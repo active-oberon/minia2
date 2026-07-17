@@ -1472,6 +1472,9 @@ PACKAGE Build ARCHIVE "Build.zip" SOURCE "BuildSrc.zip" DESCRIPTION "Build Tools
 	PETReleaseTree.Mod
 	OBEMBR4.ASM BootManager.Asm OBL.Asm OBLUnreal.Asm	# Asm
 	BootManager.Mod BootManager.Tool	# Splits up BootManager.Bin into BootManagerMBR.Bin and BootManagerTail.Bin
+
+	# [minia2] compiler self-test framework (needed by `task test`); rest of the Testing package stays excluded
+	TestSuite.Mod Versioning.Mod FoxTest.Mod
 END
 
 PACKAGE EFI ARCHIVE "EFI.zip" SOURCE "EFISrc.zip" DESCRIPTION "EFI Boot Loader and API"
