@@ -424,34 +424,13 @@ tasks:
         rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt
         rm -f {{.PLATFORM_ENV}}
 
-  # Individual platform build tasks
-  Linux32:
-    desc: Build Linux32 platform
-    cmds:
-      - task: build-platform
-        vars:
-          PLATFORM: Linux32
-
+  # Individual platform build tasks (minia2 targets: Linux64 + Win64 only)
   Linux64:
     desc: Build Linux64 platform
     cmds:
       - task: build-platform
         vars:
           PLATFORM: Linux64
-
-  LinuxARM:
-    desc: Build LinuxARM platform
-    cmds:
-      - task: build-platform
-        vars:
-          PLATFORM: LinuxARM
-
-  Win32:
-    desc: Build Win32 platform
-    cmds:
-      - task: build-platform
-        vars:
-          PLATFORM: Win32
 
   Win64:
     desc: Build Win64 platform
