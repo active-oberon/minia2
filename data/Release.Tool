@@ -1522,7 +1522,7 @@ PACKAGE Contributions ARCHIVE "Contributions.zip" SOURCE "ContributionsSrc.zip" 
 
 	# Video for Windows
 	RasterPixelFormats.Mod
-	WIN { Windows.VfW.Mod VideoExample.Mod TestVideo.Mod }
+	WIN { Windows.VfW.Mod }	# [minia2] removed VideoExample + TestVideo (demos, need W3d* from Fun)
 
 	WMOverlay.Mod WMOverlay.tar
 
