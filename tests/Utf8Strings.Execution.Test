@@ -1,0 +1,733 @@
+# Utf8Strings.Execution.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="Utf8Strings.Execution.Test.Log" --result="Utf8Strings.Execution.Diff"
+
+# -------------------------
+# Positive tests: Reading valid UTF-8 (raw write / UTF8 read)
+# -------------------------
+
+positive: Single ASCII character U+0000 (NULL)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := 00X;
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single ASCII character U+0041 'A'
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := 41X; str[1] := 00X;
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: Maximal 1-byte U+007F
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (7FX); str[1] := (0X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x007F);
+	END Test.
+
+positive: Minimal 2-byte U+0080
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C2X); str[1] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0080);
+	END Test.
+
+positive: Two-byte character U+00A9 COPYRIGHT SIGN
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C2X); str[1] := (0A9X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x00A9);
+	END Test.
+
+positive: Maximal 2-byte U+07FF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0DFX); str[1] := (0BFX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x07FF);
+	END Test.
+
+positive: Minimal 3-byte U+0800
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E0X); str[1] := (0A0X); str[2] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0800);
+	END Test.
+
+positive: Three-byte character U+20AC EURO SIGN
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E2X); str[1] := (082X); str[2] := (0ACX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: Maximal 3-byte U+FFFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EFX); str[1] := (0BFX); str[2] := (0BFX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Minimal 4-byte U+10000
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (090X); str[2] := (80X); str[3] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x10000);
+	END Test.
+
+positive: Four-byte character U+1F600 GRINNING FACE
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (09FX); str[2] := (098X); str[3] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F4X); str[1] := (08FX); str[2] := (0BFX); str[3] := (0BFX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: Non-character U+FFFE
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EFX); str[1] := (0BFX); str[2] := (0BEX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: BOM character U+FEFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EFX); str[1] := (0BBX); str[2] := (0BFX);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: Control character U+0001
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (01X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0001);
+	END Test.
+
+positive: Raw write/UTF8 read sequence ASCII + 2-byte + 3-byte + 4-byte
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (041X);  (* 'A' *)
+		str[1] := (0C2X); str[2] := (0A9X);  (* COPYRIGHT SIGN *)
+		str[3] := (0E2X); str[4] := (082X); str[5] := (0ACX);  (* EURO SIGN *)
+		str[6] := (0F0X); str[7] := (09FX); str[8] := (098X); str[9] := (80X);  (* GRINNING FACE *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x00A9);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x20AC);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Private Use Area U+E000
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EEX); str[1] := (80X); str[2] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xE000);
+	END Test.
+
+positive: CJK Ideograph U+4E00
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E4X); str[1] := (0B8X); str[2] := (80X);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x4E00);
+	END Test.
+
+# -------------------------
+# Positive tests: Writing and reading valid UTF-8 (UTF8 write / UTF8 read)
+# -------------------------
+
+positive: UTF8 write/read NULL (U+0000)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0000, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF8 write/read ASCII 'A' (U+0041)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: UTF8 write/read maximal 1-byte U+007F
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x007F, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x007F);
+	END Test.
+
+positive: UTF8 write/read minimal 2-byte U+0080
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0080, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0080);
+	END Test.
+
+positive: UTF8 write/read 2-byte U+00A9 COPYRIGHT SIGN
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x00A9, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x00A9);
+	END Test.
+
+positive: UTF8 write/read maximal 2-byte U+07FF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x07FF, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x07FF);
+	END Test.
+
+positive: UTF8 write/read minimal 3-byte U+0800
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0800, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0800);
+	END Test.
+
+positive: UTF8 write/read 3-byte U+20AC EURO SIGN
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x20AC, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: UTF8 write/read maximal 3-byte U+FFFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0xFFFF, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF8 write/read minimal 4-byte U+10000
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x10000, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x10000);
+	END Test.
+
+positive: UTF8 write/read 4-byte U+1F600 GRINNING FACE
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x1F600, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF8 write/read maximal valid U+10FFFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x10FFFF, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF8 write/read non-character U+FFFE
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0xFFFE, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF8 write/read BOM U+FEFF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0xFEFF, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF8 write/read control character U+0001
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0001, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u));
+		ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF8 write/read long sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 512 OF CHAR; i: SIGNED32; j := 0: SIZE;
+	BEGIN
+		FOR i := 0 TO 99 DO
+			ASSERT(UTF8Strings.EncodeChar(0x0041 + (i MOD 2), str, j));  (* 'A' or 'B' *)
+		END;
+
+		j := 0;
+		FOR i := 0 TO 99 DO
+			ASSERT(UTF8Strings.DecodeChar(str, j, u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF8 write/read sequence with BOM
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0xFEFF, str, j));  (* BOM *)
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));  (* 'A' *)
+		ASSERT(UTF8Strings.EncodeChar(0x1F600, str, j)); (* GRINNING FACE *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0xFEFF);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF8 write/read sequence with non-character
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));  (* 'A' *)
+		ASSERT(UTF8Strings.EncodeChar(0xFDD0, str, j));  (* non-character *)
+		ASSERT(UTF8Strings.EncodeChar(0x0042, str, j));  (* 'B' *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0xFDD0);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF8 write/read multiple supplementary plane
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x1F600, str, j));  (* GRINNING FACE *)
+		ASSERT(UTF8Strings.EncodeChar(0x1F601, str, j));  (* GRINNING FACE WITH SMILING EYES *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x1F600);
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF8 write/read private use area U+E000
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0xE000, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0xE000);
+	END Test.
+
+positive: UTF8 write/read CJK ideograph U+4E00
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x4E00, str, j));
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x4E00);
+	END Test.
+
+positive: UTF8 write/read very long sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 1024*4 OF CHAR; i: SIZE; j := 0: SIZE;
+	BEGIN
+		FOR i := 0 TO 999 DO
+			ASSERT(UTF8Strings.EncodeChar(0x1F600, str, j));  (* GRINNING FACE *)
+		END;
+
+		j := 0;
+		FOR i := 0 TO 999 DO
+			ASSERT(UTF8Strings.DecodeChar(str, j, u)); ASSERT(u = 0x1F600);
+		END;
+	END Test.
+
+# -------------------------
+# Negative tests: Reading invalid UTF-8
+# -------------------------
+
+positive: Lone continuation byte
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (80X);  str[1] := 0X; (* lone continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid start byte 0F8X (5-byte sequence)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F8X); str[1] := (088X); str[2] := (80X); str[3] := (80X); str[4] := (80X); str[5] := 0X;
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Overlong encoding of U+002F '/'
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C0X); str[1] := (0AFX);  (* overlong '/' *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Overlong encoding of U+0000 (NULL)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C0X); str[2] := (80X);  (* overlong NULL *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid codepoint beyond U+10FFFF (U+110000)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F4X); str[1] := (090X); str[2] := (80X); str[3] := (80X);  (* U+110000 *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Surrogate codepoint U+D800 (high surrogate)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EDX); str[1] := (0A0X); str[2] := (80X);  str[3] := 0X;(* U+D800 *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Surrogate codepoint U+DFFF (low surrogate)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0EDX); str[1] := (0BFX); str[2] := (0BFX); str[3] := 0X; (* U+DFFF *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid 2-byte with missing continuation
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C2X);  str[1] := 0X; (* start of 2-byte, no continuation *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid 3-byte with missing continuation
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E2X); str[1] := (082X);  str[2] := 0X; (* start of 3-byte, missing last byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid 4-byte with missing continuation
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (09FX); str[2] := (098X);  str[3] := 0X; (* start of 4-byte, missing last byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: UTF8 read partial single byte (invalid ASCII continuation)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (80X);  str[1] := 0X; (* lone continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: UTF8 read mismatch (invalid sequence)
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0FFX); str[1] := 0X;  (* invalid start byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid continuation byte in 2-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C2X); str[1] := (03FX);  str[2] := 0X; (* invalid continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Overlong 3-byte encoding of U+007F
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E0X); str[1] := (80X); str[2] := (0BFX);
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid first byte for U+07FF
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0C1X); str[1] := (0BFX);  str[2] := 0X; (* invalid for U+07FF *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid first continuation byte in 3-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E0X); str[1] := (03FX); str[2] := (80X); str[3] := 0X;  (* invalid first continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid second continuation byte in 3-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E0X); str[1] := (0A0X); str[2] := (03FX);  str[3] := 0X; (* invalid second continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid first continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (03FX); str[2] := (80X); str[3] := (80X); str[4] := 0X; (* invalid first continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid second continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (090X); str[2] := (03FX); str[3] := (80X);  (* invalid second continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+positive: Invalid third continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0F0X); str[1] := (090X); str[2] := (80X); str[3] := (03FX);  str[4] := 0X;(* invalid third continuation byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));
+	END Test.
+
+# -------------------------
+# Negative tests: Writing invalid UTF-8
+# -------------------------
+
+positive: UTF8 write invalid surrogate U+D800
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(~UTF8Strings.EncodeChar(0xD800, str, j));  (* high surrogate *)
+	END Test.
+
+positive: UTF8 write invalid codepoint U+110000
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(~UTF8Strings.EncodeChar(0x110000, str, j));  (* beyond max Unicode *)
+	END Test.
+
+# -------------------------
+# Tests for recovery after invalid UTF-8 read
+# -------------------------
+
+positive: UTF8 read recovery after invalid, ASCII + invalid + ASCII
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE; x: UNSIGNED8;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));  (* 'A' *)
+		str[1] := (80X);  (* lone continuation byte, invalid *)
+		INC(j);
+		ASSERT(UTF8Strings.EncodeChar(0x0042, str, j));  (* 'B' *)
+
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));  (* fail on invalid *)
+		INC(i);  (* manually skip the invalid byte *)
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF8 read recovery after overlong encoding
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE; x: UNSIGNED8;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));  (* 'A' *)
+		str[1] := (0C0X); str[2] := (0AFX);  (* overlong '/', invalid *)
+		INC(j, 2);
+		ASSERT(UTF8Strings.EncodeChar(0x0042, str, j));  (* 'B' *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u));  (* fail on invalid *)
+		INC(i); INC(i);  (* manually skip the invalid 2 bytes *)
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF8 read recovery after multiple invalid sequences
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE; x: UNSIGNED8;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x0041, str, j));  (* 'A' *)
+		str[j] := (80X); INC(j); (* lone continuation byte *)
+		str[2] := (0C0X); INC(j); str[3] := (80X); INC(j); (* overlong NULL *)
+		ASSERT(UTF8Strings.EncodeChar(0x0042, str, j));  (* 'B' *)
+
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0041);
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u)); INC(i);  (* skip lone byte *)
+		ASSERT(~UTF8Strings.DecodeChar(str, i, u)); INC(i); INC(i);  (* skip overlong *)
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Positive tests: Raw write + UTF8 read / UTF8 write + Raw read
+# -------------------------
+
+positive: Raw write + UTF8 read
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		str[0] := (0E2X); str[1] := (082X); str[2] := (0ACX);  (* Euro sign *)
+		ASSERT(UTF8Strings.DecodeChar(str, i, u)); ASSERT(u = 0x20AC);
+	END Test.
+
+positive: UTF8 write + Raw read
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR u: UTF8Strings.Char32; VAR str: ARRAY 256 OF CHAR; i := 0, j := 0: SIZE;
+	BEGIN
+		ASSERT(UTF8Strings.EncodeChar(0x1F600, str, j));  (* GRINNING FACE *)
+
+		ASSERT(str[0] = 0F0X);
+		ASSERT(str[1] = 09FX);
+		ASSERT(str[2] = 098X);
+		ASSERT(str[3] = 80X);
+	END Test.
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	

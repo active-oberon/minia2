@@ -1,0 +1,454 @@
+# Math32.Execution.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="Math32.Execution.Test.Log" --result="Math32.Execution.Test.Diff"
+
+positive: arctan2
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR a,b,c,d, e,f,g: Math.Value;
+	BEGIN
+		a:=Math.arctan2(1,1);
+		b:=Math.arctan2(1,-1);
+		c:=Math.arctan2(-1,1);
+		d:=Math.arctan2(-1,-1);
+		e:=Math.arctan2(1);
+		f:=Math.arctan2(-1);
+		g:=Math.arctan2(0,0);
+		ASSERT(a=e,200);
+		ASSERT(b=-d,201);
+		ASSERT(c=f,202);
+		ASSERT(g=0,203);
+		(*
+		FOR i:=-100 TO 100 DO
+			y:=i*2*pi/100;
+			context.out.FloatFix(y,8,2,0);
+			res:=arctan(y,1);context.out.FloatFix(res, 8,2,0);
+			res:=arctan(y,-1);context.out.FloatFix(res, 8,2,0);
+			context.out.Ln; context.out.Update;
+		END;
+		*)
+	END Test.
+
+positive: ilogb
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x: Math.Value;
+	BEGIN
+		(* zero *)
+		ASSERT(Math.ilogb(0.0) = MIN(Math.IntValue), 100);
+
+		(* infinities *)
+		ASSERT(Math.ilogb(Math.Inf(1)) = MAX(Math.IntValue), 101);
+		ASSERT(Math.ilogb(Math.Inf(-1)) = MAX(Math.IntValue), 102);
+
+		(* Math.NaN *)
+		ASSERT(Math.ilogb(Math.NaN()) = MAX(Math.IntValue), 103);
+
+		(* exact powers of two *)
+		ASSERT(Math.ilogb(1.0) = 0, 104);
+		ASSERT(Math.ilogb(2.0) = 1, 105);
+		ASSERT(Math.ilogb(0.5) = -1, 106);
+		ASSERT(Math.ilogb(8.0) = 3, 107);
+
+		(* normals *)
+		ASSERT(Math.ilogb(3.0) = 1, 108);
+		ASSERT(Math.ilogb(0.75) = -1, 109);
+		ASSERT(Math.ilogb(-10.0) = 3, 110);
+
+		(* subnormal: smallest positive *)
+		x := Math.ldexp(1.0, -149);   (* min subnormal *)
+		ASSERT(Math.ilogb(x) = -149, 111);
+
+		(* subnormal: a bit larger *)
+		x := Math.ldexp(1.0, -140);
+		ASSERT(Math.ilogb(x) = -140, 112);
+	END Test.
+
+positive: logb
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x: Math.Value;
+	BEGIN
+		(* zero *)
+		ASSERT(Math.isinf(Math.logb(0.0), -1), 200);
+
+		(* infinities *)
+		ASSERT(Math.isinf(Math.logb(Math.Inf(1)), 1), 201);
+		ASSERT(Math.isinf(Math.logb(Math.Inf(-1)), 1), 202);
+
+		(* Math.NaN *)
+		ASSERT(Math.isnan(Math.logb(Math.NaN())), 203);
+
+		(* exact *)
+		ASSERT(Math.logb(1.0) = 0.0, 204);
+		ASSERT(Math.logb(2.0) = 1.0, 205);
+		ASSERT(Math.logb(0.5) = -1.0, 206);
+
+		(* normal *)
+		ASSERT(Math.logb(3.0) = 1.0, 207);
+		ASSERT(Math.logb(0.75) = -1.0, 208);
+
+		(* negative *)
+		ASSERT(Math.logb(-8.0) = 3.0, 209);
+
+		(* subnormal *)
+		x := Math.ldexp(1.0, -149);
+		ASSERT(Math.logb(x) = -149.0, 210);
+	END Test.
+
+positive: FrexpLdexpBasic
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x, m: Math.Value; e: Math.IntValue;
+	BEGIN
+		(* zero *)
+		m := Math.frexp(0.0, e);
+		ASSERT(m = 0.0, 300);
+		ASSERT(e = 0, 301);
+		ASSERT(Math.ldexp(m, e) = 0.0, 302);
+
+		(* one *)
+		x := 1.0;
+		m := Math.frexp(x, e);
+		ASSERT(m = 0.5, 303);
+		ASSERT(e = 1, 304);
+		ASSERT(Math.ldexp(m, e) = x, 305);
+
+		(* negative *)
+		x := -8.0;
+		m := Math.frexp(x, e);
+		ASSERT(m = -0.5, 306);
+		ASSERT(e = 4, 307);
+		ASSERT(Math.ldexp(m, e) = x, 308);
+
+		(* fractional *)
+		x := 0.75;
+		m := Math.frexp(x, e);
+		ASSERT(m = 0.75, 309);
+		ASSERT(e = 0, 310);
+		ASSERT(Math.ldexp(m, e) = x, 311);
+	END Test.
+
+positive: FrexpSubnormal
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x, m: Math.Value; e: Math.IntValue;
+	BEGIN
+		(* smallest subnormal *)
+		x := Math.ldexp(1.0, -149);
+		m := Math.frexp(x, e);
+
+		ASSERT(ABS(m) >= 0.5, 320);
+		ASSERT(ABS(m) < 1.0, 321);
+		ASSERT(Math.ldexp(m, e) = x, 322);
+
+		(* another subnormal *)
+		x := Math.ldexp(1.0, -140);
+		m := Math.frexp(x, e);
+
+		ASSERT(ABS(m) >= 0.5, 323);
+		ASSERT(ABS(m) < 1.0, 324);
+		ASSERT(Math.ldexp(m, e) = x, 325);
+	END Test.
+
+positive: TestFrexpSpecial
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR m: Math.Value; e: Math.IntValue;
+	BEGIN
+		(* Math.NaN *)
+		m := Math.frexp(Math.NaN(), e);
+		ASSERT(Math.isnan(m), 330);
+
+		(* +Math.Inf *)
+		m := Math.frexp(Math.Inf(1), e);
+		ASSERT(Math.isinf(m, 1), 331);
+
+		(* -Math.Inf *)
+		m := Math.frexp(Math.Inf(-1), e);
+		ASSERT(Math.isinf(m, -1), 332);
+	END Test.
+
+positive: scalbn
+	MODULE Test;
+	IMPORT Math := Math32;
+	BEGIN
+		ASSERT(Math.scalbn(1.0, 10) = 1024.0, 340);
+		ASSERT(Math.scalbn(0.5, 1) = 1.0, 341);
+		ASSERT(Math.scalbn(1.0, -1) = 0.5, 342);
+	END Test.
+
+	positive: TestFmod
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR eps := 1.0E-6: Math.Value;
+			x, y: Math.Value;
+	BEGIN
+		ASSERT(ABS(Math.fmod(5.3, 2.0) - 1.3) < eps, 400);
+		ASSERT(ABS(Math.fmod(-5.3, 2.0) + 1.3) < eps, 401);
+		ASSERT(ABS(Math.fmod(5.3, -2.0) - 1.3) < eps, 402);
+		ASSERT(ABS(Math.fmod(-5.3, -2.0) + 1.3) < eps, 403);
+
+		ASSERT(ABS(Math.fmod(18.5, 4.2) - 1.7) < eps, 404);
+		ASSERT(ABS(Math.fmod(18.5, -4.2) - 1.7) < eps, 405);
+
+		ASSERT(Math.fmod(7.0, 3.5) = 0.0, 406);
+
+		x := Math.ldexp(1.0, 30); (* x = 2^30 *)
+		y := Math.ldexp(1.0, 10); (* y = 2^10 *)
+		ASSERT(Math.fmod(x, y) = 0.0, 407);
+
+		x := Math.ldexp(1.0, -149);
+		y := Math.ldexp(1.0, -150);
+		ASSERT(Math.fmod(x, y) = 0.0, 408);
+	END TestFmod;
+
+positive: TestModf
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR
+		i, f: Math.Value;
+	BEGIN
+		f := Math.modf(3.75, i);
+		ASSERT(i = 3.0);
+		ASSERT(f = 0.75);
+
+		f := Math.modf(-3.75, i);
+		ASSERT(i = -3.0);
+		ASSERT(f = -0.75);
+
+		f := Math.modf(0.0, i);
+		ASSERT(Math.iszero(f, +1));
+		ASSERT(Math.iszero(i, +1));
+
+		f := Math.modf(Math.Inf(1), i);
+		ASSERT(Math.isinf(i));
+		ASSERT(Math.iszero(f, 1));
+
+		f := Math.modf(Math.Inf(-1), i);
+		ASSERT(Math.isinf(i) & (i < 0.0));
+		ASSERT(Math.iszero(f, -1));
+
+		f := Math.modf(Math.NaN(), i);
+		ASSERT(Math.isnan(i));
+		ASSERT(Math.isnan(f));
+	END Test.
+
+positive: TestRounding
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x, res: Math.Value;
+	BEGIN
+		(* --- Math.trunc --- *)
+		ASSERT(Math.trunc(3.75) = 3.0, 600);
+		ASSERT(Math.trunc(-3.75) = -3.0, 601);
+		ASSERT(Math.trunc(3.0) = 3.0, 602);
+		ASSERT(Math.trunc(-3.0) = -3.0, 603);
+		ASSERT(Math.trunc(0.5) = 0.0, 604);
+		ASSERT(Math.trunc(-0.5) = -0.0, 605);
+		ASSERT(Math.trunc(Math.Inf(1)) = Math.Inf(1), 606);
+		ASSERT(Math.trunc(Math.Inf(-1)) = Math.Inf(-1), 607);
+		ASSERT(Math.isnan(Math.trunc(Math.NaN())), 608);
+
+		(* --- Math.floor --- *)
+		ASSERT(Math.floor(3.75) = 3.0, 610);
+		ASSERT(Math.floor(-3.75) = -4.0, 611);
+		ASSERT(Math.floor(3.0) = 3.0, 612);
+		ASSERT(Math.floor(-3.0) = -3.0, 613);
+		ASSERT(Math.floor(0.5) = 0.0, 614);
+		ASSERT(Math.floor(-0.5) = -1.0, 615);
+		ASSERT(Math.floor(Math.Inf(1)) = Math.Inf(1), 616);
+		ASSERT(Math.floor(Math.Inf(-1)) = Math.Inf(-1), 617);
+		ASSERT(Math.isnan(Math.floor(Math.NaN())), 618);
+
+		(* --- Math.ceil --- *)
+		ASSERT(Math.ceil(3.75) = 4.0, 620);
+		ASSERT(Math.ceil(-3.75) = -3.0, 621);
+		ASSERT(Math.ceil(3.0) = 3.0, 622);
+		ASSERT(Math.ceil(-3.0) = -3.0, 623);
+		ASSERT(Math.ceil(0.5) = 1.0, 624);
+		ASSERT(Math.ceil(-0.5) = 0.0, 625);
+		ASSERT(Math.ceil(Math.Inf(1)) = Math.Inf(1), 626);
+		ASSERT(Math.ceil(Math.Inf(-1)) = Math.Inf(-1), 627);
+		ASSERT(Math.isnan(Math.ceil(Math.NaN())), 628);
+
+		(* --- Math.rint  --- *)
+		ASSERT(Math.rint(3.75) = 4.0, 630);
+		ASSERT(Math.rint(-3.75) = -4.0, 631);
+		ASSERT(Math.rint(3.25) = 3.0, 632);
+		ASSERT(Math.rint(-3.25) = -3.0, 633);
+		ASSERT(Math.rint(3.5) = 4.0, 634);
+		ASSERT(Math.rint(-3.5) = -4.0, 635);
+		ASSERT(Math.rint(3.0) = 3.0, 636);
+		ASSERT(Math.rint(-3.0) = -3.0, 637);
+		ASSERT(Math.rint(0.5) = 1.0, 638);
+		ASSERT(Math.rint(-0.5) = -1.0, 639);
+		ASSERT(Math.rint(Math.Inf(1)) = Math.Inf(1), 640);
+		ASSERT(Math.rint(Math.Inf(-1)) = Math.Inf(-1), 641);
+		ASSERT(Math.isnan(Math.rint(Math.NaN())), 642);
+
+		(* --- Math.frac --- *)
+		ASSERT(Math.frac(3.75) = 0.75, 650);
+		ASSERT(Math.frac(-3.75) = -0.75, 651);
+		ASSERT(Math.frac(3.0) = 0.0, 652);
+		ASSERT(Math.frac(-3.0) = -0.0, 653);
+		ASSERT(Math.frac(0.5) = 0.5, 654);
+		ASSERT(Math.frac(-0.5) = -0.5, 655);
+		ASSERT(Math.iszero(Math.frac(Math.Inf(1)), 1), 656);
+		ASSERT(Math.iszero(Math.frac(Math.Inf(-1)), -1), 657);
+		ASSERT(Math.isnan(Math.frac(Math.NaN())), 658);
+	END Test.
+
+positive: TestRoundingComprehensive
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR i, f, x: Math.Value;
+	BEGIN
+		(* |x| > 1 *)
+		ASSERT(Math.trunc(3.75) = 3.0, 600);
+		ASSERT(Math.trunc(-3.75) = -3.0, 601);
+		(* |x| = 1 *)
+		ASSERT(Math.trunc(1.0) = 1.0, 602);
+		ASSERT(Math.trunc(-1.0) = -1.0, 603);
+		(* 0 < |x| < 1 *)
+		ASSERT(Math.trunc(0.75) = 0.0, 604);
+		ASSERT(Math.trunc(-0.75) = -0.0, 605);
+		ASSERT(Math.trunc(1.0D-20) = 0.0, 606);
+		ASSERT(Math.trunc(-1.0D-20) = -0.0, 607);
+		(* x = 0 *)
+		ASSERT(Math.iszero(Math.trunc(0.5), 1), 608);
+		ASSERT(Math.iszero(Math.trunc(-0.5), -1), 609);
+		(* Specials *)
+		ASSERT(Math.trunc(Math.Inf(1)) = Math.Inf(1), 610);
+		ASSERT(Math.trunc(Math.Inf(-1)) = Math.Inf(-1), 611);
+		ASSERT(Math.isnan(Math.trunc(Math.NaN())), 612);
+
+		ASSERT(Math.floor(3.75) = 3.0, 620);
+		ASSERT(Math.floor(-3.75) = -4.0, 621);
+		ASSERT(Math.floor(0.75) = 0.0, 622);
+		ASSERT(Math.floor(-0.75) = -1.0, 623);
+
+		ASSERT(Math.ceil(3.75) = 4.0, 630);
+		ASSERT(Math.ceil(-3.75) = -3.0, 631);
+		ASSERT(Math.ceil(0.75) = 1.0, 632);
+		ASSERT(Math.ceil(-0.75) = 0.0, 633);
+
+		ASSERT(Math.rint(3.75) = 4.0, 640);
+		ASSERT(Math.rint(-3.75) = -4.0, 641);
+		ASSERT(Math.rint(0.75) = 1.0, 642);
+		ASSERT(Math.rint(-0.75) = -1.0, 643);
+		ASSERT(Math.rint(0.5) = 1.0, 644);
+		ASSERT(Math.rint(-0.5) = -1.0, 645);
+
+		(* |x| > 1 *)
+		f := Math.modf(3.75, i); ASSERT(i = 3.0); ASSERT(f = 0.75);
+		f := Math.modf(-3.75, i); ASSERT(i = -3.0); ASSERT(f = -0.75);
+		(* 0 < |x| < 1 *)
+		f := Math.modf(0.75, i); ASSERT(Math.iszero(i, 1)); ASSERT(f = 0.75);
+		f := Math.modf(-0.75, i); ASSERT(Math.iszero(i, -1)); ASSERT(f = -0.75);
+		(* x = 0 *)
+		f := Math.modf(0.0, i); ASSERT(Math.iszero(f, 1)); ASSERT(Math.iszero(i, 1));
+		(* Specials *)
+		f := Math.modf(Math.Inf(1), i); ASSERT(Math.isinf(i, 1)); ASSERT(Math.iszero(f, 1));
+		f := Math.modf(Math.NaN(), i); ASSERT(Math.isnan(i)); ASSERT(Math.isnan(f));
+
+		ASSERT(Math.frac(3.75) = 0.75, 680);
+		ASSERT(Math.frac(-3.75) = -0.75, 681);
+		ASSERT(Math.frac(0.75) = 0.75, 682);
+		ASSERT(Math.frac(-0.75) = -0.75, 683);
+		ASSERT(Math.frac(1.0) = 0.0, 684);
+		ASSERT(Math.frac(-1.0) = -0.0, 685);
+	END Test.
+
+positive: TestAdvancedMath -- hypot, power
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR eps := 1.0E-6: Math.Value;
+			x, y: Math.Value;
+	BEGIN
+	(*
+		ASSERT(Math.isnan(log1p(Math.NaN())), 700);
+		ASSERT(Math.isinf(log1p(Math.Inf(1)), 1), 701);
+		ASSERT(Math.isinf(log1p(-1.0), -1), 702);
+		ASSERT(Math.isnan(log1p(-2.0)), 703);
+
+		ASSERT(ABS(log1p(1.0D-20) - 1.0D-20) < eps, 704);
+		ASSERT(log1p(0.0) = 0.0, 705);
+
+		ASSERT(ABS(log1p(1.0) - ln(2.0)) < eps, 706);
+		ASSERT(ABS(log1p(exp(1.0) - 1.0) - 1.0) < eps, 707);
+		ASSERT(ABS(log1p(-0.5) - ln(0.5)) < eps, 708);
+	*)
+		ASSERT(Math.isnan(Math.hypot(Math.NaN(), 1.0)), 720);
+		ASSERT(Math.isnan(Math.hypot(1.0, Math.NaN())), 721);
+		ASSERT(Math.isinf(Math.hypot(Math.Inf(1), 1.0), 1), 722);
+		ASSERT(Math.isinf(Math.hypot(1.0, Math.Inf(1)), 1), 723);
+		ASSERT(Math.isinf(Math.hypot(Math.Inf(-1), 1.0), 1), 724);
+		ASSERT(Math.isinf(Math.hypot(1.0, Math.Inf(-1)), 1), 725);
+		ASSERT(Math.hypot(0.0, 0.0) = 0.0, 726);
+
+		x := Math.power(10.0, 200);
+		y := Math.power(10.0, 200);
+		ASSERT(Math.isinf(Math.hypot(x, y), 1), 727);
+
+		x := Math.ldexp(1.0, -1000);
+		y := Math.ldexp(1.0, -1000);
+		ASSERT(ABS(Math.hypot(x, y) - (Math.sqrt(2.0) * x)) < eps, 728);
+
+		ASSERT(Math.hypot(3.0, 4.0) = 5.0, 729);
+		ASSERT(Math.hypot(5.0, 12.0) = 13.0, 730);
+
+		x := 1.23456789;
+		y := 9.87654321;
+		ASSERT(Math.hypot(x, y) = Math.hypot(y, x), 731);
+
+		ASSERT(Math.power(0.0, 5.0) = 0.0, 740);
+		ASSERT(Math.power(0.0, 0.0) = 1.0, 741);
+		ASSERT(Math.isinf(Math.power(0.0, -5.0), 1), 742);
+
+		ASSERT(Math.power(Math.Inf(1), 0.0) = 1.0, 743);
+		ASSERT(Math.power(0.0, 0.0) = 1.0, 744);
+		ASSERT(Math.power(Math.NaN(), 0.0) = 1.0, 745);
+
+		ASSERT(Math.power(1.0, Math.Inf(1)) = 1.0, 746);
+		ASSERT(Math.power(1.0, -Math.Inf(1)) = 1.0, 747);
+		ASSERT(Math.power(1.0, Math.NaN()) = 1.0, 748);
+
+		ASSERT(Math.power(-1.0, 4.0) = 1.0, 749);
+		ASSERT(Math.power(-1.0, 5.0) = -1.0, 750);
+		ASSERT(Math.isnan(Math.power(-1.0, 4.5)), 751);
+
+		ASSERT(Math.isinf(Math.power(Math.Inf(1), 5.0), 1), 752);
+		ASSERT(Math.power(Math.Inf(1), -5.0) = 0.0, 753);
+		ASSERT(Math.isinf(Math.power(Math.Inf(-1), 5.0), -1), 754);
+		ASSERT(Math.power(Math.Inf(-1), -5.0) = 0.0, 755);
+
+		ASSERT(Math.isnan(Math.power(-2.0, 0.5)), 760);
+
+		ASSERT(Math.isinf(Math.power(10.0, 400), 1), 770);
+		ASSERT(Math.power(10.0, -400) = 0.0, 771);
+
+		ASSERT(Math.power(2.0, 10) = 1024.0, 780);
+		ASSERT(Math.power(-2.0, 3) = -8.0, 781);
+	END Test.
+
+positive: TestNextAfter
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR
+		x: Math.Value;
+	BEGIN
+		x := Math.nextafter(0.0, 1.0);
+		ASSERT(x > 0.0);
+
+		x := Math.nextafter(0.0, -1.0);
+		ASSERT(x < 0.0);
+
+		x := Math.nextafter(Math.Inf(1), 0.0);
+		ASSERT(~Math.isinf(x));
+
+		x := Math.nextafter(Math.Inf(1), 0.0);
+		ASSERT(~Math.isinf(x));
+		ASSERT(x < Math.Inf(1));
+	END Test.
+
+

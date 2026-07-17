@@ -1,0 +1,998 @@
+# Utf8Stream.Execution.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="Utf8Stream.Execution.Test.Log" --result="Utf8Stream.Execution.Diff"
+
+# -------------------------
+# Positive tests: Reading valid UTF-8 (raw write / UTF8 read)
+# -------------------------
+
+positive: Single ASCII character U+0000 (NULL)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single ASCII character U+0041 'A'
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: Maximal 1-byte U+007F
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x7F);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x007F);
+	END Test.
+
+positive: Minimal 2-byte U+0080
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC2); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x0080);
+	END Test.
+
+positive: Two-byte character U+00A9 COPYRIGHT SIGN
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC2); w.RawUInt8(0xA9);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x00A9);
+	END Test.
+
+positive: Maximal 2-byte U+07FF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xDF); w.RawUInt8(0xBF);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x07FF);
+	END Test.
+
+positive: Minimal 3-byte U+0800
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE0); w.RawUInt8(0xA0); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x0800);
+	END Test.
+
+positive: Three-byte character U+20AC EURO SIGN
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE2); w.RawUInt8(0x82); w.RawUInt8(0xAC);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: Maximal 3-byte U+FFFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xEF); w.RawUInt8(0xBF); w.RawUInt8(0xBF);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Minimal 4-byte U+10000
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x90); w.RawUInt8(0x80); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x10000);
+	END Test.
+
+positive: Four-byte character U+1F600 GRINNING FACE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x9F); w.RawUInt8(0x98); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF4); w.RawUInt8(0x8F); w.RawUInt8(0xBF); w.RawUInt8(0xBF);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: Non-character U+FFFE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xEF); w.RawUInt8(0xBF); w.RawUInt8(0xBE);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: BOM character U+FEFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xEF); w.RawUInt8(0xBB); w.RawUInt8(0xBF);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: Control character U+0001
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x01);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x0001);
+	END Test.
+
+positive: Raw write/UTF8 read sequence ASCII + 2-byte + 3-byte + 4-byte
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41);  (* 'A' *)
+		w.RawUInt8(0xC2); w.RawUInt8(0xA9);  (* COPYRIGHT SIGN *)
+		w.RawUInt8(0xE2); w.RawUInt8(0x82); w.RawUInt8(0xAC);  (* EURO SIGN *)
+		w.RawUInt8(0xF0); w.RawUInt8(0x9F); w.RawUInt8(0x98); w.RawUInt8(0x80);  (* GRINNING FACE *)
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x00A9);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x20AC);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Private Use Area U+E000
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xEE); w.RawUInt8(0x80); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0xE000);
+	END Test.
+
+positive: CJK Ideograph U+4E00
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE4); w.RawUInt8(0xB8); w.RawUInt8(0x80);
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u));
+		ASSERT(u = 0x4E00);
+	END Test.
+
+# -------------------------
+# Positive tests: Writing and reading valid UTF-8 (UTF8 write / UTF8 read)
+# -------------------------
+
+positive: UTF8 write/read NULL (U+0000)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0000));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF8 write/read ASCII 'A' (U+0041)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0041));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+	END Test.
+
+positive: UTF8 write/read maximal 1-byte U+007F
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x007F));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x007F);
+	END Test.
+
+positive: UTF8 write/read minimal 2-byte U+0080
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0080));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0080);
+	END Test.
+
+positive: UTF8 write/read 2-byte U+00A9 COPYRIGHT SIGN
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x00A9));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x00A9);
+	END Test.
+
+positive: UTF8 write/read maximal 2-byte U+07FF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x07FF));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x07FF);
+	END Test.
+
+positive: UTF8 write/read minimal 3-byte U+0800
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0800));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0800);
+	END Test.
+
+positive: UTF8 write/read 3-byte U+20AC EURO SIGN
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x20AC));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x20AC);
+	END Test.
+
+positive: UTF8 write/read maximal 3-byte U+FFFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF8 write/read minimal 4-byte U+10000
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x10000));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x10000);
+	END Test.
+
+positive: UTF8 write/read 4-byte U+1F600 GRINNING FACE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x1F600));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF8 write/read maximal valid U+10FFFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x10FFFF));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF8 write/read non-character U+FFFE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0xFFFE));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF8 write/read BOM U+FEFF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0xFEFF));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF8 write/read control character U+0001
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0001));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF8 write/read long sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		FOR i := 0 TO 99 DO
+			ASSERT(w.UTF8Char(0x0041 + (i MOD 2)));  (* 'A' or 'B' *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		FOR i := 0 TO 99 DO
+			ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF8 write/read sequence with BOM
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0xFEFF));  (* BOM *)
+		ASSERT(w.UTF8Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF8Char(0x1F600)); (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xFEFF);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF8 write/read sequence with non-character
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF8Char(0xFDD0));  (* non-character *)
+		ASSERT(w.UTF8Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xFDD0);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF8 write/read multiple supplementary plane
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x1F600));  (* GRINNING FACE *)
+		ASSERT(w.UTF8Char(0x1F601));  (* GRINNING FACE WITH SMILING EYES *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF8 write/read private use area U+E000
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0xE000));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0xE000);
+	END Test.
+
+positive: UTF8 write/read CJK ideograph U+4E00
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x4E00));
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x4E00);
+	END Test.
+
+positive: UTF8 write/read very long sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		FOR i := 0 TO 999 DO
+			ASSERT(w.UTF8Char(0x1F600));  (* GRINNING FACE *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		FOR i := 0 TO 999 DO
+			ASSERT(r.UTF8Char(u)); ASSERT(u = 0x1F600);
+		END;
+	END Test.
+
+# -------------------------
+# Negative tests: Reading invalid UTF-8
+# -------------------------
+
+positive: Lone continuation byte
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x80);  (* lone continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid start byte 0xF8 (5-byte sequence)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF8); w.RawUInt8(0x88); w.RawUInt8(0x80); w.RawUInt8(0x80); w.RawUInt8(0x80);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Overlong encoding of U+002F '/'
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC0); w.RawUInt8(0xAF);  (* overlong '/' *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Overlong encoding of U+0000 (NULL)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC0); w.RawUInt8(0x80);  (* overlong NULL *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid codepoint beyond U+10FFFF (U+110000)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF4); w.RawUInt8(0x90); w.RawUInt8(0x80); w.RawUInt8(0x80);  (* U+110000 *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Surrogate codepoint U+D800 (high surrogate)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xED); w.RawUInt8(0xA0); w.RawUInt8(0x80);  (* U+D800 *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Surrogate codepoint U+DFFF (low surrogate)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xED); w.RawUInt8(0xBF); w.RawUInt8(0xBF);  (* U+DFFF *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid 2-byte with missing continuation
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC2);  (* start of 2-byte, no continuation *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid 3-byte with missing continuation
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE2); w.RawUInt8(0x82);  (* start of 3-byte, missing last byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid 4-byte with missing continuation
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x9F); w.RawUInt8(0x98);  (* start of 4-byte, missing last byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: UTF8 read empty stream
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));  (* empty stream *)
+	END Test.
+
+positive: UTF8 read partial single byte (invalid ASCII continuation)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x80);  (* lone continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: UTF8 read mismatch (invalid sequence)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xFF);  (* invalid start byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid continuation byte in 2-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC2); w.RawUInt8(0x3F);  (* invalid continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Overlong 3-byte encoding of U+007F
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE0); w.RawUInt8(0x80); w.RawUInt8(0xBF);
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid first byte for U+07FF
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xC1); w.RawUInt8(0xBF);  (* invalid for U+07FF *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid first continuation byte in 3-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE0); w.RawUInt8(0x3F); w.RawUInt8(0x80);  (* invalid first continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid second continuation byte in 3-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE0); w.RawUInt8(0xA0); w.RawUInt8(0x3F);  (* invalid second continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid first continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x3F); w.RawUInt8(0x80); w.RawUInt8(0x80);  (* invalid first continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid second continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x90); w.RawUInt8(0x3F); w.RawUInt8(0x80);  (* invalid second continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+positive: Invalid third continuation byte in 4-byte sequence
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xF0); w.RawUInt8(0x90); w.RawUInt8(0x80); w.RawUInt8(0x3F);  (* invalid third continuation byte *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(~r.UTF8Char(u));
+	END Test.
+
+# -------------------------
+# Negative tests: Writing invalid UTF-8
+# -------------------------
+
+positive: UTF8 write invalid surrogate U+D800
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(~w.UTF8Char(0xD800));  (* high surrogate *)
+		w.Update;
+	END Test.
+
+positive: UTF8 write invalid codepoint U+110000
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(~w.UTF8Char(0x110000));  (* beyond max Unicode *)
+		w.Update;
+	END Test.
+
+# -------------------------
+# Tests for recovery after invalid UTF-8 read
+# -------------------------
+
+positive: UTF8 read recovery after invalid, ASCII + invalid + ASCII
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; x: UNSIGNED8; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0041));  (* 'A' *)
+		w.RawUInt8(0x80);  (* lone continuation byte, invalid *)
+		ASSERT(w.UTF8Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF8Char(u));  (* fail on invalid *)
+		r.RawUInt8(x);  (* manually skip the invalid byte *)
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF8 read recovery after overlong encoding
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; x: UNSIGNED8; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0041));  (* 'A' *)
+		w.RawUInt8(0xC0); w.RawUInt8(0xAF);  (* overlong '/', invalid *)
+		ASSERT(w.UTF8Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF8Char(u));  (* fail on invalid *)
+		r.RawUInt8(x); r.RawUInt8(x);  (* manually skip the invalid 2 bytes *)
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF8 read recovery after multiple invalid sequences
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; x: UNSIGNED8; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x0041));  (* 'A' *)
+		w.RawUInt8(0x80);  (* lone continuation byte *)
+		w.RawUInt8(0xC0); w.RawUInt8(0x80);  (* overlong NULL *)
+		ASSERT(w.UTF8Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF8Char(u)); r.RawUInt8(x);  (* skip lone byte *)
+		ASSERT(~r.UTF8Char(u)); r.RawUInt8(x); r.RawUInt8(x);  (* skip overlong *)
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Positive tests: Raw write + UTF8 read / UTF8 write + Raw read
+# -------------------------
+
+positive: Raw write + UTF8 read
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xE2); w.RawUInt8(0x82); w.RawUInt8(0xAC);  (* Euro sign *)
+		w.Update;
+		r := f.NewReader();
+		ASSERT(r.UTF8Char(u)); ASSERT(u = 0x20AC);
+	END Test.
+
+positive: UTF8 write + Raw read
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR x: UNSIGNED8; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		ASSERT(w.UTF8Char(0x1F600));  (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.RawUInt8(x); ASSERT(x = 0xF0);
+		r.RawUInt8(x); ASSERT(x = 0x9F);
+		r.RawUInt8(x); ASSERT(x = 0x98);
+		r.RawUInt8(x); ASSERT(x = 0x80);
+	END Test.
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	

@@ -1,0 +1,1752 @@
+# Utf16Stream.Execution.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="Utf16Stream.Execution.Test.Log" --result="Utf16Stream.Execution.Diff"
+
+# -------------------------
+# Positive tests: RawChar16 write/read with RawUInt16/UNet16
+# -------------------------
+
+positive: RawUInt16 write / RawChar16 read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: UNet16 write / RawChar16 read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: RawUInt16 write / RawChar16 read surrogate value U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: UNet16 write / RawChar16 read surrogate value U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD800); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: RawUInt16 write / RawChar16 read sequence BMP + surrogate + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);  (* 'A' *)
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);  (* lead surrogate *)
+		w.RawUInt16(0x0042); ASSERT(w.res = 0);  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0041);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0xD800);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UNet16 write / RawChar16 read sequence BMP + surrogate + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0041); ASSERT(w.res = 0);  (* 'A' *)
+		w.UNet16(0xD800); ASSERT(w.res = 0);  (* lead surrogate *)
+		w.UNet16(0x0042); ASSERT(w.res = 0);  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0041);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0xD800);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Positive tests: RawUInt16/UNet16 write with RawChar16 read (vice versa)
+# -------------------------
+
+positive: RawChar16 write / RawUInt16 read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0x0041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt16(u); ASSERT(r.res = 0);
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: RawChar16 write / UNet16 read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0x0041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet16(); ASSERT(r.res = 0);
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: RawChar16 write / RawUInt16 read surrogate value U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0xD800));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt16(u); ASSERT(r.res = 0);
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: RawChar16 write / UNet16 read surrogate value U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0xD800));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet16(); ASSERT(r.res = 0);
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: RawChar16 write / RawUInt16 read sequence BMP + surrogate + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0x0041));   (* 'A' *)
+		ASSERT(w.RawChar16(0xD800));   (* lead surrogate *)
+		ASSERT(w.RawChar16(0x0042));   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt16(u); ASSERT(r.res = 0); ASSERT(u = 0x0041);
+		r.RawUInt16(u); ASSERT(r.res = 0); ASSERT(u = 0xD800);
+		r.RawUInt16(u); ASSERT(r.res = 0); ASSERT(u = 0x0042);
+	END Test.
+
+positive: RawChar16 write / UNet16 read sequence BMP + surrogate + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0x0041));   (* 'A' *)
+		ASSERT(w.RawChar16(0xD800));   (* lead surrogate *)
+		ASSERT(w.RawChar16(0x0042));   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet16(); ASSERT(r.res = 0); ASSERT(u = 0x0041);
+		u := r.UNet16(); ASSERT(r.res = 0); ASSERT(u = 0xD800);
+		u := r.UNet16(); ASSERT(r.res = 0); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Positive tests: RawChar16 write/read
+# -------------------------
+
+positive: RawChar16 write/read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0x0041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: RawChar16 write/read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0x0041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: RawChar16 write/read maximal BMP U+FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: RawChar16 write/read maximal BMP U+FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: RawChar16 write/read surrogate value U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0xD800));  (* lead surrogate, valid for RawChar16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: RawChar16 write/read surrogate value U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0xD800));  (* lead surrogate, valid for RawChar16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xD800);
+	END Test.
+
+positive: RawChar16 write/read surrogate value U+DFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0xDFFF));  (* trail surrogate, valid for RawChar16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xDFFF);
+	END Test.
+
+positive: RawChar16 write/read surrogate value U+DFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0xDFFF));  (* trail surrogate, valid for RawChar16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xDFFF);
+	END Test.
+
+positive: RawChar16 write/read non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0xFFFE));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: RawChar16 write/read non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0xFFFE));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: RawChar16 write/read sequence BMP + surrogate + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar16(0x0041));   (* 'A' *)
+		ASSERT(w.RawChar16(0xD800));   (* lead surrogate *)
+		ASSERT(w.RawChar16(0x0042));   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0041);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0xD800);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: RawChar16 write/read sequence BMP + surrogate + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar16(0x0041));   (* 'A' *)
+		ASSERT(w.RawChar16(0xD800));   (* lead surrogate *)
+		ASSERT(w.RawChar16(0x0042));   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0041);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0xD800);
+		ASSERT(r.RawChar16(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: RawChar16 read partial single byte, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0); (* single byte, not enough for Char16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.RawChar16(u));
+	END Test.
+
+positive: RawChar16 read partial single byte, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0); (* single byte, not enough for Char16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.RawChar16(u));
+	END Test.
+
+positive: RawChar16 read empty stream, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.RawChar16(u));  (* empty stream *)
+	END Test.
+
+positive: RawChar16 read empty stream, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char16; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.RawChar16(u));  (* empty stream *)
+	END Test.
+
+# -------------------------
+# Positive tests: Reading valid UTF-16 (raw write / UTF16 read)
+# -------------------------
+
+positive: Single BMP character U+0000 (NULL), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single BMP character U+0000 (NULL), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: Single BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: BMP character U+20AC EURO SIGN, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x20AC); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: BMP character U+20AC EURO SIGN, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x20AC); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: Maximal BMP codepoint U+FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xFFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Maximal BMP codepoint U+FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xFFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Surrogate pair U+1F600 GRINNING FACE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);
+		w.RawUInt16(0xDE00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Surrogate pair U+1F600 GRINNING FACE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader; lead, trail: UNSIGNED16;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		lead := 0xD83D; trail := 0xDE00;
+		w.UNet16(lead); ASSERT(w.res = 0);
+		w.UNet16(trail); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xDBFF); ASSERT(w.res = 0);  (* lead *)
+		w.RawUInt16(0xDFFF); ASSERT(w.res = 0);  (* trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xDBFF); ASSERT(w.res = 0);  (* lead *)
+		w.UNet16(0xDFFF); ASSERT(w.res = 0);  (* trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: Minimal valid surrogate pair (U+10000), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);
+		w.RawUInt16(0xDC00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x10000);
+	END Test.
+
+positive: Minimal valid surrogate pair (U+10000), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD800); ASSERT(w.res = 0);
+		w.UNet16(0xDC00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0x10000);
+	END Test.
+
+positive: BMP character U+D7FF (last before surrogates), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD7FF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xD7FF);
+	END Test.
+
+positive: BMP character U+E000 (first after surrogates), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xE000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xE000);
+	END Test.
+
+positive: BOM character U+FEFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xFEFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: BOM character U+FEFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xFEFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: Non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xFFFE); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: Non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xFFFE); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: Raw write/UTF16 read sequence BMP + surrogate + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);   (* 'A' *)
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);   (* lead surrogate *)
+		w.RawUInt16(0xDE00); ASSERT(w.res = 0);   (* trail surrogate *)
+		w.RawUInt16(0x0042); ASSERT(w.res = 0);   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: Raw write/UTF16 read sequence BMP + surrogate + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0041); ASSERT(w.res = 0);   (* 'A' *)
+		w.UNet16(0xD83D); ASSERT(w.res = 0);   (* lead surrogate *)
+		w.UNet16(0xDE00); ASSERT(w.res = 0);   (* trail surrogate *)
+		w.UNet16(0x0042); ASSERT(w.res = 0);   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: Long mixed string (BMP + surrogate + BMP + surrogate), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);
+		w.RawUInt16(0xDE00); ASSERT(w.res = 0);
+		w.RawUInt16(0x0042); ASSERT(w.res = 0);
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);
+		w.RawUInt16(0xDE00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Long mixed string (BMP + surrogate + BMP + surrogate), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0x0041); ASSERT(w.res = 0);
+		w.UNet16(0xD83D); ASSERT(w.res = 0);
+		w.UNet16(0xDE00); ASSERT(w.res = 0);
+		w.UNet16(0x0042); ASSERT(w.res = 0);
+		w.UNet16(0xD83D); ASSERT(w.res = 0);
+		w.UNet16(0xDE00); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+# -------------------------
+# Positive tests: Writing and reading valid UTF-16 (UTF16 write / UTF16 read)
+# -------------------------
+
+positive: UTF16 write/read NULL (U+0000), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF16 write/read NULL (U+0000), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF16 write/read BMP max (U+FFFF), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF16 write/read BMP max (U+FFFF), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF16 write/read surrogate pair (U+1F600), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x1F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF16 write/read surrogate pair (U+1F600), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x1F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF16 write/read multiple BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0041));   (* 'A' *)
+		ASSERT(w.UTF16Char(0x00A9));   (* COPYRIGHT SIGN *)
+		ASSERT(w.UTF16Char(0x03B1));   (* GREEK SMALL LETTER ALPHA *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x00A9);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x03B1);
+	END Test.
+
+positive: UTF16 write/read multiple BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0041));   (* 'A' *)
+		ASSERT(w.UTF16Char(0x00A9));   (* COPYRIGHT SIGN *)
+		ASSERT(w.UTF16Char(0x03B1));   (* GREEK SMALL LETTER ALPHA *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x00A9);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x03B1);
+	END Test.
+
+positive: UTF16 write/read sequence BMP + surrogate + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0041));     (* BMP 'A' *)
+		ASSERT(w.UTF16Char(0x1F600));    (* surrogate pair *)
+		ASSERT(w.UTF16Char(0x0042));     (* BMP 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF16 write/read sequence BMP + surrogate + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0041));     (* BMP 'A' *)
+		ASSERT(w.UTF16Char(0x1F600));    (* surrogate pair *)
+		ASSERT(w.UTF16Char(0x0042));     (* BMP 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF16 write/read max Unicode (U+10FFFF), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x10FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF16 write/read max Unicode (U+10FFFF), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x10FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF16 write/read multiple surrogate pairs, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x1F600));  (* GRINNING FACE *)
+		ASSERT(w.UTF16Char(0x1F601));  (* GRINNING FACE WITH SMILING EYES *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF16 write/read multiple surrogate pairs, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x1F600));  (* GRINNING FACE *)
+		ASSERT(w.UTF16Char(0x1F601));  (* GRINNING FACE WITH SMILING EYES *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF16 write/read control character U+0001, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0001));  (* control character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF16 write/read control character U+0001, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0001));  (* control character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF16 write/read long sequence, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(w.UTF16Char(0x0041 + (i MOD 2)));  (* 'A' or 'B' *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF16 write/read long sequence, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(w.UTF16Char(0x0041 + (i MOD 2)));  (* 'A' or 'B' *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF16 write/read BOM U+FEFF as code point, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0xFEFF));  (* BOM as code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF16 write/read BOM U+FEFF as code point, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0xFEFF));  (* BOM as code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF16 write/read sequence with BOM, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0xFEFF));  (* BOM *)
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF16Char(0x1F600)); (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFEFF);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF16 write/read sequence with BOM, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0xFEFF));  (* BOM *)
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF16Char(0x1F600)); (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFEFF);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF16 write/read non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0xFFFE));  (* non-character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF16 write/read non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0xFFFE));  (* non-character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF16 write/read non-character U+FDD0, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0xFDD0));  (* non-character in BMP *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFDD0);
+	END Test.
+
+positive: UTF16 write/read non-character U+FDD0, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0xFDD0));  (* non-character in BMP *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFDD0);
+	END Test.
+
+positive: UTF16 write/read non-character U+1FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x1FFFE));  (* non-character in supplementary plane *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1FFFE);
+	END Test.
+
+positive: UTF16 write/read non-character U+1FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x1FFFE));  (* non-character in supplementary plane *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x1FFFE);
+	END Test.
+
+positive: UTF16 write/read sequence with non-character, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF16Char(0xFDD0));  (* non-character *)
+		ASSERT(w.UTF16Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFDD0);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF16 write/read sequence with non-character, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New(""); w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF16Char(0xFDD0));  (* non-character *)
+		ASSERT(w.UTF16Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0xFDD0);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Negative tests: Reading invalid UTF-16
+# -------------------------
+
+positive: Lone lead surrogate, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);  (* lone lead *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Lone lead surrogate, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD800); ASSERT(w.res = 0);  (* lone lead *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Lone trail surrogate, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xDC00); ASSERT(w.res = 0);  (* lone trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Lone trail surrogate, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xDC00); ASSERT(w.res = 0);  (* lone trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Surrogate pair with invalid trail, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);   (* lead *)
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);   (* not valid trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Surrogate pair with invalid trail, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD83D); ASSERT(w.res = 0);   (* lead *)
+		w.UNet16(0x0041); ASSERT(w.res = 0);   (* not valid trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Two leads in a row, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);
+		w.RawUInt16(0xD801); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Two leads in a row, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD800); ASSERT(w.res = 0);
+		w.UNet16(0xD801); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Trail before lead, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xDC00); ASSERT(w.res = 0);
+		w.RawUInt16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: Trail before lead, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xDC00); ASSERT(w.res = 0);
+		w.UNet16(0x0041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: UTF16 read empty stream, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));  (* empty stream *)
+	END Test.
+
+positive: UTF16 read empty stream, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));  (* empty stream *)
+	END Test.
+
+positive: UTF16 read partial single byte, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0);  (* single byte, not enough for uint16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: UTF16 read partial single byte, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* single byte, not enough for uint16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: UTF16 read partial three bytes (BMP + half), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0);  (* 'A' *)
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* half of next uint16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);  (* read 'A' *)
+		ASSERT(~r.UTF16Char(u));  (* fail on partial *)
+	END Test.
+
+positive: UTF16 read partial three bytes (BMP + half), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x41); ASSERT(w.res = 0);  (* 'A' *)
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* half of next uint16 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);  (* read 'A' *)
+		ASSERT(~r.UTF16Char(u));  (* fail on partial *)
+	END Test.
+
+positive: UTF16 read partial surrogate (lead only), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt16(0xD83D); ASSERT(w.res = 0);  (* lead surrogate only *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: UTF16 read partial surrogate (lead only), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet16(0xD83D); ASSERT(w.res = 0);  (* lead surrogate only *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));
+	END Test.
+
+positive: UTF16 read partial surrogate (lead + one byte), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x3D); ASSERT(w.res = 0); w.RawUInt8(0xD8); ASSERT(w.res = 0);  (* lead surrogate 0xD83D *)
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* half of trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF16Char(u));  (* fail on partial surrogate *)
+	END Test.
+
+positive: UTF16 read partial surrogate (lead + one byte), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0xD8); ASSERT(w.res = 0); w.RawUInt8(0x3D); ASSERT(w.res = 0);  (* lead surrogate 0xD83D *)
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* half of trail *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF16Char(u));  (* fail on partial surrogate *)
+	END Test.
+
+positive: UTF16 read mismatch byte order (write LE, read BE)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u # 0x0041);  (* should read garbage *)
+	END Test.
+
+positive: UTF16 read mismatch byte order (write BE, read LE)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u));
+		ASSERT(u # 0x0041);  (* should read garbage *)
+	END Test.
+
+# -------------------------
+# Negative tests: Writing invalid UTF-16
+# -------------------------
+
+positive: UTF16 write invalid surrogate U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~w.UTF16Char(0xD800));  (* lone lead surrogate *)
+		w.Update;
+	END Test.
+
+positive: UTF16 write invalid surrogate U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~w.UTF16Char(0xD800));  (* lone lead surrogate *)
+		w.Update;
+	END Test.
+
+positive: UTF16 write invalid codepoint U+110000, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~w.UTF16Char(0x110000));  (* beyond max Unicode *)
+		w.Update;
+	END Test.
+
+positive: UTF16 write invalid codepoint U+110000, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~w.UTF16Char(0x110000));  (* beyond max Unicode *)
+		w.Update;
+	END Test.
+
+# -------------------------
+# Tests for recovery after invalid UTF-16 read
+# -------------------------
+
+positive: UTF16 read recovery after invalid, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; u16: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		w.RawUInt16(0xD800); ASSERT(w.res = 0);  (* lone lead surrogate *)
+		ASSERT(w.UTF16Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF16Char(u));  (* fail on invalid *)
+		ASSERT(r.RawChar16(u16));  (* manually skip the invalid surrogate *)
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF16 read recovery after invalid, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; u16: Streams.Char16; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF16Char(0x0041));  (* 'A' *)
+		w.UNet16(0xD800); ASSERT(w.res = 0);  (* lone lead surrogate *)
+		ASSERT(w.UTF16Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF16Char(u));  (* fail on invalid *)
+		ASSERT(r.RawChar16(u16));  (* manually skip the invalid surrogate *)
+		ASSERT(r.UTF16Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+		
+		

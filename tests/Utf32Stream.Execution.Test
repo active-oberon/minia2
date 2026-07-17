@@ -1,0 +1,1644 @@
+# Utf32Stream.Execution.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="Utf32Stream.Execution.Test.Log" --result="Utf32Stream.Execution.Diff"
+
+# -------------------------
+# Positive tests: RawChar32 write/read with RawUInt32/UNet32
+# -------------------------
+
+positive: RawUInt32 write / RawChar32 read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: UNet32 write / RawChar32 read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: RawUInt32 write / RawChar32 read invalid codepoint U+110000, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00110000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: UNet32 write / RawChar32 read invalid codepoint U+110000, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00110000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawUInt32 write / RawChar32 read sequence BMP + supplementary + invalid, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.RawUInt32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.RawUInt32(0x00110000); ASSERT(w.res = 0);   (* invalid Unicode *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00000041);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x0001F600);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00110000);
+	END Test.
+
+positive: UNet32 write / RawChar32 read sequence BMP + supplementary + invalid, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.UNet32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.UNet32(0x00110000); ASSERT(w.res = 0);   (* invalid Unicode *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00000041);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x0001F600);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00110000);
+	END Test.
+
+# -------------------------
+# Positive tests: RawChar32 write/read with RawUInt32/UNet32 (vice versa)
+# -------------------------
+
+positive: RawChar32 write / RawUInt32 read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00000041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt32(u);	ASSERT(r.res = 0);
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: RawChar32 write / UNet32 read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00000041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet32(); ASSERT(r.res = 0);
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: RawChar32 write / RawUInt32 read invalid codepoint U+110000, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00110000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt32(u);	ASSERT(w.res = 0);		
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write / UNet32 read invalid codepoint U+110000, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00110000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet32(); ASSERT(r.res = 0);
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write / RawUInt32 read sequence BMP + supplementary + invalid, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00000041));   (* 'A' *)
+		ASSERT(w.RawChar32(0x0001F600));   (* GRINNING FACE *)
+		ASSERT(w.RawChar32(0x00110000));   (* invalid Unicode *)
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		r.RawUInt32(u); ASSERT(r.res = 0); ASSERT(u = 0x00000041);
+		r.RawUInt32(u); ASSERT(r.res = 0); ASSERT(u = 0x0001F600);
+		r.RawUInt32(u); ASSERT(r.res = 0); ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write / UNet32 read sequence BMP + supplementary + invalid, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: UNSIGNED32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00000041));   (* 'A' *)
+		ASSERT(w.RawChar32(0x0001F600));   (* GRINNING FACE *)
+		ASSERT(w.RawChar32(0x00110000));   (* invalid Unicode *)
+		ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		u := r.UNet32(); ASSERT(r.res = 0); ASSERT(u = 0x00000041);
+		u := r.UNet32(); ASSERT(r.res = 0); ASSERT(u = 0x0001F600);
+		u := r.UNet32(); ASSERT(r.res = 0); ASSERT(u = 0x00110000);
+	END Test.
+
+# -------------------------
+# Positive tests: RawChar32 write/read
+# -------------------------
+
+positive: RawChar32 write/read BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00000041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: RawChar32 write/read BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00000041));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00000041);
+	END Test.
+
+positive: RawChar32 write/read maximal BMP U+FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x0000FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0000FFFF);
+	END Test.
+
+positive: RawChar32 write/read maximal BMP U+FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x0000FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0000FFFF);
+	END Test.
+
+positive: RawChar32 write/read supplementary plane U+1F600, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x0001F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0001F600);
+	END Test.
+
+positive: RawChar32 write/read supplementary plane U+1F600, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x0001F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0001F600);
+	END Test.
+
+positive: RawChar32 write/read invalid codepoint U+110000, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00110000));  (* beyond max Unicode, valid for RawChar32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write/read invalid codepoint U+110000, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00110000));  (* beyond max Unicode, valid for RawChar32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write/read non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x0000FFFE));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0000FFFE);
+	END Test.
+
+positive: RawChar32 write/read non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x0000FFFE));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0x0000FFFE);
+	END Test.
+
+positive: RawChar32 write/read max value 0xFFFFFFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(Streams.Char32(0xFFFFFFFF)));  (* max 32-bit value *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0xFFFFFFFF);
+	END Test.
+
+positive: RawChar32 write/read max value 0xFFFFFFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(Streams.Char32(0xFFFFFFFF)));  (* max 32-bit value *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u));
+		ASSERT(u = 0xFFFFFFFF);
+	END Test.
+
+positive: RawChar32 write/read sequence BMP + supplementary + invalid, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.RawChar32(0x00000041));   (* 'A' *)
+		ASSERT(w.RawChar32(0x0001F600));   (* GRINNING FACE *)
+		ASSERT(w.RawChar32(0x00110000));   (* invalid Unicode *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00000041);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x0001F600);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 write/read sequence BMP + supplementary + invalid, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.RawChar32(0x00000041));   (* 'A' *)
+		ASSERT(w.RawChar32(0x0001F600));   (* GRINNING FACE *)
+		ASSERT(w.RawChar32(0x00110000));   (* invalid Unicode *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00000041);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x0001F600);
+		ASSERT(r.RawChar32(u)); ASSERT(u = 0x00110000);
+	END Test.
+
+positive: RawChar32 read partial single byte, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0);  (* single byte, not enough for Char32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.RawChar32(u));
+	END Test.
+
+positive: RawChar32 read partial single byte, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* single byte, not enough for Char32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.RawChar32(u));
+	END Test.
+
+positive: RawChar32 read partial three bytes, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0);  (* partial Char32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.RawChar32(u));
+	END Test.
+
+positive: RawChar32 read partial three bytes, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x41); ASSERT(w.res = 0);  (* partial Char32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.RawChar32(u));
+	END Test.
+
+positive: RawChar32 read empty stream, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.RawChar32(u));  (* empty stream *)
+	END Test.
+
+positive: RawChar32 read empty stream, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.RawChar32(u));  (* empty stream *)
+	END Test.
+
+# -------------------------
+# Positive tests: Reading valid UTF-32 (raw write / UTF32 read)
+# -------------------------
+
+positive: Single BMP character U+0000 (NULL), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single BMP character U+0000 (NULL), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x0000);
+	END Test.
+
+positive: Single BMP character U+0041 'A', LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: Single BMP character U+0041 'A', BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000041); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x0041);
+	END Test.
+
+positive: BMP character U+20AC EURO SIGN, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x000020AC); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: BMP character U+20AC EURO SIGN, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x000020AC); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x20AC);
+	END Test.
+
+positive: Maximal BMP codepoint U+FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000FFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Maximal BMP codepoint U+FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000FFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: Supplementary plane U+1F600 GRINNING FACE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0001F600); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Supplementary plane U+1F600 GRINNING FACE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0001F600); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0010FFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: Maximal valid codepoint U+10FFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0010FFFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: BMP character U+D7FF (last before surrogates), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000D7FF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xD7FF);
+	END Test.
+
+positive: BMP character U+E000 (first after surrogates), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000E000); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xE000);
+	END Test.
+
+positive: BOM character U+FEFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000FEFF); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: BOM character U+FEFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000FEFF);	ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: Non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000FFFE); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: Non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000FFFE); ASSERT(w.res = 0);
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u));
+		ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: Raw write/UTF32 read sequence BMP + supplementary + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.RawUInt32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.RawUInt32(0x00000042); ASSERT(w.res = 0);   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: Raw write/UTF32 read sequence BMP + supplementary + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.UNet32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.UNet32(0x00000042); ASSERT(w.res = 0);   (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: Long mixed string (BMP + supplementary + BMP + supplementary), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.RawUInt32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.RawUInt32(0x00000042); ASSERT(w.res = 0);   (* 'B' *)
+		w.RawUInt32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: Long mixed string (BMP + supplementary + BMP + supplementary), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u := 0: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x00000041); ASSERT(w.res = 0);   (* 'A' *)
+		w.UNet32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.UNet32(0x00000042); ASSERT(w.res = 0);   (* 'B' *)
+		w.UNet32(0x0001F600); ASSERT(w.res = 0);   (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+# -------------------------
+# Positive tests: Writing and reading valid UTF-32 (UTF32 write / UTF32 read)
+# -------------------------
+
+positive: UTF32 write/read NULL (U+0000), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF32 write/read NULL (U+0000), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0000));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0000);
+	END Test.
+
+positive: UTF32 write/read BMP max (U+FFFF), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF32 write/read BMP max (U+FFFF), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0xFFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFFFF);
+	END Test.
+
+positive: UTF32 write/read supplementary plane (U+1F600), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x1F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF32 write/read supplementary plane (U+1F600), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x1F600));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF32 write/read multiple BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0041));   (* 'A' *)
+		ASSERT(w.UTF32Char(0x00A9));   (* COPYRIGHT SIGN *)
+		ASSERT(w.UTF32Char(0x03B1));   (* GREEK SMALL LETTER ALPHA *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x00A9);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x03B1);
+	END Test.
+
+positive: UTF32 write/read multiple BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0041));   (* 'A' *)
+		ASSERT(w.UTF32Char(0x00A9));   (* COPYRIGHT SIGN *)
+		ASSERT(w.UTF32Char(0x03B1));   (* GREEK SMALL LETTER ALPHA *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x00A9);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x03B1);
+	END Test.
+
+positive: UTF32 write/read sequence BMP + supplementary + BMP, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0041));     (* BMP 'A' *)
+		ASSERT(w.UTF32Char(0x1F600));    (* supplementary plane *)
+		ASSERT(w.UTF32Char(0x0042));     (* BMP 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF32 write/read sequence BMP + supplementary + BMP, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0041));     (* BMP 'A' *)
+		ASSERT(w.UTF32Char(0x1F600));    (* supplementary plane *)
+		ASSERT(w.UTF32Char(0x0042));     (* BMP 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF32 write/read max Unicode (U+10FFFF), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x10FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF32 write/read max Unicode (U+10FFFF), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x10FFFF));
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x10FFFF);
+	END Test.
+
+positive: UTF32 write/read multiple supplementary plane, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x1F600));  (* GRINNING FACE *)
+		ASSERT(w.UTF32Char(0x1F601));  (* GRINNING FACE WITH SMILING EYES *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF32 write/read multiple supplementary plane, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x1F600));  (* GRINNING FACE *)
+		ASSERT(w.UTF32Char(0x1F601));  (* GRINNING FACE WITH SMILING EYES *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F601);
+	END Test.
+
+positive: UTF32 write/read control character U+0001, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0001));  (* control character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF32 write/read control character U+0001, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0001));  (* control character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0001);
+	END Test.
+
+positive: UTF32 write/read long sequence, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(w.UTF32Char(0x0041 + (i MOD 2)));  (* 'A' or 'B' *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF32 write/read long sequence, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader; i: INTEGER;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(w.UTF32Char(0x0041 + (i MOD 2)));  (* 'A' or 'B' *)
+		END;
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		FOR i := 0 TO 99 DO
+			ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041 + (i MOD 2));
+		END;
+	END Test.
+
+positive: UTF32 write/read BOM U+FEFF as code point, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0xFEFF));  (* BOM as code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF32 write/read BOM U+FEFF as code point, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0xFEFF));  (* BOM as code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFEFF);
+	END Test.
+
+positive: UTF32 write/read sequence with BOM, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0xFEFF));  (* BOM *)
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF32Char(0x1F600)); (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFEFF);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF32 write/read sequence with BOM, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0xFEFF));  (* BOM *)
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF32Char(0x1F600)); (* GRINNING FACE *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFEFF);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1F600);
+	END Test.
+
+positive: UTF32 write/read non-character U+FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0xFFFE));  (* non-character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF32 write/read non-character U+FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0xFFFE));  (* non-character *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFFFE);
+	END Test.
+
+positive: UTF32 write/read non-character U+FDD0, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0xFDD0));  (* non-character in BMP *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFDD0);
+	END Test.
+
+positive: UTF32 write/read non-character U+FDD0, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0xFDD0));  (* non-character in BMP *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFDD0);
+	END Test.
+
+positive: UTF32 write/read non-character U+1FFFE, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x1FFFE));  (* non-character in supplementary plane *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1FFFE);
+	END Test.
+
+positive: UTF32 write/read non-character U+1FFFE, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x1FFFE));  (* non-character in supplementary plane *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x1FFFE);
+	END Test.
+
+positive: UTF32 write/read sequence with non-character, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF32Char(0xFDD0));  (* non-character *)
+		ASSERT(w.UTF32Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFDD0);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+positive: UTF32 write/read sequence with non-character, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		ASSERT(w.UTF32Char(0xFDD0));  (* non-character *)
+		ASSERT(w.UTF32Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0xFDD0);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);
+	END Test.
+
+# -------------------------
+# Negative tests: Reading invalid UTF-32
+# -------------------------
+
+positive: Invalid surrogate U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000D800); ASSERT(w.res = 0);  (* surrogate code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: Invalid surrogate U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000D800); ASSERT(w.res = 0);  (* surrogate code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: Invalid surrogate U+DFFF, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt32(0x0000DFFF); ASSERT(w.res = 0);  (* surrogate code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: Invalid surrogate U+DFFF, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.UNet32(0x0000DFFF); ASSERT(w.res = 0);  (* surrogate code point *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: UTF32 read empty stream, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));  (* empty stream *)
+	END Test.
+
+positive: UTF32 read empty stream, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));  (* empty stream *)
+	END Test.
+
+positive: UTF32 read partial single byte, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0);  (* single byte, not enough for uint32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: UTF32 read partial single byte, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0);  (* single byte, not enough for uint32 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));
+	END Test.
+
+positive: UTF32 read partial three bytes (BMP + partial), LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x41); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0);  (* partial U+0041 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));  (* fail on partial *)
+	END Test.
+
+positive: UTF32 read partial three bytes (BMP + partial), BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x00); ASSERT(w.res = 0); w.RawUInt8(0x41); ASSERT(w.res = 0);  (* partial U+0041 *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));  (* fail on partial *)
+	END Test.
+
+positive: UTF32 read mismatch byte order (write LE, read BE)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~r.UTF32Char(u));  (* fail because garbage > U+10FFFF *)
+	END Test.
+
+positive: UTF32 read mismatch byte order (write BE, read LE)
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~r.UTF32Char(u));  (* fail because garbage > U+10FFFF *)
+	END Test.
+
+# -------------------------
+# Negative tests: Writing invalid UTF-32
+# -------------------------
+
+positive: UTF32 write invalid surrogate U+D800, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~w.UTF32Char(0xD800));  (* surrogate code point *)
+		w.Update;
+	END Test.
+
+positive: UTF32 write invalid surrogate U+D800, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~w.UTF32Char(0xD800));  (* surrogate code point *)
+		w.Update;
+	END Test.
+
+positive: UTF32 write invalid codepoint U+110000, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(~w.UTF32Char(0x110000));  (* beyond max Unicode *)
+		w.Update;
+	END Test.
+
+positive: UTF32 write invalid codepoint U+110000, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR w: Streams.Writer;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(~w.UTF32Char(0x110000));  (* beyond max Unicode *)
+		w.Update;
+	END Test.
+
+# -------------------------
+# Tests for recovery after invalid UTF-32 read
+# -------------------------
+
+positive: UTF32 read recovery after invalid, LE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; u32: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		w.RawUInt32(0x0000D800); ASSERT(w.res = 0);  (* invalid surrogate *)
+		ASSERT(w.UTF32Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.LittleEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF32Char(u));  (* fail on invalid *)
+		ASSERT(r.RawChar32(u32));  (* manually skip the invalid code point *)
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+
+positive: UTF32 read recovery after invalid, BE
+	MODULE Test;
+	IMPORT Streams, Files;
+	VAR u: Streams.Char32; u32: Streams.Char32; w: Streams.Writer; r: Streams.Reader;
+	BEGIN
+		VAR f := Files.New("");
+		w := f.NewWriter();
+		w.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(w.UTF32Char(0x0041));  (* 'A' *)
+		w.UNet32(0x0000D800); ASSERT(w.res = 0);  (* invalid surrogate *)
+		ASSERT(w.UTF32Char(0x0042));  (* 'B' *)
+		w.Update;
+		r := f.NewReader();
+		r.SetByteOrder(Streams.ByteOrder.BigEndian);
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0041);
+		ASSERT(~r.UTF32Char(u));  (* fail on invalid *)
+		ASSERT(r.RawChar32(u32));  (* manually skip the invalid code point *)
+		ASSERT(r.UTF32Char(u)); ASSERT(u = 0x0042);  (* recover *)
+	END Test.
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	

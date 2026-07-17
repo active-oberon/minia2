@@ -1,0 +1,1563 @@
+MODULE FoxScanner;   (**  AUTHOR "fof & fn"; PURPOSE "Oberon Compiler: Scanner";  **)
+(* (c) fof ETH Zürich, 2009 *)
+
+IMPORT Streams, Strings, Diagnostics, Basic := FoxBasic, D := Debugging, Commands, StringPool;
+
+CONST
+	Trace = FALSE;   (* debugging output *)
+
+	(* overal scanner limitation *)
+	MaxIdentifierLength* = 128;
+
+	(* parametrization of numeric scanner: *)
+	MaxHexDigits* = 8;   (* maximal hexadecimal longint length *)
+	MaxHugeHexDigits* = 16;   (* maximal hexadecimal hugeint length *)
+	MaxRealExponent* = 38;   (* maximal real exponent *)
+	MaxLongrealExponent* = 308;   (* maximal longreal exponent *)
+
+	(* scanner constants *)
+	EOT* = 0X; LF* = 0AX; CR* = 0DX; TAB* = 09X; ESC* = 1BX;
+
+TYPE
+	StringType* = Strings.String;
+	IdentifierType* = StringPool.Index;
+	IdentifierString*= ARRAY MaxIdentifierLength+1 OF CHAR;
+	SubType*= SIGNED8;
+
+CONST
+
+(** symbols *)
+	(*
+	note: order of symbols is important for the parser, do not modify without looking it up
+
+	FoxProgTools.Enum --export --linefeed=6
+	None
+	(* RelationOps: Equal ... Is *)
+	Equal DotEqual Unequal DotUnequal
+	Less DotLess  LessEqual DotLessEqual Greater DotGreater GreaterEqual DotGreaterEqual
+	LessLessQ GreaterGreaterQ Questionmarks ExclamationMarks
+	In Is
+	(* MulOps: Times ... And *)
+	Times TimesTimes DotTimes PlusTimes Slash Backslash DotSlash Div Mod And
+	(* AddOps: Or ... Minus *)
+	Or Plus Minus
+	(* Prefix Unary Operators Plus ... Not *)
+		Not
+	(* expressions may start with Plus ... Identifier *)
+		LeftParenthesis LeftBracket LeftBrace Number Character String Nil Imag True False Self Result New Identifier
+		(* statementy may start with Self ... Begin *)
+		If Case While Repeat For Loop With Exit Await Return Ignore Begin
+		(* symbols, expressions and statements cannot start with *)
+		Semicolon Transpose RightBrace RightBracket RightParenthesis
+		Questionmark ExclamationMark
+		LessLess GreaterGreater
+		Upto Arrow Period Comma Colon Of Then Do To By Becomes Bar End Else Elsif Until Finally
+		(* declaration elements *)
+		Code Const Type Var Out Procedure Operator Import Definition Module Cell CellNet Extern
+		(* composite type symbols *)
+		Any Array Object Record Pointer Enum Port Address Size Alias
+		(* assembler constants *)
+		Ln PC PCOffset
+		(* number types *)
+		Shortint Integer Longint Hugeint Real Longreal
+		Comment EndOfText Escape
+		~
+	*)
+		
+	None*= 0; 
+	(* RelationOps: Equal ... Is *)
+	Equal*= 1; DotEqual*= 2; Unequal*= 3; DotUnequal*= 4; Less*= 5; DotLess*= 6; 
+	LessEqual*= 7; DotLessEqual*= 8; Greater*= 9; DotGreater*= 10; GreaterEqual*= 11; DotGreaterEqual*= 12; 
+	LessLessQ*= 13; GreaterGreaterQ*= 14; Questionmarks*= 15; ExclamationMarks*= 16; In*= 17; Is*= 18; 
+	(* MulOps: Times ... And *)
+	Times*= 19; TimesTimes*= 20; DotTimes*= 21; PlusTimes*= 22; Slash*= 23; Backslash*= 24; 
+	DotSlash*= 25; Div*= 26; Mod*= 27; And*= 28; 
+	(* AddOps: Or ... Minus *)
+	Or*= 29; Plus*= 30; Minus*= 31; 
+	(* Prefix Unary Operators Plus ... Not *)
+	Not*= 32; 
+	(* expressions may start with Plus ... Identifier *)
+	LeftParenthesis*= 33; LeftBracket*= 34; LeftBrace*= 35; Number*= 36; Character*= 37; String*= 38; 
+	Nil*= 39; Imag*= 40; True*= 41; False*= 42; Self*= 43; Result*= 44; 
+	New*= 45; Identifier*= 46; 
+	(* statementy may start with Self ... Begin *)
+	If*= 47; Case*= 48; While*= 49; Repeat*= 50; For*= 51; Loop*= 52; 
+	With*= 53; Exit*= 54; Await*= 55; Return*= 56; Ignore*= 57; Begin*= 58; 
+	(* symbols, expressions and statements cannot start with *)
+	Semicolon*= 59; Transpose*= 60; RightBrace*= 61; RightBracket*= 62; RightParenthesis*= 63; Questionmark*= 64; 
+	ExclamationMark*= 65; LessLess*= 66; GreaterGreater*= 67; Upto*= 68; Arrow*= 69; Period*= 70; 
+	Comma*= 71; Colon*= 72; Of*= 73; Then*= 74; Do*= 75; To*= 76; 
+	By*= 77; Becomes*= 78; Bar*= 79; End*= 80; Else*= 81; Elsif*= 82; 
+	Until*= 83; Finally*= 84; 
+	(* declaration elements *)
+	Code*= 85; Const*= 86; Type*= 87; Var*= 88; Out*= 89; Procedure*= 90; 
+	Operator*= 91; Import*= 92; Definition*= 93; Module*= 94; Cell*= 95; CellNet*= 96; 
+	Extern*= 97; 
+	(* composite type symbols *)
+	Any*= 98; Array*= 99; Object*= 100; Record*= 101; Pointer*= 102; Enum*= 103; 
+	Port*= 104; Address*= 105; Size*= 106; Alias*= 107; 
+	(* assembler constants *)
+	Ln*= 108; PC*= 109; PCOffset*= 110; 
+	(* number types *)
+	Shortint*= 111; Integer*= 112; Longint*= 113; Hugeint*= 114; Real*= 115; Longreal*= 116; 
+	Comment*= 117; EndOfText*= 118; Escape*= 119; 
+
+	SingleQuote = 27X;  DoubleQuote* = 22X;
+	Ellipsis = 7FX;   (* used in Scanner.GetNumber to return with ".." when reading an interval like 3..5 *)
+
+	Uppercase*=0;
+	Lowercase*=1;
+	Unknown*=2;
+
+TYPE
+	(* keywords book keeping *)
+	Keyword* = ARRAY 32 OF CHAR;
+
+	KeywordTable* = OBJECT(Basic.HashTableInt); (* string -> symbol *)
+	VAR table: POINTER TO ARRAY OF IdentifierType;
+
+		PROCEDURE &InitTable*(size: SIZE);
+		VAR i: SIZE;
+		BEGIN
+			Init(size); NEW(table,size); FOR i := 0 TO size-1 DO table[i] := -1; END;
+		END InitTable;
+
+		PROCEDURE SymbolByIdentifier*(identifier: IdentifierType): Symbol;
+		BEGIN
+			IF Has(identifier) THEN
+				RETURN Symbol(GetInt(identifier))
+			ELSE (* do not modify index *)
+				RETURN -1
+			END;
+		END SymbolByIdentifier;
+
+		PROCEDURE SymbolByString*(CONST name: ARRAY OF CHAR): Symbol;
+		VAR stringPoolIndex: StringPool.Index;
+		BEGIN
+			StringPool.GetIndex(name,stringPoolIndex);
+			IF Has(stringPoolIndex) THEN
+				RETURN Symbol(GetInt(stringPoolIndex))
+			ELSE (* do not modify index *)
+				RETURN -1
+			END;
+		END SymbolByString;
+
+		PROCEDURE IdentifierBySymbol*(symbol: Symbol; VAR identifier: IdentifierType);
+		BEGIN
+			identifier := table[symbol]
+		END IdentifierBySymbol;
+
+		PROCEDURE StringBySymbol*(symbol: Symbol; VAR name: ARRAY OF CHAR);
+		VAR stringPoolIndex: StringPool.Index;
+		BEGIN
+			stringPoolIndex := table[symbol];
+			IF stringPoolIndex < 0 THEN
+				name := ""
+			ELSE
+				StringPool.GetString(stringPoolIndex,name);
+			END;
+		END StringBySymbol;
+
+		PROCEDURE PutString*(CONST name: ARRAY OF CHAR; symbol: Symbol);
+		VAR stringPoolIndex: StringPool.Index;
+		BEGIN
+			StringPool.GetIndex(name,stringPoolIndex);
+			table[symbol] := stringPoolIndex;
+			PutInt(stringPoolIndex,symbol);
+		END PutString;
+
+	END KeywordTable;
+TYPE
+
+	Symbol*=SIGNED32;
+	Position*= Basic.Position;
+
+	(**
+		token: data structure for the data transfer of the last read input from the scanner to the parser
+	**)
+	Token*= RECORD
+		position*: Position;
+		symbol*: Symbol; (* symbol of token *)
+		identifier*: IdentifierType; (* identifier *)
+		identifierString*: IdentifierString; (* cache of identifier's string *)
+		string*: StringType;  (* string or identifier *)
+		stringLength*: SIZE; (* length of string, if stringLength = 2 then this may be interpreted as character and integer = ORD(ch) *)
+		numberType*: SubType;  (* Integer, HugeInteger, Real or Longreal *)
+		integer*: SIGNED64;
+		character*: CHAR;
+		real*: FLOAT64;
+	END;
+
+	StringMaker* = OBJECT (* taken from TF's scanner *)
+	VAR length- : SIZE;
+		data : StringType;
+
+		PROCEDURE &Init*(initialSize : SIZE);
+		BEGIN
+			IF initialSize < 256 THEN initialSize := 256 END;
+			NEW(data, initialSize); length := 0;
+		END Init;
+
+		PROCEDURE Add*(CONST buf: ARRAY OF CHAR; ofs, len: SIZE; propagate: BOOLEAN; VAR res: INTEGER);
+		VAR i : SIZE; n: StringType;
+		BEGIN
+			IF length + len + 1 >= LEN(data) THEN
+				NEW(n, LEN(data) + len + 1); FOR i := 0 TO length - 1 DO n[i] := data[i] END;
+				data := n
+			END;
+			WHILE len > 0 DO
+				data[length] := buf[ofs];
+				INC(ofs); INC(length); DEC(len)
+			END;
+			data[length] := 0X;
+		END Add;
+
+		(* remove last n characters *)
+		PROCEDURE Shorten*(n : SIZE);
+		BEGIN
+			DEC(length, n);
+			IF length < 0 THEN length := 0 END;
+			IF length > 0 THEN data[length - 1] := 0X ELSE data[length] := 0X END
+		END Shorten;
+
+		PROCEDURE Clear*;
+		BEGIN
+			data[0] := 0X;
+			length := 0
+		END Clear;
+
+		PROCEDURE GetWriter*() : Streams.Writer;
+		VAR w : Streams.Writer;
+		BEGIN
+			NEW(w, SELF.Add, 256);
+			RETURN w
+		END GetWriter;
+
+		PROCEDURE GetReader*(): Streams.Reader;
+		VAR r: Streams.StringReader;
+		BEGIN
+			NEW(r, 256);
+			r.Set(data^);
+			RETURN r
+		END GetReader;
+
+		PROCEDURE GetString*(VAR len: SIZE) : StringType;
+		BEGIN
+			len := length;
+			RETURN data
+		END GetString;
+
+		PROCEDURE GetStringCopy*(VAR len: SIZE): StringType;
+		VAR new: StringType;
+		BEGIN
+			len := length;
+			NEW(new,len+1);
+			COPY(data^,new^);
+			RETURN new
+		END GetStringCopy;
+
+	END StringMaker;
+
+	(** scanner reflects the following EBNF
+		Token				= String | Symbol | Number | Keyword | Identifier.
+		Symbol				=  | '#' | '&' | '(' ['*' any '*' ')'] | ')' | '*'['*'] | '+'['*'] | ',' | '-' | '.' [ '.' | '*' | '/' | '=' | '#' | '>'['='] | '<' ['=']
+											| '/' | ':' ['='] | ';'  | '<' ['=' | '<' ['?'] ] | '=' | '>' [ '=' | '>' ['?']]
+											| '[' | ']' | '^' | '{' | '|' | '}' | '~' | '\' |  '`' |  '?' ['?'] | '!' ['!']
+		Identifier			= Letter {Letter | Digit | '_'}.
+		Letter					= 'A' | 'B' | .. | 'Z' | 'a' | 'b' | .. | 'z'.
+		Digit						= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' .
+		BinaryDigit  	= '0' | '1'.
+		String					= '"' {Character} '"' | "'" {Character} "'".
+		Character			= Digit [HexDigit] 'X'.
+		Number				= Integer | Real.
+		Integer				= Digit {Digit} | Digit {HexDigit} 'H' | '0x' {HexDigit} | '0b {["'"]BinaryDigit}.
+		Real						= Digit {Digit} '.' {Digit} [ScaleFactor].
+		ScaleFactor		= ('E' | 'D') ['+' | '-'] digit {digit}.
+		HexDigit			= Digit | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'.
+	**)
+
+	Scanner* = OBJECT
+	VAR
+
+		(* helper state information *)
+		source-: StringType;
+		reader-: Streams.Reader;   (* source *)
+		diagnostics: Diagnostics.Diagnostics;   (* error logging *)
+
+		ch-: CHAR;   (* look-ahead character *)
+		position-: Position;  (* current position *)
+
+		error-: BOOLEAN;   (* if error occured during scanning *)
+
+		firstIdentifier: BOOLEAN;   (* support of lower vs. upper case keywords  *)
+		case-: SIGNED32;
+		stringWriter: Streams.Writer;
+		stringMaker: StringMaker;
+
+		useLineNumbers*: BOOLEAN;
+
+		(*
+			source: name of the source code for reference in error outputs
+			reader: input stream
+			position: reference position (offset) of the input stream , for error output
+			diagnostics: error output object
+		*)
+		PROCEDURE & InitializeScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; pos: Position; diagnostics: Diagnostics.Diagnostics );
+		BEGIN
+			NEW(stringMaker,1024);
+			stringWriter := stringMaker.GetWriter();
+			error := FALSE;
+			NEW(SELF.source, Strings.Length(source)+1);
+			COPY (source, SELF.source^);
+			SELF.reader := reader;
+			SELF.diagnostics := diagnostics;
+			ch := " ";
+			case := Unknown;
+			firstIdentifier := TRUE;
+			SELF.position := pos;
+			DEC(position.start, 1); (* one token lookahead *)
+			IF reader = NIL THEN ch := EOT ELSE GetNextCharacter END;
+			IF Trace THEN D.Str( "New scanner  " ); D.Ln; END;
+			IF source = "" THEN SELF.position.reader := reader END;
+			useLineNumbers := FALSE;
+		END InitializeScanner;
+
+		PROCEDURE ResetCase*; (*! needs a better naming ! *)
+		BEGIN
+			firstIdentifier := TRUE; case := Unknown;
+		END ResetCase;
+
+		PROCEDURE SetCase*(c: SIGNED32);
+		BEGIN
+			case := c;
+		END SetCase;
+
+		(** report an error occured during scanning **)
+		PROCEDURE ErrorS(CONST msg: ARRAY OF CHAR);
+		BEGIN
+			Basic.Error(diagnostics, source^, position,  msg);
+			error := TRUE;
+		END ErrorS;
+
+		(** report an error occured during scanning **)
+		PROCEDURE Error( code: SIGNED16 );
+		BEGIN
+			Basic.ErrorC(diagnostics, source^, position, code, "");
+			error := TRUE;
+		END Error;
+
+		(** get next character, end of text results in ch = EOT **)
+		PROCEDURE GetNextCharacter*;
+		BEGIN
+			reader.Char(ch); INC(position.start);
+			IF ch = LF THEN INC(position.line); position.linepos := position.start+1 END;
+			(*
+			(* not necessary, as Streams returns 0X if reading failed, but in case Streams.Reader.Char is modified ...  *)
+			IF reader.res # Streams.Ok THEN ch := EOT END;
+			*)
+		END GetNextCharacter;
+
+(*
+	The following is an implementation of the KMP algorithm used in order to traverse strings until some pattern occurs.
+	It is not necessary for our implementation of string escape sequences, because the first character of the pattern does not occur in the pattern elsewhere
+	I found the code useful and keep it here for the time being....
+
+	(* generate a table to be able to quickly search for string containing overlaps - KMP algorithm *)
+	PROCEDURE MakeOverlapTable*(CONST pattern: ARRAY OF CHAR; VAR table: ARRAY OF SIGNED32);
+	VAR i, cnd: SIGNED32;
+	BEGIN
+		ASSERT(pattern[0] # 0X);
+		(* if first character did not match: reset search *)
+		table[0] := -1;
+		(* if second character did not match: compare to first *)
+		IF pattern[1] # 0X THEN
+			table[1] := 0;
+		END;
+		(* for all other characters: switch back to previous overlay in pattern *)
+		i := 2; cnd := 0;
+		WHILE(pattern[i] # 0X) DO
+			(* do patterns [i-cnd, i-1] match with pattern[0.. cnd] ? *)
+			IF pattern[i-1] = pattern[cnd] THEN
+				INC(cnd); table[i] := cnd; INC(i);
+			(* no, switch back to last overlap, if possible *)
+			ELSIF cnd > 0 THEN cnd := table[cnd]
+			(* not possible: restart at beginning *)
+			ELSE table[i] := 0; INC(i)
+			END;
+		END;
+	END MakeOverlapTable;
+
+	(* using KMP substring search algorithm consume and reproduce all characters of a string until endString *)
+	PROCEDURE GetString(CONST endString: ARRAY OF CHAR);
+	VAR escapePos: SIGNED32; ech: CHAR; i: SIGNED32; table: ARRAY 16 OF SIGNED32;
+		next: SIGNED32;
+
+			PROCEDURE Append(ch :CHAR);
+			BEGIN
+				IF ch = 0X THEN
+					ErrorS("Unexpected end of text in string"); error := TRUE
+				ELSE
+					stringWriter.Char(ch)
+				END;
+			END Append;
+
+	BEGIN
+		MakeOverlapTable(endString, table);
+
+		(* traverse *)
+		escapePos := 0; ech := endString[0];
+		GetNextCharacter;
+		REPEAT
+			IF ch = ech THEN
+				INC(escapePos); ech := endString[escapePos];
+				GetNextCharacter;
+			ELSIF escapePos = 0 THEN (* frequent case *)
+				Append(ch); GetNextCharacter;
+			ELSE
+				(* overlaps ? *)
+				next := table[escapePos];
+				IF next < 0 THEN next := 0 END;
+
+				(* account for "forgotten" characters *)
+				FOR i := 0 TO escapePos-1-next DO
+					Append(endString[i]);
+				END;
+				(* to next overlapping ? *)
+				escapePos := table[escapePos];
+				(* no overlapping *)
+				IF escapePos < 0 THEN
+					Append(ch);
+					escapePos := 0;
+					GetNextCharacter;
+				END;
+				ech := endString[escapePos];
+			END;
+		UNTIL (ch = EOT) OR (ech = 0X);
+
+	END GetString;
+*)
+
+		(* simple case can be utilized when endString does not contain first character, which is the case for our string convention *)
+		PROCEDURE ConsumeStringUntil(CONST endString: ARRAY OF CHAR; useControl: BOOLEAN);
+		VAR escapePos: SIGNED32; ech: CHAR; i: SIGNED32; startPosition: Streams.Position;
+		CONST
+			Control = '\';
+			Delimiter = '"';
+
+				PROCEDURE Append(ch :CHAR);
+				BEGIN
+					IF ch = 0X THEN
+						ErrorS("Unexpected end of text in string"); error := TRUE;
+					ELSE
+						stringWriter.Char(ch)
+					END;
+				END Append;
+
+		BEGIN
+			(* traverse *)
+			escapePos := 0; ech := endString[0]; startPosition := position.start;
+			GetNextCharacter;
+			REPEAT
+				IF ch = ech THEN
+					INC(escapePos); ech := endString[escapePos];
+					GetNextCharacter;
+				ELSIF useControl & (ch = Control) THEN
+					GetNextCharacter;
+					IF (ch = Control) OR (ch = Delimiter) THEN
+						Append(ch)
+					ELSIF ch = 'n' THEN
+						Append(CR); Append(LF);
+					ELSIF ch = 't' THEN
+						Append(TAB)
+					ELSE
+						ErrorS("Unknown control sequence")
+					END;
+					GetNextCharacter
+				ELSIF escapePos = 0 THEN (* frequent case *)
+					Append(ch); GetNextCharacter;
+				ELSE
+					(* account for "forgotten" characters *)
+					FOR i := 0 TO escapePos-1 DO
+						Append(endString[i]);
+					END;
+					(* restart *)
+					ech := endString[0]; escapePos := 0;
+				END;
+			UNTIL (ch = EOT) OR (ech = 0X) OR error;
+			IF ch = EOT THEN position.start := startPosition; ErrorS("Unexpected end of text in string") END;
+		END ConsumeStringUntil;
+
+		PROCEDURE GetEscapedString(VAR token: Token);
+		VAR endString: ARRAY 4 OF CHAR; escape: CHAR;
+		BEGIN
+			(* backslash already consumed *)
+			stringMaker.Clear;
+			IF ch = '"' THEN
+				escape := 0X;
+			ELSE
+				escape := ch; GetNextCharacter;
+			END;
+			ASSERT((ch = '"') OR (ch = "'"));
+			REPEAT
+				IF escape # 0X THEN
+					endString[0] := ch;
+					endString[1] := escape;
+					endString[2] := '\';
+					endString[3] := 0X;
+				ELSE
+					endString[0] := ch;
+					endString[1] := '\';
+					endString[2] := 0X;
+				END;
+				ConsumeStringUntil(endString, escape = 0X);
+			UNTIL TRUE;
+			stringWriter.Char(0X);
+			stringWriter.Update;
+			token.string := stringMaker.GetStringCopy(token.stringLength);
+		END GetEscapedString;
+
+		(** get a string starting at current position
+			string = {'"' {Character} '"'} | {"'" {Character} "'"}.
+		**)
+		(* multiline indicates that a string may occupy more than one lines, either concatenated or via multi-strings " "  " "
+		*)
+		PROCEDURE GetString(VAR token: Token; multiLine, multiString, useControl: BOOLEAN);
+		VAR och: CHAR; error: BOOLEAN;
+		CONST control = '\';
+
+			PROCEDURE Append(ch :CHAR);
+			BEGIN
+				IF ch = 0X THEN
+					ErrorS("Unexpected end of text in string"); error := TRUE
+				ELSE
+					stringWriter.Char(ch)
+				END;
+			END Append;
+
+		BEGIN
+			stringMaker.Clear;
+			och := ch; error := FALSE;
+			REPEAT
+				LOOP
+					IF error THEN EXIT END;
+					GetNextCharacter;
+					IF (ch = och) OR (ch = EOT) THEN EXIT END;
+					IF useControl & (ch = control) THEN
+						GetNextCharacter;
+						IF (ch = control) OR (ch = och) THEN
+							Append(ch)
+						ELSIF ch = 'n' THEN
+							Append(CR); Append(LF);
+						ELSIF ch = 't' THEN
+							Append(TAB)
+						ELSE
+							ErrorS("Unknown control sequence")
+						END;
+					ELSE
+						IF ~multiLine & (ch < " ") THEN Error( Basic.StringIllegalCharacter ); EXIT END;
+						Append(ch)
+					END;
+				END;
+				IF ch = EOT THEN
+					ErrorS("Unexpected end of text in string")
+				ELSE
+					GetNextCharacter;
+					IF multiString THEN SkipBlanks END;
+				END;
+			UNTIL ~multiString OR (ch # och);
+			stringWriter.Char(0X);
+			stringWriter.Update;
+			token.string := stringMaker.GetStringCopy(token.stringLength);
+		END GetString;
+
+		(**
+			Identifier = Letter {Letter | Digit | '_'} .
+			Letter = 'A' | 'B' | .. |  'Z' | 'a' | 'b' |  .. | 'z' .
+			Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'.
+
+			'_' is the underscore character
+		**)
+		PROCEDURE GetIdentifier( VAR token: Token );
+		VAR i: SIGNED32;
+		BEGIN
+			i := 0;
+			REPEAT token.identifierString[i] := ch; INC( i );  GetNextCharacter UNTIL reservedCharacter[ORD( ch )] OR (i = MaxIdentifierLength);
+			IF i = MaxIdentifierLength THEN Error( Basic.IdentifierTooLong );  DEC( i ) END;
+			token.identifierString[i] := 0X;
+			StringPool.GetIndex(token.identifierString, token.identifier);
+		END GetIdentifier;
+
+		(**
+		Number       =  Integer | Real.
+		Integer      =  Digit {["'"]Digit} | Digit {["'"]HexDigit} 'H' | '0x' {["'"]HexDigit} | '0b' {["'"]BinaryDigit}.
+		Real         =  Digit {["'"]Digit} '.' {Digit} [ScaleFactor].
+		ScaleFactor  =  ('E' | 'D') ['+' | '-'] digit {digit}.
+		HexDigit     =  Digit | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'.
+		Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' .
+		**)
+		PROCEDURE GetNumber(VAR token: Token): Symbol;
+		VAR i, m, n, d, e, si: SIGNED32;
+			dig: ARRAY 24 OF CHAR;
+			f: FLOAT64;  expCh: CHAR;  neg, long: BOOLEAN;
+			result: Symbol;
+			hugeint, number, nextInt: SIGNED64;
+			digits: SIGNED32;
+
+			(** 10^e **)
+			PROCEDURE Ten( e: SIGNED32 ): FLOAT64;
+			VAR x, p: FLOAT64;
+			BEGIN
+				x := 1;  p := 10;
+				WHILE e > 0 DO
+					IF ODD( e ) THEN x := x * p END;
+					e := e DIV 2;
+					IF e > 0 THEN p := p * p END  (* prevent overflow *)
+				END;
+				RETURN x
+			END Ten;
+
+			(** return decimal number associated to character ch , error if none **)
+			PROCEDURE Decimal( ch: CHAR ): SIGNED32;
+			BEGIN  (* ("0" <= ch) & (ch <= "9") OR ("A" <= ch) & (ch <= "F") *)
+				IF ch <= "9" THEN RETURN ORD( ch ) - ORD( "0" ) ELSE Error( Basic.NumberIllegalCharacter );  RETURN 0 END
+			END Decimal;
+
+			(** return hexadecimal number associated to character ch, error if none **)
+			PROCEDURE Hexadecimal( ch: CHAR ): SIGNED32;
+			BEGIN
+				IF ch <= "9" THEN RETURN ORD( ch ) - ORD( "0" )
+				ELSIF ch <= "F" THEN RETURN ORD( ch ) - ORD( "A" ) + 10
+				ELSIF ch <= "f" THEN RETURN ORD( ch ) - ORD( "a" ) + 10
+				ELSE Error( Basic.NumberIllegalCharacter );  RETURN 0
+				END
+			END Hexadecimal;
+
+			PROCEDURE IsHexDigit(ch: CHAR): BOOLEAN;
+			BEGIN
+				RETURN (ch >= "0") & (ch <= "9") OR (ch >= "a") & (ch <="f") OR (ch >= "A") & (ch <= "F")
+			END IsHexDigit;
+
+			PROCEDURE IsBinaryDigit(ch: CHAR): BOOLEAN;
+			BEGIN
+				RETURN (ch >= "0") & (ch <= "1")
+			END IsBinaryDigit;
+
+			PROCEDURE IsDecimalDigit(ch: CHAR): BOOLEAN;
+			BEGIN
+				RETURN (ch >= "0") & (ch <= '9');
+			END IsDecimalDigit;
+
+
+		BEGIN  (* ("0" <= ch) & (ch <= "9") *)
+			result := Number;
+			i := 0;  m := 0;  n := 0;  d := 0;  si := 0;  long := FALSE;
+
+			IF (ch = "0") THEN
+				IF (reader.Peek() = "x") THEN (* hex number *)
+					digits := 0;
+					GetNextCharacter; GetNextCharacter;
+					IF (ch = "'")& IsHexDigit(reader.Peek())  THEN GetNextCharacter END;
+					WHILE IsHexDigit(ch) DO
+						number := number * 10H + Hexadecimal(ch);
+						INC(digits);
+						GetNextCharacter;
+						IF (ch = "'") & IsHexDigit(reader.Peek()) THEN GetNextCharacter END;
+					END;
+					token.integer := number;
+					IF (digits > MaxHexDigits) OR (digits = MaxHexDigits) & (number > MAX(SIGNED32)) THEN
+						token.numberType := Hugeint
+					ELSE
+						token.numberType := Integer
+					END;
+					RETURN result;
+				ELSIF reader.Peek() = "b" THEN (* binary number *)
+					digits := 0;
+					GetNextCharacter; GetNextCharacter;
+					IF (ch = "'") & IsBinaryDigit(reader.Peek()) THEN GetNextCharacter END;
+					WHILE IsBinaryDigit(ch) DO
+						number := number * 2;
+						INC(digits);
+						IF ch = "1" THEN INC(number) END;
+						GetNextCharacter;
+						IF (ch = "'") & IsBinaryDigit(reader.Peek()) THEN GetNextCharacter END;
+					END;
+					token.integer := number;
+					IF digits > 32 THEN
+						token.numberType := Hugeint
+					ELSE
+						token.numberType := Integer
+					END;
+					RETURN result;
+				END;
+			END;
+
+			LOOP  (* read mantissa *)
+				IF (ch = "'") & (d = 0) & IsHexDigit(reader.Peek()) THEN GetNextCharacter END;
+				IF IsDecimalDigit(ch) OR (d = 0) & IsHexDigit(ch) THEN
+					IF (m > 0) OR (ch # "0") THEN  (* ignore leading zeros *)
+						IF n < LEN( dig ) THEN dig[n] := ch;  INC( n ) END;
+						INC( m )
+					END;
+					token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  INC( i )
+				ELSIF ch = "." THEN
+					token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
+					IF ch = "." THEN ch := Ellipsis;  EXIT
+					ELSIF d = 0 THEN  (* i > 0 *) d := i
+					ELSE Error( Basic.NumberIllegalCharacter )
+					END
+				ELSE EXIT
+				END
+			END;   (* 0 <= n <= m <= i, 0 <= d <= i *)
+			IF d = 0 THEN  (* integer *)
+				IF n = m THEN
+					token.integer := 0;  i := 0;
+					IF ch = "X" THEN  (* character *)
+						token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  result := Character;
+						IF  (n <= 2) THEN
+							WHILE i < n DO token.integer := token.integer * 10H + Hexadecimal( dig[i] );  INC( i ) END;
+							token.character := CHR(token.integer);
+						ELSE Error( Basic.NumberTooLarge )
+						END
+					ELSIF ch = "H" THEN  (* hexadecimal *)
+						token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
+						IF (n < MaxHexDigits) OR (n=MaxHexDigits) & (dig[0] <= "7")  THEN (* otherwise the positive (!) number is not in the range of longints *)
+							token.numberType := Integer;
+							(* IF (n = MaxHexDigits) & (dig[0] > "7") THEN  (* prevent overflow *) token.integer := -1 END;  *)
+							WHILE i < n DO token.integer := token.integer * 10H + Hexadecimal( dig[i] );  INC( i ) END;
+						ELSIF n <= MaxHugeHexDigits THEN
+							token.numberType := Hugeint;
+							IF (n = MaxHugeHexDigits) & (dig[0] > "7") THEN  (* prevent overflow *) token.integer := -1 END;
+							WHILE i < n DO token.integer := Hexadecimal( dig[i] ) + token.integer * 10H; INC( i ) END;
+						ELSE
+							token.numberType := Hugeint; (* to make parser able to go on *)
+							Error( Basic.NumberTooLarge )
+						END
+					ELSE  (* decimal *)
+						token.numberType := Integer;
+						WHILE (i < n) & ~long  DO
+							d := Decimal( dig[i] );  INC( i );
+							IF token.integer >= MAX(SIGNED32) DIV 10 THEN (* multiplication overflow *)long := TRUE END;
+							nextInt := token.integer*10+d;
+							IF nextInt >=0 THEN token.integer := nextInt ELSE (* overflow *) long := TRUE END;
+						END;
+						IF long THEN
+							i := 0; (* restart computation , artificial limit because of compiler problems with hugeint *)
+							hugeint := 0;
+							token.numberType := Hugeint;
+							WHILE i < n DO
+								d := Decimal( dig[i] );  INC( i );
+								IF hugeint > MAX(SIGNED64) DIV 10 THEN Error( Basic.NumberTooLarge) END;
+								hugeint := hugeint * 10 + d;
+								IF hugeint < 0 THEN Error( Basic.NumberTooLarge ) END
+							END;
+							token.integer := hugeint;
+						END
+					END
+				ELSE
+					token.numberType := Hugeint;
+					Error( Basic.NumberTooLarge )
+				END
+			ELSE  (* fraction *)
+				f := 0;  e := 0;  expCh := "E";
+				WHILE n > 0 DO  (* 0 <= f < 1 *) DEC( n );  f := (Decimal( dig[n] ) + f) / 10 END;
+				IF (ch = "E") OR (ch = "D") THEN
+					expCh := ch;  token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  neg := FALSE;
+					IF ch = "-" THEN neg := TRUE;  token.identifierString[si] := ch;  INC( si );  GetNextCharacter
+					ELSIF ch = "+" THEN token.identifierString[si] := ch;  INC( si );  GetNextCharacter
+					END;
+					IF ("0" <= ch) & (ch <= "9") THEN
+						REPEAT
+							n := Decimal( ch );  token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
+							IF e <= (MAX( SIGNED16 ) - n) DIV 10 THEN e := e * 10 + n ELSE Error( Basic.NumberTooLarge ) END
+						UNTIL (ch < "0") OR ("9" < ch);
+						IF neg THEN e := -e END
+					ELSE Error( Basic.NumberIllegalCharacter )
+					END
+				END;
+				DEC( e, i - d - m );   (* decimal point shift *)
+				token.numberType := Real;
+				IF e > MaxRealExponent THEN
+					token.numberType := Longreal;
+				END;
+				IF (1 - MaxLongrealExponent < e) & (e <= MaxLongrealExponent) THEN
+					IF e < 0 THEN token.real := f / Ten( -e ) ELSE token.real := f * Ten( e ) END
+				ELSE Error( Basic.NumberTooLarge )
+				END
+			END;
+			token.identifierString[si] := 0X;
+			RETURN result;
+		END GetNumber;
+
+		(** read / skip a comment **)
+		PROCEDURE ReadComment(VAR token: Token);
+		VAR level: SIGNED32;
+		BEGIN
+			stringMaker.Clear;
+			level := 1;
+			WHILE (level > 0) & (ch # EOT) DO
+				IF ch = "(" THEN
+					stringWriter.Char(ch);
+					GetNextCharacter;
+					IF ch = "*" THEN INC(level); stringWriter.Char(ch); GetNextCharacter;  END;
+				ELSIF ch = "*" THEN
+					stringWriter.Char(ch);
+					GetNextCharacter;
+					IF ch =")" THEN DEC(level); stringWriter.Char(ch); GetNextCharacter;  END;
+				ELSE
+					stringWriter.Char(ch);
+					GetNextCharacter;
+				END;
+			END;
+
+			IF level > 0 THEN
+				Error(Basic.CommentNotClosed)
+			END;
+
+			stringWriter.Char(0X);
+			stringWriter.Update;
+			stringMaker.Shorten(2); (* remove comment closing *)
+			token.symbol := Comment;
+			token.string := stringMaker.GetString(token.stringLength);
+		END ReadComment;
+
+		PROCEDURE SkipToEndOfCode*(VAR startPos,endPos: Streams.Position; VAR token: Token): Symbol;
+		VAR s: SIGNED32; newline: BOOLEAN;
+		BEGIN
+			ASSERT(case # Unknown);
+			stringMaker.Clear;
+			startPos := token.position.end;
+			s := Code; newline := FALSE;
+			WHILE (s # EndOfText) & (s # End) & (s # With) & (s # Unequal) DO
+				token.position := position;
+				endPos := position.start;
+				IF (ch >= 'A') & (ch <= 'Z') OR (ch >= 'a') & (ch <= 'z') THEN
+					newline := FALSE;
+					GetIdentifier(token);
+					IF (case=Uppercase) & (token.identifierString = "END") OR (case=Lowercase) & (token.identifierString = "end") THEN
+						s := End
+					ELSIF (case = Uppercase) & (token.identifierString = "WITH") OR (case = Lowercase) & (token.identifierString = "with") THEN
+						s := With
+					ELSE
+						stringWriter.String(token.identifierString);
+					END;
+				ELSIF (ch = '#') & newline THEN
+					s := Unequal;
+					GetNextCharacter;
+				ELSE
+					IF ch > ' ' THEN newline := FALSE;
+					ELSIF (ch = CR) OR (ch = LF) THEN newline := TRUE;
+					END;
+					stringWriter.Char(ch);
+					GetNextCharacter;
+				END;
+				token.position.end := position.start;
+			END;
+			stringWriter.Update;
+			token.string := stringMaker.GetStringCopy(token.stringLength);
+			token.symbol := s;
+
+			IF Trace THEN
+				D.String("skip to end: "); D.Int(startPos,1); D.String(","); D.Int(endPos,1); D.Ln;
+				PrintToken(D.Log,token); D.Ln;
+			END;
+			RETURN s
+		END SkipToEndOfCode;
+
+		PROCEDURE SkipBlanks;
+		BEGIN
+			WHILE (ch <= " ") & (ch # ESC)  DO  (*ignore control characters*)
+				IF ch = EOT THEN
+					IF Trace THEN D.String("EOT"); D.Ln; END;
+					RETURN
+				ELSE GetNextCharacter
+				END
+			END;
+		END SkipBlanks;
+
+		(** get next token **)
+		PROCEDURE GetNextToken*(VAR token: Token ): BOOLEAN;
+		VAR s,symbol: Symbol;
+		BEGIN
+			SkipBlanks;
+			token.position := position;
+			stringMaker.Clear;
+			CASE ch OF  (* ch > " " *)
+			EOT: s := EndOfText
+			|ESC: s := Escape; GetNextCharacter
+			| DoubleQuote:
+					s := String; GetString(token,TRUE, TRUE, FALSE);
+			| SingleQuote:
+					s := String; GetString(token,FALSE, FALSE,FALSE);
+					(* to be replaced by:
+					s := Character; GetString(token);
+					IF token.stringLength #2 THEN  (* stringlength = 1 for empty string '' *)
+						Error(Basic.IllegalCharacterValue)
+					END;
+					*)
+			| '#':     s := Unequal;  GetNextCharacter
+			| '&':     s := And;  GetNextCharacter
+			| '(':     GetNextCharacter;
+					IF ch = '*' THEN GetNextCharacter; ReadComment(token);  s := Comment; ELSE s := LeftParenthesis END
+			| ')':     s := RightParenthesis;  GetNextCharacter
+			| '*':    GetNextCharacter; IF ch = '*' THEN GetNextCharacter;  s := TimesTimes ELSE s := Times END
+			| '+':    GetNextCharacter; IF ch = '*' THEN GetNextCharacter; s := PlusTimes ELSE s := Plus END
+			| ',':     s := Comma;  GetNextCharacter
+			| '-':    s := Minus;  GetNextCharacter
+			| '.':     GetNextCharacter;
+					IF ch = '.' THEN GetNextCharacter; s := Upto;
+					ELSIF ch = '*' THEN GetNextCharacter; s := DotTimes;
+					ELSIF ch = '/' THEN GetNextCharacter; s := DotSlash;
+					ELSIF ch='=' THEN GetNextCharacter; s := DotEqual;
+					ELSIF ch='#' THEN GetNextCharacter; s := DotUnequal;
+					ELSIF ch='>' THEN GetNextCharacter;
+						IF ch='=' THEN s := DotGreaterEqual; GetNextCharacter
+						ELSE s := DotGreater;
+						END
+					ELSIF ch='<' THEN GetNextCharacter;
+						IF ch='=' THEN s := DotLessEqual; GetNextCharacter
+						ELSE s := DotLess;
+						END
+					ELSE s := Period END
+			| '/':     s := Slash;  GetNextCharacter
+			| '0'..'9':   s := GetNumber(token);
+			| ':':     GetNextCharacter;
+					IF ch = '=' THEN GetNextCharacter;  s := Becomes  ELSE s := Colon END
+			| ';':     s := Semicolon;  GetNextCharacter
+			| '<':     GetNextCharacter;
+					IF ch = '=' THEN GetNextCharacter;  s := LessEqual
+					ELSIF ch ='<' THEN GetNextCharacter;
+						IF ch ='?' THEN GetNextCharacter; s := LessLessQ
+						ELSE s := LessLess
+						END;
+					ELSE s := Less;
+					END
+			| '=':     s := Equal;  GetNextCharacter
+			| '>':     GetNextCharacter;
+					IF ch = '=' THEN GetNextCharacter;  s := GreaterEqual
+					ELSIF ch ='>' THEN GetNextCharacter;
+						IF ch ='?' THEN GetNextCharacter; s := GreaterGreaterQ
+						ELSE s := GreaterGreater
+						END;
+					ELSE s := Greater;  END
+			| '[':     s := LeftBracket;  GetNextCharacter
+			| ']':     s := RightBracket;  GetNextCharacter
+			| '^':     s := Arrow;  GetNextCharacter
+			| '{':     s := LeftBrace;  GetNextCharacter
+			| '|':     s := Bar;  GetNextCharacter
+			| '}':     s := RightBrace;  GetNextCharacter
+			| '~':     s := Not;  GetNextCharacter
+			| '\':     s := Backslash;  GetNextCharacter;
+					IF ch = DoubleQuote THEN
+						s := String;
+						GetEscapedString(token);
+						(*
+						GetString(token, TRUE, TRUE, TRUE)
+						*)
+					ELSIF (ch > " ") & (reader.Peek() = DoubleQuote) THEN
+						s := String;
+						GetEscapedString(token);
+					END;
+			| '`':     s := Transpose; GetNextCharacter
+			| '?':     s := Questionmark; GetNextCharacter; IF ch = '?' THEN s := Questionmarks; GetNextCharacter END;
+			| '!':     s := ExclamationMark; GetNextCharacter; IF ch = '!' THEN s := ExclamationMarks; GetNextCharacter END;
+			| Ellipsis:
+					s := Upto;  GetNextCharacter
+			| 'A'..'Z': s := Identifier; GetIdentifier( token );
+					IF (case=Uppercase) OR (case=Unknown) THEN
+						symbol := keywordsUpper.SymbolByIdentifier(token.identifier);
+						IF  (symbol >= 0) THEN s := symbol END;
+						IF (s = Module) OR (s=CellNet) THEN case := Uppercase END;
+					END;
+			| 'a'..'z': s := Identifier; GetIdentifier( token);
+					IF (case = Lowercase) OR (case=Unknown) THEN
+						symbol := keywordsLower.SymbolByIdentifier(token.identifier);
+						IF  (symbol >= 0) THEN s := symbol END;
+						IF (s = Module) OR (s=CellNet) THEN case := Lowercase END;
+					END;
+					IF firstIdentifier & (s # Module) & (s # CellNet) & (case = Unknown) THEN case := Uppercase; s := Identifier END;
+			ELSE s := Identifier;  GetIdentifier( token );
+			END;
+			firstIdentifier := FALSE;
+
+			token.symbol := s;
+			token.position.end := position.start;
+
+			IF Trace THEN PrintToken(D.Log,token); D.Ln; END;
+
+			RETURN ~error
+		END GetNextToken;
+
+		PROCEDURE ResetError*();
+		BEGIN error := FALSE
+		END ResetError;
+
+		(** set the diagnostics mode of the scanner (diagnostics = NIL ==> no report) and reset the error state
+			intended for silent token peeeking after the end of a module *)
+		PROCEDURE ResetErrorDiagnostics*(VAR diagnostics: Diagnostics.Diagnostics);
+		VAR d: Diagnostics.Diagnostics;
+		BEGIN
+			error := FALSE;
+			d := SELF.diagnostics; SELF.diagnostics := diagnostics; diagnostics := d;
+		END ResetErrorDiagnostics;
+
+	END Scanner;
+
+	Context*=RECORD
+		position: Position;
+		readerPosition : Streams.Position;
+		ch: CHAR;
+	END;
+
+	(** assembler scanner reflects the following EBNF
+		Token			= String | Symbol | Number | Identifier.
+		Symbol			= '\' | '#' | '(' ['*' any '*' ')'] | ')' | CR [LF] | LF | '*' | '+' | ',' | '-' | '~' | '.' | '/' | '%' | ':' | ';' | '=' | '[' | ']' | '{' | '}' | '!' | '^' | '$'['$'].
+		String				= '"' {Character} '"' | "'" {Character} "'".
+		Identifier		= '@' | Letter {'@' | '.' | Letter | Digit | '_'} .
+		Letter				= 'A' | 'B' | .. |  'Z' | 'a' | 'b' |  .. | 'z' .
+		Digit				= '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'.
+		BinaryDigit	= '0' | '1' .
+		Number			= Integer | Real.
+		Character		= Digit [HexDigit] 'X'.
+		Integer			=  Digit {Digit} | Digit {HexDigit} 'H' | '0x' {HexDigit} | '0b' {["'"]BinaryDigit}.
+		Real					= Digit {Digit} '.' {Digit} [ScaleFactor].
+		ScaleFactor	= ('E' | 'D') ['+' | '-'] digit {digit}.
+		HexDigit		= Digit | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'.
+	**)
+
+	AssemblerScanner* = OBJECT (Scanner) (*!  move to different module? unify with compiler scanner? *)
+	VAR
+		startContext-: Context;
+
+		PROCEDURE &InitAssemblerScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; position: Position; diagnostics: Diagnostics.Diagnostics );
+		BEGIN
+			InitializeScanner(source,reader,position,diagnostics);
+			GetContext(startContext);
+		END InitAssemblerScanner;
+
+		PROCEDURE GetContext*(VAR context: Context);
+		BEGIN
+			context.ch := ch;
+			context.position := position;
+			context.readerPosition := reader.Pos();
+		END GetContext;
+
+		PROCEDURE SetContext*(CONST context: Context);
+		BEGIN
+			reader.SetPos(context.readerPosition);
+			ch := context.ch;
+			position := context.position;
+		END SetContext;
+
+		PROCEDURE SkipToEndOfLine*;
+		BEGIN
+			WHILE (ch # EOT) & (ch # CR) & (ch # LF) DO
+				GetNextCharacter
+			END;
+		END SkipToEndOfLine;
+
+		(**
+			note: in contrast to a regular identifier, an assembler scanner identifier may also contain periods and the '@'-token
+
+			Identifier = '@' | Letter {'@' | '.' | Letter | Digit | '_'} .
+			Letter = 'A' | 'B' | .. |  'Z' | 'a' | 'b' |  .. | 'z' .
+			Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'.
+
+			'_' is the underscore character
+		**)
+		PROCEDURE GetIdentifier( VAR token: Token );
+		VAR
+			i: SIGNED32;
+
+			PROCEDURE CharacterIsAllowed(character: CHAR): BOOLEAN;
+			BEGIN
+				CASE character OF
+				| 'a' .. 'z', 'A' .. 'Z', '0' .. '9', '@', '.', '_': RETURN TRUE
+				ELSE RETURN FALSE
+				END;
+			END CharacterIsAllowed;
+		BEGIN
+			i := 0;
+			REPEAT
+				token.identifierString[i] := ch; INC( i );  GetNextCharacter
+			UNTIL ~CharacterIsAllowed(ch) OR (i = MaxIdentifierLength);
+
+			IF i = MaxIdentifierLength THEN Error( Basic.IdentifierTooLong );  DEC( i ) END;
+			token.identifierString[i] := 0X;
+		END GetIdentifier;
+
+		(** get next token **)
+		PROCEDURE GetNextToken*(VAR token: Token ): BOOLEAN;
+		VAR s: SIGNED32;
+
+			PROCEDURE SkipBlanks;
+			BEGIN
+				WHILE (ch <= ' ') & (ch # CR) & (ch # LF) & (ch # EOT)  DO  (* ignore control characters except line feeds *)
+					GetNextCharacter
+				END;
+			END SkipBlanks;
+
+		BEGIN
+			REPEAT
+				SkipBlanks;
+				token.position := position;
+				CASE ch OF  (* ch > ' ' *)
+				| EOT:	s := EndOfText;
+				| DoubleQuote:
+						s := String; GetString(token, TRUE, FALSE, TRUE);
+				| SingleQuote:
+						s := Character; GetString(token, FALSE, FALSE, FALSE); token.character := token.string[0];
+						IF token.stringLength <2 THEN  (* stringlength = 1 for empty string '' *)
+							Error(Basic.IllegalCharacterValue)
+						ELSIF token.stringLength >2 THEN
+							s := String;
+						END;
+				| '\':     s := Backslash;  GetNextCharacter;
+						IF ch = DoubleQuote THEN s := String; GetString(token, FALSE, FALSE, TRUE) END;
+				| '#':     s := Unequal;  GetNextCharacter; (* for the ARM assembler *)
+				| '(': GetNextCharacter;
+						IF ch = '*' THEN GetNextCharacter; ReadComment(token);  s := Comment; ELSE s := LeftParenthesis END
+				| ')':     s := RightParenthesis;  GetNextCharacter
+				| CR: GetNextCharacter; s := Ln;IF ch = LF THEN GetNextCharacter END;
+				| LF: GetNextCharacter; s := Ln; IF ch = CR THEN GetNextCharacter END;
+				| '*':    s := Times; GetNextCharacter;
+				| '+':    s := Plus ; GetNextCharacter;
+				| ',':     s := Comma;  GetNextCharacter
+				| '-':    s := Minus;  GetNextCharacter
+				| '~':    s := Not;  GetNextCharacter
+				| '.':     s:= Period; GetNextCharacter
+				| '/':     s := Div;  GetNextCharacter
+				| '%':	s := Mod; GetNextCharacter
+				| '0'..'9':   s := GetNumber(token);
+				| ':':     s := Colon; GetNextCharacter;
+				| ';':    s := Comment; SkipToEndOfLine;
+				| '=':     s := Equal;  GetNextCharacter
+				| '[':     s := LeftBracket;  GetNextCharacter
+				| ']':     s := RightBracket;  GetNextCharacter
+				| '{':     s := LeftBrace;  GetNextCharacter
+				| '}':     s := RightBrace;  GetNextCharacter
+				| '!':     s := ExclamationMark; GetNextCharacter;
+				| '^':     s := Arrow; GetNextCharacter;
+
+				| 'A'..'Z': s := Identifier; GetIdentifier( token );
+				| 'a'..'z': s := Identifier; GetIdentifier( token);
+				| '@':     s := Identifier; GetIdentifier( token); (* the '@'-token initiates an assembly scanner identifier *)
+				| '$': GetNextCharacter;
+					IF ch = '$' THEN s := PCOffset; GetNextCharacter ELSE s := PC; END
+				ELSE s := None; GetNextCharacter;
+				END;
+				token.position.end := position.start;
+			UNTIL s # Comment;
+
+			token.symbol := s;
+
+			IF Trace THEN D.Ln;  D.Str( "Scan at " );  D.Int( token.position.start,1 );  D.Str( ": " );  PrintToken(D.Log,token); D.Update;  END;
+			RETURN ~error
+		END GetNextToken;
+
+	END AssemblerScanner;
+
+	VAR
+		reservedCharacter: ARRAY 256 OF BOOLEAN;
+		symbols-: ARRAY EndOfText+1 OF Keyword;
+		keywordsLower, keywordsUpper: KeywordTable;
+
+	(** return a new scanner on a stream, error output via diagnostics  **)
+	PROCEDURE NewScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; position: Streams.Position; diagnostics: Diagnostics.Diagnostics ): Scanner;
+	VAR s: Scanner; pos: Position;
+	BEGIN
+		pos.start := position;
+		pos.end := position;
+		pos.line := 1;
+		pos.linepos := 0;
+		NEW( s, source, reader, pos, diagnostics );  RETURN s;
+	END NewScanner;
+
+	PROCEDURE NewAssemblerScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; position: Streams.Position; diagnostics: Diagnostics.Diagnostics ): AssemblerScanner;
+	VAR s: AssemblerScanner;pos: Position;
+	BEGIN
+		pos.start := position;
+		pos.end := position;
+		pos.line := 1;
+		pos.linepos := 0;
+		NEW( s, source, reader, pos, diagnostics );  RETURN s;
+	END NewAssemblerScanner;
+
+	PROCEDURE TokenToString*(CONST token: Token; case: SIGNED32; VAR str: ARRAY OF CHAR);
+	VAR id: StringPool.Index;
+	BEGIN
+		CASE token.symbol OF
+		Identifier, Number: COPY(token.identifierString, str)
+		| String, Comment: ASSERT(LEN(str) >= LEN(token.string^)); COPY(token.string^, str);
+		ELSE
+			GetKeyword(case, token.symbol, id);
+			IF id < 0 THEN str := "" ELSE StringPool.GetString(id, str) END;
+		END;
+	END TokenToString;
+
+	(** debugging output **)
+	PROCEDURE PrintToken*(w: Streams.Writer; CONST token: Token);
+	VAR str: ARRAY 256 OF CHAR;
+	BEGIN
+		w.Int(token.position.start,1); w.String("-");w.Int(token.position.end,1); w.String(":");
+		w.String(symbols[token.symbol]);
+		IF token.symbol= Number THEN
+			CASE token.numberType OF
+				Integer: w.String("(integer)")
+				|Hugeint: w.String("(hugeint)")
+				|Real: w.String("(real)")
+				|Longreal: w.String("(longreal)")
+			END;
+		END;
+		IF token.symbol = String THEN
+			w.String(":"); w.Char('"'); w.String(token.string^); w.Char('"');
+		ELSIF token.symbol = Comment THEN
+			w.String("(*"); w.String(token.string^); w.String("*)");
+		ELSE
+			TokenToString(token, Uppercase, str); w.String(": "); w.String(str);
+		END
+	END PrintToken;
+
+	(** reserved characters are the characters that may not occur within an identifier **)
+	PROCEDURE InitReservedCharacters;
+	VAR i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO LEN( reservedCharacter ) - 1 DO
+			CASE CHR(i) OF
+				| 'a' .. 'z', 'A' .. 'Z': reservedCharacter[i] := FALSE;
+				| '0'..'9': reservedCharacter[i] := FALSE;
+				| '_': reservedCharacter[i] := FALSE
+			ELSE
+				reservedCharacter[i] := TRUE
+			END;
+		END;
+	END InitReservedCharacters;
+
+	(* get keyword by symbol *)
+	PROCEDURE GetKeyword*(case:INTEGER; symbol: Symbol; VAR identifier: IdentifierType);
+	BEGIN
+		IF case = Uppercase THEN
+			keywordsUpper.IdentifierBySymbol(symbol,identifier);
+		ELSE ASSERT(case=Lowercase);
+			keywordsLower.IdentifierBySymbol(symbol,identifier);
+		END;
+	END GetKeyword;
+
+	PROCEDURE InitSymbols;
+	VAR i: SIGNED32;
+	BEGIN
+		symbols[None] := "None";
+		symbols[Equal] := "Equal";
+		symbols[DotEqual] := "DotEqual";
+		symbols[Unequal] := "Unequal";
+		symbols[DotUnequal] := "DotUnequal";
+		symbols[Less] := "Less";
+		symbols[DotLess] := "DotLess";
+		symbols[LessEqual] := "LessEqual";
+		symbols[DotLessEqual] := "DotLessEqual";
+		symbols[Greater] := "Greater";
+		symbols[DotGreater] := "DotGreater";
+		symbols[GreaterEqual] := "GreaterEqual";
+		symbols[DotGreaterEqual] := "DotGreaterEqual";
+		symbols[LessLessQ] := "LessLessQ";
+		symbols[GreaterGreaterQ] := "GreaterGreaterQ";
+		symbols[In] := "In";
+		symbols[Is] := "Is";
+		symbols[Times] := "Times";
+		symbols[TimesTimes] := "TimesTimes";
+		symbols[DotTimes] := "DotTimes";
+		symbols[PlusTimes] := "PlusTimes";
+		symbols[Slash] := "Slash";
+		symbols[Backslash] := "Backslash";
+		symbols[DotSlash] := "DotSlash";
+		symbols[Div] := "Div";
+		symbols[Mod] := "Mod";
+		symbols[And] := "And";
+		symbols[Or] := "Or";
+		symbols[Plus] := "Plus";
+		symbols[Minus] := "Minus";
+		symbols[Not] := "Not";
+		symbols[LeftParenthesis] := "LeftParenthesis";
+		symbols[LeftBracket] := "LeftBracket";
+		symbols[LeftBrace] := "LeftBrace";
+		symbols[Number] := "Number";
+		symbols[Character] := "Character";
+		symbols[String] := "String";
+		symbols[Nil] := "Nil";
+		symbols[Imag] := "Imag";
+		symbols[True] := "True";
+		symbols[False] := "False";
+		symbols[Self] := "Self";
+		symbols[New] := "New";
+		symbols[Result] := "Result";
+		symbols[Identifier] := "Identifier";
+		symbols[If] := "If";
+		symbols[Case] := "Case";
+		symbols[While] := "While";
+		symbols[Repeat] := "Repeat";
+		symbols[For] := "For";
+		symbols[Loop] := "Loop";
+		symbols[With] := "With";
+		symbols[Exit] := "Exit";
+		symbols[Await] := "Await";
+		symbols[Return] := "Return";
+		symbols[Ignore] := "Ignore";
+		symbols[Begin] := "Begin";
+		symbols[Semicolon] := "Semicolon";
+		symbols[Transpose] := "Transpose";
+		symbols[RightBrace] := "RightBrace";
+		symbols[RightBracket] := "RightBracket";
+		symbols[RightParenthesis] := "RightParenthesis";
+		symbols[Questionmark] := "Questionmark";
+		symbols[ExclamationMark] := "ExclamationMark";
+		symbols[Questionmarks] := "Questionmarks";
+		symbols[ExclamationMarks] := "ExclamationMarks";
+		symbols[LessLess] := "LessLess";
+		symbols[GreaterGreater] := "GreaterGreater";
+		symbols[Upto] := "Upto";
+		symbols[Arrow] := "Arrow";
+		symbols[Period] := "Period";
+		symbols[Comma] := "Comma";
+		symbols[Colon] := "Colon";
+		symbols[Of] := "Of";
+		symbols[Then] := "Then";
+		symbols[Do] := "Do";
+		symbols[To] := "To";
+		symbols[By] := "By";
+		symbols[Becomes] := "Becomes";
+		symbols[Bar] := "Bar";
+		symbols[End] := "End";
+		symbols[Else] := "Else";
+		symbols[Elsif] := "Elsif";
+		symbols[Extern] := "Extern";
+		symbols[Until] := "Until";
+		symbols[Finally] := "Finally";
+		symbols[Code] := "Code";
+		symbols[Const] := "Const";
+		symbols[Type] := "Type";
+		symbols[Var] := "Var";
+		symbols[Out] := "Out";
+		symbols[Procedure] := "Procedure";
+		symbols[Operator] := "Operator";
+		symbols[Import] := "Import";
+		symbols[Definition] := "Definition";
+		symbols[Module] := "Module";
+		symbols[Cell] := "Cell";
+		symbols[CellNet] := "CellNet";
+		symbols[Any] := "Any";
+		symbols[Array] := "Array";
+		symbols[Object] := "Object";
+		symbols[Record] := "Record";
+		symbols[Pointer] := "Pointer";
+		symbols[Enum] := "Enum";
+		symbols[Port] := "Port";
+		symbols[Address] := "Address";
+		symbols[Alias] := "Alias";
+		symbols[Size] := "Size";
+		symbols[Ln] := "Ln";
+		symbols[PC] := "PC";
+		symbols[PCOffset] := "PCOffset";
+		symbols[Shortint] := "Shortint";
+		symbols[Integer] := "Integer";
+		symbols[Longint] := "Longint";
+		symbols[Hugeint] := "Hugeint";
+		symbols[Real] := "Real";
+		symbols[Longreal] := "Longreal";
+		symbols[Comment] := "Comment";
+		symbols[EndOfText] := "EndOfText";
+		FOR i := 0 TO EndOfText DO ASSERT(symbols[i] # "") END;
+	END InitSymbols;
+
+	(** enter keywords in the list of keywords (both upper- and lowercase)  **)
+	PROCEDURE InitKeywords;
+
+		PROCEDURE Upper(CONST source: ARRAY OF CHAR; VAR dest: ARRAY OF CHAR);
+		VAR c: CHAR; i: SIGNED32;
+		BEGIN
+			i := 0;
+			REPEAT
+				c := source[i];
+				IF (c >= 'a') & (c<= 'z') THEN c :=  CHR(ORD(c)-ORD('a')+ORD('A')) END;
+				dest[i] := c; INC(i);
+			UNTIL c = 0X;
+		END Upper;
+
+		PROCEDURE Enter1(CONST name: ARRAY OF CHAR; symbol: SIGNED32; case: SET);
+		BEGIN
+			IF Lowercase IN case THEN keywordsLower.PutString(name,symbol) END;
+			IF Uppercase IN case THEN keywordsUpper.PutString(name,symbol) END;
+			Basic.SetErrorExpected(symbol,name);
+		END Enter1;
+
+		PROCEDURE Enter(CONST name: ARRAY OF CHAR; symbol: SIGNED32);
+		VAR upper: Keyword;
+		BEGIN
+			Enter1(name,symbol,{Lowercase});
+			Upper(name,upper);
+			Enter1(upper,symbol,{Uppercase});
+		END Enter;
+
+		PROCEDURE EnterSymbol(CONST name: ARRAY OF CHAR; symbol: SIGNED32);
+		BEGIN
+			Enter1(name,symbol,{Lowercase,Uppercase});
+		END EnterSymbol;
+
+	BEGIN
+		NEW(keywordsUpper,EndOfText+1);
+		NEW(keywordsLower,EndOfText+1);
+
+		(* constructs and statements *)
+		Enter( "await" , Await);
+		Enter( "begin" , Begin);
+		Enter( "by" , By);
+		Enter( "const" , Const);
+		Enter( "case" , Case);
+		Enter( "cell", Cell );
+		Enter( "cellnet", CellNet);
+		Enter( "code" , Code);
+		Enter( "definition", Definition);
+		Enter( "do" , Do);
+		Enter( "div" , Div);
+		Enter( "end" , End);
+		Enter( "enum", Enum);
+		Enter( "else" , Else);
+		Enter( "elsif" , Elsif);
+		Enter( "exit" , Exit);
+		Enter( "extern" , Extern);
+		Enter( "false" , False);
+		Enter( "for" , For);
+		Enter( "finally" , Finally);
+		Enter( "if" , If);
+		Enter( "ignore" , Ignore);
+		Enter( "imag" , Imag);
+		Enter( "in" , In);
+		Enter( "is" , Is);
+		Enter( "import" , Import);
+		Enter( "loop" , Loop);
+		Enter( "module", Module);
+		Enter( "mod" , Mod);
+		Enter( "nil" , Nil );
+		Enter( "of" , Of);
+		Enter( "or" , Or);
+		Enter( "out", Out);
+		Enter( "operator" , Operator);
+		Enter( "procedure" , Procedure);
+		Enter( "port", Port);
+		Enter( "repeat" , Repeat);
+		Enter( "return" , Return);
+		Enter( "self", Self);
+		Enter( "new", New);
+		Enter( "result", Result);
+		Enter( "then" , Then);
+		Enter( "true" , True);
+		Enter( "to" , To);
+		Enter( "type" , Type);
+		Enter( "until" , Until );
+		Enter( "var" , Var );
+		Enter( "while" , While);
+		Enter( "with" , With);
+
+		(* types *)
+		Enter( "any" , Any );
+		Enter( "array" , Array );
+		Enter( "object" , Object);
+		Enter( "pointer" , Pointer);
+		Enter( "record" , Record);
+		Enter( "address" , Address);
+		Enter( "size" , Size);
+		Enter( "alias" , Alias);
+
+		(* tokens *)
+		EnterSymbol( "#", Unequal);
+		EnterSymbol( "&", And);
+		EnterSymbol( "(", LeftParenthesis);
+		EnterSymbol( ")", RightParenthesis);
+		EnterSymbol( "*", Times);
+		EnterSymbol( "**",TimesTimes);
+		EnterSymbol( "+", Plus);
+		EnterSymbol( "+*", PlusTimes);
+		EnterSymbol( ",", Comma);
+		EnterSymbol( "-", Minus);
+		EnterSymbol(".",Period );
+		EnterSymbol("..",Upto );
+		EnterSymbol(".*",DotTimes );
+		EnterSymbol("./",DotSlash );
+		EnterSymbol(".=",DotEqual );
+		EnterSymbol(".#",DotUnequal );
+		EnterSymbol(".>",DotGreater );
+		EnterSymbol(".>=",DotGreaterEqual );
+		EnterSymbol(".<", DotLess);
+		EnterSymbol(".<=",DotLessEqual );
+		EnterSymbol( "/", Slash);
+		EnterSymbol( ":", Colon);
+		EnterSymbol( ":=",Becomes);
+		EnterSymbol( ";", Semicolon);
+		EnterSymbol( "<", Less);
+		EnterSymbol( "<=", LessEqual);
+		EnterSymbol( "=", Equal);
+		EnterSymbol( ">", Greater);
+		EnterSymbol( ">=", GreaterEqual);
+		EnterSymbol( "[", LeftBracket);
+		EnterSymbol( "]", RightBracket);
+		EnterSymbol( "^", Arrow);
+		EnterSymbol( "{", LeftBrace);
+		EnterSymbol( "|",Bar);
+		EnterSymbol( "}", RightBrace);
+		EnterSymbol( "~", Not);
+		EnterSymbol( "\", Backslash);
+		EnterSymbol( "`", Transpose);
+		EnterSymbol( "?",Questionmark);
+		EnterSymbol( "??",Questionmarks);
+		EnterSymbol( "!",ExclamationMark);
+		EnterSymbol( "!!",ExclamationMarks);
+		EnterSymbol( "<<",LessLess);
+		EnterSymbol( "<<?",LessLessQ);
+		EnterSymbol( ">>",GreaterGreater);
+		EnterSymbol( ">>?",GreaterGreaterQ);
+
+		Basic.SetErrorMessage(Number,"missing number");
+		Basic.SetErrorMessage(String,"missing string");
+		Basic.SetErrorMessage(Character,"missing character");
+		Basic.SetErrorMessage(Identifier,"missing identifier");
+		Basic.SetErrorMessage(EndOfText,"unexpected token before end");
+	END InitKeywords;
+
+	(** debugging / reporting **)
+	PROCEDURE ReportKeywords*(context: Commands.Context);
+	VAR s: Symbol; name: Keyword;
+	BEGIN
+		FOR s := 0 TO EndOfText DO
+			context.out.Int(s,1); context.out.String(": ");
+			context.out.Char('"');
+			keywordsLower.StringBySymbol(s,name);
+			context.out.String(name);
+			context.out.Char('"');
+			context.out.String(", ");
+			context.out.Char('"');
+			keywordsUpper.StringBySymbol(s,name);
+			context.out.String(name);
+			context.out.Char('"');
+			context.out.Ln;
+		END;
+	END ReportKeywords;
+
+	(*
+	PROCEDURE TestScanner*(context: Commands.Context);
+	VAR filename: ARRAY 256 OF CHAR; reader: Streams.Reader; scanner: Scanner;token: Token;
+	BEGIN
+		context.arg.SkipWhitespace; context.arg.String(filename);
+		reader := TextUtilities.GetTextReader(filename);
+		scanner := NewScanner(filename,reader,0,NIL);
+		REPEAT
+			IF scanner.GetNextToken(token) THEN
+				PrintToken(context.out,token);context.out.Ln;
+			END;
+		UNTIL scanner.error OR (token.symbol=EndOfText)
+	END TestScanner;
+	*)
+
+BEGIN
+	InitReservedCharacters; InitSymbols; InitKeywords
+END FoxScanner.
+
+FoxScanner.ReportKeywords
+FoxScanner.TestScanner Test.Mod ~

@@ -1,0 +1,520 @@
+version: "3"
+
+vars:
+  PLATFORMS: Linux64 Win64
+  # minia2 'clean desktop' package exclude — drops obsolete/junk from Release.Build.
+  # Kept: Kernel System Drivers Compiler Build ApplicationsMini GuiApplicationsMini
+  #       Applications GuiApplications Contributions + fonts.
+  MINI_EXCLUDE: "Oberon OberonGadgets OberonApplications OberonVoyager OberonAnts OberonDocumentation Fun Education Testing EFI CjkFonts Pr3Fonts Pr6Fonts"
+  CURRENT_DIR: "{{.ROOT_DIR}}"
+  CONFIGS: "{{.CURRENT_DIR}}/configs"
+  SRC: "{{.CURRENT_DIR}}/source"
+  DATA: "{{.CURRENT_DIR}}/data"
+  BUILD_DIR: "{{.CURRENT_DIR}}/target"
+  COMPILERS: "{{.CURRENT_DIR}}/compilers"
+  HOST: '{{if eq OS "windows"}}Win64{{else if eq ARCH "arm64"}}LinuxARM{{else if eq ARCH "arm"}}LinuxARM{{else if eq ARCH "386"}}Linux32{{else}}Linux64{{end}}'
+  PATHSEP:
+    sh: |
+      if [[ "{{.HOST}}" == Win* ]]; then
+        echo "\\"
+      else
+        echo "/"
+      fi
+  RELEASE_TOOL: "{{.DATA}}/Release.Tool"
+  DEPENDENCY_WALKER: "{{.SRC}}/DependencyWalker.Mod"
+  TOOL:
+    sh: |
+      if [[ -f "{{.COMPILERS}}/{{.HOST}}/oberon" ]]; then
+        echo "{{.COMPILERS}}/{{.HOST}}/oberon"
+      else
+        echo "{{.COMPILERS}}/{{.HOST}}/oberon.exe"
+      fi
+  OBERON_MODULES: "{{.CONFIGS}}/oberon_modules.txt"
+  ENV_FILE: "{{.CONFIGS}}/env.yml"
+  PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+
+tasks:
+  default:
+    desc: Build all platforms
+    cmds:
+      - task: platforms
+
+  set-platform-env:
+    desc: Set platform-specific environment (from env.yml)
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+    preconditions:
+      - sh: "command -v yq >/dev/null 2>&1"
+        msg: "yq is required to parse {{.ENV_FILE}} but was not found in PATH"
+      - sh: "test -f {{.ENV_FILE}}"
+        msg: "Environment file not found: {{.ENV_FILE}}"
+    cmds:
+      - |
+        set -eo pipefail
+
+        echo "[INFO] Setting env for platform: {{.PLATFORM}}"
+
+        if ! yq -e ".{{.PLATFORM}}" {{.ENV_FILE}} >/dev/null; then
+          echo "[ERROR] Unknown platform {{.PLATFORM}} in {{.ENV_FILE}}"
+          exit 1
+        fi
+
+        mkdir -p $(dirname {{.PLATFORM_ENV}})
+
+        yq -r ".{{.PLATFORM}} | to_entries | .[] | \"export \(.key)=\\\"\(.value)\\\"\"" \
+          {{.ENV_FILE}} > {{.PLATFORM_ENV}}
+
+        echo "[SUCCESS] Environment written to {{.PLATFORM_ENV}}"
+
+  prepare-workspace:
+    desc: "Preparing workspace"
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - echo "[INFO] Preparing workspace for {{.PLATFORM}}"
+      - mkdir -p {{.BUILD_DIR}}/{{.PLATFORM}}/bin
+      - mkdir -p {{.BUILD_DIR}}/{{.PLATFORM}}/work
+      - cp -r {{.SRC}} {{.BUILD_DIR}}/{{.PLATFORM}}/
+      - cp -r {{.DATA}} {{.BUILD_DIR}}/{{.PLATFORM}}/
+
+  generate-module-list:
+    desc: Generate raw module list (used internally)
+    preconditions:
+      - sh: "test -x {{.TOOL}}"
+        msg: "Host compiler not found or not executable: {{.TOOL}}"
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}/{{.HOST}}
+      - |
+        set -eo pipefail
+        AOSPATH={{.DATA}} {{.TOOL}} Release.Build --list {{.HOST}} \
+        | tr -d '\r' \
+        | grep -E "^[^ ]+\.Mod[[:space:]]" \
+        | tr -d ' ' \
+        > {{.BUILD_DIR}}/{{.HOST}}/.modules
+    sources:
+      - "{{.DATA}}/**/*"
+    generates:
+      - "{{.BUILD_DIR}}/{{.HOST}}/.modules"
+
+  modules:
+    desc: Export modules as environment variable
+    deps: [generate-module-list]
+    cmds:
+      - |
+        set -eo pipefail
+        cat {{.BUILD_DIR}}/{{.HOST}}/.modules \
+        | paste -sd' ' - \
+        | sed 's/$/ DependencyWalker.Mod/' \
+        | sed 's/.*/export MODULES="&"/' \
+        > {{.BUILD_DIR}}/{{.HOST}}/.modules_env
+    sources:
+      - "{{.BUILD_DIR}}/{{.HOST}}/.modules"
+    generates:
+      - "{{.BUILD_DIR}}/{{.HOST}}/.modules_env"
+
+  dependencies:
+    desc: Generate modules dependencies
+    deps:
+      - task: set-platform-env
+        vars: { PLATFORM: "{{.HOST}}" }
+      - generate-module-list
+    cmds:
+      - |
+        source {{.PLATFORM_ENV}}
+        module_files=""
+        while read -r module; do
+          module_files="$module_files source/$module"
+        done < <(sort -u {{.BUILD_DIR}}/{{.HOST}}/.modules)
+        {{.TOOL}} DependencyWalker.Walk $DEFINES --fileExtension=.$EXTENSION $module_files {{.DEPENDENCY_WALKER}} | tr -d '\r' | grep "^.*\\.$EXTENSION:" > {{.BUILD_DIR}}/{{.HOST}}/.dependencies
+        echo "FoxArrayBase.$EXTENSION: source/ComplexNumbers.$EXTENSION" >> {{.BUILD_DIR}}/{{.HOST}}/.dependencies
+        rm "{{.BUILD_DIR}}/{{.HOST}}/.modules"
+    sources:
+      - "{{.BUILD_DIR}}/{{.HOST}}/.modules"
+    generates:
+      - "{{.BUILD_DIR}}/{{.HOST}}/.dependencies"
+
+  compile-module:
+    desc: Compile a single module (internal task)
+    vars:
+      MODULE: "{{.MODULE}}"
+    deps:
+      - task: set-platform-env
+        vars: { PLATFORM: "{{.HOST}}" }
+    cmds:
+      - |
+        source {{.PLATFORM_ENV}}
+        {{.TOOL}} Compiler.Compile $COMPILEOPTIONS --destPath="{{.BUILD_DIR}}/{{.HOST}}/bin/" --objectFileExtension=$EXTENSION --symbolFileExtension=$SYMBOLFILEEXCEPTION {{.SRC}}/{{.MODULE}}
+    sources:
+      - "source/{{.MODULE}}.Mod"
+    generates:
+      - "{{.MODULE}}.$EXTENSION"
+
+  compile-all-modules:
+    desc: Compile all modules using compile-module
+    vars:
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.HOST}}/.env"
+    deps:
+      - modules
+      - task: set-platform-env
+        vars: { PLATFORM: "{{.HOST}}" }
+      - task: prepare-workspace
+        vars:
+          PLATFORM: "{{.HOST}}"
+    cmds:
+      - |
+        set -eo pipefail
+        source {{.PLATFORM_ENV}}
+        source {{.BUILD_DIR}}/{{.HOST}}/.modules_env
+        for mod in $MODULES; do
+          {{.TOOL}} Compiler.Compile $COMPILEOPTIONS --destPath="{{.BUILD_DIR}}/{{.HOST}}/bin/" --objectFileExtension=$EXTENSION --symbolFileExtension=$SYMBOLFILEEXCEPTION "{{.BUILD_DIR}}/{{.HOST}}/source"/$mod || exit 1
+        done
+
+  oberon:
+    desc: Build a specific compiler for host
+    vars:
+      PLATFORM: "{{.HOST}}"
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+    cmds:
+      - task: compile-all-modules
+      - task: configure-platform
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - |
+        set -eo pipefail
+        source {{.PLATFORM_ENV}}
+        cat {{.OBERON_MODULES}} >> "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+        echo "~" >> "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+      - task: create-compile-cfg
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: compile-platform
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - |
+        set -eo pipefail
+        echo "[INFO] Replacing old compiler binary"
+        source {{.PLATFORM_ENV}}
+        cp {{.BUILD_DIR}}/{{.HOST}}/$FILENAME {{.COMPILERS}}/{{.HOST}}/$FILENAME.new
+        mv {{.COMPILERS}}/{{.HOST}}/$FILENAME.new {{.COMPILERS}}/{{.HOST}}/$FILENAME
+        chmod +x {{.COMPILERS}}/{{.HOST}}/$FILENAME
+      # - task: update-module-list
+      #   vars:
+      #     PLATFORM: "{{.PLATFORM}}"
+      - task: clean-temporary-files
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: clean
+        vars:
+          PLATFORM: "{{.HOST}}"
+      - echo "[SUCCESS] Compiler rebuilt and replaced for {{.PLATFORM}}"
+
+  platforms:
+    desc: Build all supported platforms
+    cmds:
+      - for: { var: PLATFORMS, split: " " }
+        task: build-platform
+        vars:
+          PLATFORM: "{{.ITEM}}"
+
+  build-platform:
+    desc: Build a specific platform
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - task: prepare-workspace
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: configure-platform
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: add-module-list
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: create-compile-cfg
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: compile-platform
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      # - task: update-module-list
+      #   vars:
+      #     PLATFORM: "{{.PLATFORM}}"
+      - task: create-runtime-files
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: clean-temporary-files
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - echo "Building platform {{.PLATFORM}} have finished"
+
+  configure-platform:
+    desc: Configure platform-specific settings
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+    deps:
+      - task: set-platform-env
+        vars: { PLATFORM: "{{.PLATFORM}}" }
+    cmds:
+      - |
+        set -eo pipefail
+        source {{.PLATFORM_ENV}}
+        echo "Using module list: $MODULE_LIST"
+        echo "Release.Build --build --path=bin/ --exclude=\"{{.MINI_EXCLUDE}}\" {{.PLATFORM}} ~" > "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+        echo "Linker.Link $( [ '{{.PLATFORM}}' = 'Win32' ] || [ '{{.PLATFORM}}' = 'Win64' ] || echo -p={{.PLATFORM}} ) --path=bin/ $FILEFORMAT --fileName=$FILENAME --extension=$EXTENSION $DISPLACEMENT" >> "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+
+  add-module-list:
+    desc: Added list of modules to Linker
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+    deps:
+      - task: set-platform-env
+        vars: { PLATFORM: "{{.PLATFORM}}" }
+    cmds:
+      - |
+        set -eo pipefail
+        source {{.PLATFORM_ENV}}
+        cat "$MODULE_LIST" >> "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+        echo "~" >> "{{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt"
+
+  create-compile-cfg:
+    desc: Create oberonCompile.cfg file
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - |
+        cat > {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg << EOF
+        Heaps.SetMetaData~
+        Files.AddSearchPath {{.BUILD_DIR}}/{{.PLATFORM}}/bin~
+        Files.AddSearchPath data~
+        Files.AddSearchPath source~
+        Configuration.Init~
+        EOF
+
+  compile-platform:
+    desc: Compile the platform
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    preconditions:
+      - sh: "test -x {{.TOOL}}"
+        msg: "Host compiler not found or not executable: {{.TOOL}}"
+    cmds:
+      - |
+        cd {{.BUILD_DIR}}/{{.PLATFORM}} && {{.TOOL}} do "
+          System.DoFile oberonCompile.cfg ~
+          Files.SetWorkPath {{.BUILD_DIR}}/{{.PLATFORM}} ~
+          System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt ~
+        "
+      - |
+        case "{{.PLATFORM}}" in
+          Linux*|LinuxARM)
+            chmod +x {{.BUILD_DIR}}/{{.PLATFORM}}/oberon
+            ;;
+          Win*)
+            chmod +x {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.exe
+            ;;
+        esac
+
+  create-runtime-files:
+    desc: Create runtime configuration files
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - task: create-a2-cfg
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: create-oberon-cfg
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+      - task: create-platform-specific-files
+        vars:
+          PLATFORM: "{{.PLATFORM}}"
+
+  create-a2-cfg:
+    desc: Create a2.cfg file
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - |
+        cat > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.cfg << EOF
+        System.DoFile oberon.cfg~
+        Display.Install~
+        WindowManager.Install~
+        Clipboard.Install~
+        Autostart.Run~
+        EOF
+
+  create-oberon-cfg:
+    desc: Create oberon.cfg file
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - |
+        cat > {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg << EOF
+        Heaps.SetMetaData~
+        Files.AddSearchPath bin~
+        Files.AddSearchPath source~
+        Files.AddSearchPath data~
+        Files.AddSearchPath work~
+        Files.SetWorkPath work~
+        Configuration.Init~
+        FSTools.Mount WORK RelativeFileSystem .~
+        EOF
+
+  create-platform-specific-files:
+    desc: Create platform-specific startup files
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - |
+        case "{{.PLATFORM}}" in
+          Linux64|Linux32|LinuxARM)
+            cat > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.sh << 'EOF'
+        #!/bin/sh
+        cd "$(dirname "$0")" || exit 1
+        ./oberon run a2.cfg
+        EOF
+            chmod +x {{.BUILD_DIR}}/{{.PLATFORM}}/a2.sh
+            echo 'KbdMouse.DisableMouseEmulation~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.cfg
+            echo 'DisplayRefresher.Install~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.cfg
+            ;;
+          Win32|Win64)
+            echo '@echo off' > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'cd /d "%~dp0"' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'oberon.exe run a2.cfg' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'Machine.SetTraceFile~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg
+            echo 'Traps.Install~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg
+            ;;
+        esac
+
+  update-module-list:
+    desc: Update module list file from oberon.log
+    vars:
+      PLATFORM: "{{.PLATFORM}}"
+    cmds:
+      - |
+        case "{{.PLATFORM}}" in
+          Linux64|Linux32)
+            OUT="{{.CONFIGS}}/moduleListLinux.txt"
+            ;;
+          LinuxARM)
+            OUT="{{.CONFIGS}}/moduleListLinuxARM.txt"
+            ;;
+          Win64|Win32)
+            OUT="{{.CONFIGS}}/moduleListWin.txt"
+            ;;
+          *)
+            echo "Unknown platform: {{.PLATFORM}}"; exit 1
+            ;;
+        esac
+        grep ":processing\s*$" {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.log | grep -o "^[^:]*" | sed 's/\.[^.]*$$//' | uniq > "$OUT"
+        echo "Module list updated: $OUT"
+
+  clean-temporary-files:
+    desc: Clean up the temporary files that were created while compiling a platform
+    vars:
+      PLATFORM: "{{.PLATFORM | default .HOST}}"
+      PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
+    cmds:
+      - |
+        rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.log
+        rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg
+        rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt
+        rm -f {{.PLATFORM_ENV}}
+
+  # Individual platform build tasks
+  Linux32:
+    desc: Build Linux32 platform
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: Linux32
+
+  Linux64:
+    desc: Build Linux64 platform
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: Linux64
+
+  LinuxARM:
+    desc: Build LinuxARM platform
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: LinuxARM
+
+  Win32:
+    desc: Build Win32 platform
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: Win32
+
+  Win64:
+    desc: Build Win64 platform
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: Win64
+
+  test:
+    desc: Run compiler tests for host platform
+    preconditions:
+      - sh: "test -x {{.BUILD_DIR}}/{{.HOST}}/oberon || test -x {{.BUILD_DIR}}/{{.HOST}}/oberon.exe"
+        msg: "No built compiler in {{.BUILD_DIR}}/{{.HOST}}. Build it first (e.g. `task {{.HOST}}` or `task oberon`)."
+    cmds:
+      - echo "Running tests for host {{.HOST}}"
+      # Test the freshly built compiler (target/{{.HOST}}/oberon), not the
+      # committed bootstrap in compilers/ — the bootstrap drifts out of sync
+      # with source and fails to load freshly compiled modules (FSTools.Mount
+      # ... incompatible). The tests/ dir holds test files not shipped in the
+      # build output, so it is added to the search path. work/ is recreated
+      # because CI artifacts drop empty directories.
+      # export PWD: A2 (Unix.UnixFiles) reads its working directory from the
+      # $PWD env var, not getcwd(). go-task's shell (mvdan/sh) does not export
+      # an updated $PWD to child processes after `cd`, so without this oberon
+      # would use a stale cwd, fail to enter work/, and produce flaky results.
+      - |
+        set -eo pipefail
+        cd {{.BUILD_DIR}}/{{.HOST}}
+        export PWD="$(pwd)"
+        rm -rf work && mkdir -p work
+        OBERON=./oberon; [ -x "$OBERON" ] || OBERON=./oberon.exe
+        "$OBERON" do "
+          System.DoFile oberon.cfg ~
+          Files.AddSearchPath {{.CURRENT_DIR}}/tests ~
+          FoxTest.Compile --verbose -l=TestCompilation.Log Oberon.Compilation.Test Oberon.Compilation.AMD64TestDiff ~
+          FoxTest.Compile --verbose -l=TestExecution.Log Oberon.Execution.Test Oberon.Execution.AMD64TestDiff ~
+        "
+      - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.SymUu
+      - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.GofUu
+      - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.txt
+
+  clean:
+    desc: Remove build artifacts for one platform (PLATFORM=… or host)
+    vars:
+      PLATFORM: "{{.PLATFORM | default .HOST}}"
+    cmds:
+      - rm -rf {{.BUILD_DIR}}/{{.PLATFORM}}
+      - echo "Cleaned build artifacts for {{.PLATFORM}}"
+
+  clean-all:
+    desc: Remove all build artifacts (every platform)
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - echo "Cleaned all build artifacts"
+
+  help:
+    desc: Display help message
+    cmds:
+      - 'echo "task <platform>            — build a single platform from the list: [{{.PLATFORMS}}]"'
+      - 'echo "task build-platform PLATFORM=Linux64 — same, generic form"'
+      - echo "task platforms             — build all platforms"
+      - echo "task test                  — run compiler tests"
+      - 'echo "task clean [PLATFORM=…]     — remove build artifacts for one platform (host by default)"'
+      - echo "task clean-all             — remove build artifacts for every platform"
+      - echo "task help                  — display this help message"
+      - echo "task --list                — list all available tasks"

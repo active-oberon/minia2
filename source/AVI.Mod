@@ -1,0 +1,1393 @@
+MODULE AVI;
+
+(* Procedures to read an .avi file *)
+(* Written by Thomas Trachsel, ttrachsel@web.de, 18.9.2003 *)
+(* Extended with indexfunctionality and adaptation on Codecs by Urs Müller, October 2004 *)
+(* Cleaned by PL, March 2005 *)
+
+IMPORT
+	SYSTEM, Machine, Streams, KernelLog, Codecs;
+
+	CONST
+		Debug = FALSE;
+		DefaultReaderSize = 4096;
+		WriteError = 2907;
+
+	(* Steht jetzt einmal hier, kann man vielleicht in AVIDemux reinpacken, mal schauen *)
+	TYPE
+		(* Structure that contains the main informations of the .avi file *)
+		MainAVIHeaderDesc* = OBJECT
+		VAR
+			microSecsPerFrame*: SIGNED32;
+			maxBytesPerSec*: SIGNED32;
+			reserved1*: SIGNED32;
+			flags*: SIGNED32;
+			totalFrames*: SIGNED32;
+			initialFrames*: SIGNED32;
+			streams*: SIGNED32;
+			suggestedBufferSize*: SIGNED32;
+			width*: SIGNED32;
+			height*: SIGNED32;
+			reserved*: ARRAY 4 OF SIGNED32;
+		END MainAVIHeaderDesc;
+
+		(* Structure that contains the main Info of a stream in a .avi file *)
+		AVIStreamHeader* = OBJECT
+		VAR
+			fccType*: ARRAY 4 OF CHAR;
+			fccHandler*: ARRAY 4 OF CHAR;
+			flags*: SIGNED32;
+			priority*: SIGNED32;
+			initialFrames*: SIGNED32;
+			scale*: SIGNED32;
+			rate*: SIGNED32;
+			start*: SIGNED32;
+			length*: SIGNED32;
+			suggestedBufferSize*: SIGNED32;
+			quality*: SIGNED32;
+			sampleSize*: SIGNED32;
+			left*: SIGNED32;
+			top*: SIGNED32;
+			right*: SIGNED32;
+			bottom*: SIGNED32;
+			streamIdentifier*: ARRAY 4 OF CHAR;
+			bitMapInfo*: BitMapInfo;
+			waveFormatEx*: WAVEFormatEx;
+		END AVIStreamHeader;
+
+		(* video stream specific infos *)
+		BitMapInfo = OBJECT
+		VAR
+			size*: SIGNED32;
+			width*: SIGNED32;
+			height*: SIGNED32;
+			planes*: SIGNED32;
+			bitCount*: SIGNED32;
+			compression*: SIGNED32;
+			sizeImage*: SIGNED32;
+			xPelsPerMeter*: SIGNED32;
+			yPelsPerMeter*: SIGNED32;
+			clrUsed*: SIGNED32;
+			clrImportant*: SIGNED32;
+		END BitMapInfo;
+
+		(* audio stream specific infos *)
+		WAVEFormatEx* = OBJECT
+		VAR
+			formatTag*: SIGNED32;
+			channels*: SIGNED32;
+			samplesPerSec*: SIGNED32;
+			avgBytesPerSec*: SIGNED32;
+			blockAlign*: SIGNED32;
+			bitsPerSample*: SIGNED32;
+			cbSize*: SIGNED32;
+		END WAVEFormatEx;
+
+		(* IndexChunk infos *)
+		AVIIndexEntry* = RECORD
+			ckid*: SIGNED32;
+			flags*: SIGNED32;
+			offset*: SIGNED32;
+			length*: SIGNED32;
+			tot*: SIGNED32;
+		END;
+
+	TYPE IndexArrayPointer* = POINTER TO ARRAY OF AVIIndexEntry;
+
+	(* Stream for reading a Stream of an .avi file *)
+	TYPE AVIStream* = OBJECT(Codecs.DemuxStream)
+		VAR
+			bufAdr: ADDRESS;
+			r : Streams.Reader;
+			chunkSize*: SIZE;	(* Bytes in actual AVI Chunk *)
+			streamHeader: AVIStreamHeader;
+			stuffByte*: SIGNED32;
+			eof*: BOOLEAN;	(* End of File *)
+
+		(* Constructor *)
+		PROCEDURE & Init*( r: Streams.Reader;  streamHdr: AVIStreamHeader);
+		BEGIN
+			bufAdr := 0;
+			chunkSize := 0;
+			streamHeader := streamHdr;
+			SELF.r := r;
+			ASSERT(SELF.r # NIL);
+			stuffByte := 0;
+			eof := FALSE;
+		END Init;
+
+		(* Returns TRUE if the underlying reader supports seeking.  *)
+		PROCEDURE CanSetPos*() : BOOLEAN;
+		BEGIN
+			RETURN r.CanSetPos();
+		END CanSetPos;
+
+		(* Compare two array up to len bytes *)
+		PROCEDURE CompareCharArrays(ar1,ar2 : ARRAY OF CHAR; len: SIGNED32 ): BOOLEAN;
+		VAR
+			i: SIGNED32;
+		BEGIN
+			IF ( len > LEN( ar1 ) ) OR ( len > LEN( ar2 ) ) THEN
+				RETURN FALSE
+			END;
+
+			FOR i := 0 TO len-1 DO
+				IF ar1[i] # ar2[i] THEN
+					RETURN FALSE
+				END;
+			END;
+			RETURN TRUE
+		END CompareCharArrays;
+
+		(* Seek the next chunk of our stream in the avi file and read it *)
+		PROCEDURE  ReadNextChunk(VAR buf:  ARRAY OF CHAR);
+		VAR
+			tempBuf: ARRAY 4 OF CHAR;
+			length: SIZE;
+			len: SIGNED32;
+			done: BOOLEAN;
+		BEGIN
+			IF Debug THEN KernelLog.String("Read next Chunk"); KernelLog.Ln; END;
+			done := FALSE;
+			eof := FALSE;
+
+			(* Undocument in .avi docu; if the size of a chunk is odd, we have to skip one byte *)
+			IF stuffByte > 0 THEN
+				r.SkipBytes( 1 );
+				stuffByte := 0
+			END;
+
+			REPEAT
+				r.Bytes(tempBuf, 0, 4, length );
+				IF r.res = Streams.Ok THEN
+					r.RawInt32(len);
+					stuffByte := len MOD 2;
+					IF r.res = Streams.Ok THEN
+						IF Debug THEN
+							KernelLog.String( "AVIStream: Found Chunk : " );
+							KernelLog.Hex( ORD( tempBuf[0] ), 0 ); KernelLog.Hex( ORD( tempBuf[1] ), 0 );
+							KernelLog.Hex( ORD( tempBuf[2] ), 0 ); KernelLog.Hex( ORD( tempBuf[3] ), 0 ); KernelLog.String(" ");
+							KernelLog.Char( tempBuf[0] ); KernelLog.Char( tempBuf[1] ); KernelLog.Char( tempBuf[2] );
+							KernelLog.Char( tempBuf[3] ); KernelLog.String( "@Pos: "); KernelLog.Int( r.Pos() - 8, 0 );
+							KernelLog.String( " SkipBytes: " ); KernelLog.Int( len, 0 ); KernelLog.Ln();
+						END;
+						IF CompareCharArrays( tempBuf, streamHeader.streamIdentifier, 4 ) THEN
+							(* We found the correct chunk *)
+							IF len > 0 THEN
+								done := TRUE;
+								bufAdr := ADDRESSOF( buf[0] );
+								r.Bytes( buf, 0, len, chunkSize );
+								buf[len] := CHR( 0 ); buf[len+1] := CHR( 0 ); buf[len+2] := CHR( 0 ); buf[len+3] := CHR( 0 );
+								ASSERT( len = chunkSize );
+							END;
+						ELSE
+							r.SkipBytes( len + stuffByte )
+						END;
+					ELSE
+						eof := TRUE;
+						res := Streams.EOF;
+						KernelLog.String("ENDE");
+					END;
+				ELSE
+					eof := TRUE;
+					res := Streams.EOF;
+					KernelLog.String("ENDE");
+				END;
+			UNTIL ( done OR eof );
+		END ReadNextChunk;
+
+		(* Go to the beginnig of the next frame -> Read next chunk *)
+		PROCEDURE Resynch*(VAR buf: ARRAY OF CHAR): BOOLEAN;
+		BEGIN
+			ReadNextChunk(buf);
+			RETURN ~eof
+		END Resynch;
+
+		(* Return Pos in Avi File, relativ to the beginning of the stream data *)
+		PROCEDURE Pos*(): Streams.Position;
+		BEGIN
+			RETURN r.Pos()
+		END Pos;
+
+		(* Set the Position of the AVIReader. If frame flag is set, position is interpreted as a framenumber *)
+		PROCEDURE SetAVIPos*(pos: SIGNED32;  VAR retPos: SIGNED32);
+		BEGIN
+			IF Debug THEN KernelLog.String("DemuxStream.SetAVIPos"); KernelLog.Ln; END;
+			r.SetPos(pos);
+			stuffByte := 0;
+			retPos := r.Pos()(SIGNED32);
+			Reset;
+		END SetAVIPos;
+
+		PROCEDURE Bytes*(VAR x: ARRAY OF CHAR; ofs, size: SIZE; VAR len: SIZE);
+		VAR
+			min: SIGNED32; res: INTEGER;
+		BEGIN
+			IF Debug THEN KernelLog.String("Bytes"); KernelLog.Ln; END;
+			demultiplexer.GetData(streamNr, x, ofs, size, min, len, res);
+		END Bytes;
+
+		(* Set Byte Position *)
+		PROCEDURE SetPos*(pos : Streams.Position);
+		VAR seekType, itemSize: SIGNED32; res : INTEGER;
+		BEGIN
+			IF Debug THEN KernelLog.String("DemuxStream.SetPos"); KernelLog.Ln; END;
+			seekType := Codecs.SeekByte;
+			demultiplexer.SetStreamPos(streamNr, seekType, pos(SIGNED32), itemSize, res);
+			Reset;
+		END SetPos;
+
+	END AVIStream;
+
+	(* The .avi File Demultiplexer *)
+	AVIDemux* = OBJECT(Codecs.AVDemultiplexer)
+	VAR
+		r : Streams.Reader;
+		filename* : ARRAY 256 OF CHAR;
+
+		(* We need just these 3 Headers *)
+		aviHeader: MainAVIHeaderDesc;
+		audioStreamHeader: AVIStreamHeader;
+		videoStreamHeader: AVIStreamHeader;
+		riffLength: SIGNED32;
+
+		movieBeginPos: Streams.Position;
+		indexStart: Streams.Position;
+		videoFrames: SIGNED32;
+		audioChunks: SIGNED32;
+		videoIndex: IndexArrayPointer;
+		audioIndex: IndexArrayPointer;
+		audioBytes: SIGNED32;
+
+		videoBufferIndex: SIGNED32;
+
+		audioChunkSize: SIGNED32;
+
+		audioStream: AVIStream;
+		videoStream: AVIStream;
+		videoFramePos: SIGNED32;
+		audioFramePos: SIGNED32;
+
+		PROCEDURE Open*(in : Streams.Reader; VAR res : INTEGER);
+		BEGIN
+			r := in;
+			res := Codecs.ResFailed;
+
+			IF in IS Codecs.FileInputStream	THEN
+				in(Codecs.FileInputStream).f.GetName(filename);
+				IF ReadHeader() THEN res := Codecs.ResOk END
+			ELSE RETURN END;													(* bad bad bad *)
+
+		END Open;
+
+		PROCEDURE GetAVIHeader*(): MainAVIHeaderDesc;
+		BEGIN
+			RETURN aviHeader
+		END  GetAVIHeader;
+
+		(* Compare two arrays up to len bytes *)
+		PROCEDURE CompareCharArrays( ar1,ar2 : ARRAY OF CHAR; len: SIGNED32 ): BOOLEAN;
+		VAR
+			i: SIGNED32;
+		BEGIN
+			IF ( len > LEN( ar1 ) ) OR ( len > LEN( ar2 ) ) THEN
+				RETURN FALSE
+			END;
+
+			FOR i := 0 TO len-1 DO
+				IF ar1[i] # ar2[i] THEN
+					RETURN FALSE
+				END;
+			END;
+			RETURN TRUE
+		END CompareCharArrays;
+
+		(* Read .avi FIle Header *)
+		PROCEDURE ReadHeader*(): BOOLEAN;
+		VAR
+			buf : ARRAY 8 OF CHAR;
+			len: SIZE;
+			done: BOOLEAN;
+			headerLength: SIGNED32;
+			headerBeginPos: Streams.Position;
+
+			tempHeader: AVIStreamHeader;
+			streamNumber: SIGNED8;
+
+		BEGIN
+			done := FALSE;
+			streamNumber := 0;
+			riffLength := 0;
+			aviHeader := NIL;
+			audioStreamHeader := NIL;
+			videoStreamHeader := NIL;
+
+			ASSERT(r # NIL);
+
+			(* Check, if we have a valid avi file *)
+			r.Bytes( buf,0,4,len );
+			IF CompareCharArrays( buf, "RIFF" ,4 ) # TRUE THEN
+				KernelLog.String( "Not a valid .avi File!" ); KernelLog.Ln;
+				RETURN FALSE
+			END;
+			r.RawInt32(riffLength);
+
+			r.Bytes( buf,0,4, len );
+			IF CompareCharArrays( buf, "AVI ",4 ) # TRUE THEN
+				KernelLog.String( "Only .avi Files that contain a video stream are allowed" ); KernelLog.Ln();
+				RETURN FALSE
+			END;
+
+			(* Read AVI Headers *)
+			REPEAT
+				r.Bytes( buf,0,4, len );
+				IF CompareCharArrays( buf, "LIST",4 ) THEN
+					(* We found an additional Header *)
+					(* Store Infos about header *)
+					r.RawInt32(headerLength);
+
+					headerLength := headerLength + headerLength MOD 2;
+					headerBeginPos := r.Pos();
+					r.Bytes( buf,0,4, len );
+
+					(* Main AVI Header *)
+					IF CompareCharArrays(buf, "hdrl",4) THEN
+						r.Bytes( buf,0,4, len );
+						IF CompareCharArrays(buf, "avih",4) THEN
+								aviHeader := ReadMainAVIHeader()
+						ELSE
+							SkipHeader()
+						END;
+					(* Stream Header *)
+					ELSIF CompareCharArrays( buf, "strl",4 ) THEN
+						r.Bytes( buf,0,4, len );
+						IF CompareCharArrays( buf, "strh",4 ) THEN
+							tempHeader := ReadAVIStreamHeader();
+
+							IF CompareCharArrays(tempHeader.fccType, "vids",4) THEN
+								r.SkipBytes(4); (* Skip "strf" *)
+
+								IF videoStreamHeader = NIL THEN
+									videoStreamHeader := tempHeader;
+									videoStreamHeader.streamIdentifier[0] := "0";
+									videoStreamHeader.streamIdentifier[1] := CHR( ORD( '0' ) + streamNumber );
+									videoStreamHeader.streamIdentifier[2] := "d";
+									videoStreamHeader.streamIdentifier[3] := "c";
+									INC(streamNumber)
+								END;
+								tempHeader := NIL;
+
+								IF videoStreamHeader.bitMapInfo = NIL THEN
+									videoStreamHeader.bitMapInfo := ReadBitMapInfo();
+									videoStreamHeader.waveFormatEx := NIL
+								ELSE
+									SkipHeader()
+								END;
+							ELSIF CompareCharArrays(tempHeader.fccType, "auds",4) THEN
+								r.SkipBytes(4);
+
+								IF audioStreamHeader = NIL THEN
+									audioStreamHeader := tempHeader;
+									audioStreamHeader.streamIdentifier[0] := "0";
+									audioStreamHeader.streamIdentifier[1] := CHR( ORD('0') + streamNumber );
+									audioStreamHeader.streamIdentifier[2] := "w";
+									audioStreamHeader.streamIdentifier[3] := "b";
+									INC(streamNumber)
+								END;
+								tempHeader := NIL;
+
+								IF audioStreamHeader.waveFormatEx = NIL THEN
+									audioStreamHeader.waveFormatEx := ReadWaveFormatEx();
+									audioStreamHeader.bitMapInfo := NIL
+								ELSE
+									SkipHeader()
+								END;
+							ELSE
+								IF Debug THEN
+									KernelLog.String( "AVIDemux: Unknown AviStream found; " ); KernelLog.String(tempHeader.fccType);
+									KernelLog.Ln()
+								END;
+							END;
+						END;
+					ELSIF CompareCharArrays(buf, "movi",4) THEN
+						(* movie data begin, including movi Tag *)
+						movieBeginPos := r.Pos()-4;
+
+						(* this could be improved... *)
+						r.SetPos(headerLength+movieBeginPos);			(* headerLength); *)
+
+						r.Bytes(buf,0,4,len);
+
+						IF CompareCharArrays(buf, "idx1",4) THEN
+							(* There is an index *)
+
+							(* Start of Index including idx1 Tag *)
+							indexStart := r.Pos()-4;
+							ReadIndex();
+							IF Debug THEN
+								KernelLog.String("AVIDemux: Start of movie stream found " ); KernelLog.Ln()
+							END;
+						ELSE
+							videoIndex := NIL;
+							audioIndex := NIL;
+						END;
+						r.SetPos(movieBeginPos+4);
+
+						done := TRUE;
+					ELSE
+						IF Debug THEN
+							KernelLog.String("AVIDemux: Unknown StreamHeader found: " ); KernelLog.String(buf); KernelLog.Ln()
+						END;
+						r.SkipBytes( headerLength - ( r.Pos() - headerBeginPos ) )
+					END;
+				ELSE
+					(* Unknown Header -> Skip *)
+					IF Debug THEN
+						KernelLog.String("AVIDemux: Unknown Header found: " ); KernelLog.Buffer(buf,0,4); KernelLog.Ln()
+					END;
+					SkipHeader();
+				END;
+			UNTIL done;
+
+			IF Debug THEN
+				DumpHeaders();
+			END;
+
+			RETURN TRUE
+		END ReadHeader;
+
+		(* Noch ueberlegen: BOOLEAN Rueckgabe, wenn kein Index dann False *)
+		PROCEDURE ReadIndex*;
+		VAR
+			buf : ARRAY 8 OF CHAR;
+			buf2 : ARRAY 8 OF CHAR;
+			indexLength: SIGNED32;
+			nidx: SIGNED32;
+			idxType: SIGNED16;
+			i: SIGNED32;
+			pos: SIGNED32;
+			length: SIGNED32;
+			len: SIZE;
+			temp: SIGNED32;
+			nai: SIGNED32;
+			nvi: SIGNED32;
+			tot: SIGNED32;
+			ioff: SIGNED32;
+
+		BEGIN
+			r.RawInt32(indexLength);
+
+			nidx := indexLength DIV 16;
+			idxType := 0;
+			i := 0;
+			LOOP
+				r.Bytes(buf, 0, 4, len);
+				IF CompareCharArrays(buf, videoStreamHeader.streamIdentifier, 3) THEN
+					i := i+1;
+					(* Not shure, wether this is necessary - but everything works fine with it *)
+					indexStart := r.Pos()-4;
+					EXIT;
+				END;
+				IF i >= nidx THEN
+					KernelLog.String("No Index found"); KernelLog.Ln();
+					EXIT;
+				END;
+			END;
+
+			r.SkipBytes(4);
+			r.RawInt32(pos);
+			r.RawInt32(length);
+			r.SetPos(pos);
+
+			(* Index from start of File*)
+			IF CompareCharArrays(buf2, buf, 4) THEN
+				r.RawInt32(temp);
+
+				IF (temp = length) THEN
+					idxType := 1;
+				END;
+			ELSE
+				r.SetPos(pos + movieBeginPos);
+
+				r.Bytes(buf2, 0, 4, len);
+				IF CompareCharArrays(buf2, buf, 4) THEN
+					r.RawInt32(temp);
+
+					IF (temp = length) THEN
+						idxType := 2;
+					END;
+				END;
+			END;
+
+			(* now go on according to indexType *)
+			IF idxType = 0 THEN
+				KernelLog.String("File without index: Not supported yet");
+				(* And trap here ... *)
+			END;
+
+			(* The 0 case: no index. It is possible to generate an index b y traversing the whole file *)
+			(* For now we simply declare the file as not seekable *)
+
+			IF idxType # 0 THEN
+				nai := 0;
+				nvi := 0;
+
+				r.SetPos(indexStart);
+
+				i := 0;
+				(* Count, how many entries there are (the number would also be in the header, *)
+				(* but if there is no index, you have to do this anyway) *)
+				REPEAT
+					r.Bytes(buf, 0, 4, len);
+					IF CompareCharArrays(buf, videoStreamHeader.streamIdentifier, 3) THEN
+						nvi := nvi+1;
+					ELSE
+						IF audioStreamHeader # NIL THEN
+							IF CompareCharArrays(buf, audioStreamHeader.streamIdentifier, 4) THEN
+								nai := nai+1;
+							END;
+						END;
+					END;
+					r.SkipBytes(12);
+					i := i+1;
+				UNTIL (i = nidx-1);
+
+				videoFrames := nvi;
+				audioChunks := nai;
+				NEW(videoIndex, nvi);
+
+				(* Vielleicht haben wir ja nur Bilder... *)
+				IF (audioChunks > 0) THEN
+					NEW(audioIndex, nai);
+				END;
+
+				(* So, und jetzt die Arrays fuellen *)
+				nvi := 0;
+				nai := 0;
+				tot := 0;
+				r.SetPos(indexStart);
+
+				IF (idxType = 1) THEN
+					ioff := 8;
+				ELSE
+					ioff := movieBeginPos(SIGNED32);
+				END;
+
+				i := 0;
+				REPEAT
+					r.Bytes(buf, 0, 4, len);
+					IF CompareCharArrays(buf, videoStreamHeader.streamIdentifier, 3) THEN
+						r.RawInt32(videoIndex[nvi].flags);
+						r.RawInt32(videoIndex[nvi].offset);
+						videoIndex[nvi].offset := videoIndex[nvi].offset + ioff;
+						r.RawInt32(videoIndex[nvi].length);
+						nvi := nvi+1;
+					ELSE
+						IF CompareCharArrays(buf, audioStreamHeader.streamIdentifier, 4) THEN
+							r.SkipBytes(4);
+							r.RawInt32(audioIndex[nai].offset);
+							audioIndex[nai].offset := audioIndex[nai].offset + ioff;
+							r.RawInt32(audioIndex[nai].length);
+							audioIndex[nai].tot := tot;
+							tot := tot + audioIndex[nai].length;
+							nai := nai+1;
+						END;
+					END;
+					i := i+1;
+				UNTIL (i = nidx-1);
+				audioBytes := tot;
+			END;
+		END ReadIndex;
+
+		(* Skip chunk *)
+		PROCEDURE SkipHeader*;
+		VAR
+			length: SIGNED32;
+		BEGIN
+			r.RawInt32(length);
+			r.SkipBytes( length + length MOD 2)
+		END SkipHeader;
+
+		(* Read Main AVI Header *)
+		PROCEDURE ReadMainAVIHeader(): MainAVIHeaderDesc;
+		VAR
+			aviHeader: MainAVIHeaderDesc;
+			headerLength: SIGNED32;
+			startPos: Streams.Position;
+		BEGIN
+			NEW( aviHeader );
+
+			r.RawInt32(headerLength);
+			startPos := r.Pos();
+
+			r.RawInt32( aviHeader.microSecsPerFrame );
+			r.RawInt32( aviHeader.maxBytesPerSec );
+			r.RawInt32( aviHeader.reserved1 );
+			r.RawInt32( aviHeader.flags );
+			r.RawInt32( aviHeader.totalFrames );
+			r.RawInt32( aviHeader.initialFrames );
+			r.RawInt32( aviHeader.streams );
+			r.RawInt32( aviHeader.suggestedBufferSize );
+			r.RawInt32( aviHeader.width );
+			r.RawInt32( aviHeader.height );
+			r.RawInt32( aviHeader.reserved[0] );
+			r.RawInt32( aviHeader.reserved[1] );
+			r.RawInt32( aviHeader.reserved[2] );
+			r.RawInt32( aviHeader.reserved[3] );
+
+			(* Skip Bytes if we have still available *)
+			IF r.Pos() - startPos < headerLength THEN
+				r.SkipBytes( headerLength - ( r.Pos() - startPos ) )
+			END;
+
+			RETURN aviHeader;
+		END ReadMainAVIHeader;
+
+		(* Read Header of this avi Stream *)
+		PROCEDURE ReadAVIStreamHeader(): AVIStreamHeader;
+		VAR
+			header: AVIStreamHeader;
+			headerLength: SIGNED32;
+			startPos: Streams.Position;
+			len: SIZE;
+			temp: SIGNED16;
+		BEGIN
+			NEW(header);
+
+			r.RawInt32(headerLength);
+			startPos := r.Pos();
+
+			r.Bytes( header.fccType,0,4, len );
+			r.Bytes( header.fccHandler,0,4, len );
+			r.RawInt32( header.flags );
+			r.RawInt32( header.priority );
+			r.RawInt32( header.initialFrames );
+			r.RawInt32( header.scale );
+			r.RawInt32( header.rate );
+			r.RawInt32( header.start );
+			r.RawInt32( header.length );
+			r.RawInt32( header.suggestedBufferSize );
+			r.RawInt32( header.quality );
+			r.RawInt32( header.sampleSize );
+			r.RawInt16( temp ); header.left := temp;
+			r.RawInt16( temp ); header.top := temp;
+			r.RawInt16( temp ); header.right := temp;
+			r.RawInt16( temp ); header.bottom := temp;
+
+			(* Skio Bytes if we have still available *)
+			IF r.Pos() - startPos < headerLength THEN
+				r.SkipBytes( headerLength - ( r.Pos() - startPos ) )
+			END;
+
+			RETURN header
+		END ReadAVIStreamHeader;
+
+		(* Read BitMapInfo Structure *)
+		PROCEDURE ReadBitMapInfo(): BitMapInfo;
+		VAR
+			header: BitMapInfo;
+			headerLength: SIGNED32;
+			startPos: Streams.Position;
+			temp: SIGNED16;
+		BEGIN
+			NEW(header);
+
+			r.RawInt32(headerLength);
+			startPos := r.Pos();
+
+			r.RawInt32( header.size );
+			r.RawInt32( header.width );
+			r.RawInt32( header.height );
+			r.RawInt16( temp ); header.planes := temp;
+			r.RawInt16( temp ); header.bitCount := temp;
+			r.RawInt32( header.compression );
+			r.RawInt32( header.sizeImage );
+			r.RawInt32( header.xPelsPerMeter );
+			r.RawInt32( header.yPelsPerMeter );
+			r.RawInt32( header.clrUsed );
+			r.RawInt32( header.clrImportant );
+
+			IF r.Pos() - startPos < headerLength THEN
+				r.SkipBytes( headerLength - ( r.Pos() - startPos ) )
+			END;
+
+			RETURN header
+		END  ReadBitMapInfo;
+
+		(* Read WaveFormatEX Structure *)
+		PROCEDURE ReadWaveFormatEx(): WAVEFormatEx;
+		VAR
+			header: WAVEFormatEx;
+			headerLength: SIGNED32;
+			startPos: Streams.Position;
+			temp: SIGNED16;
+		BEGIN
+			NEW(header);
+
+			r.RawInt32(headerLength);
+			startPos := r.Pos();
+
+			r.RawInt16( temp ); header.formatTag := temp;
+			r.RawInt16( temp ); header.channels := temp;
+			r.RawInt32( header.samplesPerSec );
+			r.RawInt32( header.avgBytesPerSec );
+			r.RawInt16( temp ); header.blockAlign := temp;
+			r.RawInt16( temp ); header.bitsPerSample := temp;
+			r.RawInt16( temp ); header.cbSize := temp;
+
+			IF r.Pos() - startPos < headerLength THEN
+				r.SkipBytes( headerLength - ( r.Pos() - startPos ) )
+			END;
+
+			RETURN header
+		END ReadWaveFormatEx;
+
+		(* Write Avi Headers to KernelLog *)
+		PROCEDURE DumpHeaders*;
+		BEGIN
+			KernelLog.String("AviDemux: Dump of Avi Headers: "); KernelLog.Ln();
+
+			IF aviHeader # NIL THEN
+				KernelLog.String( "aviHeader.microSecsPerFrame =  " ); KernelLog.Int( aviHeader.microSecsPerFrame, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.maxBytesPerSec =  " ); KernelLog.Int( aviHeader.maxBytesPerSec, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.reserved1 =  " ); KernelLog.Int( aviHeader.reserved1, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.flags =  " ); KernelLog.Int( aviHeader.flags, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.totalFrames =  " ); KernelLog.Int( aviHeader.totalFrames, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.initialFrames =  " ); KernelLog.Int( aviHeader.initialFrames, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.streams =  " ); KernelLog.Int( aviHeader.streams, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.suggestedBufferSize =  " ); KernelLog.Int( aviHeader.suggestedBufferSize, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.width =  " ); KernelLog.Int( aviHeader.width, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.height =  " ); KernelLog.Int( aviHeader.height, 0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.reserved[0] =  " ); KernelLog.Int( aviHeader.reserved[0],0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.reserved[1] =  " ); KernelLog.Int( aviHeader.reserved[1],0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.reserved[2] =  " ); KernelLog.Int( aviHeader.reserved[2],0 ); KernelLog.Ln();
+				KernelLog.String( "aviHeader.reserved[3] =  " ); KernelLog.Int( aviHeader.reserved[3],0 ); KernelLog.Ln()
+			ELSE
+				KernelLog.String("AVIDemux.aviHeader = NIL"); KernelLog.Ln()
+			END;
+
+			IF audioStreamHeader # NIL THEN
+				KernelLog.String( "audioStreamHeader.fccType =  " ); KernelLog.String( audioStreamHeader.fccType ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.fccHandler =  " ); KernelLog.String( audioStreamHeader.fccHandler );
+					KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.flags =  " ); KernelLog.Int( audioStreamHeader.flags, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.priority =  " ); KernelLog.Int( audioStreamHeader.priority, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.initialFrames =  " ); KernelLog.Int( audioStreamHeader.initialFrames, 0 );
+					KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.scale =  " ); KernelLog.Int( audioStreamHeader.scale, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.rate =  " ); KernelLog.Int( audioStreamHeader.rate, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.start =  " ); KernelLog.Int( audioStreamHeader.start, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.length =  " ); KernelLog.Int( audioStreamHeader.length, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.suggestedBufferSize =  " );
+					KernelLog.Int( audioStreamHeader.suggestedBufferSize, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.quality =  " ); KernelLog.Int( audioStreamHeader.quality, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.sampleSize =  " ); KernelLog.Int( audioStreamHeader.sampleSize, 0 );
+					KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.left =  " ); KernelLog.Int( audioStreamHeader.left, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.top =  " ); KernelLog.Int( audioStreamHeader.top, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.right =  " ); KernelLog.Int( audioStreamHeader.right, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.bottom =  " ); KernelLog.Int( audioStreamHeader.bottom, 0 ); KernelLog.Ln();
+				KernelLog.String( "audioStreamHeader.streamIdentifier =  " );
+				KernelLog.Buffer( audioStreamHeader.streamIdentifier, 0, 4 ); KernelLog.Ln()
+			ELSE
+				KernelLog.String("AVIDemux.audioStreamHeader = NIL"); KernelLog.Ln()
+			END;
+
+			IF videoStreamHeader # NIL THEN
+				KernelLog.String( "videoStreamHeader.fccType =  " ); KernelLog.String( videoStreamHeader.fccType ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.fccHandler =  " ); KernelLog.String( videoStreamHeader.fccHandler );
+					KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.flags =  " ); KernelLog.Int( videoStreamHeader.flags, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.priority =  " ); KernelLog.Int( videoStreamHeader.priority, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.initialFrames =  " ); KernelLog.Int( videoStreamHeader.initialFrames, 0 );
+					KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.scale =  " ); KernelLog.Int( videoStreamHeader.scale, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.rate =  " ); KernelLog.Int( videoStreamHeader.rate, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.start =  " ); KernelLog.Int( videoStreamHeader.start, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.length =  " ); KernelLog.Int( videoStreamHeader.length, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.suggestedBufferSize =  " );
+					KernelLog.Int( videoStreamHeader.suggestedBufferSize, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.quality =  " ); KernelLog.Int( videoStreamHeader.quality, 0 ); KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.sampleSize =  " ); KernelLog.Int( videoStreamHeader.sampleSize, 0 );
+					KernelLog.Ln();
+				KernelLog.String( "videoStreamHeader.streamIdentifier =  " );
+				KernelLog.Buffer( videoStreamHeader.streamIdentifier, 0, 4 ); KernelLog.Ln()
+			ELSE
+				KernelLog.String("AVIDemux.videoStreamHeader = NIL"); KernelLog.Ln()
+			END;
+
+			IF videoStreamHeader.bitMapInfo # NIL THEN
+				KernelLog.String( "bitMapInfo.size =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.size ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.width =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.width ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.height =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.height ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.planes =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.planes ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.bitCount =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.bitCount ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.compression =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.compression ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.sizeImage =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.sizeImage ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.xPelsPerMeter =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.xPelsPerMeter ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.yelsPerMeter =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.yPelsPerMeter ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.clrUsed =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.clrUsed ,0 ); KernelLog.Ln();
+				KernelLog.String( "bitMapInfo.clrImportant =  " ); KernelLog.Int( videoStreamHeader.bitMapInfo.clrImportant ,0 ); KernelLog.Ln()
+			ELSE
+				KernelLog.String("AVIDemux.bitMapInfo = NIL"); KernelLog.Ln()
+			END;
+
+			IF (audioStreamHeader # NIL) & (audioStreamHeader.waveFormatEx # NIL) THEN
+				KernelLog.String( "waveFormat.formatTag =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.formatTag ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.channel =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.channels ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.samplesPerSec =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.samplesPerSec ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.avgBytesPerSec =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.avgBytesPerSec ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.blockAlign =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.blockAlign ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.bitsPerSample =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.bitsPerSample ,0 ); KernelLog.Ln();
+				KernelLog.String( "waveFormat.cbSize =  " ); KernelLog.Int( audioStreamHeader.waveFormatEx.cbSize ,0 ); KernelLog.Ln()
+			ELSE
+				KernelLog.String("AVIDemux.waveFormat = NIL"); KernelLog.Ln()
+			END;
+
+			KernelLog.Ln()
+		END DumpHeaders;
+
+		(* Write AVI video index to Kernel Log *)
+		PROCEDURE DumpVideoIndex*;
+		VAR i : SIZE;
+		BEGIN
+			KernelLog.String("AviDemux: Dump of Video-Index: "); KernelLog.Ln();
+			IF videoIndex = NIL THEN KernelLog.String("no index in AVI"); KernelLog.Ln; RETURN END;
+
+			FOR i := 0 TO LEN(videoIndex)-1 DO
+				KernelLog.String("Index: "); KernelLog.Int(i, 0);
+				KernelLog.String(" ckid= "); KernelLog.Int(videoIndex[i].ckid, 0);
+				KernelLog.String(" flags= "); KernelLog.Int(videoIndex[i].flags, 0);
+				KernelLog.String(" offset= "); KernelLog.Int(videoIndex[i].offset, 0);
+				KernelLog.String(" length= "); KernelLog.Int(videoIndex[i].length, 0);
+				KernelLog.String(" tot= "); KernelLog.Int(videoIndex[i].tot, 0);
+				IF (i > 0) THEN KernelLog.String(" deltaOFF= "); KernelLog.Int(videoIndex[i].offset - videoIndex[i-1].offset, 0); END;
+				KernelLog.Ln;
+			END
+
+		END DumpVideoIndex;
+
+		(* Write AVI audio index to Kernel Log *)
+		PROCEDURE DumpAudioIndex*;
+		VAR i : SIGNED32;
+		BEGIN
+			KernelLog.String("AviDemux: Dump of Audio-Index: "); KernelLog.Ln();
+			IF audioIndex = NIL THEN KernelLog.String("no index in AVI"); KernelLog.Ln; RETURN END;
+
+			FOR i := 0 TO INTEGER(LEN(audioIndex))-1 DO
+				KernelLog.String("Index: "); KernelLog.Int(i, 0);
+				KernelLog.String(" ckid= "); KernelLog.Int(audioIndex[i].ckid, 0);
+				KernelLog.String(" flags= "); KernelLog.Int(audioIndex[i].flags, 0);
+				KernelLog.String(" offset= "); KernelLog.Int(audioIndex[i].offset, 0);
+				KernelLog.String(" length= "); KernelLog.Int(audioIndex[i].length, 0);
+				KernelLog.String(" tot= "); KernelLog.Int(audioIndex[i].tot, 0);
+				IF (i > 0) THEN KernelLog.String(" deltaOFF= "); KernelLog.Int(audioIndex[i].offset - audioIndex[i-1].offset, 0); END;
+				KernelLog.Ln;
+			END
+
+		END DumpAudioIndex;
+
+		(* Return AudioStreamHeader *)
+		PROCEDURE GetAudioStreamHeader*(): AVIStreamHeader;
+		BEGIN
+			RETURN audioStreamHeader
+		END GetAudioStreamHeader;
+
+		(* Return VideoStreamHeader *)
+		PROCEDURE GetVideoStreamHeader*():AVIStreamHeader;
+		BEGIN
+			RETURN videoStreamHeader
+		END GetVideoStreamHeader;
+
+		(* Muss noch generischer werden *)
+		PROCEDURE GetStream*(streamNr: SIGNED32): Codecs.DemuxStream;
+		VAR
+			(* reader : AVIReader; *)
+			(* reader: Codecs.FileInputStream; *)
+			reader : Streams.Reader;
+			i: SIGNED32;
+
+			streamInfo : Codecs.AVStreamInfo;
+			tag : ARRAY 4 OF CHAR;
+
+		BEGIN
+
+			reader := Codecs.OpenInputStream(filename);				(* should be only one reader ideally... *)
+			reader.SetPos(r.Pos());
+
+			IF streamNr = 0 THEN
+				NEW(videoStream, reader, videoStreamHeader);
+				videoFramePos := 0;
+				(* Add streamInfo to Stream *)
+				streamInfo.streamType := Codecs.STVideo;
+				FOR i := 0 TO 3 DO streamInfo.contentType[i] := videoStreamHeader.fccHandler[i] END;
+				IF videoIndex = NIL THEN streamInfo.seekability := {};
+				ELSE streamInfo.seekability := {3,4}; END;
+				streamInfo.length := videoFrames;
+				streamInfo.frames := videoFrames;
+				streamInfo.rate := videoStreamHeader.rate;
+
+				videoStream.streamInfo := streamInfo;
+				RETURN videoStream;
+			ELSE
+				NEW(audioStream, reader, audioStreamHeader);
+				audioFramePos := 0;
+				(* Add streamInfo to Stream *)
+				streamInfo.streamType := Codecs.STAudio;
+				IF (audioStreamHeader.waveFormatEx # NIL) THEN
+					CASE audioStreamHeader.waveFormatEx.formatTag OF
+						1 :	COPY("PCM", tag);
+					|	85:	COPY("MP3", tag);
+					ELSE
+					END;
+					FOR i := 0 TO 3 DO streamInfo.contentType[i] := tag[i]; END;
+				END;
+				IF audioIndex = NIL THEN streamInfo.seekability := {};
+				ELSE streamInfo.seekability := {1,2}; END;
+				streamInfo.length := audioStreamHeader.length*GetSampleSize();
+				streamInfo.frames := audioChunks;
+				streamInfo.rate := audioStreamHeader.rate;
+
+				audioStream.streamInfo := streamInfo;
+				RETURN audioStream;
+			END;
+		END GetStream;
+
+		PROCEDURE GetMilliSecondsPerFrame*(): SIGNED32;
+		BEGIN
+			RETURN aviHeader.microSecsPerFrame DIV 1000;
+		END GetMilliSecondsPerFrame;
+
+		PROCEDURE GetNofChannels*(): SIGNED32;
+		BEGIN
+			RETURN audioStreamHeader.waveFormatEx.channels;
+		END GetNofChannels;
+
+		PROCEDURE GetSamplesPerSecond*(): SIGNED32;
+		BEGIN
+			RETURN audioStreamHeader.waveFormatEx.samplesPerSec;
+		END GetSamplesPerSecond;
+
+		PROCEDURE GetBitsPerSample*(): SIGNED32;
+		BEGIN
+			RETURN audioStreamHeader.waveFormatEx.bitsPerSample;
+		END GetBitsPerSample;
+
+		PROCEDURE GetVideoIndex*(): IndexArrayPointer;
+		BEGIN
+			RETURN videoIndex;
+		END GetVideoIndex;
+
+		PROCEDURE GetAudioIndex*(): IndexArrayPointer;
+		BEGIN
+			RETURN audioIndex;
+		END GetAudioIndex;
+
+		PROCEDURE GetAudioChunks*(): SIGNED32;
+		BEGIN
+			RETURN audioChunks;
+		END GetAudioChunks;
+
+		PROCEDURE GetAudioBytes*(): SIGNED32;
+		BEGIN
+			RETURN audioBytes;
+		END GetAudioBytes;
+
+		PROCEDURE GetVideoFrames*(): SIGNED32;
+		BEGIN
+			RETURN videoFrames;
+		END GetVideoFrames;
+
+		PROCEDURE GetNumberOfStreams*(): SIGNED32;
+		BEGIN
+			RETURN aviHeader.streams;
+		END GetNumberOfStreams;
+
+		(* Could be optimized, as we assume videostream beeing at index 0 and that there is only one *)
+		PROCEDURE GetStreamInfo*(streamNr: SIGNED32): Codecs.AVStreamInfo;
+		VAR streamInfo : Codecs.AVStreamInfo;
+			i: SIGNED16;
+			tag : ARRAY 4 OF CHAR;
+		BEGIN
+
+			IF streamNr = 0 THEN							(* Video *)
+				streamInfo.streamType := Codecs.STVideo;
+				FOR i := 0 TO 3 DO
+					streamInfo.contentType[i] := videoStreamHeader.fccHandler[i];
+				END;
+
+				IF videoIndex = NIL THEN
+					streamInfo.seekability := {};
+				ELSE
+					streamInfo.seekability := {3,4};
+				END;
+				streamInfo.length := videoFrames;
+				streamInfo.frames := videoFrames;
+				streamInfo.rate := videoStreamHeader.rate;
+			ELSE											(* Audio *)
+				streamInfo.streamType := Codecs.STAudio;
+
+				IF (audioStreamHeader.waveFormatEx # NIL) THEN
+					CASE audioStreamHeader.waveFormatEx.formatTag OF
+						1 :	COPY("PCM", tag);
+					|	85:	COPY("MP3", tag);
+					ELSE
+					END;
+					FOR i := 0 TO 3 DO
+						streamInfo.contentType[i] := tag[i];
+					END;
+				END;
+
+				IF audioIndex = NIL THEN
+					streamInfo.seekability := {};
+				ELSE
+					streamInfo.seekability := {1,2};
+				END;
+				streamInfo.length := audioStreamHeader.length*GetSampleSize();
+				streamInfo.frames := audioChunks;
+				streamInfo.rate := audioStreamHeader.rate;
+			END;
+
+			RETURN streamInfo
+		END GetStreamInfo;
+
+		PROCEDURE GetStreamType*(streamNr : SIGNED32): SIGNED32;
+		VAR type : SIGNED32;
+		BEGIN
+			IF streamNr = 0 THEN type :=  Codecs.STVideo;
+			ELSIF streamNr = 1 THEN type := Codecs.STAudio;
+			ELSE type := Codecs.STUnknown;
+			END;
+			RETURN type
+		END GetStreamType;
+
+		(* Returns Information, which can be read out from file and which is useful/needed *)
+		PROCEDURE GetInfo*(VAR vl, vf, vr, mspf, al, af, ar : SIGNED32);
+		BEGIN
+			vl := videoFrames;
+			vf := videoFrames;
+			vr := videoStreamHeader.rate;
+			mspf := aviHeader.microSecsPerFrame;
+			IF audioStreamHeader # NIL THEN
+				al := audioStreamHeader.length*GetSampleSize();
+				af := audioChunks;
+				ar := audioStreamHeader.rate;
+			END;
+
+		END GetInfo;
+
+		PROCEDURE GetData*(streamNr: SIGNED32;  VAR buf:  ARRAY OF CHAR; ofs, size, min: SIZE; VAR len: SIZE; VAR res: INTEGER);
+		VAR
+			rres: BOOLEAN;
+		BEGIN
+			IF streamNr = 0 THEN
+				IF videoIndex # NIL THEN
+					IF videoFramePos < videoFrames THEN
+						len := videoIndex[videoFramePos].length;
+						IF (len > (size-4)) THEN
+							len := len+4;
+							res := Codecs.ResFailed;
+							RETURN;
+						END;
+						rres := videoStream.Resynch(buf);
+						INC(videoFramePos);
+						IF rres THEN
+							videoStream.res := Streams.Ok;
+							res := Codecs.ResOk;
+						ELSE
+							res := Codecs.ResFailed;
+							videoStream.res := Streams.EOF;
+						END
+					ELSE
+						res := Codecs.ResFailed;
+						videoStream.res := Streams.EOF;
+						len := 0;
+					END;
+				END;
+			ELSE
+				IF audioIndex # NIL THEN
+					IF audioFramePos < audioChunks THEN
+						len := audioIndex[audioFramePos].length;
+						IF (LEN(buf) < len+4) THEN
+							len := len+4;
+							res := Codecs.ResFailed;
+							audioStream.res := Streams.EOF;
+							RETURN;
+						END;
+						len := audioIndex[audioFramePos].length;
+						rres := audioStream.Resynch(buf);
+						INC(audioFramePos);
+						IF rres THEN
+							audioStream.res := Streams.Ok;
+							res := Codecs.ResOk;
+						ELSE
+							(* res := Codecs.ResFailed; *)
+							audioStream.res := Streams.EOF;
+						END
+					ELSE
+						res := Codecs.ResFailed;
+						audioStream.res := Streams.EOF;
+						len := 0;
+					END;
+				END;
+			END;
+		END GetData;
+
+		PROCEDURE SetStreamPos*(streamNr: SIGNED32; seekType: SIGNED32; pos: SIGNED32; VAR itemSize: SIGNED32; VAR res: INTEGER);
+		(* PROCEDURE SetStreamPos*(streamNr, pos : SIGNED32; VAR res: INTEGER); *)
+		VAR
+			n0, n1, n, spos: SIGNED32;
+			(* seekType, itemSize : SIGNED32; *)
+		BEGIN
+			IF Debug THEN KernelLog.String("AVIDemux.SetStreamPos: "); KernelLog.Int(pos, 0); KernelLog.Ln; END;
+			IF streamNr = 0 THEN
+				IF videoIndex # NIL THEN
+					IF seekType = Codecs.SeekKeyFrame THEN
+						IF pos > itemSize THEN
+							IF pos >= videoStreamHeader.length-1 THEN
+								pos := videoStreamHeader.length-1;
+							ELSE
+								WHILE ((pos < videoFrames-1) & (videoIndex[pos].flags # 16)) DO
+									INC(pos);
+								END;
+							END;
+						ELSE
+							IF(pos > 0) THEN
+								DEC(pos);
+							END;
+							WHILE ((videoIndex[pos].flags # 16) & (pos > 0)) DO
+								DEC(pos);
+							END;
+						END;
+					END;
+					IF ((seekType = Codecs.SeekFrame) OR (seekType = Codecs.SeekKeyFrame)) THEN
+						IF pos < LEN(videoIndex) THEN
+							videoStream.SetAVIPos(videoIndex[pos].offset, itemSize);
+							itemSize := pos;
+							videoFramePos := pos;
+						END
+					ELSE
+						videoStream.SetAVIPos(pos, itemSize);
+					END;
+				END;
+			ELSE
+				IF audioIndex # NIL THEN
+					IF seekType = Codecs.SeekSample THEN
+						IF pos < 0 THEN
+							pos := 0;
+						END;
+						IF pos = 0 THEN
+							n0 := 0;
+						ELSE
+							n0 := 0;
+							n1 := audioChunks;
+
+							WHILE (n0 < n1 - 1) DO
+								n := (n0 + n1) DIV 2;
+								IF (audioIndex[n].tot > pos) THEN
+									n1 := n;
+								ELSE
+									n0 := n;
+								END;
+							END;
+						END;
+						audioStream.SetAVIPos(audioIndex[n0].offset, itemSize);
+						audioFramePos := n0;
+					ELSIF seekType = Codecs.SeekByte THEN
+						(* spos := ENTIER(pos * 8 *  audioStreamHeader.waveFormatEx.samplesPerSec/audioStreamHeader.rate / 1000); *)
+						spos := ENTIER(pos / audioStreamHeader.rate * audioStreamHeader.waveFormatEx.samplesPerSec);
+
+						IF Debug THEN KernelLog.String("spos= "); KernelLog.Int(spos, 0); KernelLog.Ln; END;
+						IF spos < 0 THEN spos := 0 END;
+						IF spos = 0 THEN n0 := 0
+						ELSE
+							n0 := 0;
+							n1 := audioChunks;
+
+							WHILE (n0 < n1 - 1) DO
+								n := (n0 + n1) DIV 2;
+								IF (audioIndex[n].tot > spos) THEN
+									n1 := n;
+								ELSE
+									n0 := n;
+								END;
+							END;
+						END;
+
+						audioStream.SetAVIPos(audioIndex[n0].offset, itemSize);
+						audioFramePos := n0;
+						IF Debug THEN
+							KernelLog.String("audioIndex[n].tot= "); KernelLog.Int(audioIndex[n].tot, 0);
+							KernelLog.String("audioIndex[n0].offset= "); KernelLog.Int(audioIndex[n0].offset, 0);
+							KernelLog.String("audioFramePos= "); KernelLog.Int(audioFramePos, 0);
+							KernelLog.String("itemSize= "); KernelLog.Int(itemSize, 0);  KernelLog.Ln;
+						END
+					ELSE
+						audioStream.SetAVIPos(pos, itemSize);
+					END;
+				END;
+			END;
+		END SetStreamPos;
+
+		PROCEDURE GetVideoWidth*(): SIGNED32;
+		BEGIN
+			RETURN videoStreamHeader.bitMapInfo.width;
+		END GetVideoWidth;
+
+		PROCEDURE GetVideoHeight*(): SIGNED32;
+		BEGIN
+			RETURN videoStreamHeader.bitMapInfo.height;
+		END GetVideoHeight;
+
+		PROCEDURE GetNextFrameSize*(streamNr: SIGNED32): SIGNED32;
+		BEGIN
+			IF streamNr = 0 THEN
+				IF videoFramePos < videoFrames THEN
+					RETURN videoIndex[videoFramePos].length;
+				ELSE
+					RETURN Codecs.ResFailed;
+				END;
+			ELSE
+				IF audioFramePos < audioChunks THEN
+					RETURN audioIndex[audioFramePos].length;
+				ELSE
+					RETURN Codecs.ResFailed;
+				END;
+			END;
+		END GetNextFrameSize;
+
+		PROCEDURE GetSampleSize*(): SIGNED32;
+		VAR
+			s: SIGNED32;
+		BEGIN
+			s := ((audioStreamHeader.waveFormatEx.bitsPerSample+7) DIV 8)*audioStreamHeader.waveFormatEx.channels;
+			IF s = 0 THEN
+				s := 1;
+			END;
+			RETURN s;
+		END GetSampleSize;
+
+	END AVIDemux;
+
+	(* -- Helper Procedures -- *)
+
+(* Align stream to next Byte *)
+PROCEDURE Align*(VAR  index: SIZE);
+BEGIN
+	IF ( index MOD 8 ) # 0 THEN
+		index :=  index - ( index MOD 8 ) + 8
+	END;
+END Align;
+
+(* True if actual position is on byte boundary *)
+PROCEDURE IsAligned*(index: SIZE): BOOLEAN;
+BEGIN
+	IF ( index MOD 8 ) = 0 THEN
+		RETURN TRUE;
+	ELSE
+		RETURN FALSE;
+	END;
+END IsAligned;
+
+(* Read next n Bits (max 32), without advancing in stream. Max 32 Bits are allowed *)
+(* Very slow but portable *)
+PROCEDURE ShowBitsSlow*( n: SIGNED32; VAR buf: ARRAY OF CHAR; VAR index: SIZE): SIGNED32;
+VAR
+	ret: SIGNED32;
+	count: SIGNED32;
+BEGIN
+	ret := 0;
+	count := 0;
+
+	WHILE count < n DO
+		ret := ret * 2;
+		IF ( 7 - ( index MOD 8 ) ) IN SET(ORD(buf[index DIV 8])) THEN
+			INC(ret)
+		END;
+		INC( index );
+		INC( count )
+	END;
+
+	index := index - count;
+
+	RETURN ret
+END ShowBitsSlow;
+
+(* Read next n Bits (max 32), without advancing in stream. Max 32 Bits are allowed *)
+(* Fast, but im not sure if it's portable *)
+PROCEDURE ShowBits*( n: SIGNED32; VAR buf: ARRAY OF CHAR; VAR index: SIZE): SIGNED32;
+VAR
+	nbit: SIZE;
+	posInLONGINT: SIZE;
+	bufa, bufb: SIGNED32;
+	temp: ADDRESS;
+	bufAdr: ADDRESS;
+BEGIN
+	bufAdr := ADDRESSOF( buf[0] );
+	posInLONGINT := index MOD 32;
+	nbit := ( posInLONGINT+ n ) - 32;
+
+	IF nbit > 0 THEN
+		(* We have to read two 32 bit values *)
+		temp := LSH( index - posInLONGINT , -3 ) + bufAdr;
+		bufa := Machine.ChangeByteOrder( SYSTEM.GET32( temp ) );
+		bufb := Machine.ChangeByteOrder( SYSTEM.GET32( temp + 4 ) );
+
+		temp := LSH( LSH( bufa, posInLONGINT ),  nbit - posInLONGINT );
+		RETURN SYSTEM.VAL( SIGNED32, SYSTEM.VAL( SET, LSH( bufb, nbit - 32 ) ) + SYSTEM.VAL( SET, temp ) )
+	ELSE
+		(* Reading one 32 value is sufficient *)
+		bufa := Machine.ChangeByteOrder( SYSTEM.GET32( LSH( index - posInLONGINT, -3 ) + bufAdr ) );
+
+		RETURN LSH( LSH( bufa, posInLONGINT ),  n - 32 )
+	END;
+END ShowBits;
+
+(* Show n bits, byte aligned without advancing in bit stream *)
+PROCEDURE ShowBitsByteAligned*(n: SIGNED32; VAR buf: ARRAY OF CHAR; VAR index: SIZE): SIGNED32;
+VAR
+	count: SIZE;
+	ret: SIGNED32;
+BEGIN
+	count := 8 - ( index MOD 8 );
+
+	IF count = 8 THEN
+		IF ShowBits(8, buf, index) = 7FH THEN (* Spezial case: see iso spec *)
+			count := 8
+		ELSE
+			count := 0
+		END;
+	END;
+
+	index := index + count;
+	ret := ShowBits(n, buf, index);
+	index := index - count;
+	RETURN ret
+END ShowBitsByteAligned;
+
+(* Read next n Bits and advance in Bit Stream. Max 32 Bits are allowed *)
+PROCEDURE GetBits*( n: SIGNED32; VAR buf: ARRAY OF CHAR; VAR index: SIZE): SIGNED32;
+VAR
+	ret: SIGNED32;
+BEGIN
+	ret := ShowBits(n, buf, index);
+	SkipBits(n, index);
+	RETURN ret
+END GetBits;
+
+(* Skip Next n Bits *)
+PROCEDURE SkipBits*(n: SIGNED32; VAR index: SIZE );
+BEGIN
+	index := index + n
+END SkipBits;
+
+PROCEDURE Factory*() : Codecs.AVDemultiplexer;
+VAR p: AVIDemux;
+BEGIN
+	NEW(p);
+	RETURN p
+END Factory;
+
+END AVI.
+
+flags.avi

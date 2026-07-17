@@ -1,0 +1,111 @@
+stages:
+  - build
+  - test
+  - package
+  - release
+
+default:
+  image: debian:latest
+  before_script:
+    - apt update && apt install -y curl git git-lfs wget
+    - curl -sL https://taskfile.dev/install.sh | sh
+    - mv ./bin/task /usr/local/bin/task
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
+    - yq --version
+    - task --version
+    - git lfs install
+    - git lfs pull
+
+buildLinuxARM:
+  stage: build
+  script:
+    - task LinuxARM
+  artifacts:
+    paths:
+      - target/LinuxARM
+
+buildLinuxAMD:
+  stage: build
+  script:
+    - task Linux32
+    - task Linux64
+  artifacts:
+    paths:
+      - target/Linux32
+      - target/Linux64
+
+buildWinAMD:
+  stage: build
+  script:
+    - task Win32
+    - task Win64
+  artifacts:
+    paths:
+      - target/Win32
+      - target/Win64
+
+test:
+  stage: test
+  script:
+    - task test
+
+# Runs only on CalVer tags (YYYY.MM.DD, optional .N for a second build the
+# same day). No `needs:` on purpose — stage ordering makes package wait for
+# the whole `test` stage to pass, so a broken build can never be released.
+# Build artifacts (target/*) are downloaded automatically from earlier stages.
+package:
+  stage: package
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/'
+  before_script:
+    - apt update && apt install -y curl zip
+  script:
+    - |
+      set -eu
+      for P in Linux32 Linux64 LinuxARM Win32 Win64; do
+        archive="a2-$P-$CI_COMMIT_TAG.zip"
+        (cd target && zip -r "../$archive" "$P")
+        curl --fail --silent --show-error \
+          --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+          --upload-file "$archive" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/${archive}"
+        echo "[SUCCESS] published $archive"
+      done
+  artifacts:
+    paths:
+      - "a2-*-*.zip"
+    expire_in: 1 week
+
+# Creates a GitLab Release for the tag with download links pointing at the
+# archives published to the Generic Package Registry by the package job.
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  before_script: []          # release-cli image is alpine; skip the debian setup
+  dependencies: []           # no artifacts needed, just the links below
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^\d{4}\.\d{2}\.\d{2}(\.\d+)?$/'
+  script:
+    - echo "Creating release $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "A2 Oberon $CI_COMMIT_TAG"
+    description: "Automated build for $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "Linux32"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/a2-Linux32-${CI_COMMIT_TAG}.zip"
+          link_type: package
+        - name: "Linux64"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/a2-Linux64-${CI_COMMIT_TAG}.zip"
+          link_type: package
+        - name: "LinuxARM"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/a2-LinuxARM-${CI_COMMIT_TAG}.zip"
+          link_type: package
+        - name: "Win32"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/a2-Win32-${CI_COMMIT_TAG}.zip"
+          link_type: package
+        - name: "Win64"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/a2/${CI_COMMIT_TAG}/a2-Win64-${CI_COMMIT_TAG}.zip"
+          link_type: package

@@ -1,0 +1,8 @@
+target
+.task
+**/*.bak
+**/*.log
+**/*.Log
+**/*.Test.Diff
+**/TesterInput.txt
+.codex

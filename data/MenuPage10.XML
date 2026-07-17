@@ -1,0 +1,231 @@
+<Standard:Panel generator="WMStandardComponents.GenPanel" caption="System">
+	<Properties>
+		<FillColor loader="WMProperties.NewColor">00000000</FillColor>
+		<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+	</Properties>
+
+	<Standard:Panel generator="WMStandardComponents.GenPanel">
+		<Properties>
+			<Bounds loader="WMProperties.NewRectangle">
+				<Left>0</Left>
+				<Top>0</Top>
+				<Width>120</Width>
+				<Height>0</Height>
+			</Bounds>
+			<Alignment loader="WMProperties.NewInt32">1</Alignment>
+			<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+		</Properties>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Configuration</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">PET.Open Configuration.XML</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Log</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">WMKernelLog.Open</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+	</Standard:Panel>
+
+	<Standard:Panel generator="WMStandardComponents.GenPanel">
+		<Properties>
+			<Bounds loader="WMProperties.NewRectangle">
+				<Left>0</Left>
+				<Top>0</Top>
+				<Width>120</Width>
+				<Height>0</Height>
+			</Bounds>
+			<Alignment loader="WMProperties.NewInt32">1</Alignment>
+			<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+		</Properties>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Macros</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">PET.Open Macros.XML</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Hot Keys</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">PET.Open HotKeys.XML</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+	</Standard:Panel>
+
+	<Standard:Panel generator="WMStandardComponents.GenPanel">
+		<Properties>
+			<Bounds loader="WMProperties.NewRectangle">
+				<Left>0</Left>
+				<Top>0</Top>
+				<Width>120</Width>
+				<Height>0</Height>
+			</Bounds>
+			<Alignment loader="WMProperties.NewInt32">1</Alignment>
+			<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+		</Properties>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Clock</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">WMClock.Open</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Calendar</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">WMCalendar.Open</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+	</Standard:Panel>
+
+	<Standard:Panel generator="WMStandardComponents.GenPanel">
+		<Properties>
+			<Bounds loader="WMProperties.NewRectangle">
+				<Left>0</Left>
+				<Top>0</Top>
+				<Width>120</Width>
+				<Height>0</Height>
+			</Bounds>
+			<Alignment loader="WMProperties.NewInt32">1</Alignment>
+			<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+		</Properties>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Installer</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">WMInstaller.Open</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Save Desktop</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">WMRestorable.Store Auto.dsk;SkinEngine.SetCurrentAsDefault;StartMenu.ClosePopup</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+	</Standard:Panel>
+
+	<Standard:Panel generator="WMStandardComponents.GenPanel">
+		<Properties>
+			<Bounds loader="WMProperties.NewRectangle">
+				<Left>0</Left>
+				<Top>0</Top>
+				<Width>120</Width>
+				<Height>0</Height>
+			</Bounds>
+			<Alignment loader="WMProperties.NewInt32">1</Alignment>
+			<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+		</Properties>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Reboot</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">System.Reboot</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+
+		<Standard:Button generator="WMStandardComponents.GenButton">
+			<Properties>
+				<Alignment loader="WMProperties.NewInt32">2</Alignment>
+				<EditMode loader="WMProperties.NewBoolean">false</EditMode>
+				<Caption loader="WMProperties.NewString">Shutdown</Caption>
+				<OnClickHandler loader="WMProperties.NewString">X Run</OnClickHandler>
+			</Properties>
+
+			<Standard:SystemCommand generator="WMStandardComponents.GenSystemCommand">
+				<Properties>
+					<ID loader="WMProperties.NewString">X</ID>
+					<CommandString loader="WMProperties.NewString">System.PowerDown</CommandString>
+				</Properties>
+			</Standard:SystemCommand>
+		</Standard:Button>
+	</Standard:Panel>
+</Standard:Panel>

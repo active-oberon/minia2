@@ -1,0 +1,56 @@
+# Options.Mod test suite
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test Options;System.Load Test" --logFile="Options.Execution.Test.Log" --result="Options.Execution.Test.Diff"
+
+positive: Test for all types of options
+
+	MODULE Test;
+
+	IMPORT
+		Streams, Options;
+
+	PROCEDURE CheckOptions;
+	VAR
+		reader : Streams.StringReader;
+		writer : Streams.StringWriter;
+		options : Options.Options;
+		buf : ARRAY 256 OF CHAR;
+		val : SIGNED32;
+	BEGIN
+
+		NEW(options);
+		ASSERT(options # NIL);
+		options.Add("f", "flag1", Options.Flag);
+		options.Add("g", "flag2", Options.Flag);
+		options.Add("s", "string1", Options.String);
+		options.Add("t", "string2", Options.String);
+		options.Add("u", "string3", Options.String);
+		options.Add("i", "integer1", Options.Integer);
+		options.Add("j", "integer2", Options.Integer);
+		options.Add("k", "integer3", Options.Integer);
+
+		Streams.OpenStringReader(reader, '-f=false --flag2 -s="Hello" --string2="Hello World" --string3="B" -i=76H  --integer2="99" --integer3=9');
+		Streams.OpenStringWriter(writer, 256);
+		ASSERT(options.Parse(reader, writer));
+		writer.Get(buf);
+		ASSERT(buf = "");
+
+		ASSERT(options.GetString("string1", buf) & (buf = "Hello"));
+		ASSERT(~options.GetFlag("flag1"));
+		ASSERT(options.GetString("string2", buf) & (buf = "Hello World"));
+		ASSERT(options.GetFlag("flag2"));
+		ASSERT(options.GetString("string3", buf) & (buf[0] = 'B'));
+		ASSERT(options.GetInteger("integer1", val) & (val = ORD(76X)));
+		ASSERT(options.GetInteger("integer2", val) & (val = 99));
+		ASSERT(options.GetInteger("integer3", val) & (val = 9));
+
+	END CheckOptions;
+
+	BEGIN
+		CheckOptions;
+	END Test.
+
+
+
+
+
+	

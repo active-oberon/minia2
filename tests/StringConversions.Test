@@ -1,0 +1,3122 @@
+# StringConversions.Test
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="StringConversions.Test.Log" --result="StringConversions.Test.Diff"
+
+
+# TryScanUInt64At
+
+positive: TryScanUInt64At "", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "",  00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanUInt64At " ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, " ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "   0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "   0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "+0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "+0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "-0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "-0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0b", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0b", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0o", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0o", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0x", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0x", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0b   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0b   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0o   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0o   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0x   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0x   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "b0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "b0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "o0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "o0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "x0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "u0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "u0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "a0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "a0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "z0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "z0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "+1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "+1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "-1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "-1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At "0x10000000000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0x10000000000000000", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+positive: TryScanUInt64At "0o2000000000000000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "0o2000000000000000000000", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+positive: TryScanUInt64At "18446744073709551616", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "18446744073709551616", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+positive: TryScanUInt64At "184467440737095516150", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt64At(i, "184467440737095516150", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+positive: TryScanUInt64At "0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt64At 3, "   0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 3: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "   0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt64At "0   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0   ", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt64At 3, "   1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 3: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "   1", 00, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt64At "1", base = 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "1", 10, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt64At "1 ", base = 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "1 ", 10, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt64At "123abc", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "123abc", 00, value, res) & (value=123));
+	END Test.
+
+positive: TryScanUInt64At "123456789", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "123456789", 00, value, res) & (value = 123456789));
+	END Test.
+
+positive: TryScanUInt64At "0x123456789", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0x123456789", 00, value, res) & (value = 0x123456789));
+	END Test.
+
+positive: TryScanUInt64At "0x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0x0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt64At "0123456789", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0123456789", 00, value, res) & (value = 123456789));
+	END Test.
+
+positive: TryScanUInt64At "0123456789", base - 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0123456789", 16, value, res) & (value = 0x123456789));
+	END Test.
+
+positive: TryScanUInt64At "1234567890", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "1234567890", 00, value, res) & (value = 1234567890));
+	END Test.
+
+positive: TryScanUInt64At "123456789x", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "123456789x", 00, value, res) & (value = 123456789));
+	END Test.
+
+positive: TryScanUInt64At "987654321", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "987654321",  00, value, res) & (value = 987654321)  & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "98765432100", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "98765432100", 00, value, res) & (value = 98765432100) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "18446744073709551615", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "18446744073709551615",  00, value, res) & (value = MAX(UNSIGNED64))  & (res =  Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "0b1000000000000000000000000000000000000000000000000000000000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0b1000000000000000000000000000000000000000000000000000000000000000", 00, value, res) & (value = MIN(SIGNED64)) & (res =  Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "0xFFFFFFFFFFFFFFFF", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0xFFFFFFFFFFFFFFFF",  00, value, res) & (value = MAX(UNSIGNED64))  & (res =  Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "0FFFFFFFFFFFFFFFF", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0FFFFFFFFFFFFFFFF",  16, value, res) & (value = MAX(UNSIGNED64))  & (res =  Strings.Ok));
+	END Test.
+
+
+positive: TryScanUInt64At "0o1777777777777777777777", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0o1777777777777777777777",  00, value, res) & (value = MAX(UNSIGNED64))  & (res =  Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "0o200000000000000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0o200000000000000000000",  00, value, res) & (value = LSH(1, 61))  & (res =  Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At "0o377", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt64At(i, "0o377",  00, value, res) & (value = 255) & (res =  Strings.Ok));
+	END Test.
+
+
+# TryScanInt64At
+
+positive: TryScanInt64At "0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "00", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "00", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1", 00, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1", 00, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1", 00, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+01", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+01", 00, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-01", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-01", 00, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+
+positive: TryScanInt64At "002", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "002", 00, value, res) & (value=2) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+002", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+002", 00, value, res) & (value=2) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-002", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-002", 00, value, res) & (value=-2) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0003", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0003", 00, value, res) & (value=3) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0003", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0003", 00, value, res) & (value=3) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0003", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0003", 00, value, res) & (value=-3) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "12345", 00, value, res) & (value=12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+12345", 00, value, res) & (value=+12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-12345", 00, value, res) & (value=-12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0012345", 00, value, res) & (value=12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0012345", 00, value, res) & (value=12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0012345", 00, value, res) & (value=-12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "001234500", 00, value, res) & (value=1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+001234500", 00, value, res) & (value=1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-001234500", 00, value, res) & (value=-1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+2147483647", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+2147483647", 00, value, res) & (value = 2147483647));
+	END Test.
+
+positive: TryScanInt64At "-2147483648", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-2147483648", 00, value, res) & (value = -2147483648));
+	END Test.
+
+### 64
+positive: TryScanInt64At "-2147483649", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-2147483649", 00, value, res) & (value = -2147483649));
+	END Test.
+
+positive: TryScanInt64At "+2147483648", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+2147483648", 00, value, res) & (value = 2147483648));
+	END Test.
+
+positive: TryScanInt64At "+21474836470", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+21474836470", 00, value, res) & (value = 21474836470));
+	END Test.
+
+positive: TryScanInt64At "98765432100", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "98765432100", 00, value, res) & (value=98765432100) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+98765432100", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+98765432100", 00, value, res) & (value=98765432100) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-98765432100", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-98765432100", 00, value, res) & (value=-98765432100) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "9223372036854775807", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "9223372036854775807", 00, value, res) & (value=MAX(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+9223372036854775807", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+9223372036854775807", 00, value, res) & (value = MAX(SIGNED64)));
+	END Test.
+
+positive: TryScanInt64At "+9223372036854775807" 0, 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+9223372036854775807", 10, value, res) & (value = MAX(SIGNED64)));
+	END Test.
+
+positive: TryScanInt64At "-9223372036854775807", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-9223372036854775807", 00, value, res) & (value=-9223372036854775807) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-9223372036854775808", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-9223372036854775808", 00, value, res) & (value=MIN(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-9223372036854775808", base = 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-9223372036854775808", 10, value, res) & (value=MIN(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-9223372036854775809", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt64At(i, "-9223372036854775809", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt64At "+000009223372036854775807", base = 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+000009223372036854775807", 10, value, res) & (value = MAX(SIGNED64)));
+	END Test.
+
+positive: TryScanInt64At "-000009223372036854775808", base = 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-000009223372036854775808", 10, value, res) & (value=MIN(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+## base = 2
+
+positive: TryScanInt64At "0", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0", 2, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1", 2, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1010", 2, value, res) & (value=10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1010", 2, value, res) & (value=10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1010", 2, value, res) & (value=-10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1000000000000000", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1000000000000000", 2, value, res) & (value=32768) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "111111111111111111111111111111111111111111111111111111111111111", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "111111111111111111111111111111111111111111111111111111111111111", 2, value, res) & (value=MAX(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1000000000000000000000000000000000000000000000000000000000000000", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1000000000000000000000000000000000000000000000000000000000000000", 2, value, res) & (value=MIN(SIGNED64)) & (res = 	Strings.Ok));
+	END Test.
+
+## 8
+
+positive: TryScanInt64At "0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1", 8, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1", 8, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1", 8, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "10", 8, value, res) & (value=8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+10", 8, value, res) & (value=8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-10", 8, value, res) & (value=-8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1010", 8, value, res) & (value=520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1010", 8, value, res) & (value=520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1010", 8, value, res) & (value=-520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "5423112345", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "5423112345", 8, value, res) & (value=743216357) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "100000000", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "100000000", 8, value, res) & (value=16777216) & (res = Strings.Ok));
+	END Test.
+
+## 16
+
+positive: TryScanInt64At "0x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0x0", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0xf", 00, value, res) & (value=0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0xf", 00, value, res) & (value=0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0xf", 00, value, res) & (value=-0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1", 16, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1", 16, value, res) & (value=+1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1", 16, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "10", 16, value, res) & (value=16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+10", 16, value, res) & (value=16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-10", 16, value, res) & (value=-16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "1010", 16, value, res) & (value=4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+1010", 16, value, res) & (value=4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-1010", 16, value, res) & (value=-4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0x12345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0x12345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0x12345", 00, value, res) & (value=-0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0x00012345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0x00012345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0x00012345", 00, value, res) & (value=-0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "0x0001234500", 00, value, res) & (value=0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "+0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "+0x0001234500", 00, value, res) & (value=0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-0x0001234500", 00, value, res) & (value=-0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "-123456789abcdef", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "-123456789abcdef", 16, value, res) & (value=-0x123456789abcdef) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "7fffffffffffffff", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt64At(i, "7fffffffffffffff", 16, value, res) & (value=MAX(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+
+# TryScanUInt32At
+
+positive: TryScanUInt32At "", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanUInt32At " ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, " ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "   0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "   0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "+0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "+0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "-0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "-0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0b", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0b", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0o", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0o", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0x", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0x", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0b   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0b   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0o   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0o   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0x   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0x   ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "b0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "b0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "o0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "o0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "x0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "a0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "a0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "z0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "z0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "+1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "+1", 00, value, res) & (res = Strings.SyntaxError))
+	END Test.
+
+positive: TryScanUInt32At "-1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "-1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0b100000000000000000000000000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0b100000000000000000000000000000000", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "100000000000000000000000000000000", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "100000000000000000000000000000000", 2, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "0o200000000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0o200000000000", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "200000000000", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "200000000000", 8,value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "0x100000000", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0x100000000", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "100000000", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "100000000", 16,value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "4294967296", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "4294967296", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "4294967299", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "4294967299", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "42949672950", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "42949672950", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At "0", base = 0, 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt32At "   0", 3, 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 3: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "   0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt32At "0   ", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0   ", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt32At "   1" at 3, 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 3: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "   1", 00, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt32At "1", 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "1", 10, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt32At "1 ", 10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "1 ", 10, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanUInt32At "123abc", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "123abc", 00, value, res) & (value=123));
+	END Test.
+
+positive: TryScanUInt32At "123456789", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "123456789", 00, value, res) & (value = 123456789));
+	END Test.
+
+positive: TryScanUInt32At "0x12345678", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0x12345678", 00, value, res) & (value = 0x12345678));
+	END Test.
+
+positive: TryScanUInt32At "0x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0x0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanUInt32At "012345678", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "012345678", 00, value, res) & (value = 12345678));
+	END Test.
+
+positive: TryScanUInt32At "012345678", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "012345678", 16,value, res) & (value = 0x12345678));
+	END Test.
+
+positive: TryScanUInt32At "1234567890", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "1234567890", 00, value, res) & (value = 1234567890));
+	END Test.
+
+positive: TryScanUInt32At "123456789x", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "123456789x", 00, value, res) & (value = 123456789));
+	END Test.
+
+positive: TryScanUInt32At "987654321", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "987654321",  00, value, res) & (value = 987654321)  & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At "65432100", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "65432100", 00, value, res) & (value = 65432100) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At "0x'1", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0x'1", 00, value, res) & (value = 1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At "0x'ff'ff'ff", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "0x'ff'ff'ff", 00, value, res) & (value = 0x'ff'ff'ff) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At "1'2'3'4'5'6'7'8", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "1'2'3'4'5'6'7'8", 00, value, res) & (value = 1'2'3'4'5'6'7'8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At "1'2'3'4'5'6'7'8'", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "1'2'3'4'5'6'7'8'", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0x'", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0x'", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "0'x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "0'x0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "'0123", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "'0123", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "123''456", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "123''456", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "123'Z", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanUInt32At(i, "123'Z", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At "123Z", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanUInt32At(i, "123Z", 00, value, res) & (value = 123));
+	END Test.
+
+# TryScanInt32At
+
+positive: TryScanInt32At "FF0000FF"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "FF0000FF", 16, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt32At ""
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanInt32At " "
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, " ", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt32At "0"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanInt32At "0  "
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0  ", 00, value, res) & (value = 0));
+	END Test.
+
+positive: TryScanInt32At " 0"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, " 0", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt32At "1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1", 00, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanInt32At "-1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1", 00, value, res) & (value = -1));
+	END Test.
+
+positive: TryScanInt32At "+1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1", 00, value, res) & (value = +1));
+	END Test.
+
+positive: TryScanInt32At "  1" at 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 2: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "  1", 00, value, res) & (value = 1));
+	END Test.
+
+positive: TryScanInt32At "   -1" at 3
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 3: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "   -1", 00, value, res) & (value = -1));
+	END Test.
+
+positive: TryScanInt32At "    +2" at 4
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 4: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "    +2", 00, value, res) & (value = 2));
+	END Test.
+
+positive: TryScanInt32At " 1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, " 1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt32At "- 1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "- 1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt32At "+ 1"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "+ 1", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt32At "-2147483648"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-2147483648", 00, value, res) & (value = MIN(SIGNED32)));
+	END Test.
+
+positive: TryScanInt32At "12345"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "12345", 00, value, res) & (value = 12345));
+	END Test.
+
+positive: TryScanInt32At "012345"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "012345", 00, value, res) & (value = 12345));
+	END Test.
+
+positive: TryScanInt32At "+012345"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+012345", 00, value, res) & (value = 12345));
+	END Test.
+
+positive: TryScanInt32At "-012345"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-012345", 00, value, res) & (value = -12345));
+	END Test.
+
+positive: TryScanInt32At "54321"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "54321", 00, value, res) & (value = 54321));
+	END Test.
+
+positive: TryScanInt32At "543210"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "543210", 00, value, res) & (value = 543210));
+	END Test.
+
+positive: TryScanInt32At "+2147483647"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+2147483647", 00, value, res) & (value = MAX(SIGNED32)));
+	END Test.
+
+positive: TryScanInt32At "+000002147483647"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+000002147483647", 00, value, res) & (value = MAX(SIGNED32)));
+	END Test.
+
+positive: TryScanInt32At "-2147483649"
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "-2147483649", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt32At "+2147483648", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "+2147483648", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt32At "+21474836470", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "+21474836470", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+## base 2
+
+positive: TryScanInt32At "0", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0", 2, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1", 2, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1010", 2, value, res) & (value=10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1010", 2, value, res) & (value=10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1010", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1010", 2, value, res) & (value=-10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1000000000000000", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1000000000000000", 2, value, res) & (value=32768) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1111111111111111111111111111111", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1111111111111111111111111111111", 2, value, res) & (value=MAX(SIGNED32)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-10000000000000000000000000000000", base = 2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-10000000000000000000000000000000", 2, value, res) & (value=MIN(SIGNED32)) & (res = 	Strings.Ok));
+	END Test.
+
+## 8
+
+positive: TryScanInt32At "0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0", 8, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1", 8, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1", 8, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1", 8, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "10", 8, value, res) & (value=8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+10", 8, value, res) & (value=8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-10", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-10", 8, value, res) & (value=-8) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1010", 8, value, res) & (value=520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1010", 8, value, res) & (value=520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1010", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1010", 8, value, res) & (value=-520) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "5423112345", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "5423112345", 8, value, res) & (value=743216357) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "100000000", base = 8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "100000000", 8, value, res) & (value=16777216) & (res = Strings.Ok));
+	END Test.
+
+## 16
+
+positive: TryScanInt32At "0x0", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0x0", 00, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0xf", 00, value, res) & (value=0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0xf", 00, value, res) & (value=0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0xf", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0xf", 00, value, res) & (value=-0xf) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0", 16, value, res) & (value=0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1", 16, value, res) & (value=1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1", 16, value, res) & (value=+1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1", 16, value, res) & (value=-1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "10", 16, value, res) & (value=16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+10", 16, value, res) & (value=16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-10", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-10", 16, value, res) & (value=-16) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "1010", 16, value, res) & (value=4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+1010", 16, value, res) & (value=4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-1010", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-1010", 16, value, res) & (value=-4112) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0x12345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0x12345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0x12345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0x12345", 00, value, res) & (value=-0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0x00012345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0x00012345", 00, value, res) & (value=0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0x00012345", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0x00012345", 00, value, res) & (value=-0x12345) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "0x0001234500", 00, value, res) & (value=0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "+0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "+0x0001234500", 00, value, res) & (value=0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-0x0001234500", base = 0
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-0x0001234500", 00, value, res) & (value=-0x1234500) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "-12abcdef", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "-12abcdef", 16, value, res) & (value=-0x12abcdef) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "7fffffff", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "7fffffff", 16, value, res) & (value=MAX(SIGNED32)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At "7fffffffH", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( Strings.TryScanInt32At(i, "7fffffffH", 16, value, res) & (value=MAX(SIGNED32)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At "FF000000000000FF", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt64At(i, "FF000000000000FF", 16, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt32At "FF0000FF", base = 16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT( ~Strings.TryScanInt32At(i, "FF0000FF", 16, value, res) & (res = Strings.RangeError));
+	END Test.
+
+# Additional comprehensive tests for StringConversions module
+
+### Non-standard numeral systems (11-36)
+positive: TryScanUInt32At_base36_Z0_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "Z0", 36, value, res) & (value = 35*36) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_base35_YY_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "YY", 35, value, res) & (value = 34*35 + 34) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_base35_Z_invalid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "Z", 35, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At_base11_1A_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "1A", 11, value, res) & (value = 1*11 + 10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_base16_large_hex
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "123456789ABCDEF", 16, value, res) & (value = 0x123456789ABCDEF) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_base11_1A_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "1A", 11, value, res) & (value = 1*11 + 10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_base11_1A_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "1A", 11, value, res) & (value = 1*11 + 10) & (res = Strings.Ok));
+	END Test.
+
+### Invalid base values
+positive: TryScanUInt32At_base1_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "0", 1, value, res) & (res = Strings.BaseError));
+	END Test.
+
+positive: TryScanUInt32At_base37_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "0", 37, value, res) & (res = Strings.BaseError));
+	END Test.
+
+positive: TryScanUInt64At_base1_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt64At(i, "0", 1, value, res) & (res = Strings.BaseError));
+	END Test.
+
+positive: TryScanInt32At_base1_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "0", 1, value, res) & (res = Strings.BaseError));
+	END Test.
+
+positive: TryScanInt64At_base1_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "0", 1, value, res) & (res = Strings.BaseError));
+	END Test.
+
+### Additional tests for apostrophe separators
+positive: TryScanUInt32At_apostrophe_at_end_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "1'", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt64At_apostrophe_at_end_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt64At(i, "1'", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At_double_apostrophe_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "1''2", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanUInt32At_hex_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0x1'2'3", 00, value, res) & (value = 0x123) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_hex_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "0x1'2'3'4'5'6'7'8", 00, value, res) & (value = 0x12345678) & (res = Strings.Ok));
+	END Test.
+
+### Tests for position update and multiple number parsing
+positive: TryScanUInt32At_position_update_two_numbers
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "123 456", 00, value, res) & (value = 123) & (i = 3) & (res = Strings.Ok));
+		INC(i);
+		ASSERT(Strings.TryScanUInt32At(i, "123 456", 00, value, res) & (value = 456) & (i = 7) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_position_update_two_numbers
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "123 456", 00, value, res) & (value = 123) & (i = 3) & (res = Strings.Ok));
+		INC(i);
+		ASSERT(Strings.TryScanUInt64At(i, "123 456", 00, value, res) & (value = 456) & (i = 7) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_position_middle_of_string
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 4: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "abc 123 def", 00, value, res) & (value = 123) & (i = 7) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_two_hex_numbers_in_string
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0x123 0x456", 00, value, res) & (value = 0x123) & (i = 5) & (res = Strings.Ok));
+		INC(i);
+		ASSERT(Strings.TryScanUInt32At(i, "0x123 0x456", 00, value, res) & (value = 0x456) & (i = 11) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_position_update_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "1'000 2'000", 00, value, res) & (value = 1000) & (i = 5) & (res = Strings.Ok));
+		INC(i);
+		ASSERT(Strings.TryScanUInt32At(i, "1'000 2'000", 00, value, res) & (value = 2000) & (i = 11) & (res = Strings.Ok));
+	END Test.
+
+### TryParse* functions (different API from TryScan*At)
+positive: TryParseUInt32_with_prefixes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32;
+	BEGIN
+		ASSERT(Strings.TryParseUInt32("0b11111111", value) & (value = 255));
+		ASSERT(Strings.TryParseUInt32("0o777", value) & (value = 511));
+		ASSERT(Strings.TryParseUInt32("0xDEADBEEF", value) & (value = 0xDEADBEEF));
+	END Test.
+
+positive: TryParseUInt32_overflow_handling
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32;
+	BEGIN
+		ASSERT(~Strings.TryParseUInt32("0x100000000", value) & (value = MAX(UNSIGNED32)));
+	END Test.
+
+positive: TryParseInt32_boundary_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32;
+	BEGIN
+		ASSERT(Strings.TryParseInt32("-2147483648", value) & (value = MIN(SIGNED32)));
+		ASSERT(~Strings.TryParseInt32("-2147483649", value) & (value = MIN(SIGNED32)));
+		ASSERT(Strings.TryParseInt32("2147483647", value) & (value = MAX(SIGNED32)));
+		ASSERT(~Strings.TryParseInt32("2147483648", value) & (value = MAX(SIGNED32)));
+	END Test.
+
+positive: TryParseUInt64_large_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64;
+	BEGIN
+		ASSERT(Strings.TryParseUInt64("0xFFFFFFFFFFFFFFFF", value) & (value = MAX(UNSIGNED64)));
+		ASSERT(~Strings.TryParseUInt64("0x10000000000000000", value) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+positive: TryParseInt64_boundary_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64;
+	BEGIN
+		ASSERT(Strings.TryParseInt64("-9223372036854775808", value) & (value = MIN(SIGNED64)));
+		ASSERT(~Strings.TryParseInt64("-9223372036854775809", value) & (value = MIN(SIGNED64)));
+		ASSERT(Strings.TryParseInt64("9223372036854775807", value) & (value = MAX(SIGNED64)));
+		ASSERT(~Strings.TryParseInt64("9223372036854775808", value) & (value = MAX(SIGNED64)));
+	END Test.
+
+### CharOrDefault boundary cases
+positive: CharOrDefault_boundary_conditions
+	MODULE Test;
+	IMPORT Strings;
+	VAR s := "test": ARRAY 5 OF CHAR;
+	BEGIN
+		ASSERT(Strings.CharOrDefault(s, 0, 5) = 't');
+		ASSERT(Strings.CharOrDefault(s, 3, 5) = 't');
+		ASSERT(Strings.CharOrDefault(s, 4, 5) = 0X);
+		ASSERT(Strings.CharOrDefault(s, 5, 5) = 0X);
+		ASSERT(Strings.CharOrDefault(s, -1, 5) = 0X);
+		ASSERT(Strings.CharOrDefault(s, 2, 5, 'X') = 's');
+		ASSERT(Strings.CharOrDefault(s, 10, 5, 'X') = 'X');
+	END Test.
+
+### IsDigit, IsDecimal, IsHexadecimal
+positive: IsDigit_boundary_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsDigit('0', 2, d) & (d = 0));
+		ASSERT(Strings.IsDigit('1', 2, d) & (d = 1));
+		ASSERT(~Strings.IsDigit('2', 2, d));
+		ASSERT(Strings.IsDigit('9', 10, d) & (d = 9));
+		ASSERT(~Strings.IsDigit('A', 10, d));
+		ASSERT(Strings.IsDigit('A', 11, d) & (d = 10));
+		ASSERT(Strings.IsDigit('Z', 36, d) & (d = 35));
+		ASSERT(~Strings.IsDigit('a', 10, d));
+		ASSERT(Strings.IsDigit('a', 11, d) & (d = 10));
+		ASSERT(~Strings.IsDigit('@', 16, d));
+		ASSERT(~Strings.IsDigit('[', 36, d));
+		ASSERT(~Strings.IsDigit(0X, 10, d));
+	END Test.
+
+positive: IsDecimal_function
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsDecimal('0', d) & (d = 0));
+		ASSERT(Strings.IsDecimal('5', d) & (d = 5));
+		ASSERT(Strings.IsDecimal('9', d) & (d = 9));
+		ASSERT(~Strings.IsDecimal('A', d));
+		ASSERT(~Strings.IsDecimal('a', d));
+		ASSERT(~Strings.IsDecimal(' ', d));
+		ASSERT(~Strings.IsDecimal(0X, d));
+	END Test.
+
+positive: IsHexadecimal_function
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsHexadecimal('0', d) & (d = 0));
+		ASSERT(Strings.IsHexadecimal('9', d) & (d = 9));
+		ASSERT(Strings.IsHexadecimal('A', d) & (d = 10));
+		ASSERT(Strings.IsHexadecimal('F', d) & (d = 15));
+		ASSERT(Strings.IsHexadecimal('a', d) & (d = 10));
+		ASSERT(Strings.IsHexadecimal('f', d) & (d = 15));
+		ASSERT(~Strings.IsHexadecimal('G', d));
+		ASSERT(~Strings.IsHexadecimal('g', d));
+		ASSERT(~Strings.IsHexadecimal(' ', d));
+		ASSERT(~Strings.IsHexadecimal(0X, d));
+	END Test.
+
+### Overflow with separators
+positive: TryScanUInt32At_overflow_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "4'294'967'296", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED32)));
+	END Test.
+
+positive: TryScanUInt64At_MAX_with_separators
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "18'446'744'073'709'551'615", 00, value, res) & (value = MAX(UNSIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+### H-suffix tests (corrected)
+positive: TryScanUInt32At_H_suffix_without_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "7FFFH", 16, value, res) & (value = 0x7FFF) & (i = 5) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_H_suffix_with_prefix_position
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0x7FFF", 00, value, res) & (value = 0x7FFF) & (i = 6) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_no_H_suffix_consumed_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0x7FFFH extra", 00, value, res) & (value = 0x7FFF) & (i = 6) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_H_suffix_without_prefix_max_unsigned
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "FFFFFFFFFFFFFFFFH", 16, value, res) & (value = MAX(UNSIGNED64)) & (i = 17) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_H_suffix_without_prefix_half_max
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "7FFFFFFFFFFFFFFFH", 16, value, res) & (value = 0x7FFFFFFFFFFFFFFF) & (i = 17) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_H_suffix_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "0x7FFFFFFFFFFFFFFF", 00, value, res) & (value = MAX(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+### Signed zero in different numeral systems
+positive: TryScanInt32At_signed_zero_base2
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0", 2, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_signed_zero_base8
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "+0", 8, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_signed_zero_base16
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0", 16, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_signed_zero_base10
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+0", 10, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+### Empty string after sign
+positive: TryScanInt32At_only_minus_sign_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "-", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanInt32At_only_plus_sign_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "+", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanInt64At_only_minus_sign_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "-", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+positive: TryScanInt64At_only_plus_sign_error
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "+", 00, value, res) & (res = Strings.EmptyStringError));
+	END Test.
+
+### Mixed case hexadecimal digits (corrected)
+positive: TryScanInt32At_mixed_case_hex_within_range
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0x7FFFABCD", 00, value, res) & (value = -0x7FFFABCD) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_mixed_case_hex_out_of_range
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "-0xAaBbCcDd", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At_mixed_case_hex_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0xAaBbCcDd", 00, value, res) & (value = 0xAABBCCDD) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_mixed_case_hex_valid
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "0xAaBbCcDdEeFf", 00, value, res) & (value = 0xAABBCCDDEEFF) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_mixed_case_hex_within_range
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+0x7FFFAAABBBCCCDD", 00, value, res) & (value = 0x7FFFAAABBBCCCDD) & (res = Strings.Ok));
+	END Test.
+
+### Test for TryParseSize and TryParseAddress
+positive: TryParseSize_basic
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIZE;
+	BEGIN
+		ASSERT(Strings.TryParseSize("0", value) & (value = 0));
+		ASSERT(Strings.TryParseSize("12345", value) & (value = 12345));
+		ASSERT(Strings.TryParseSize("-1", value) & (value = -1));
+	END Test.
+
+positive: TryParseAddress_hex_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: ADDRESS;
+	BEGIN
+		ASSERT(Strings.TryParseAddress("0x1234", value) & (value = 0x1234));
+		ASSERT(Strings.TryParseAddress("0o777", value) & (value = 511));
+		ASSERT(Strings.TryParseAddress("0b1010", value) & (value = 10));
+	END Test.
+
+### Test for position parameter in TryParse* functions
+positive: TryParseUInt32_with_start_position
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32;
+	BEGIN
+		ASSERT(Strings.TryParseUInt32("abc123def", value, 3) & (value = 123));
+	END Test.
+
+positive: TryParseUInt64_with_start_position
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64;
+	BEGIN
+		ASSERT(Strings.TryParseUInt64("abc123456789def", value, 3) & (value = 123456789));
+	END Test.
+
+positive: TryParseInt32_with_start_position
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32;
+	BEGIN
+		ASSERT(Strings.TryParseInt32("prefix-12345suffix", value, 6) & (value = -12345));
+	END Test.
+
+positive: TryParseInt64_with_start_position
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64;
+	BEGIN
+		ASSERT(Strings.TryParseInt64("prefix-1234567890suffix", value, 6) & (value = -1234567890));
+	END Test.
+
+### Additional edge cases for all functions
+positive: TryScanUInt32At_max_valid_base36
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "Z", 36, value, res) & (value = 35) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_max_valid_base36
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "Z", 36, value, res) & (value = 35) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_digit_out_of_range
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "G", 16, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+positive: TryScanInt64At_digit_out_of_range
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "G", 16, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+### Test leading zeros with signs
+positive: TryScanInt32At_leading_zeros_with_sign
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0000123", 10, value, res) & (value = -123) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_leading_zeros_with_sign
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+000001234567890", 10, value, res) & (value = 1234567890) & (res = Strings.Ok));
+	END Test.
+
+### Hex overflow boundary tests
+positive: TryScanInt32At_hex_overflow_negative
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "-0x80000001", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt32At_hex_overflow_positive
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt32At(i, "0x80000000", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt64At_hex_overflow_negative
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "-0x8000000000000001", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanInt64At_hex_overflow_positive
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanInt64At(i, "0x8000000000000000", 00, value, res) & (res = Strings.RangeError));
+	END Test.
+
+positive: TryScanUInt32At_hex_overflow
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt32At(i, "0x100000000", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED32)));
+	END Test.
+
+positive: TryScanUInt64At_hex_overflow
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(~Strings.TryScanUInt64At(i, "0x10000000000000000", 00, value, res) & (res = Strings.RangeError) & (value = MAX(UNSIGNED64)));
+	END Test.
+
+### Additional symmetry tests for Int32/Int64
+positive: TryScanInt32At_positive_hex_with_H_suffix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "7FFFABCDH", 16, value, res) & (value = 0x7FFFABCD) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_positive_hex_with_H_suffix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "7FFFFFFFFFFFFFFFH", 16, value, res) & (value = MAX(SIGNED64)) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_negative_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-1'000'000", 10, value, res) & (value = -1000000) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_negative_with_apostrophes
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "-1'000'000'000", 10, value, res) & (value = -1000000000) & (res = Strings.Ok));
+	END Test.
+
+### Tests for binary (base 2) parsing
+positive: TryScanUInt32At_binary_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0b11111111", 00, value, res) & (value = 255) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_binary_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "0b1111111111111111", 00, value, res) & (value = 65535) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_binary_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0b1010", 00, value, res) & (value = -10) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_binary_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+0b1010", 00, value, res) & (value = 10) & (res = Strings.Ok));
+	END Test.
+
+### Tests for octal (base 8) parsing
+positive: TryScanUInt32At_octal_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0o777", 00, value, res) & (value = 511) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_octal_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "0o7777777777", 00, value, res) & (value = 1073741823) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_octal_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0o777", 00, value, res) & (value = -511) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_octal_with_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+0o777", 00, value, res) & (value = 511) & (res = Strings.Ok));
+	END Test.
+
+### Tests for hex (base 16) parsing with explicit base parameter
+
+positive: TryScanUInt32At_hex_explicit_base_prefix_parses_only_zero
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0x123", 16, value, res) & (value = 0) & (i = 1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_hex_explicit_base_prefix_parses_only_zero
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt64At(i, "0x123456789", 16, value, res) & (value = 0) & (i = 1) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt32At_hex_explicit_base_prefix_parses_negative_zero
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt32At(i, "-0x123", 16, value, res) & (value = 0) & (i = 2) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanInt64At_hex_explicit_base_prefix_parses_positive_zero
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: SIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanInt64At(i, "+0x123456789", 16, value, res) & (value = 0) & (i = 2) & (res = Strings.Ok));
+	END Test.
+
+
+### Tests for base=0 (auto-detection) edge cases
+positive: TryScanUInt32At_base0_just_zero
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		ASSERT(Strings.TryScanUInt32At(i, "0", 00, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt32At_base0_zero_with_invalid_prefix
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED32; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		(* "0z" - 'z' is not a valid prefix, so it's just decimal 0 *)
+		ASSERT(Strings.TryScanUInt32At(i, "0z", 00, value, res) & (value = 0) & (res = Strings.Ok));
+	END Test.
+
+positive: TryScanUInt64At_base0_zero_with_extra_chars
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: UNSIGNED64; i := 0: SIZE; res: INTEGER;
+	BEGIN
+		(* "0x" is valid prefix but no digits after it -> syntax error *)
+		ASSERT(~Strings.TryScanUInt64At(i, "0x", 00, value, res) & (res = Strings.SyntaxError));
+	END Test.
+
+### Tests for IsDigit edge cases
+positive: IsDigit_null_character
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(~Strings.IsDigit(0X, 10, d));  (* Null character should return FALSE *)
+	END Test.
+
+positive: IsDigit_lowercase_conversion
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsDigit('a', 11, d) & (d = 10));
+		ASSERT(Strings.IsDigit('z', 36, d) & (d = 35));
+	END Test.
+
+positive: IsDigit_invalid_radix_handling
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(~Strings.IsDigit('0', 1, d));   (* radix < 2 *)
+		ASSERT(~Strings.IsDigit('0', 37, d));  (* radix > 36 *)
+		ASSERT(~Strings.IsDigit('0', 0, d));   (* radix = 0 *)
+	END Test.
+
+### Tests for IsDecimal optimization
+positive: IsDecimal_faster_than_IsDigit_for_base10
+	MODULE Test;
+	IMPORT Strings;
+	VAR d1, d2: SIGNED32; success1, success2: BOOLEAN;
+	BEGIN
+		success1 := Strings.IsDecimal('5', d1);
+		success2 := Strings.IsDigit('5', 10, d2);
+		ASSERT(success1 & success2 & (d1 = 5) & (d2 = 5));
+	END Test.
+
+positive: IsDecimal_invalid_characters
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(~Strings.IsDecimal('A', d));
+		ASSERT(~Strings.IsDecimal(' ', d));
+		ASSERT(~Strings.IsDecimal(0X, d));
+		ASSERT(~Strings.IsDecimal(':', d));
+	END Test.
+
+### Tests for IsHexadecimal specialization
+positive: IsHexadecimal_case_insensitive
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsHexadecimal('a', d) & (d = 10));
+		ASSERT(Strings.IsHexadecimal('A', d) & (d = 10));
+		ASSERT(Strings.IsHexadecimal('f', d) & (d = 15));
+		ASSERT(Strings.IsHexadecimal('F', d) & (d = 15));
+	END Test.
+
+positive: IsHexadecimal_boundary_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR d: SIGNED32;
+	BEGIN
+		ASSERT(Strings.IsHexadecimal('0', d) & (d = 0));
+		ASSERT(Strings.IsHexadecimal('9', d) & (d = 9));
+		ASSERT(~Strings.IsHexadecimal('/', d));  (* just before '0' *)
+		ASSERT(~Strings.IsHexadecimal(':', d));  (* just after '9' *)
+		ASSERT(~Strings.IsHexadecimal('@', d));  (* just before 'A' *)
+		ASSERT(~Strings.IsHexadecimal('G', d));  (* just after 'F' *)
+		ASSERT(~Strings.IsHexadecimal('`', d));  (* just before 'a' *)
+		ASSERT(~Strings.IsHexadecimal('g', d));  (* just after 'f' *)
+	END Test.
+
+### Tests for CharOrDefault with different defaults
+
+positive: CharOrDefault_custom_default
+	MODULE Test;
+	IMPORT Strings;
+	VAR s := "test": ARRAY 5 OF CHAR;
+	BEGIN
+		ASSERT(Strings.CharOrDefault(s, 0, 5, 'X') = 't');
+		ASSERT(Strings.CharOrDefault(s, 5, 5, 'X') = 'X');
+		ASSERT(Strings.CharOrDefault(s, 10, 5, 'Y') = 'Y');
+		ASSERT(Strings.CharOrDefault(s, -1, 5, 'Z') = 'Z');
+	END Test.
+
+positive: CharOrDefault_empty_array
+	MODULE Test;
+	IMPORT Strings;
+	VAR empty: ARRAY 0 OF CHAR;
+	BEGIN
+		ASSERT(Strings.CharOrDefault(empty, 0, 0) = 0X);
+		ASSERT(Strings.CharOrDefault(empty, 0, 0, 'X') = 'X');
+		ASSERT(Strings.CharOrDefault(empty, 1, 0) = 0X);
+		ASSERT(Strings.CharOrDefault(empty, -1, 0) = 0X);
+	END Test.
+
+### Tests for TryParseAddress (specific to memory addresses)
+positive: TryParseAddress_large_values
+	MODULE Test;
+	IMPORT Strings;
+	VAR value: ADDRESS;
+	BEGIN
+		ASSERT(Strings.TryParseAddress("0xFFFFFFFF", value) & (value = 0xFFFFFFFF));
+	END Test.
+
+### Final comprehensive test combining multiple functions
+
+positive: comprehensive_parsing_scenario
+	MODULE Test;
+	IMPORT Strings;
+	VAR
+		u32: UNSIGNED32; u64: UNSIGNED64;
+		i32: SIGNED32; i64: SIGNED64;
+		sz: SIZE; addr: ADDRESS;
+		pos: SIZE; res: INTEGER;
+	BEGIN
+		(* Test 1: UNSIGNED32 with various bases *)
+		ASSERT(Strings.TryParseUInt32("0b1101", u32) & (u32 = 13));
+		ASSERT(Strings.TryParseUInt32("0o777", u32) & (u32 = 511));
+		ASSERT(Strings.TryParseUInt32("1234", u32) & (u32 = 1234));
+		ASSERT(Strings.TryParseUInt32("0xABCD", u32) & (u32 = 0xABCD));
+
+		(* Test 2: SIGNED32 with signs and overflow *)
+		ASSERT(Strings.TryParseInt32("-1234", i32) & (i32 = -1234));
+		ASSERT(Strings.TryParseInt32("+1234", i32) & (i32 = 1234));
+		ASSERT(~Strings.TryParseInt32("2147483648", i32) & (i32 = MAX(SIGNED32)));
+
+		(* Test 3: UNSIGNED64 with separators using TryScan *)
+		pos := 0;
+		ASSERT(Strings.TryScanUInt64At(pos, "1'000'000'000", 00, u64, res) & (u64 = 1000000000) & (res = Strings.Ok));
+
+		(* Test 4: SIGNED64 with hex *)
+		ASSERT(Strings.TryParseInt64("-0x7FFFFFFFFFFFFFFF", i64) & (i64 = -0x7FFFFFFFFFFFFFFF));
+
+		(* Test 5: SIZE (platform dependent) *)
+		ASSERT(Strings.TryParseSize("4096", sz) & (sz = 4096));
+
+		(* Test 6: ADDRESS *)
+		ASSERT(Strings.TryParseAddress("0x1000", addr) & (addr = 0x1000));
+
+		(* Test 7: Helper functions *)
+		VAR d: SIGNED32;
+		ASSERT(Strings.IsDecimal('7', d) & (d = 7));
+		ASSERT(Strings.IsHexadecimal('E', d) & (d = 14));
+		ASSERT(Strings.IsDigit('Z', 36, d) & (d = 35));
+
+		(* Test 8: CharOrDefault *)
+		VAR str := "Hello": ARRAY 6 OF CHAR;
+		ASSERT(Strings.CharOrDefault(str, 1, 6) = 'e');
+		ASSERT(Strings.CharOrDefault(str, 10, 6, '!') = '!');
+	END Test.
