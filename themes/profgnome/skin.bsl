@@ -1,7 +1,7 @@
 skin{
 	meta{
-		name : "Nordic";
-		description : "Nord-palette dark theme (gnome-look Nordic inspired)";
+		name : "ProfGnome";
+		description : "Light Prof-Gnome inspired theme (professional, old-school)";
 		author : "minia2";
 		date : "2026-07-18";
 	}
@@ -10,7 +10,7 @@ skin{
 		title{
 			activeLeftMargin : 12;
 			activeTopMargin : 17;
-			activeColor : 0ECEFF4FF;
+			activeColor : 0363636FF;
 			activeCloseBitmap : "images/aclose.png";
 			activeMinimizeBitmap : "images/amin.png";
 			activeMaximizeBitmap : "images/amax.png";
@@ -20,12 +20,12 @@ skin{
 			hoverMaximizeBitmap : "images/hmax.png";
 			inactiveLeftMargin : 12;
 			inactiveTopMargin : 17;
-			inactiveColor : 0D8DEE9FF;
+			inactiveColor : 0929595FF;
 			inactiveCloseBitmap : "images/iclose.png";
 			inactiveMinimizeBitmap : "images/imin.png";
 			inactiveMaximizeBitmap : "images/imax.png";
 			inactiveRestoreBitmap : "images/imax.png";
-			spaceBetweenButtons : 8;
+			spaceBetweenButtons : 6;
 		}
 		top{
 			activeLeft : "images/atl.png";
@@ -46,10 +46,10 @@ skin{
 		left{ activeMiddle : "images/alm.png"; inactiveMiddle : "images/ilm.png"; }
 		right{ activeMiddle : "images/arm.png"; inactiveMiddle : "images/irm.png"; }
 		desktop{
-			color : 088C0D0FF;
-			bgColor : 02E3440FF;
-			fgColor : 0ECEFF4FF;
-			selectColor : 05E81ACFF;
+			color : 03584E4FF;
+			bgColor : 0E6E6E6FF;
+			fgColor : 0252525FF;
+			selectColor : 03584E4FF;
 		}
 	}
 	cursor{
@@ -59,12 +59,12 @@ skin{
 	component{
 		button{
 			bounds{ height : 22; width : 64; }
-			clDefault : 0434C5EFF;
-			clHover : 04C566AFF;
-			clPressed : 05E81ACFF;
-			clTextDefault : 0ECEFF4FF;
-			clTextHover : 0ECEFF4FF;
-			clTextPressed : 0ECEFF4FF;
+			clDefault : 0E6E6E6FF;
+			clHover : 0D8D8D8FF;
+			clPressed : 03584E4FF;
+			clTextDefault : 0252525FF;
+			clTextHover : 0252525FF;
+			clTextPressed : 0252525FF;
 			fontHeight : 12;
 			effect3d : 0;
 			useBgBitmaps : FALSE;
@@ -75,12 +75,12 @@ skin{
 			useTrackerBitmaps : FALSE;
 			useArrowBitmaps : FALSE;
 			useBackgroundBitmaps : FALSE;
-			clDefault : 03B4252FF;
-			clHover : 0434C5EFF;
-			clPressed : 05E81ACFF;
-			clBtnDefault : 04C566AFF;
-			clBtnHover : 088C0D0FF;
-			clBtnPressed : 05E81ACFF;
+			clDefault : 0DCDCDCFF;
+			clHover : 0CDCDCDFF;
+			clPressed : 03584E4FF;
+			clBtnDefault : 0C0C0C0FF;
+			clBtnHover : 03584E4FF;
+			clBtnPressed : 03584E4FF;
 			effect3d : 0;
 		}
 	}
