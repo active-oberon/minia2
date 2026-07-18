@@ -1286,6 +1286,12 @@ PACKAGE GuiApplications ARCHIVE "GuiApplications.zip" SOURCE "GuiApplicationsSrc
 
 	WMScreenShot.Mod
 	WMBackdrop.Mod mars.png BluebottlePic0.png	# Backdrop
+	nebula_nord.png	# procedural wallpaper (Nord nebula)
+	# gnome-look wallpapers (see themes/wallpapers/gnome_look.txt for provenance)
+	wp_misty_peaks.jpg wp_night_camp.jpg wp_gnome_fly.jpg wp_cabin_falls.jpg
+	wp_night_lake.jpg wp_snow_ridge.jpg wp_amber_abstract.jpg wp_violet_peak.jpg
+	wp_lake_cabins.jpg wp_teal_peaks.jpg wp_dusk_lake.jpg wp_deer_forest.jpg
+	wp_autumn_sunset.jpg wp_green_valley.jpg wp_winter_dusk.jpg wp_cottage_woods.jpg
 
 	WMLanguageSwitcher.Mod	#	Language switcher
 
