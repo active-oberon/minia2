@@ -1,0 +1,25 @@
+# gnome-look wallpapers added to minia2
+#
+# Downloaded from gnome-look.org (pling/opendesktop) via the per-product
+# `loadFiles` JSON endpoint, choosing the highest-resolution non-watermarked
+# ("No-Logo") image, then resized to 2560px wide and saved as JPEG q90 in data/.
+# These are third-party, user-uploaded artworks — each keeps its uploader's
+# gnome-look licence terms. Bundled here for a personal desktop build.
+#
+# installed file          menu name        source page                              picked file
+data/wp_misty_peaks.jpg    Misty Peaks      https://www.gnome-look.org/p/2029167     GDWP-772-5K-No-Logo
+data/wp_night_camp.jpg     Night Camp       https://www.gnome-look.org/p/2019359     GDWP-727-4K-No-Logo
+data/wp_gnome_fly.jpg      GNOME Fly        https://www.gnome-look.org/p/1043304     139311-Fly high (GNOME branded)
+data/wp_cabin_falls.jpg    Cabin Falls      https://www.gnome-look.org/p/2030880     GDWP-777-4K-No-Logo
+data/wp_night_lake.jpg     Night Lake       https://www.gnome-look.org/p/1421905     4K No Logo G321
+data/wp_snow_ridge.jpg     Snow Ridge       https://www.gnome-look.org/p/1450867     4K No Logo G477
+data/wp_amber_abstract.jpg Amber Abstract   https://www.gnome-look.org/p/1043142     138738-Gnome Nightmare
+data/wp_violet_peak.jpg    Violet Peak      https://www.gnome-look.org/p/2021755     GDWP-760-4K-No-Logo
+data/wp_lake_cabins.jpg    Lake Cabins      https://www.gnome-look.org/p/2329887     Gnome-Desktop-873-4K-No-Logo
+data/wp_teal_peaks.jpg     Teal Peaks       https://www.gnome-look.org/p/2011197     GDWP-723-4K-N-Logo
+data/wp_dusk_lake.jpg      Dusk Lake        https://www.gnome-look.org/p/1377748     4K NO LOGO G187
+data/wp_deer_forest.jpg    Deer Forest      https://www.gnome-look.org/p/2337558     GDWP-935-LEFT-4K-No-Logo
+data/wp_autumn_sunset.jpg  Autumn Sunset    https://www.gnome-look.org/p/2340029     GDWP-958-4K-No-Logo
+data/wp_green_valley.jpg   Green Valley     https://www.gnome-look.org/p/2340392     GDWP-961-4K-No-Logo
+data/wp_winter_dusk.jpg    Winter Dusk      https://www.gnome-look.org/p/2349296     GDWP-1221-Right-4K-No-Logo
+data/wp_cottage_woods.jpg  Cottage Woods    https://www.gnome-look.org/p/2340669     GDWP-940-4K-No-Logo
