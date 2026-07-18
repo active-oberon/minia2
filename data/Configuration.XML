@@ -83,7 +83,7 @@ To update: Configuration.Init ~
 			<Setting name="SharpenContours" value="FALSE"/>
 
 			<Section name="DefaultFont">
-				<Setting name="Name" value="LiberationSans"/>
+				<Setting name="Name" value="NotoSans"/>
 				<Setting name="Size" value="14"/>
 				<Setting name="Style" value=""/>
 			</Section>
@@ -91,12 +91,12 @@ To update: Configuration.Init ~
 <!-- System Fonts -->
 			<Section name="SystemFonts">
 				<Section name="Default">
-					<Setting name="Name" value="LiberationSans"/>
+					<Setting name="Name" value="NotoSans"/>
 					<Setting name="Size" value="14"/>
 					<Setting name="Style" value=""/>
 				</Section>
 				<Section name="Monospace">
-					<Setting name="Name" value="LiberationMono"/>
+					<Setting name="Name" value="JetBrainsMono"/>
 					<Setting name="Size" value="14"/>
 					<!-- Setting name="FontWeight" value / -->
 				</Section>
@@ -104,17 +104,17 @@ To update: Configuration.Init ~
 						<Setting name="Name" value="Monospace"/>
 					</Section -->
 				<Section name="Serif">
-					<Setting name="Name" value="LiberationSerif"/>
+					<Setting name="Name" value="NotoSerif"/>
 					<Setting name="Size" value="14"/>
 					<!-- Setting name="FontWeight" value / -->
 				</Section>
 				<Section name="SansSerif">
-					<Setting name="Name" value="LiberationSans"/>
+					<Setting name="Name" value="NotoSans"/>
 					<Setting name="Size" value="14"/>
 					<!-- Setting name="FontWeight" value / -->
 				</Section>
 				<Section name="Console">
-					<Setting name="Name" value="Courier"/>
+					<Setting name="Name" value="JetBrainsMono"/>
 					<Setting name="Size" value="12"/>
 					<!-- Setting name="Italic" value="" / -->
 					<!-- Setting name="FontWeight" value / -->

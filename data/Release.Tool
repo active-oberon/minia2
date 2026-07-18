@@ -1251,6 +1251,7 @@ PACKAGE GuiApplications ARCHIVE "GuiApplications.zip" SOURCE "GuiApplicationsSrc
 	BluePlastic.skin
 	reptile.skin pklook.skin redlook.skin traditional.skin
 	winxp.skin aqua.skin xmas.skin glass.skin stijn.skin stijnbw.skin xpe.skin
+	nordic.skin profgnome.skin
 
 	SkinEditor.Mod SkinTutorial.Text
 
@@ -2113,6 +2114,12 @@ PACKAGE TrueTypeFonts ARCHIVE "TrueTypeFonts.zip" SOURCE "" DESCRIPTION "True-ty
 	PTSerif.ttf PTSerif_bd.ttf PTSerif_bi.ttf PTSerif_i.ttf
 	PTSerifCaption.ttf PTSerifCaption_i.ttf
 	PTFreeFontOFL.txt
+
+	JetBrainsMono.ttf JetBrainsMono_bd.ttf JetBrainsMono_bi.ttf JetBrainsMono_i.ttf
+	JetBrainsMonoOFL.txt
+	NotoSans.ttf NotoSans_bd.ttf NotoSans_bi.ttf NotoSans_i.ttf
+	NotoSerif.ttf NotoSerif_bd.ttf NotoSerif_bi.ttf NotoSerif_i.ttf
+	NotoFontsOFL.txt
 END
 
 PACKAGE CjkFonts ARCHIVE "CjkFonts.zip" SOURCE "" DESCRIPTION "Chinese, Japanese and Korean Fonts"

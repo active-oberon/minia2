@@ -17,4 +17,5 @@ Available Skins: Displayed name and file name per skin
 	<Look name="Stijn" file="stijn.skin"/>
 	<Look name="StijnBW" file="stijnbw.skin"/>
 	<Look name="Nordic" file="nordic.skin"/>
+	<Look name="ProfGnome" file="profgnome.skin"/>
 </LookList>
