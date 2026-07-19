@@ -25,6 +25,13 @@ task build-platform PLATFORM=Linux64
 Output lands in `target/<PLATFORM>/`. Launch the desktop with `target/Linux64/a2.sh`
 (needs an X display) or `target/Win64/a2.bat`.
 
+**Building the Windows version:** cross-compile `Win64` from a native Linux
+filesystem. Use a regular Linux installation, a Linux virtual machine, or WSL2.
+When using WSL2, clone or copy the repository into the WSL2 filesystem (for
+example, `~/src/minia2`) before running `task Win64`. Do not build it directly
+from a mounted Windows drive such as `/mnt/c` or `/mnt/d`: the A2 build can fail
+to import symbol files created earlier in the same compilation pass.
+
 The build drives A2's own `Release.Build` with a package `--exclude` list
 (`MINI_EXCLUDE` in `Taskfile.yml`) then links the static kernel from
 `configs/moduleList*.txt`.
