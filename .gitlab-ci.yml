@@ -97,6 +97,22 @@ container:
         docker push "$IMAGE:latest"
       fi
     - echo "[SUCCESS] pushed $IMAGE:$TAG"
+    # Also mirror to Docker Hub when credentials are configured (CI/CD variables
+    # DOCKERHUB_USER + DOCKERHUB_TOKEN). Skipped silently if unset.
+    - |
+      if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+        echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin docker.io
+        HUB="docker.io/$DOCKERHUB_USER/minia2-sdk"
+        docker tag "$IMAGE:$TAG" "$HUB:$TAG"
+        docker push "$HUB:$TAG"
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          docker tag "$IMAGE:$TAG" "$HUB:latest"
+          docker push "$HUB:latest"
+        fi
+        echo "[SUCCESS] pushed $HUB:$TAG"
+      else
+        echo "[SKIP] Docker Hub push (set DOCKERHUB_USER + DOCKERHUB_TOKEN to enable)"
+      fi
 
 # Creates a GitLab Release for the tag with download links pointing at the
 # archives published to the Generic Package Registry by the package job.
