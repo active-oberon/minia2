@@ -93,8 +93,8 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 382 modules (symbol + object files) |
-| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 378 modules, for `build -t win64` |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 383 modules (symbol + object files) |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 379 modules, for `build -t win64` |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
@@ -105,7 +105,7 @@ naive ~255MB Linux-only image in three steps:
 - **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
   `ld-linux`) already ship in `debian:bookworm-slim`.
 - **Headless-core stdlib only** (~16MB saved): of the 712 built stdlib modules,
-  only the 382 whose import closure never reaches the window manager / display /
+  only the 383 whose import closure never reaches the window manager / display /
   raster are shipped (this keeps the full networking stack — TCP/UDP/DNS/HTTP —
   which registers through the generic `Plugins` driver registry, not the GUI).
   See `docker/headless-core.txt`; regenerate it with

@@ -1040,6 +1040,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	UnihanParser.Mod Radicals.txt	# Unicode tool
 
 	CSV.Mod # support for comma separated value files
+	JSON.Mod # RFC 8259 JSON parser and serializer
 END
 
 PACKAGE GuiApplicationsMini ARCHIVE "GuiApplicationsMini.zip" SOURCE "GuiApplicationsMiniSrc.zip" DESCRIPTION "Minimal GUI applications set"

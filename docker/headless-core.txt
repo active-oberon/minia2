@@ -191,6 +191,7 @@ Inflate
 IsoImages
 JPEG2000DecoderCS
 JPEG2000DecoderUtil
+JSON
 Joysticks
 Kernel
 KernelLog
