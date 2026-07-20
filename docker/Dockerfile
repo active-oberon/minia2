@@ -41,8 +41,9 @@ RUN task Linux64
 # the window manager / display / raster). Drops ~400 GUI modules / ~18MB.
 RUN set -eu; \
     mkdir -p /opt/a2sdk/lib; \
-    cp target/Linux64/oberon     /opt/a2sdk/oberon; \
-    cp target/Linux64/oberon.cfg /opt/a2sdk/oberon.cfg; \
+    cp target/Linux64/oberon      /opt/a2sdk/oberon; \
+    cp target/Linux64/oberon.cfg  /opt/a2sdk/oberon.cfg; \
+    cp configs/moduleListLinux.txt /opt/a2sdk/boot-modules.txt; \
     while read -r m; do \
         for e in SymUu GofUu; do \
             [ -f "target/Linux64/bin/$m.$e" ] && \

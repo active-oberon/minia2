@@ -3,8 +3,10 @@
 # ob — a Go-style CLI over the A2 (Active Oberon) toolchain.
 #
 # Hides the .cfg / System.DoFile / search-path mechanics of the bare `oberon`
-# binary behind three verbs:
+# binary behind these verbs:
 #
+#   ob build   <File.Mod> [-o <name>]  link a standalone native ELF (runtime baked
+#                                      in); runs without A2 as `./name Mod.Proc`
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
 #   ob repl                            drop into the interactive A2 shell
@@ -20,7 +22,9 @@ set -euo pipefail
 SDK="${A2SDK:-/opt/a2sdk}"
 OBERON="$SDK/oberon"
 LIB="$SDK/lib"
-PLATFORM="${A2_PLATFORM:-Unix64}"
+PLATFORM="${A2_PLATFORM:-Unix64}"           # compiler backend
+LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
+BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
 OBJ_EXT="GofUu"
 SYM_EXT=".SymUu"
 
@@ -77,6 +81,52 @@ cmd_compile() {
   echo "ob: wrote $outdir/$mod.$OBJ_EXT"
 }
 
+cmd_build() {
+  local src="" outname=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o|--output) outname="$2"; shift 2 ;;
+      *)           src="$1";     shift   ;;
+    esac
+  done
+  [ -n "$src" ] || die "usage: ob build <File.Mod> [-o <name>]"
+  [ -f "$src" ] || die "no such file: $src"
+  [ -f "$BOOT_LIST" ] || die "boot module list not found at $BOOT_LIST"
+  src="$(realpath "$src")"
+
+  local mod w boot dest; mod="$(module_name "$src")"
+  [ -n "$outname" ] || outname="$mod"
+  # resolve output to an absolute path before we cd into the scratch dir
+  case "$outname" in /*) dest="$outname" ;; *) dest="$(pwd)/$outname" ;; esac
+  mkdir -p "$(dirname "$dest")"
+
+  local fn; fn="$(basename "$dest")"
+  w="$(make_workdir)"
+  trap 'rm -rf "$w"' RETURN
+  cp "$src" "$w/$mod.Mod"
+  boot="$(tr '\n' ' ' < "$BOOT_LIST")"
+
+  ( cd "$w" && export PWD="$w"
+    # 1. compile the module to an object file (errors print here and abort)
+    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+      "./$mod.Mod" >/dev/null
+    # 2. statically link the boot set + module + (auto-resolved) imports into
+    #    one native executable. The linker follows the import graph itself, so
+    #    only the boot set and the module need to be named.
+    "$OBERON" do "
+      Linker.Link -p=$LINK_PLATFORM --path=./ --fileName=$fn --extension=$OBJ_EXT
+      $boot $mod
+      ~
+    " | tr -d '\r' | grep -vE '^GC mode|^WORK:' || true
+    [ -f "$fn" ] || die "link failed (no output binary produced)"
+    cp "$fn" "$dest" )
+
+  chmod +x "$dest"
+  echo "ob: wrote $dest"
+  echo "    run it (no A2 needed):  $dest $mod.Do"
+}
+
 cmd_run() {
   local src="${1:-}"; shift || true
   local proc="${1:-Do}"
@@ -106,11 +156,12 @@ cmd_version() {
 }
 
 case "${1:-}" in
+  build)   shift; cmd_build "$@" ;;
   compile) shift; cmd_compile "$@" ;;
   run)     shift; cmd_run "$@" ;;
   repl)    shift; cmd_repl ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac
