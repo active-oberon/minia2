@@ -41,20 +41,18 @@ RUN task Linux64
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS sdk
 
-# The A2 runtime is a dynamically-linked glibc ELF (libc + libdl); both are in
-# the base image. ca-certificates is only for user convenience.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libc6 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# No apt install needed: the A2 runtime is a dynamically-linked glibc ELF
+# (libc.so.6 + libdl.so.2 + ld-linux), all already present in the base image.
+# The desktop `data/` tree (fonts, wallpapers, skins) is deliberately NOT copied
+# — headless compile/run never touches it, and it was ~48MB of the image.
 
 ENV A2SDK=/opt/a2sdk \
     A2_PLATFORM=Unix64 \
     TMPDIR=/tmp
 
-# Runtime binary, runtime config, and the app data (fonts, Configuration, …).
+# Runtime binary + runtime config (config only matters for `ob repl`).
 COPY --from=builder /src/target/Linux64/oberon     ${A2SDK}/oberon
 COPY --from=builder /src/target/Linux64/oberon.cfg ${A2SDK}/oberon.cfg
-COPY --from=builder /src/target/Linux64/data       ${A2SDK}/data
 # The precompiled standard library (symbol + object files) lives under lib/.
 COPY --from=builder /src/target/Linux64/bin        ${A2SDK}/lib
 

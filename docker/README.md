@@ -55,8 +55,12 @@ END Hello.
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
 | `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the precompiled standard library — symbol + object files for 700+ modules |
-| `/opt/a2sdk/data` | fonts, `Configuration`, and other app data |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
+
+The image is ~164MB. The desktop `data/` tree (fonts, wallpapers, skins — ~48MB)
+is intentionally excluded: headless compile/run never reads it. The base image
+needs no extra packages — the runtime's shared libs (`libc`, `libdl`, `ld-linux`)
+already ship in `debian:bookworm-slim`.
 
 The A2 compiler resolves imported modules from its **current working directory**,
 not from a configurable search path. So `ob` runs each build inside a private
