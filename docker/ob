@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# ob — a Go-style CLI over the A2 (Active Oberon) toolchain.
+#
+# Hides the .cfg / System.DoFile / search-path mechanics of the bare `oberon`
+# binary behind three verbs:
+#
+#   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
+#   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
+#   ob repl                            drop into the interactive A2 shell
+#   ob version                         print the SDK version banner
+#
+# The A2 compiler resolves imported modules from its *current working directory*,
+# not from a configurable search path. So each invocation runs inside a private
+# scratch dir that is pre-populated with symlinks to the precompiled standard
+# library (SDK/lib/*.SymUu + *.GofUu). This keeps the shared SDK read-only and
+# lets many builds run concurrently without clobbering each other.
+set -euo pipefail
+
+SDK="${A2SDK:-/opt/a2sdk}"
+OBERON="$SDK/oberon"
+LIB="$SDK/lib"
+PLATFORM="${A2_PLATFORM:-Unix64}"
+OBJ_EXT="GofUu"
+SYM_EXT=".SymUu"
+
+die() { echo "ob: $*" >&2; exit 1; }
+
+[ -x "$OBERON" ] || die "runtime not found at $OBERON (set A2SDK to the SDK root)"
+[ -d "$LIB" ]    || die "standard library not found at $LIB"
+
+# Parse the module name from a `MODULE <Name>;` header, falling back to the
+# file's basename. A2 requires the object-file name to match the module name.
+module_name() {
+  local f="$1" name
+  name="$(grep -aoE '^[[:space:]]*MODULE[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$f" \
+          | head -1 | awk '{print $2}')"
+  [ -n "$name" ] || name="$(basename "$f" .Mod)"
+  printf '%s' "$name"
+}
+
+# Build an isolated work dir seeded with the stdlib symbol + object files.
+make_workdir() {
+  local w
+  w="$(mktemp -d "${TMPDIR:-/tmp}/ob.XXXXXX")"
+  ln -s "$LIB"/*"$SYM_EXT"  "$w"/ 2>/dev/null || true
+  ln -s "$LIB"/*."$OBJ_EXT" "$w"/ 2>/dev/null || true
+  printf '%s' "$w"
+}
+
+cmd_compile() {
+  local src="" outdir="."
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o|--output) outdir="$2"; shift 2 ;;
+      *)           src="$1";    shift   ;;
+    esac
+  done
+  [ -n "$src" ] || die "usage: ob compile <File.Mod> [-o <dir>]"
+  [ -f "$src" ] || die "no such file: $src"
+  src="$(realpath "$src")"
+  mkdir -p "$outdir"; outdir="$(realpath "$outdir")"
+
+  local mod w; mod="$(module_name "$src")"
+  w="$(make_workdir)"
+  trap 'rm -rf "$w"' RETURN
+  cp "$src" "$w/$mod.Mod"
+
+  ( cd "$w" && export PWD="$w"
+    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+      "./$mod.Mod" )
+
+  cp "$w/$mod.$OBJ_EXT" "$outdir/" 2>/dev/null \
+    || die "compile produced no $mod.$OBJ_EXT"
+  [ -f "$w/$mod$SYM_EXT" ] && cp "$w/$mod$SYM_EXT" "$outdir/" || true
+  echo "ob: wrote $outdir/$mod.$OBJ_EXT"
+}
+
+cmd_run() {
+  local src="${1:-}"; shift || true
+  local proc="${1:-Do}"
+  [ -n "$src" ] || die "usage: ob run <File.Mod> [Proc]"
+  [ -f "$src" ] || die "no such file: $src"
+  src="$(realpath "$src")"
+
+  local mod w; mod="$(module_name "$src")"
+  w="$(make_workdir)"
+  trap 'rm -rf "$w"' RETURN
+  cp "$src" "$w/$mod.Mod"
+
+  ( cd "$w" && export PWD="$w"
+    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+      "./$mod.Mod" >/dev/null
+    exec "$OBERON" "$mod.$proc" )
+}
+
+cmd_repl() { exec "$OBERON" do "System.DoFile $SDK/oberon.cfg ~"; }
+
+cmd_version() {
+  echo "A2 (Active Oberon) SDK — minia2"
+  echo "  runtime : $OBERON"
+  echo "  stdlib  : $(ls "$LIB"/*"$SYM_EXT" 2>/dev/null | wc -l) modules"
+  echo "  target  : $PLATFORM"
+}
+
+case "${1:-}" in
+  compile) shift; cmd_compile "$@" ;;
+  run)     shift; cmd_run "$@" ;;
+  repl)    shift; cmd_repl ;;
+  version|--version|-v) cmd_version ;;
+  ""|help|-h|--help)
+    sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try: ob help)" ;;
+esac
