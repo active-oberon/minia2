@@ -69,6 +69,10 @@ ENV A2SDK=/opt/a2sdk \
 # assembled at /opt/a2sdk in the builder stage.
 COPY --from=builder /opt/a2sdk ${A2SDK}
 
+# A2 is BSD-3-Clause (ETH Zurich); binary redistribution requires reproducing the
+# copyright notice + disclaimer with the distribution. Bundle it in the image.
+COPY license.txt /opt/a2sdk/LICENSE.txt
+
 COPY docker/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob
 
