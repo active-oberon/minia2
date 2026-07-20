@@ -28,6 +28,11 @@ docker run --rm minia2-sdk
 # compile + run a module's Do command (like `go run`)
 docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod
 
+# build a standalone native executable with the runtime baked in (like `go build`)
+docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -o hello
+# ...then run it on any glibc Linux box — no A2 install needed:
+./hello Hello.Do          #  ->  Hello from A2 / Active Oberon!
+
 # run a named exported command instead of Do
 docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod Main
 
@@ -79,12 +84,25 @@ scratch dir seeded with symlinks to the stdlib, keeping the shared SDK read-only
 and letting builds run concurrently. `compile` then emits `Module.GofUu`; `run`
 compiles and hands the module name to the runtime, which loads and executes it.
 
+`build` goes further: it compiles the module, then invokes `Linker.Link` to
+statically link the boot set (`boot-modules.txt` — kernel + GC + scheduler +
+console shell) together with your module into one native ELF. The linker walks
+the import graph itself, so only the boot set and your module are named; the rest
+of the closure is pulled in automatically. The result embeds the whole A2 runtime
+and runs on any glibc Linux box with no A2 present — verified by running the
+output alone in a pristine `debian:bookworm-slim` container (`--network none
+--read-only`, no `oberon` binary anywhere).
+
 ## Limitations (PoC scope)
 
-- **Not a single static binary.** `ob run` uses the runtime + dynamically loaded
-  object files (the `go run` model), not a `go build`-style standalone ELF with
-  the runtime linked in. Baking `Linker.Link` into an `ob build` verb is the next
-  step.
-- **Linux ELF / Win PE output only** — never native macOS Mach-O. The base must be
-  glibc (the runtime links `libc`/`libdl`); musl/Alpine will not work.
-- Dead-code elimination is module-granular, so binaries are larger than Go's.
+- **`build` output is invoked as `./app Module.Proc`**, not a bare `./app`. The
+  console boot shell dispatches the command from argv; auto-running a baked-in
+  command with no arguments would need a custom boot module (a later step).
+- **This image targets Linux x86-64 ELF only.** The compiler+linker also support
+  Windows PE (`-p=Win64 --fileFormat=PE64CUI`), but cross-building a `.exe` needs
+  the Win64-compiled stdlib (`.SymWw`/`.GofWw`) shipped alongside — not in this
+  image. Native macOS Mach-O is not supported at all.
+- The base must be glibc (the runtime links `libc`/`libdl`); musl/Alpine will not
+  work — for the SDK image and for running `build` output.
+- Dead-code elimination is module-granular, so binaries are larger than Go's
+  (hello-world ≈ 1.3 MB — it contains the full kernel + GC + scheduler).
