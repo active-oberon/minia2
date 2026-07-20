@@ -136,9 +136,9 @@ symbols, and the linker writes a PE64 image instead of an ELF.
 
 ## Limitations (PoC scope)
 
-- **The Win64 `.exe` is produced but not executed here** — it is verified only as
-  a well-formed `PE32+ console x86-64` image (`file`). Running it needs Windows or
-  Wine. Native macOS Mach-O is not supported at all.
+- **The Win64 `.exe` needs Windows (or Wine) to run** — it is a `PE32+ console
+  x86-64` image, confirmed running under Wine. Native macOS Mach-O is not
+  supported at all.
 - Networking on the Win64 target is incomplete (the Linux `Sockets` module has no
   Win64 build in this stdlib); the Linux target has the full TCP/UDP/HTTP stack.
 - The base must be glibc (the runtime links `libc`/`libdl`); musl/Alpine will not
