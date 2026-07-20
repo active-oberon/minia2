@@ -43,6 +43,34 @@ docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 docker run --rm -it minia2-sdk repl
 ```
 
+### A shorter command: the `ob` alias
+
+Typing the full `docker run …` each time is tedious. Add an alias to your
+`~/.bashrc` (or `~/.zshrc`) so the SDK feels like a locally installed `ob` tool:
+
+```sh
+alias ob='docker run --rm -v "$PWD:/work" minia2-sdk'
+# interactive verbs (repl) also want a TTY:
+alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'
+```
+
+Reload the shell (`source ~/.bashrc`) and the workflow becomes:
+
+```sh
+ob run     Hello.Mod          # compile + run (go run)
+ob build   Hello.Mod -o hello # standalone binary (go build)
+./hello    Hello.Do           # run it — no A2 needed
+ob compile Hello.Mod -o out   # just the .GofUu object file
+ob version                    # SDK banner
+obit repl                     # interactive A2 shell
+```
+
+> **Quoting matters.** Use single quotes and `"$PWD"` exactly as above. `$PWD`
+> is left unexpanded in the alias definition and resolves to the *current*
+> directory each time you call `ob` — that is what bind-mounts your sources into
+> `/work`. Writing `"PWD"` (no `$`) makes Docker create an empty **named volume**
+> called `PWD` instead, and every file lands as "no such file: Hello.Mod".
+
 A minimal module (`docker/examples/Hello.Mod`):
 
 ```oberon
