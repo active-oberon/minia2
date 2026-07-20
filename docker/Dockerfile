@@ -36,6 +36,21 @@ COPY . /src
 # runtime plus 700+ precompiled stdlib .SymUu/.GofUu files.
 RUN task Linux64
 
+# Assemble the SDK payload: runtime + only the headless-core stdlib modules
+# (see docker/headless-core.txt — everything whose import closure never reaches
+# the window manager / display / raster). Drops ~400 GUI modules / ~18MB.
+RUN set -eu; \
+    mkdir -p /opt/a2sdk/lib; \
+    cp target/Linux64/oberon     /opt/a2sdk/oberon; \
+    cp target/Linux64/oberon.cfg /opt/a2sdk/oberon.cfg; \
+    while read -r m; do \
+        for e in SymUu GofUu; do \
+            [ -f "target/Linux64/bin/$m.$e" ] && \
+                cp "target/Linux64/bin/$m.$e" /opt/a2sdk/lib/ || true; \
+        done; \
+    done < docker/headless-core.txt; \
+    echo "SDK lib: $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"
+
 # ---------------------------------------------------------------------------
 # Stage 2 — the SDK image: runtime + stdlib + `ob` wrapper on a slim base.
 # ---------------------------------------------------------------------------
@@ -50,11 +65,9 @@ ENV A2SDK=/opt/a2sdk \
     A2_PLATFORM=Unix64 \
     TMPDIR=/tmp
 
-# Runtime binary + runtime config (config only matters for `ob repl`).
-COPY --from=builder /src/target/Linux64/oberon     ${A2SDK}/oberon
-COPY --from=builder /src/target/Linux64/oberon.cfg ${A2SDK}/oberon.cfg
-# The precompiled standard library (symbol + object files) lives under lib/.
-COPY --from=builder /src/target/Linux64/bin        ${A2SDK}/lib
+# The whole SDK payload (runtime + oberon.cfg + headless-core lib/) was
+# assembled at /opt/a2sdk in the builder stage.
+COPY --from=builder /opt/a2sdk ${A2SDK}
 
 COPY docker/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob

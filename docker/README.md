@@ -54,13 +54,22 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the precompiled standard library — symbol + object files for 700+ modules |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** standard library — 310 modules (symbol + object files) |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
-The image is ~164MB. The desktop `data/` tree (fonts, wallpapers, skins — ~48MB)
-is intentionally excluded: headless compile/run never reads it. The base image
-needs no extra packages — the runtime's shared libs (`libc`, `libdl`, `ld-linux`)
-already ship in `debian:bookworm-slim`.
+The image is ~134MB, trimmed from a naive ~255MB in three steps:
+
+- **No desktop `data/`** (fonts, wallpapers, skins — ~48MB): headless compile/run
+  never reads it.
+- **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
+  `ld-linux`) already ship in `debian:bookworm-slim`.
+- **Headless-core stdlib only** (~18MB saved): of the 712 built stdlib modules,
+  only the 310 whose import closure never reaches the window manager / display /
+  raster are shipped. See `docker/headless-core.txt`; regenerate it with
+  `docker/gen-headless-core.sh` (it taint-propagates the GUI roots through A2's
+  own `DependencyWalker`). The kept set is closed under imports, so every retained
+  module both compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is
+  a compile error by design — use the full desktop build for GUI work.
 
 The A2 compiler resolves imported modules from its **current working directory**,
 not from a configurable search path. So `ob` runs each build inside a private
