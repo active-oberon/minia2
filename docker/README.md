@@ -30,8 +30,13 @@ docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod
 
 # build a standalone native executable with the runtime baked in (like `go build`)
 docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -o hello
-# ...then run it on any glibc Linux box — no A2 install needed:
-./hello Hello.Do          #  ->  Hello from A2 / Active Oberon!
+# ...then run it on any glibc Linux box — no A2 install needed. It auto-runs the
+# module's Do command (no argument required):
+./hello                   #  ->  Hello from A2 / Active Oberon!
+
+# cross-build a Windows .exe from the same Linux image
+docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -t win64 -o hello.exe
+# -> hello.exe : PE32+ console executable for Windows x86-64
 
 # run a named exported command instead of Do
 docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod Main
@@ -57,12 +62,13 @@ alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'
 Reload the shell (`source ~/.bashrc`) and the workflow becomes:
 
 ```sh
-ob run     Hello.Mod          # compile + run (go run)
-ob build   Hello.Mod -o hello # standalone binary (go build)
-./hello    Hello.Do           # run it — no A2 needed
-ob compile Hello.Mod -o out   # just the .GofUu object file
-ob version                    # SDK banner
-obit repl                     # interactive A2 shell
+ob run     Hello.Mod             # compile + run (go run)
+ob build   Hello.Mod -o hello    # standalone Linux binary (go build)
+./hello                          # run it — no A2 needed, auto-runs Hello.Do
+ob build   Hello.Mod -t win64 -o hello.exe   # cross-build a Windows .exe
+ob compile Hello.Mod -o out      # just the .GofUu object file
+ob version                       # SDK banner
+obit repl                        # interactive A2 shell
 ```
 
 > **Quoting matters.** Use single quotes and `"$PWD"` exactly as above. `$PWD`
@@ -87,10 +93,12 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** standard library — 382 modules (symbol + object files) |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 382 modules (symbol + object files) |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 378 modules, for `build -t win64` |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
-The image is ~138MB, trimmed from a naive ~255MB in three steps:
+The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
+naive ~255MB Linux-only image in three steps:
 
 - **No desktop `data/`** (fonts, wallpapers, skins — ~48MB): headless compile/run
   never reads it.
@@ -112,25 +120,28 @@ scratch dir seeded with symlinks to the stdlib, keeping the shared SDK read-only
 and letting builds run concurrently. `compile` then emits `Module.GofUu`; `run`
 compiles and hands the module name to the runtime, which loads and executes it.
 
-`build` goes further: it compiles the module, then invokes `Linker.Link` to
-statically link the boot set (`boot-modules.txt` — kernel + GC + scheduler +
-console shell) together with your module into one native ELF. The linker walks
-the import graph itself, so only the boot set and your module are named; the rest
-of the closure is pulled in automatically. The result embeds the whole A2 runtime
-and runs on any glibc Linux box with no A2 present — verified by running the
-output alone in a pristine `debian:bookworm-slim` container (`--network none
---read-only`, no `oberon` binary anywhere).
+`build` goes further: it compiles the module, generates a tiny boot driver
+(`ObEntry`) whose module body calls your command and then exits, and invokes
+`Linker.Link` to statically link the boot set (`boot-modules.txt`, minus the
+interactive shell) + your module + `ObEntry` into one native executable. The
+linker walks the import graph itself, so only the boot set and your module are
+named; the rest of the closure is pulled in automatically. The result embeds the
+whole A2 runtime and auto-runs on startup — verified by running the output alone
+in a pristine `debian:bookworm-slim` container (`--network none --read-only`, no
+`oberon` binary anywhere), which prints the greeting and exits 0 with no argument.
+
+For `-t win64` the compiler still runs on Linux (it loads its backend modules as
+Linux `.GofUu`) but emits Win64 `.GofWw` type-checked against the Win64 stdlib
+symbols, and the linker writes a PE64 image instead of an ELF.
 
 ## Limitations (PoC scope)
 
-- **`build` output is invoked as `./app Module.Proc`**, not a bare `./app`. The
-  console boot shell dispatches the command from argv; auto-running a baked-in
-  command with no arguments would need a custom boot module (a later step).
-- **This image targets Linux x86-64 ELF only.** The compiler+linker also support
-  Windows PE (`-p=Win64 --fileFormat=PE64CUI`), but cross-building a `.exe` needs
-  the Win64-compiled stdlib (`.SymWw`/`.GofWw`) shipped alongside — not in this
-  image. Native macOS Mach-O is not supported at all.
+- **The Win64 `.exe` is produced but not executed here** — it is verified only as
+  a well-formed `PE32+ console x86-64` image (`file`). Running it needs Windows or
+  Wine. Native macOS Mach-O is not supported at all.
+- Networking on the Win64 target is incomplete (the Linux `Sockets` module has no
+  Win64 build in this stdlib); the Linux target has the full TCP/UDP/HTTP stack.
 - The base must be glibc (the runtime links `libc`/`libdl`); musl/Alpine will not
-  work — for the SDK image and for running `build` output.
+  work — for the SDK image and for running Linux `build` output.
 - Dead-code elimination is module-granular, so binaries are larger than Go's
   (hello-world ≈ 1.3 MB — it contains the full kernel + GC + scheduler).

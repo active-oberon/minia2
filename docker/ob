@@ -5,8 +5,11 @@
 # Hides the .cfg / System.DoFile / search-path mechanics of the bare `oberon`
 # binary behind these verbs:
 #
-#   ob build   <File.Mod> [-o <name>]  link a standalone native ELF (runtime baked
-#                                      in); runs without A2 as `./name Mod.Proc`
+#   ob build   <File.Mod> [-o name] [-t linux64|win64] [Proc]
+#                                      link a standalone native executable (runtime
+#                                      baked in) that auto-runs Module.Proc (default
+#                                      Do). linux64 -> ELF runs as `./name`; win64
+#                                      -> a Windows PE64 .exe
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
 #   ob repl                            drop into the interactive A2 shell
@@ -21,10 +24,12 @@ set -euo pipefail
 
 SDK="${A2SDK:-/opt/a2sdk}"
 OBERON="$SDK/oberon"
-LIB="$SDK/lib"
-PLATFORM="${A2_PLATFORM:-Unix64}"           # compiler backend
+LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runtime
+LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
+PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux)
 LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
 BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
+BOOT_LIST_WIN="$SDK/boot-modules-win64.txt"
 OBJ_EXT="GofUu"
 SYM_EXT=".SymUu"
 
@@ -43,12 +48,25 @@ module_name() {
   printf '%s' "$name"
 }
 
-# Build an isolated work dir seeded with the stdlib symbol + object files.
+# Build an isolated work dir seeded with the stdlib symbol + object files for the
+# requested target. For win64 we still need the Linux .GofUu objects — the
+# compiler itself runs on Linux and loads its backend modules dynamically — plus
+# the Win64 .SymWw (target symbols) and .GofWw (link objects).
 make_workdir() {
-  local w
+  local target="${1:-linux64}" w
   w="$(mktemp -d "${TMPDIR:-/tmp}/ob.XXXXXX")"
-  ln -s "$LIB"/*"$SYM_EXT"  "$w"/ 2>/dev/null || true
-  ln -s "$LIB"/*."$OBJ_EXT" "$w"/ 2>/dev/null || true
+  case "$target" in
+    win64)
+      [ -d "$LIBWIN" ] || die "win64 target unavailable: $LIBWIN not in this image"
+      ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
+      ln -s "$LIBWIN"/*.SymWw "$w"/ 2>/dev/null || true   # Win64 target symbols
+      ln -s "$LIBWIN"/*.GofWw "$w"/ 2>/dev/null || true   # Win64 link objects
+      ;;
+    *)
+      ln -s "$LIB"/*"$SYM_EXT"  "$w"/ 2>/dev/null || true
+      ln -s "$LIB"/*."$OBJ_EXT" "$w"/ 2>/dev/null || true
+      ;;
+  esac
   printf '%s' "$w"
 }
 
@@ -82,49 +100,81 @@ cmd_compile() {
 }
 
 cmd_build() {
-  local src="" outname=""
+  local src="" outname="" proc="Do" target="linux64"
   while [ $# -gt 0 ]; do
     case "$1" in
-      -o|--output) outname="$2"; shift 2 ;;
-      *)           src="$1";     shift   ;;
+      -o|--output)  outname="$2"; shift 2 ;;
+      -t|--target)  target="$2";  shift 2 ;;
+      -*)           die "unknown option: $1" ;;
+      *) if [ -z "$src" ]; then src="$1"; else proc="$1"; fi; shift ;;
     esac
   done
-  [ -n "$src" ] || die "usage: ob build <File.Mod> [-o <name>]"
+  [ -n "$src" ] || die "usage: ob build <File.Mod> [-o <name>] [-t linux64|win64] [Proc]"
   [ -f "$src" ] || die "no such file: $src"
-  [ -f "$BOOT_LIST" ] || die "boot module list not found at $BOOT_LIST"
   src="$(realpath "$src")"
 
+  # per-target toolchain settings
+  local c_ext s_ext bootfile linkopts suffix
+  case "$target" in
+    linux64)
+      c_ext="GofUu"; s_ext=".SymUu"; bootfile="$BOOT_LIST"; suffix=""
+      linkopts="-p=$LINK_PLATFORM --extension=GofUu" ;;
+    win64)
+      c_ext="GofWw"; s_ext=".SymWw"; bootfile="$BOOT_LIST_WIN"; suffix=".exe"
+      linkopts="--fileFormat=PE64CUI --extension=GofWw --displacement=401000H" ;;
+    *) die "unknown target: $target (use linux64 or win64)" ;;
+  esac
+  [ -f "$bootfile" ] || die "boot module list not found: $bootfile"
+  local c_plat; [ "$target" = win64 ] && c_plat="Win64" || c_plat="$PLATFORM"
+
   local mod w boot dest; mod="$(module_name "$src")"
-  [ -n "$outname" ] || outname="$mod"
-  # resolve output to an absolute path before we cd into the scratch dir
+  [ -n "$outname" ] || outname="$mod$suffix"
   case "$outname" in /*) dest="$outname" ;; *) dest="$(pwd)/$outname" ;; esac
   mkdir -p "$(dirname "$dest")"
 
   local fn; fn="$(basename "$dest")"
-  w="$(make_workdir)"
+  w="$(make_workdir "$target")"
   trap 'rm -rf "$w"' RETURN
   cp "$src" "$w/$mod.Mod"
-  boot="$(tr '\n' ' ' < "$BOOT_LIST")"
+
+  # A generated boot driver replaces the interactive shell: its module body runs
+  # at startup, calls the chosen command, and maps success/failure to exit 0/1
+  # (A2 quirk: Reboot -> exit(0), PowerDown -> exit(1)). Importing the user
+  # module forces the linker to include it.
+  cat > "$w/ObEntry.Mod" <<EOF
+MODULE ObEntry;
+IMPORT Commands, Modules, Trace, $mod;
+VAR res: INTEGER; msg: ARRAY 256 OF CHAR;
+BEGIN
+	Commands.Call("$mod.$proc", {Commands.Wait}, res, msg);
+	IF res = 0 THEN Modules.Shutdown(Modules.Reboot)
+	ELSE Trace.String(msg); Trace.Ln; Modules.Shutdown(Modules.PowerDown) END
+END ObEntry.
+EOF
+
+  # Boot set minus the interactive shell (StdIOShell/Shell) — our ObEntry drives
+  # startup instead. The linker auto-resolves the rest of the import closure.
+  boot="$(grep -vE '^(StdIOShell|Shell)$' "$bootfile" | tr '\n' ' ')"
 
   ( cd "$w" && export PWD="$w"
-    # 1. compile the module to an object file (errors print here and abort)
-    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
-      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
-      "./$mod.Mod" >/dev/null
-    # 2. statically link the boot set + module + (auto-resolved) imports into
-    #    one native executable. The linker follows the import graph itself, so
-    #    only the boot set and the module need to be named.
+    "$OBERON" Compiler.Compile "-p=$c_plat" \
+      --objectFileExtension="$c_ext" --symbolFileExtension="$s_ext" \
+      "./$mod.Mod" "./ObEntry.Mod" >/dev/null
     "$OBERON" do "
-      Linker.Link -p=$LINK_PLATFORM --path=./ --fileName=$fn --extension=$OBJ_EXT
-      $boot $mod
+      Linker.Link --path=./ $linkopts --fileName=$fn
+      $boot $mod ObEntry
       ~
     " | tr -d '\r' | grep -vE '^GC mode|^WORK:' || true
     [ -f "$fn" ] || die "link failed (no output binary produced)"
     cp "$fn" "$dest" )
 
   chmod +x "$dest"
-  echo "ob: wrote $dest"
-  echo "    run it (no A2 needed):  $dest $mod.Do"
+  echo "ob: wrote $dest  (target: $target, baked entry: $mod.$proc)"
+  if [ "$target" = win64 ]; then
+    echo "    a Windows PE64 console .exe — run it on Windows: $fn"
+  else
+    echo "    run it (no A2 needed):  $dest"
+  fi
 }
 
 cmd_run() {
@@ -151,8 +201,11 @@ cmd_repl() { exec "$OBERON" do "System.DoFile $SDK/oberon.cfg ~"; }
 cmd_version() {
   echo "A2 (Active Oberon) SDK — minia2"
   echo "  runtime : $OBERON"
-  echo "  stdlib  : $(ls "$LIB"/*"$SYM_EXT" 2>/dev/null | wc -l) modules"
-  echo "  target  : $PLATFORM"
+  echo "  stdlib  : $(ls "$LIB"/*"$SYM_EXT" 2>/dev/null | wc -l) modules (linux64)"
+  if [ -d "$LIBWIN" ]; then
+    echo "            $(ls "$LIBWIN"/*.SymWw 2>/dev/null | wc -l) modules (win64)"
+  fi
+  echo "  targets : linux64 (ELF)$([ -d "$LIBWIN" ] && echo ', win64 (PE .exe)')"
 }
 
 case "${1:-}" in
@@ -162,6 +215,6 @@ case "${1:-}" in
   repl)    shift; cmd_repl ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac

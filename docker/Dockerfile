@@ -32,25 +32,36 @@ RUN curl -sL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin \
 WORKDIR /src
 COPY . /src
 
-# Produces /src/target/Linux64/{oberon, bin/, data/, ...} — the self-contained
-# runtime plus 700+ precompiled stdlib .SymUu/.GofUu files.
-RUN task Linux64
+# Produces target/Linux64 (Unix64 stdlib .SymUu/.GofUu) and target/Win64 (Win64
+# stdlib .SymWw/.GofWw) — both cross-built from the same Linux host toolchain.
+RUN task Linux64 && task Win64
 
-# Assemble the SDK payload: runtime + only the headless-core stdlib modules
-# (see docker/headless-core.txt — everything whose import closure never reaches
-# the window manager / display / raster). Drops ~400 GUI modules / ~18MB.
+# Assemble the SDK payload: the Linux runtime + headless-core stdlib for both
+# targets (see docker/headless-core.txt — everything whose import closure never
+# reaches the window manager / display / raster). The Win64 lib enables
+# `ob build -t win64` (cross-compiled .exe); the win-specific boot modules
+# (Kernel32, WinFS) come from configs/moduleListWin.txt.
 RUN set -eu; \
-    mkdir -p /opt/a2sdk/lib; \
+    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64; \
     cp target/Linux64/oberon      /opt/a2sdk/oberon; \
     cp target/Linux64/oberon.cfg  /opt/a2sdk/oberon.cfg; \
     cp configs/moduleListLinux.txt /opt/a2sdk/boot-modules.txt; \
+    cp configs/moduleListWin.txt   /opt/a2sdk/boot-modules-win64.txt; \
     while read -r m; do \
         for e in SymUu GofUu; do \
             [ -f "target/Linux64/bin/$m.$e" ] && \
                 cp "target/Linux64/bin/$m.$e" /opt/a2sdk/lib/ || true; \
         done; \
     done < docker/headless-core.txt; \
-    echo "SDK lib: $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"
+    { cat docker/headless-core.txt configs/moduleListWin.txt; } | sort -u | \
+    while read -r m; do \
+        for e in SymWw GofWw; do \
+            [ -f "target/Win64/bin/$m.$e" ] && \
+                cp "target/Win64/bin/$m.$e" /opt/a2sdk/lib-win64/ || true; \
+        done; \
+    done; \
+    echo "SDK lib (linux64): $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"; \
+    echo "SDK lib (win64):   $(ls /opt/a2sdk/lib-win64/*.SymWw | wc -l) modules, $(du -sh /opt/a2sdk/lib-win64 | cut -f1)"
 
 # ---------------------------------------------------------------------------
 # Stage 2 — the SDK image: runtime + stdlib + `ob` wrapper on a slim base.
