@@ -1,0 +1,6 @@
+.git
+.task
+target
+**/*.log
+**/*.Log
+**/*.bak
