@@ -4,7 +4,10 @@
 # headless SDK image ships in /opt/a2sdk/lib.
 #
 # A module is kept iff its transitive import closure never reaches a GUI root
-# (Displays / WindowManager / Raster / Inputs / KbdMouse / Plugins / WM*). That
+# (Displays / WindowManager / Raster / Inputs / KbdMouse / WM*). NB: the generic
+# `Plugins` driver registry is deliberately NOT a root — network drivers, file
+# systems and disks register through it too, so tainting it would wrongly drop
+# the whole networking stack (IP/TCP/UDP/DNS/HTTP/...). That
 # set is closed under imports, so it is self-consistent for both compilation
 # (needs .SymUu of the closure) and dynamic loading (needs .GofUu of the closure).
 #
@@ -37,7 +40,7 @@ for line in open(graph):
     m = lhs[:-6] if lhs.endswith(".GofUu") else lhs
     deps[m] = {t[:-6] for t in rhs.split() if t.endswith(".GofUu")}
 have = {os.path.basename(p)[:-6] for p in glob.glob(binp+"/*.SymUu")}
-ROOTS = {"Displays","Display","Inputs","KbdMouse","Raster","Plugins",
+ROOTS = {"Displays","Display","Inputs","KbdMouse","Raster",
          "WindowManager","WMGraphics","WMWindowManager","XDisplay"}
 gui = lambda m: m.startswith("WM") or m in ROOTS
 sys.setrecursionlimit(10000)
