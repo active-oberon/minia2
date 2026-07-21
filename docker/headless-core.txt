@@ -196,6 +196,7 @@ Joysticks
 Kernel
 KernelLog
 LPR
+LSP
 Linker
 Loader
 Localization
