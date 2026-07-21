@@ -223,8 +223,9 @@ VAR
 		WriteMessage(out, resp)
 	END Respond;
 
-	(** Command entry point: `oberon LSP.Run`. Speaks LSP over stdin/stdout. *)
-	PROCEDURE Run* (context: Commands.Context);
+	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
+	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
+	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
 	VAR msg: JSON.Value; req, params, td, caps, result: JSON.Object;
 		method, uri, text: Strings.String; in: Streams.Reader; out: Streams.Writer;
 		changes: JSON.Value; arr: JSON.Array; first: JSON.Value;
@@ -265,7 +266,8 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) & (changes # NIL) & (changes IS JSON.Array) THEN
 							arr := changes(JSON.Array); first := arr.At(0);
 							IF (first # NIL) & GetStr(AsObject(first), "text", text) THEN
-								PutDoc(uri^, text^)
+								PutDoc(uri^, text^);
+								IF live THEN PublishFor(out, uri) END
 							END
 						END
 					ELSIF method^ = "textDocument/didSave" THEN
@@ -287,6 +289,14 @@ VAR
 				END
 			END
 		END
-	END Run;
+	END Serve;
+
+	(** `oberon LSP.Run` — diagnostics on open + save (default, stable). *)
+	PROCEDURE Run* (context: Commands.Context);
+	BEGIN Serve(context, FALSE) END Run;
+
+	(** `oberon LSP.RunLive` — also re-diagnose on every change (client debounces). *)
+	PROCEDURE RunLive* (context: Commands.Context);
+	BEGIN Serve(context, TRUE) END RunLive;
 
 END LSP.
