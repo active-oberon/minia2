@@ -42,7 +42,7 @@ RUN task Linux64 && task Win64
 # `ob build -t win64` (cross-compiled .exe); the win-specific boot modules
 # (Kernel32, WinFS) come from configs/moduleListWin.txt.
 RUN set -eu; \
-    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64; \
+    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64 /opt/a2sdk/lib-sym; \
     cp target/Linux64/oberon      /opt/a2sdk/oberon; \
     cp target/Linux64/oberon.cfg  /opt/a2sdk/oberon.cfg; \
     cp configs/moduleListLinux.txt /opt/a2sdk/boot-modules.txt; \
@@ -53,6 +53,7 @@ RUN set -eu; \
                 cp "target/Linux64/bin/$m.$e" /opt/a2sdk/lib/ || true; \
         done; \
     done < docker/headless-core.txt; \
+    cp target/Linux64/bin/*.SymUu /opt/a2sdk/lib-sym/; \
     { cat docker/headless-core.txt configs/moduleListWin.txt; } | sort -u | \
     while read -r m; do \
         for e in SymWw GofWw; do \
@@ -61,7 +62,8 @@ RUN set -eu; \
         done; \
     done; \
     echo "SDK lib (linux64): $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"; \
-    echo "SDK lib (win64):   $(ls /opt/a2sdk/lib-win64/*.SymWw | wc -l) modules, $(du -sh /opt/a2sdk/lib-win64 | cut -f1)"
+    echo "SDK lib (win64):   $(ls /opt/a2sdk/lib-win64/*.SymWw | wc -l) modules, $(du -sh /opt/a2sdk/lib-win64 | cut -f1)"; \
+    echo "SDK lib-sym (LSP): $(ls /opt/a2sdk/lib-sym/*.SymUu | wc -l) symbols, $(du -sh /opt/a2sdk/lib-sym | cut -f1)"
 
 # ---------------------------------------------------------------------------
 # Stage 2 — the SDK image: runtime + stdlib + `ob` wrapper on a slim base.

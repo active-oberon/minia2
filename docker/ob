@@ -29,6 +29,7 @@ SDK="${A2SDK:-/opt/a2sdk}"
 OBERON="$SDK/oberon"
 LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runtime
 LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
+LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
 PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux)
 LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
 BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
@@ -209,6 +210,10 @@ cmd_lsp() {
   [ "${1:-}" = "--live" ] && entry="LSP.RunLive"
   w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
+  # full stdlib symbols so the checker resolves any in-tree import (GUI etc.)
+  [ -d "$LIBSYM" ] && ln -sf "$LIBSYM"/*.SymUu "$w"/ 2>/dev/null || true
+  # project sources mounted at /work become resolvable via on-demand compilation
+  [ -d /work ] && ln -sf /work/*.Mod "$w"/ 2>/dev/null || true
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
 }
 

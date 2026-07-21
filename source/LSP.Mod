@@ -11,7 +11,7 @@ MODULE LSP;
 *)
 
 IMPORT Streams, Strings, JSON, Diagnostics, Compiler, SyntaxTree := FoxSyntaxTree, Commands,
-	FoxScanner, FoxParser, FoxSemanticChecker, FoxGlobal, Printout := FoxPrintout;
+	FoxScanner, FoxParser, FoxSemanticChecker, FoxGlobal, FoxBasic, Printout := FoxPrintout;
 
 CONST
 	CR = 0DX; LF = 0AX;
@@ -98,21 +98,19 @@ TYPE
 			END
 		END WStmt;
 
+		(* Recurse the whole scope tree, walking every procedure/method body — this
+		   covers module procedures, nested procedures, AND methods declared inside
+		   OBJECT/RECORD types (whose ProcedureScopes are nested scopes). *)
 		PROCEDURE WScope (scope: SyntaxTree.Scope);
-		VAR sym: SyntaxTree.Symbol;
+		VAR ns: SyntaxTree.Scope;
 		BEGIN
 			IF scope = NIL THEN RETURN END;
-			sym := scope.firstSymbol;
-			WHILE sym # NIL DO
-				WITH sym: SyntaxTree.Procedure DO
-					IF sym.procedureScope # NIL THEN
-						IF sym.procedureScope.body # NIL THEN WSeq(sym.procedureScope.body.statements) END;
-						WScope(sym.procedureScope)
-					END
-				ELSE
-				END;
-				sym := sym.nextSymbol
-			END
+			WITH scope: SyntaxTree.ProcedureScope DO
+				IF scope.body # NIL THEN WSeq(scope.body.statements) END
+			ELSE
+			END;
+			ns := scope.firstScope;
+			WHILE ns # NIL DO WScope(ns); ns := ns.nextScope END
 		END WScope;
 
 		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): SyntaxTree.SymbolDesignator;
@@ -198,6 +196,79 @@ VAR
 		RETURN o
 	END Position;
 
+	(* ---- on-demand import-closure build (project-aware resolution) ----
+	   The server runs in a work dir seeded with the stdlib .SymUu and symlinks to
+	   the project's .Mod sources. To resolve a module M we ensure M.SymUu exists:
+	   if not, and M.Mod is available, parse M, ensure its imports first (deps-first),
+	   then compile M to a .SymUu. Import cycles are illegal in Oberon, so the
+	   recursion terminates; the .SymUu file itself is the memo. *)
+
+	PROCEDURE FileExists (CONST fn: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN FoxBasic.GetFileReader(fn) # NIL
+	END FileExists;
+
+	(* Compile modFile with symbol-file export to the cwd (no code generation). *)
+	PROCEDURE CompileToSym (CONST modFile: ARRAY OF CHAR);
+	VAR optR: Streams.StringReader; opts: Compiler.CompilerOptions; reader: Streams.Reader;
+		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
+		importCache: SyntaxTree.ModuleScope; ignore: BOOLEAN;
+	BEGIN
+		reader := FoxBasic.GetFileReader(modFile); IF reader = NIL THEN RETURN END;
+		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
+		Streams.OpenStringReader(optR, "-p=Unix64 --destPath=./");
+		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN END;
+		opts.objectFile := NIL;   (* symbolFile.Export still runs -> writes <M>.SymUu *)
+		importCache := NIL;
+		ignore := Compiler.Modules(modFile, reader, 0, diag, log, opts, importCache)
+	END CompileToSym;
+
+	PROCEDURE EnsureSymbols (CONST name: ARRAY OF CHAR);
+	VAR modFile, symFile, iname: ARRAY 256 OF CHAR; reader: Streams.Reader;
+		diag: Diagnostics.DiagnosticsList; scanner: FoxScanner.Scanner; parser: FoxParser.Parser;
+		module: SyntaxTree.Module; imp: SyntaxTree.Import;
+	BEGIN
+		COPY(name, symFile); Strings.Append(symFile, ".SymUu");
+		IF FileExists(symFile) THEN RETURN END;           (* already have symbols *)
+		COPY(name, modFile); Strings.Append(modFile, ".Mod");
+		reader := FoxBasic.GetFileReader(modFile);
+		IF reader = NIL THEN RETURN END;                  (* no source -> leave unresolved *)
+		NEW(diag);
+		scanner := FoxScanner.NewScanner(name, reader, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module # NIL) & ~parser.error THEN
+			imp := module.moduleScope.firstImport;
+			WHILE imp # NIL DO
+				IF imp.moduleName # FoxGlobal.SystemName THEN
+					FoxBasic.GetString(imp.moduleName, iname); EnsureSymbols(iname)
+				END;
+				imp := imp.nextImport
+			END
+		END;
+		CompileToSym(modFile)
+	END EnsureSymbols;
+
+	(* Parse `text`, then ensure symbols for each of its imports exist in the cwd. *)
+	PROCEDURE EnsureImportsOf (text: Strings.String);
+	VAR srcR: Streams.StringReader; diag: Diagnostics.DiagnosticsList;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+		imp: SyntaxTree.Import; iname: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(diag);
+		Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN END;
+		imp := module.moduleScope.firstImport;
+		WHILE imp # NIL DO
+			IF imp.moduleName # FoxGlobal.SystemName THEN
+				FoxBasic.GetString(imp.moduleName, iname); EnsureSymbols(iname)
+			END;
+			imp := imp.nextImport
+		END
+	END EnsureImportsOf;
+
 	(* Compile `text` and return a JSON array of LSP Diagnostic objects. *)
 	PROCEDURE Diagnose (text: Strings.String): JSON.Array;
 	VAR
@@ -208,6 +279,7 @@ VAR
 		line, char, sev: SIGNED32; msg: ARRAY 256 OF CHAR;
 	BEGIN
 		arr := JSON.NewArray();
+		EnsureImportsOf(text);   (* build project import-closure symbols first *)
 		NEW(diag); NEW(logbuf, 256); log := logbuf.GetWriter();
 		Streams.OpenStringReader(optR, "-p=Unix64 --warnings");
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN arr END;
@@ -396,6 +468,7 @@ VAR
 		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
 		checker: FoxSemanticChecker.Checker; importCache: SyntaxTree.ModuleScope; system: FoxGlobal.System;
 	BEGIN
+		EnsureImportsOf(text);   (* build project import-closure symbols first *)
 		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
 		Streams.OpenStringReader(optR, "-p=Unix64");
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN NIL END;
