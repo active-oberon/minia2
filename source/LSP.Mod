@@ -10,7 +10,8 @@ MODULE LSP;
 		 - Positions assume the source is ASCII/UTF-8 with 1 char = 1 UTF-16 unit."
 *)
 
-IMPORT Streams, Strings, JSON, Diagnostics, Compiler, SyntaxTree := FoxSyntaxTree, Commands;
+IMPORT Streams, Strings, JSON, Diagnostics, Compiler, SyntaxTree := FoxSyntaxTree, Commands,
+	FoxScanner, FoxParser, FoxSemanticChecker, FoxGlobal, Printout := FoxPrintout;
 
 CONST
 	CR = 0DX; LF = 0AX;
@@ -19,6 +20,115 @@ TYPE
 	Document = OBJECT
 	VAR next: Document; uri: Strings.String; text: Strings.String;
 	END Document;
+
+	(* Locates the innermost resolved use-site (SymbolDesignator) whose token span
+	   contains a byte offset. The designator's .end position is unreliable, so the
+	   token length is taken from the symbol name. *)
+	Finder = OBJECT
+	VAR best: SyntaxTree.SymbolDesignator; bestSpan: SIZE; target: SIGNED64;
+
+		PROCEDURE Consider (d: SyntaxTree.SymbolDesignator);
+		VAR span: SIZE; nm: ARRAY 128 OF CHAR;
+		BEGIN
+			IF d.symbol = NIL THEN RETURN END;
+			d.symbol.GetName(nm); span := Strings.Length(nm);
+			IF (d.position.start >= 0) & (target >= d.position.start) & (target < d.position.start + span) THEN
+				IF (best = NIL) OR (span < bestSpan) THEN best := d; bestSpan := span END
+			END
+		END Consider;
+
+		PROCEDURE WList (l: SyntaxTree.ExpressionList);
+		VAR i: SIZE;
+		BEGIN IF l # NIL THEN FOR i := 0 TO l.Length()-1 DO WExpr(l.GetExpression(i)) END END
+		END WList;
+
+		PROCEDURE WExpr (e: SyntaxTree.Expression);
+		BEGIN
+			IF e = NIL THEN RETURN END;
+			WITH e:
+				  SyntaxTree.SymbolDesignator DO Consider(e); WExpr(e.left)
+				| SyntaxTree.ProcedureCallDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.BuiltinCallDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.ParameterDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.IndexDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.BracketDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.ArrowDesignator DO WExpr(e.left)
+				| SyntaxTree.SelectorDesignator DO WExpr(e.left)
+				| SyntaxTree.Designator DO WExpr(e.left)
+				| SyntaxTree.BinaryExpression DO WExpr(e.left); WExpr(e.right)
+				| SyntaxTree.UnaryExpression DO WExpr(e.left)
+			ELSE
+			END
+		END WExpr;
+
+		PROCEDURE WSeq (s: SyntaxTree.StatementSequence);
+		VAR i: SIZE;
+		BEGIN IF s # NIL THEN FOR i := 0 TO s.Length()-1 DO WStmt(s.GetStatement(i)) END END
+		END WSeq;
+
+		PROCEDURE WStmt (s: SyntaxTree.Statement);
+		VAR i: SIZE; cp: SyntaxTree.CasePart;
+		BEGIN
+			IF s = NIL THEN RETURN END;
+			WITH s:
+				  SyntaxTree.Assignment DO WExpr(s.left); WExpr(s.right)
+				| SyntaxTree.CommunicationStatement DO WExpr(s.left); WExpr(s.right)
+				| SyntaxTree.ProcedureCallStatement DO WExpr(s.call)
+				| SyntaxTree.IfStatement DO
+					WExpr(s.ifPart.condition); WSeq(s.ifPart.statements);
+					FOR i := 0 TO s.ElsifParts()-1 DO
+						WExpr(s.GetElsifPart(i).condition); WSeq(s.GetElsifPart(i).statements)
+					END;
+					WSeq(s.elsePart)
+				| SyntaxTree.WhileStatement DO WExpr(s.condition); WSeq(s.statements)
+				| SyntaxTree.RepeatStatement DO WExpr(s.condition); WSeq(s.statements)
+				| SyntaxTree.ForStatement DO WExpr(s.variable); WExpr(s.from); WExpr(s.to); WExpr(s.by); WSeq(s.statements)
+				| SyntaxTree.ReturnStatement DO WExpr(s.returnValue)
+				| SyntaxTree.AwaitStatement DO WExpr(s.condition)
+				| SyntaxTree.CaseStatement DO
+					WExpr(s.variable);
+					IF s.caseParts # NIL THEN
+						FOR i := 0 TO s.caseParts.Length()-1 DO
+							cp := s.GetCasePart(i); WList(cp.elements); WSeq(cp.statements)
+						END
+					END;
+					WSeq(s.elsePart)
+				| SyntaxTree.StatementBlock DO WSeq(s.statements)
+			ELSE
+			END
+		END WStmt;
+
+		PROCEDURE WScope (scope: SyntaxTree.Scope);
+		VAR sym: SyntaxTree.Symbol;
+		BEGIN
+			IF scope = NIL THEN RETURN END;
+			sym := scope.firstSymbol;
+			WHILE sym # NIL DO
+				WITH sym: SyntaxTree.Procedure DO
+					IF sym.procedureScope # NIL THEN
+						IF sym.procedureScope.body # NIL THEN WSeq(sym.procedureScope.body.statements) END;
+						WScope(sym.procedureScope)
+					END
+				ELSE
+				END;
+				sym := sym.nextSymbol
+			END
+		END WScope;
+
+		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): SyntaxTree.SymbolDesignator;
+		VAR ms: SyntaxTree.ModuleScope;
+		BEGIN
+			best := NIL; bestSpan := 0; target := offset;
+			IF module = NIL THEN RETURN NIL END;
+			ms := module.moduleScope;
+			WScope(ms);
+			IF (ms.bodyProcedure # NIL) & (ms.bodyProcedure.procedureScope # NIL)
+				& (ms.bodyProcedure.procedureScope.body # NIL) THEN
+				WSeq(ms.bodyProcedure.procedureScope.body.statements)
+			END;
+			RETURN best
+		END Find;
+	END Finder;
 
 VAR
 	documents: Document;
@@ -223,12 +333,137 @@ VAR
 		WriteMessage(out, resp)
 	END Respond;
 
+	(* ---- hover / go-to-definition (frontend + checker, then AST lookup) ---- *)
+
+	PROCEDURE GetInt (o: JSON.Object; CONST key: ARRAY OF CHAR; VAR n: SIGNED32): BOOLEAN;
+	VAR v: JSON.Value;
+	BEGIN
+		IF o = NIL THEN RETURN FALSE END;
+		v := o.Get(key);
+		IF (v # NIL) & (v IS JSON.Number) THEN n := SIGNED32(ENTIER(v(JSON.Number).value)); RETURN TRUE END;
+		RETURN FALSE
+	END GetInt;
+
+	(* LSP 0-based (line, character) -> byte offset in text *)
+	PROCEDURE PosToOffset (text: Strings.String; line, char: SIGNED32): SIGNED64;
+	VAR i: SIZE; l, c: SIGNED32;
+	BEGIN
+		IF text = NIL THEN RETURN 0 END;
+		i := 0; l := 0; c := 0;
+		WHILE text[i] # 0X DO
+			IF (l = line) & (c = char) THEN RETURN i END;
+			IF text[i] = LF THEN
+				IF l = line THEN RETURN i END;   (* target char past end of line *)
+				INC(l); c := 0
+			ELSE INC(c) END;
+			INC(i)
+		END;
+		RETURN i
+	END PosToOffset;
+
+	PROCEDURE Kind (sym: SyntaxTree.Symbol; VAR k: ARRAY OF CHAR);
+	BEGIN
+		WITH sym:
+			  SyntaxTree.Module DO COPY("module", k)
+			| SyntaxTree.TypeDeclaration DO COPY("type", k)
+			| SyntaxTree.Constant DO COPY("const", k)
+			| SyntaxTree.Parameter DO COPY("parameter", k)
+			| SyntaxTree.Property DO COPY("field", k)
+			| SyntaxTree.Variable DO COPY("variable", k)
+			| SyntaxTree.Operator DO COPY("operator", k)
+			| SyntaxTree.Procedure DO COPY("procedure", k)
+			| SyntaxTree.Alias DO COPY("alias", k)
+			| SyntaxTree.Builtin DO COPY("builtin", k)
+			| SyntaxTree.Import DO COPY("import", k)
+		ELSE COPY("symbol", k)
+		END
+	END Kind;
+
+	PROCEDURE TypeStr (sym: SyntaxTree.Symbol): Strings.String;
+	VAR buf: Streams.Buffer; w: Streams.Writer; p: Printout.Printer;
+	BEGIN
+		IF (sym.type = NIL) OR (sym.type.resolvedType = NIL) THEN RETURN NIL END;
+		NEW(buf, 256); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SymbolFile, FALSE);
+		p.Type(sym.type.resolvedType); w.Update;
+		RETURN buf.GetString()
+	END TypeStr;
+
+	(* Parse + semantically check `text`, returning the resolved module (or NIL).
+	   Replicates Compiler.Modules' checker setup so imports resolve. *)
+	PROCEDURE Analyze (text: Strings.String): SyntaxTree.Module;
+	VAR optR, srcR: Streams.StringReader; opts: Compiler.CompilerOptions;
+		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+		checker: FoxSemanticChecker.Checker; importCache: SyntaxTree.ModuleScope; system: FoxGlobal.System;
+	BEGIN
+		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
+		Streams.OpenStringReader(optR, "-p=Unix64");
+		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN NIL END;
+		Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN module END;
+		system := opts.backend.GetSystem();
+		IF opts.symbolFile # NIL THEN opts.symbolFile.Initialize(diag, system, "") END;
+		importCache := NIL;
+		checker := FoxSemanticChecker.NewChecker(diag, FALSE, FALSE, system, opts.symbolFile, importCache, "");
+		checker.Module(module);
+		RETURN module
+	END Analyze;
+
+	(* textDocument/hover result, or NIL if nothing under the offset. *)
+	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64): JSON.Value;
+	VAR module: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
+		nm: ARRAY 128 OF CHAR; kd: ARRAY 16 OF CHAR; ts: Strings.String; lf: ARRAY 2 OF CHAR;
+		val: ARRAY 1024 OF CHAR; contents, range, result: JSON.Object; line, char: SIGNED32;
+	BEGIN
+		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
+		NEW(f); d := f.Find(module, offset); IF d = NIL THEN RETURN NIL END;
+		sym := d.symbol; sym.GetName(nm); Kind(sym, kd); ts := TypeStr(sym);
+		COPY(kd, val); Strings.Append(val, " "); Strings.Append(val, nm);
+		IF ts # NIL THEN Strings.Append(val, " : "); Strings.Append(val, ts^) END;
+		IF sym.comment # NIL THEN lf[0] := LF; lf[1] := 0X; Strings.Append(val, lf); Strings.Append(val, sym.comment.source^) END;
+		contents := JSON.NewObject();
+		contents.Set("kind", JSON.NewString("plaintext"));
+		contents.Set("value", JSON.NewString(val));
+		OffsetToPos(text, d.position.start, line, char);
+		range := JSON.NewObject();
+		range.Set("start", Position(line, char));
+		range.Set("end", Position(line, char + SIGNED32(Strings.Length(nm))));
+		result := JSON.NewObject();
+		result.Set("contents", contents); result.Set("range", range);
+		RETURN result
+	END HoverAt;
+
+	(* textDocument/definition Location (same file only), or NIL. *)
+	PROCEDURE DefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	VAR module: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
+		nm: ARRAY 128 OF CHAR; loc, range: JSON.Object; line, char: SIGNED32;
+	BEGIN
+		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
+		NEW(f); d := f.Find(module, offset); IF d = NIL THEN RETURN NIL END;
+		sym := d.symbol;
+		(* only resolve definitions declared in THIS document (we can address only its uri) *)
+		IF (sym.scope = NIL) OR (sym.scope.ownerModule # module) OR (sym.position.start < 0) THEN RETURN NIL END;
+		line := SIGNED32(sym.position.line) - 1;
+		char := SIGNED32(sym.position.start - sym.position.linepos);
+		sym.GetName(nm);
+		range := JSON.NewObject();
+		range.Set("start", Position(line, char));
+		range.Set("end", Position(line, char + SIGNED32(Strings.Length(nm))));
+		loc := JSON.NewObject();
+		loc.Set("uri", JSON.NewString(uri^)); loc.Set("range", range);
+		RETURN loc
+	END DefinitionAt;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
-	VAR msg: JSON.Value; req, params, td, caps, result: JSON.Object;
+	VAR msg: JSON.Value; req, params, td, caps, result, pos: JSON.Object;
 		method, uri, text: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr: JSON.Array; first: JSON.Value;
+		changes: JSON.Value; arr: JSON.Array; first, res: JSON.Value;
+		line, char: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
 		documents := NIL; initialized := FALSE;
@@ -242,6 +477,8 @@ VAR
 					IF method^ = "initialize" THEN
 						caps := JSON.NewObject();
 						caps.Set("textDocumentSync", JSON.NewNumber(1));   (* full sync *)
+						caps.Set("hoverProvider", JSON.NewBool(TRUE));
+						caps.Set("definitionProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						Respond(out, req.Get("id"), result)
@@ -282,6 +519,26 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							RemoveDoc(uri^); PublishFor(out, uri)   (* empty diagnostics *)
 						END
+					ELSIF method^ = "textDocument/hover" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := HoverAt(doc.text, PosToOffset(doc.text, line, char)) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/definition" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := DefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
 					ELSE
 						(* unknown: answer requests with null so clients don't hang *)
 						Respond(out, req.Get("id"), NIL)

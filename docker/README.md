@@ -85,11 +85,18 @@ obit repl                        # interactive A2 shell
 ## Editor setup (LSP)
 
 `ob lsp` is an [LSP](https://microsoft.github.io/language-server-protocol/) server
-speaking JSON-RPC over stdio. It reports **diagnostics** (syntax + semantic errors
-and warnings). By default a full compile runs on **open** and **save**, so errors
-refresh on `:w` and clear once fixed. Add **`--live`** to also re-check on every
-change (let the client debounce it). Point any LSP client at
-`docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]` (note: `-i`, no `-t`).
+speaking JSON-RPC over stdio. It provides:
+
+- **diagnostics** (syntax + semantic errors/warnings) on **open** and **save**, so
+  errors refresh on `:w` and clear once fixed rather than flickering per keystroke;
+  add **`--live`** to also re-check on change (the client debounces).
+- **hover** — type, kind and doc-comment of the symbol under the cursor (resolves
+  across modules: hovering `KernelLog.Int` shows its real signature).
+- **go-to-definition** — jumps to the declaration (within the current file; symbols
+  declared in other modules aren't addressable yet).
+
+Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]`
+(note: `-i`, no `-t`).
 
 > MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
 > against the standard library; other modules in your own project aren't indexed.
