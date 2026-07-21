@@ -256,17 +256,25 @@ VAR
 							PutDoc(uri^, text^); PublishFor(out, uri)
 						END
 					ELSIF method^ = "textDocument/didChange" THEN
+						(* keep the buffer text current but do NOT re-diagnose on every
+						   keystroke: compiling per change is too heavy and produces
+						   flickering/stale transient errors. Diagnostics refresh on
+						   open and on save (below). *)
 						td := AsObject(params.Get("textDocument"));
 						changes := params.Get("contentChanges");
 						IF (td # NIL) & GetStr(td, "uri", uri) & (changes # NIL) & (changes IS JSON.Array) THEN
 							arr := changes(JSON.Array); first := arr.At(0);
 							IF (first # NIL) & GetStr(AsObject(first), "text", text) THEN
-								PutDoc(uri^, text^); PublishFor(out, uri)
+								PutDoc(uri^, text^)
 							END
 						END
 					ELSIF method^ = "textDocument/didSave" THEN
 						td := AsObject(params.Get("textDocument"));
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN PublishFor(out, uri) END
+						(* didSave may carry the saved text; use it if present *)
+						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+							IF GetStr(params, "text", text) THEN PutDoc(uri^, text^) END;
+							PublishFor(out, uri)
+						END
 					ELSIF method^ = "textDocument/didClose" THEN
 						td := AsObject(params.Get("textDocument"));
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
