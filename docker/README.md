@@ -91,12 +91,20 @@ speaking JSON-RPC over stdio. It provides:
   errors refresh on `:w` and clear once fixed rather than flickering per keystroke;
   add **`--live`** to also re-check on change (the client debounces).
 - **hover** — type, kind and doc-comment of the symbol under the cursor (resolves
-  across modules: hovering `KernelLog.Int` shows its real signature).
+  across modules: hovering `KernelLog.Int` shows its real signature). Works on
+  use-sites inside procedures and object/record methods.
 - **go-to-definition** — jumps to the declaration (within the current file; symbols
   declared in other modules aren't addressable yet).
 
+**Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
+you mount your project sources at `/work` it resolves your own modules too — building
+any missing dependency's symbols on demand from its `.Mod` source (imports resolve
+transitively). So diagnostics/hover work on real multi-module code, not just
+single files against the stdlib. (Hover/definition currently target *statement*
+use-sites, not declaration-site type annotations.)
+
 Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]`
-(note: `-i`, no `-t`).
+(the `-v` mount is what makes your project modules resolvable; `-i`, no `-t`).
 
 > MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
 > against the standard library; other modules in your own project aren't indexed.
