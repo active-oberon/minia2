@@ -86,29 +86,34 @@ obit repl                        # interactive A2 shell
 
 `ob lsp` is an [LSP](https://microsoft.github.io/language-server-protocol/) server
 speaking JSON-RPC over stdio. It reports **diagnostics** (syntax + semantic errors
-and warnings) when you **open** and **save** a `.Mod` file — a full compile runs at
-those points, so errors refresh on `:w` (and clear once fixed) rather than
-flickering on every keystroke. Point any LSP client at the command
-`docker run --rm -i -v "$PWD:/work" minia2-sdk lsp` (note: `-i`, no `-t`).
+and warnings). By default a full compile runs on **open** and **save**, so errors
+refresh on `:w` and clear once fixed. Add **`--live`** to also re-check on every
+change (let the client debounce it). Point any LSP client at
+`docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]` (note: `-i`, no `-t`).
 
 > MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
 > against the standard library; other modules in your own project aren't indexed.
 
-**Neovim** (0.8+, no plugin needed):
+**Neovim** — the config-manager-agnostic way (works with NVChad/LazyVim/etc.
+without touching their files): two standard Neovim runtime files.
 
+`~/.config/nvim/ftdetect/oberon.lua`:
 ```lua
 vim.filetype.add({ extension = { Mod = "oberon" } })
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "oberon",
-  callback = function(args)
-    vim.lsp.start({
-      name = "ob-lsp",
-      cmd = { "docker", "run", "--rm", "-i", "-v", vim.fn.getcwd() .. ":/work", "minia2-sdk", "lsp" },
-      root_dir = vim.fn.getcwd(),
-    })
-  end,
+```
+
+`~/.config/nvim/after/ftplugin/oberon.lua`:
+```lua
+vim.diagnostic.config({ virtual_lines = { current_line = true } })  -- full error text inline
+vim.lsp.start({
+  name = "ob",
+  cmd = { "docker", "run", "--rm", "-i", "minia2-sdk", "lsp", "--live" },
+  root_dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0)) or vim.fn.getcwd(),
+  flags = { debounce_text_changes = 500 },   -- live, but only after you pause typing
 })
 ```
+Drop `--live` and the `flags` line for on-open/save-only. `vim.diagnostic.config`
+is global — remove that line if you don't want inline text for other filetypes.
 
 **VS Code**: use a generic LSP bridge extension (e.g. *"Generic LSP Client"*) or a
 tiny extension whose `serverOptions` runs the same `docker … minia2-sdk lsp` command
