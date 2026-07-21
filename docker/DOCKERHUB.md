@@ -49,7 +49,7 @@ ob build Hello.Mod -o hello && ./hello
 
 ## What you can build
 
-Headless console & server programs from a 383-module standard library: files, streams,
+Headless console & server programs from a 384-module standard library: files, streams,
 strings, arbitrary-precision math, **crypto** (AES/RSA/SHA/DSA), compression (zlib/zip),
 XML, JSON, and **networking** (TCP/UDP/DNS, HTTP client & server). GUI apps are out of scope
 (no window manager in the headless core).

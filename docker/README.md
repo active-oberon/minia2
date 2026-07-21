@@ -46,6 +46,9 @@ docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 
 # interactive A2 shell
 docker run --rm -it minia2-sdk repl
+
+# language server (LSP over stdio) — editors spawn this; see "Editor setup" below
+docker run --rm -i -v "$PWD:/work" minia2-sdk lsp
 ```
 
 ### A shorter command: the `ob` alias
@@ -77,6 +80,44 @@ obit repl                        # interactive A2 shell
 > `/work`. Writing `"PWD"` (no `$`) makes Docker create an empty **named volume**
 > called `PWD` instead, and every file lands as "no such file: Hello.Mod".
 
+## Editor setup (LSP)
+
+`ob lsp` is an [LSP](https://microsoft.github.io/language-server-protocol/) server
+speaking JSON-RPC over stdio. It reports **diagnostics** (syntax + semantic errors
+and warnings) as you open, edit and save `.Mod` files. Point any LSP client at the
+command `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp` (note: `-i`, no `-t`).
+
+> MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
+> against the standard library; other modules in your own project aren't indexed.
+
+**Neovim** (0.8+, no plugin needed):
+
+```lua
+vim.filetype.add({ extension = { Mod = "oberon" } })
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "oberon",
+  callback = function(args)
+    vim.lsp.start({
+      name = "ob-lsp",
+      cmd = { "docker", "run", "--rm", "-i", "-v", vim.fn.getcwd() .. ":/work", "minia2-sdk", "lsp" },
+      root_dir = vim.fn.getcwd(),
+    })
+  end,
+})
+```
+
+**VS Code**: use a generic LSP bridge extension (e.g. *"Generic LSP Client"*) or a
+tiny extension whose `serverOptions` runs the same `docker … minia2-sdk lsp` command
+with `transport: stdio` and a document selector for the `oberon` language / `*.Mod`.
+
+**Test it without an editor** — pipe a framed session in:
+
+```sh
+printf 'Content-Length: %d\r\n\r\n%s' 78 \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' \
+  | docker run --rm -i minia2-sdk lsp
+```
+
 A minimal module (`docker/examples/Hello.Mod`):
 
 ```oberon
@@ -93,8 +134,8 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 383 modules (symbol + object files) |
-| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 379 modules, for `build -t win64` |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 384 modules (symbol + object files) |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 380 modules, for `build -t win64` |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
@@ -105,7 +146,7 @@ naive ~255MB Linux-only image in three steps:
 - **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
   `ld-linux`) already ship in `debian:bookworm-slim`.
 - **Headless-core stdlib only** (~16MB saved): of the 712 built stdlib modules,
-  only the 383 whose import closure never reaches the window manager / display /
+  only the 384 whose import closure never reaches the window manager / display /
   raster are shipped (this keeps the full networking stack — TCP/UDP/DNS/HTTP —
   which registers through the generic `Plugins` driver registry, not the GUI).
   See `docker/headless-core.txt`; regenerate it with

@@ -12,6 +12,8 @@
 #                                      -> a Windows PE64 .exe
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
+#   ob lsp                             run the Active Oberon language server (LSP
+#                                      over stdio: diagnostics on open/change/save)
 #   ob repl                            drop into the interactive A2 shell
 #   ob version                         print the SDK version banner
 #
@@ -198,6 +200,15 @@ cmd_run() {
 
 cmd_repl() { exec "$OBERON" do "System.DoFile $SDK/oberon.cfg ~"; }
 
+# Language server: speaks LSP over stdin/stdout. Runs in a scratch dir seeded with
+# the stdlib symbols so the diagnostics compiler can resolve imports. Blocks until
+# the editor closes the connection (stdin EOF), then cleans up.
+cmd_lsp() {
+  local w; w="$(make_workdir)"
+  trap 'rm -rf "$w"' RETURN
+  ( cd "$w" && export PWD="$w" && exec "$OBERON" LSP.Run )
+}
+
 cmd_version() {
   echo "A2 (Active Oberon) SDK — minia2"
   echo "  runtime : $OBERON"
@@ -213,8 +224,9 @@ case "${1:-}" in
   compile) shift; cmd_compile "$@" ;;
   run)     shift; cmd_run "$@" ;;
   repl)    shift; cmd_repl ;;
+  lsp)     shift; cmd_lsp ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac
