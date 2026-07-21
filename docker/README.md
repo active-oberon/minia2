@@ -86,8 +86,10 @@ obit repl                        # interactive A2 shell
 
 `ob lsp` is an [LSP](https://microsoft.github.io/language-server-protocol/) server
 speaking JSON-RPC over stdio. It reports **diagnostics** (syntax + semantic errors
-and warnings) as you open, edit and save `.Mod` files. Point any LSP client at the
-command `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp` (note: `-i`, no `-t`).
+and warnings) when you **open** and **save** a `.Mod` file — a full compile runs at
+those points, so errors refresh on `:w` (and clear once fixed) rather than
+flickering on every keystroke. Point any LSP client at the command
+`docker run --rm -i -v "$PWD:/work" minia2-sdk lsp` (note: `-i`, no `-t`).
 
 > MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
 > against the standard library; other modules in your own project aren't indexed.
