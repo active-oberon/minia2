@@ -4,10 +4,12 @@ A Go-style toolchain for **A2 / Active Oberon**, packaged as one Docker image.
 No per-OS host port needed — it runs anywhere Docker does (Linux, macOS, Windows
 via Docker Desktop / WSL2). The compiled output is a Linux glibc ELF.
 
-This is a proof of concept: it wraps the repo's existing self-hosting toolchain
-(the `oberon` runtime + the precompiled standard library that `task Linux64`
-produces) behind an `ob` CLI. It does **not** yet produce a single standalone
-native executable with the runtime baked in — see *Limitations* below.
+It wraps the repo's self-hosting toolchain (the `oberon` runtime + the precompiled
+standard library that `task` produces) behind an `ob` CLI that feels like Go:
+`ob run` (compile+run), `ob build` (standalone native executable with the runtime
+baked in — Linux ELF or, via `-t win64`, a Windows PE `.exe`), `ob compile`, and
+`ob lsp` (a language server with diagnostics for your editor). See *Limitations*
+for the current scope.
 
 ## Build
 
