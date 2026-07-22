@@ -29,9 +29,28 @@ TYPE
 	Finder = OBJECT
 	VAR foundSym: SyntaxTree.Symbol; foundStart: SIGNED64; foundNameLen: SIZE;
 		bestSpan: SIZE; target: SIGNED64; hasFound: BOOLEAN;
-		(* collect mode (find-all-references): gather every use-site matching a key *)
-		collect: BOOLEAN; keyName, keyOwner: ARRAY 128 OF CHAR; keyKind: SIGNED32;
-		refOff: ARRAY 8192 OF SIGNED64; refLen: ARRAY 8192 OF SIGNED32; refN: SIGNED32;
+		(* collect mode (find-all-references): gather every use-site matching a key.
+		   tokenize mode (semantic tokens): gather EVERY resolved occurrence + its class. *)
+		collect, tokenize: BOOLEAN; keyName, keyOwner: ARRAY 128 OF CHAR; keyKind: SIGNED32;
+		refOff: ARRAY 16384 OF SIGNED64; refLen, refKind: ARRAY 16384 OF SIGNED32; refN: SIGNED32;
+
+		(* LSP semantic-token type index (see the legend in Serve), or -1 to skip. *)
+		PROCEDURE SemKind (sym: SyntaxTree.Symbol): SIGNED32;
+		VAR k: SIGNED32; inRec: BOOLEAN;
+		BEGIN
+			k := -1; inRec := (sym.scope # NIL) & (sym.scope IS SyntaxTree.RecordScope);
+			WITH sym:
+				  SyntaxTree.Module DO k := 0
+				| SyntaxTree.Import DO k := 0
+				| SyntaxTree.TypeDeclaration DO k := 1
+				| SyntaxTree.Procedure DO IF inRec THEN k := 7 ELSE k := 2 END
+				| SyntaxTree.Variable DO IF inRec THEN k := 6 ELSE k := 3 END
+				| SyntaxTree.Parameter DO k := 4
+				| SyntaxTree.Constant DO k := 5
+			ELSE
+			END;
+			RETURN k
+		END SemKind;
 
 		(* Coarse symbol class, to disambiguate same-named symbols. *)
 		PROCEDURE KindOf (sym: SyntaxTree.Symbol): SIGNED32;
@@ -65,7 +84,14 @@ TYPE
 		PROCEDURE Hit (sym: SyntaxTree.Symbol; matchStart: SIGNED64; matchSpan: SIZE; hitStart: SIGNED64; nameLen: SIZE);
 		BEGIN
 			IF sym = NIL THEN RETURN END;
-			IF collect THEN
+			IF tokenize THEN
+				IF (hitStart >= 0) & (refN < LEN(refOff)) THEN
+					IF SemKind(sym) >= 0 THEN
+						refOff[refN] := hitStart; refLen[refN] := SIGNED32(nameLen);
+						refKind[refN] := SemKind(sym); INC(refN)
+					END
+				END
+			ELSIF collect THEN
 				IF (hitStart >= 0) & (refN < LEN(refOff)) & SymMatches(sym) THEN
 					refOff[refN] := hitStart; refLen[refN] := SIGNED32(nameLen); INC(refN)
 				END
@@ -238,7 +264,7 @@ TYPE
 
 		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): BOOLEAN;
 		BEGIN
-			collect := FALSE; hasFound := FALSE; bestSpan := 0; target := offset;
+			collect := FALSE; tokenize := FALSE; hasFound := FALSE; bestSpan := 0; target := offset;
 			foundSym := NIL; foundStart := 0; foundNameLen := 0;
 			Traverse(module);
 			RETURN hasFound
@@ -247,10 +273,18 @@ TYPE
 		(* Collect every use-site of the symbol identified by (name, owner, kind). *)
 		PROCEDURE CollectRefs (module: SyntaxTree.Module; CONST name, owner: ARRAY OF CHAR; kind: SIGNED32);
 		BEGIN
-			collect := TRUE; COPY(name, keyName); COPY(owner, keyOwner); keyKind := kind; refN := 0;
+			collect := TRUE; tokenize := FALSE; COPY(name, keyName); COPY(owner, keyOwner); keyKind := kind; refN := 0;
 			Traverse(module);
 			collect := FALSE
 		END CollectRefs;
+
+		(* Collect every resolved occurrence + its semantic class. *)
+		PROCEDURE CollectTokens (module: SyntaxTree.Module);
+		BEGIN
+			tokenize := TRUE; collect := FALSE; refN := 0;
+			Traverse(module);
+			tokenize := FALSE
+		END CollectTokens;
 	END Finder;
 
 	(* Locates a declaration by (simple) name anywhere in a freshly-analyzed module's
@@ -1463,12 +1497,58 @@ VAR
 		RETURN arr
 	END ReferencesAt;
 
+	(* ---- semantic tokens ---- *)
+
+	(* Insertion sort a Finder's collected tokens by byte offset (nearly sorted already). *)
+	PROCEDURE SortTokens (f: Finder);
+	VAR i, j: SIGNED32; o: SIGNED64; l, k: SIGNED32;
+	BEGIN
+		i := 1;
+		WHILE i < f.refN DO
+			o := f.refOff[i]; l := f.refLen[i]; k := f.refKind[i]; j := i - 1;
+			WHILE (j >= 0) & (f.refOff[j] > o) DO
+				f.refOff[j+1] := f.refOff[j]; f.refLen[j+1] := f.refLen[j]; f.refKind[j+1] := f.refKind[j]; DEC(j)
+			END;
+			f.refOff[j+1] := o; f.refLen[j+1] := l; f.refKind[j+1] := k; INC(i)
+		END
+	END SortTokens;
+
+	(* textDocument/semanticTokens/full: delta-encoded 5-tuples (deltaLine, deltaChar,
+	   length, tokenType, 0) for every resolved identifier occurrence, sorted by position. *)
+	PROCEDURE SemanticTokens (text: Strings.String): JSON.Value;
+	VAR module: SyntaxTree.Module; f: Finder; data: JSON.Array; result: JSON.Object;
+		i: SIGNED32; pos, tstart: SIZE; curLine, curChar, prevLine, prevChar, dl, dc: SIGNED32;
+	BEGIN
+		data := JSON.NewArray();
+		result := JSON.NewObject(); result.Set("data", data);
+		module := Analyze(text); IF module = NIL THEN RETURN result END;
+		NEW(f); f.CollectTokens(module); SortTokens(f);
+		pos := 0; curLine := 0; curChar := 0; prevLine := 0; prevChar := 0; i := 0;
+		WHILE i < f.refN DO
+			IF (i = 0) OR (f.refOff[i] # f.refOff[i-1]) THEN   (* drop duplicate positions *)
+				tstart := SIZE(f.refOff[i]);
+				WHILE (pos < tstart) & (text[pos] # 0X) DO
+					IF text[pos] = LF THEN INC(curLine); curChar := 0 ELSE INC(curChar) END;
+					INC(pos)
+				END;
+				dl := curLine - prevLine;
+				IF dl = 0 THEN dc := curChar - prevChar ELSE dc := curChar END;
+				data.Add(JSON.NewNumber(dl)); data.Add(JSON.NewNumber(dc));
+				data.Add(JSON.NewNumber(f.refLen[i])); data.Add(JSON.NewNumber(f.refKind[i]));
+				data.Add(JSON.NewNumber(0));
+				prevLine := curLine; prevChar := curChar
+			END;
+			INC(i)
+		END;
+		RETURN result
+	END SemanticTokens;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
-	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl, sighelp: JSON.Object;
+	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl, sighelp, semtok, legend: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr, trig, sigtrig: JSON.Array; first, res: JSON.Value;
+		changes: JSON.Value; arr, trig, sigtrig, ttypes: JSON.Array; first, res: JSON.Value;
 		line, char: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
@@ -1495,6 +1575,18 @@ VAR
 						sighelp.Set("triggerCharacters", sigtrig);
 						caps.Set("signatureHelpProvider", sighelp);
 						caps.Set("referencesProvider", JSON.NewBool(TRUE));
+						legend := JSON.NewObject();
+						ttypes := JSON.NewArray();
+						ttypes.Add(JSON.NewString("namespace")); ttypes.Add(JSON.NewString("type"));
+						ttypes.Add(JSON.NewString("function")); ttypes.Add(JSON.NewString("variable"));
+						ttypes.Add(JSON.NewString("parameter")); ttypes.Add(JSON.NewString("enumMember"));
+						ttypes.Add(JSON.NewString("property")); ttypes.Add(JSON.NewString("method"));
+						legend.Set("tokenTypes", ttypes);
+						legend.Set("tokenModifiers", JSON.NewArray());
+						semtok := JSON.NewObject();
+						semtok.Set("legend", legend);
+						semtok.Set("full", JSON.NewBool(TRUE));
+						caps.Set("semanticTokensProvider", semtok);
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1597,6 +1689,14 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := ReferencesAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/semanticTokens/full" THEN
+						td := AsObject(params.Get("textDocument"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := SemanticTokens(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
