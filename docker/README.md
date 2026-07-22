@@ -100,6 +100,10 @@ speaking JSON-RPC over stdio. It provides:
 - **document symbols** — a hierarchical outline of the module: types with their fields
   and methods as children, plus procedures, variables and constants. Powers the
   editor's outline/breadcrumbs (the equivalent of PET's module-tree side panel).
+- **completion** (trigger `.`, or on demand) — after `Mod.` the imported module's
+  exported symbols; after `var.` the fields and methods of its record/object type
+  (following the base-type chain); otherwise keywords, imported module names and the
+  current module's own declarations. Each item carries its kind and signature.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
