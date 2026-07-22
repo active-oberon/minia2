@@ -230,6 +230,114 @@ TYPE
 		END Find;
 	END DeclScan;
 
+	(* Builds a hierarchical textDocument/documentSymbol tree (LSP DocumentSymbol[]) of
+	   a freshly-analyzed module: the module as root, then its types (with their fields
+	   and methods as children), procedures, variables and constants. Positions come
+	   from the fresh analysis, so they are reliable. Self-contained (no module-level
+	   proc calls) so it can live in the type section. *)
+	Outliner = OBJECT
+
+		PROCEDURE Pos (line, char: SIGNED32): JSON.Object;
+		VAR o: JSON.Object;
+		BEGIN
+			o := JSON.NewObject();
+			o.Set("line", JSON.NewNumber(line));
+			o.Set("character", JSON.NewNumber(char));
+			RETURN o
+		END Pos;
+
+		PROCEDURE Range (sym: SyntaxTree.Symbol): JSON.Object;
+		VAR line, char, len: SIGNED32; nm: ARRAY 128 OF CHAR; r: JSON.Object;
+		BEGIN
+			IF sym.position.line > 0 THEN
+				line := SIGNED32(sym.position.line) - 1;
+				char := SIGNED32(sym.position.start - sym.position.linepos)
+			ELSE line := 0; char := 0 END;
+			sym.GetName(nm); len := SIGNED32(Strings.Length(nm));
+			r := JSON.NewObject();
+			r.Set("start", Pos(line, char));
+			r.Set("end", Pos(line, char + len));
+			RETURN r
+		END Range;
+
+		PROCEDURE Node (sym: SyntaxTree.Symbol; kind: SIGNED32; children: JSON.Array): JSON.Object;
+		VAR nm: ARRAY 128 OF CHAR; o: JSON.Object;
+		BEGIN
+			sym.GetName(nm);
+			o := JSON.NewObject();
+			o.Set("name", JSON.NewString(nm));
+			o.Set("kind", JSON.NewNumber(kind));
+			o.Set("range", Range(sym));
+			o.Set("selectionRange", Range(sym));   (* fresh object; must be within range *)
+			IF children # NIL THEN o.Set("children", children) END;
+			RETURN o
+		END Node;
+
+		PROCEDURE RecordScopeOf (t: SyntaxTree.Type): SyntaxTree.Scope;
+		BEGIN
+			IF t = NIL THEN RETURN NIL END;
+			IF t IS SyntaxTree.PointerType THEN t := t(SyntaxTree.PointerType).pointerBase END;
+			IF (t # NIL) & (t IS SyntaxTree.RecordType) THEN RETURN t(SyntaxTree.RecordType).recordScope END;
+			RETURN NIL
+		END RecordScopeOf;
+
+		(* record/object members: fields (kind Field=8) and methods (kind Method=6) *)
+		PROCEDURE Members (scope: SyntaxTree.Scope): JSON.Array;
+		VAR arr: JSON.Array; sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR;
+		BEGIN
+			arr := JSON.NewArray();
+			IF scope = NIL THEN RETURN arr END;
+			sym := scope.firstSymbol;
+			WHILE sym # NIL DO
+				sym.GetName(nm);
+				IF (nm[0] # "@") & (sym.position.line > 0) THEN
+					WITH sym:
+						  SyntaxTree.Variable DO arr.Add(Node(sym, 8, NIL))
+						| SyntaxTree.Procedure DO arr.Add(Node(sym, 6, NIL))
+					ELSE
+					END
+				END;
+				sym := sym.nextSymbol
+			END;
+			RETURN arr
+		END Members;
+
+		(* top-level module members; types carry their record/object members as children *)
+		PROCEDURE TopLevel (scope: SyntaxTree.Scope): JSON.Array;
+		VAR arr, ch: JSON.Array; sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR; rs: SyntaxTree.Scope;
+		BEGIN
+			arr := JSON.NewArray();
+			IF scope = NIL THEN RETURN arr END;
+			sym := scope.firstSymbol;
+			WHILE sym # NIL DO
+				sym.GetName(nm);
+				IF (nm[0] # "@") & (sym.position.line > 0) THEN
+					WITH sym:
+						  SyntaxTree.TypeDeclaration DO
+							rs := RecordScopeOf(sym.declaredType);
+							IF rs # NIL THEN ch := Members(rs) ELSE ch := NIL END;
+							arr.Add(Node(sym, 5, ch))
+						| SyntaxTree.Procedure DO arr.Add(Node(sym, 12, NIL))
+						| SyntaxTree.Variable DO arr.Add(Node(sym, 13, NIL))
+						| SyntaxTree.Constant DO arr.Add(Node(sym, 14, NIL))
+					ELSE
+					END
+				END;
+				sym := sym.nextSymbol
+			END;
+			RETURN arr
+		END TopLevel;
+
+		PROCEDURE Module (module: SyntaxTree.Module): JSON.Array;
+		VAR arr: JSON.Array;
+		BEGIN
+			arr := JSON.NewArray();
+			IF module = NIL THEN RETURN arr END;
+			arr.Add(Node(module, 2, TopLevel(module.moduleScope)));   (* kind Module=2 *)
+			RETURN arr
+		END Module;
+	END Outliner;
+
 VAR
 	documents: Document;
 	initialized: BOOLEAN;
@@ -730,6 +838,14 @@ VAR
 		RETURN loc
 	END DefinitionAt;
 
+	(* textDocument/documentSymbol: the module's symbol tree (outline). *)
+	PROCEDURE DocumentSymbols (text: Strings.String): JSON.Value;
+	VAR module: SyntaxTree.Module; o: Outliner;
+	BEGIN
+		module := Analyze(text); IF module = NIL THEN RETURN JSON.NewArray() END;
+		NEW(o); RETURN o.Module(module)
+	END DocumentSymbols;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
@@ -752,6 +868,7 @@ VAR
 						caps.Set("textDocumentSync", JSON.NewNumber(1));   (* full sync *)
 						caps.Set("hoverProvider", JSON.NewBool(TRUE));
 						caps.Set("definitionProvider", JSON.NewBool(TRUE));
+						caps.Set("documentSymbolProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -816,6 +933,14 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/documentSymbol" THEN
+						td := AsObject(params.Get("textDocument"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := DocumentSymbols(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
