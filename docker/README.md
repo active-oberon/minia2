@@ -119,6 +119,21 @@ single files against the stdlib. Hover and go-to-definition work both on *statem
 use-sites and on *declaration-site* type annotations (`VAR x: Mod.T`, parameter and
 return types, record/object fields, and type aliases).
 
+**Prebuilt symbols (recommended for big trees).** On-demand compilation assumes a
+module `M` lives in `M.Mod`; that breaks for modules whose source is in a
+platform-prefixed file (`I386.Foo.Mod` provides module `Foo`) or that don't compile
+under the server's target, producing spurious *"module not loaded"* cascades. Instead,
+mount your project's own build output at `/psym` — the server seeds those `.SymUu`
+over the bundled stdlib, so imports resolve from the real artifacts (no on-demand
+build, no module→file guessing):
+
+```sh
+docker run --rm -i -v "$PWD:/work" \
+  -v "$HOME/Projects/A2/a2oberon/target/Linux64/bin:/psym:ro" minia2-sdk lsp --live
+```
+
+(The prebuilt symbols must match the server's target — `.SymUu` = Linux64/Unix64.)
+
 **stdlib jumps.** Go-to-definition into a standard-library module needs that module's
 source available to the editor. Two ways:
 - edit inside a full A2 tree (e.g. `a2oberon/source`) — every module is already a
