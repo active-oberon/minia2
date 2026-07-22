@@ -10,7 +10,7 @@ MODULE LSP;
 		 - Positions assume the source is ASCII/UTF-8 with 1 char = 1 UTF-16 unit."
 *)
 
-IMPORT Streams, Strings, JSON, Diagnostics, Compiler, SyntaxTree := FoxSyntaxTree, Commands,
+IMPORT Streams, Strings, Files, JSON, Diagnostics, Compiler, SyntaxTree := FoxSyntaxTree, Commands,
 	FoxScanner, FoxParser, FoxSemanticChecker, FoxGlobal, FoxBasic, Printout := FoxPrintout;
 
 CONST
@@ -29,13 +29,47 @@ TYPE
 	Finder = OBJECT
 	VAR foundSym: SyntaxTree.Symbol; foundStart: SIGNED64; foundNameLen: SIZE;
 		bestSpan: SIZE; target: SIGNED64; hasFound: BOOLEAN;
+		(* collect mode (find-all-references): gather every use-site matching a key *)
+		collect: BOOLEAN; keyName, keyOwner: ARRAY 128 OF CHAR; keyKind: SIGNED32;
+		refOff: ARRAY 8192 OF SIGNED64; refLen: ARRAY 8192 OF SIGNED32; refN: SIGNED32;
+
+		(* Coarse symbol class, to disambiguate same-named symbols. *)
+		PROCEDURE KindOf (sym: SyntaxTree.Symbol): SIGNED32;
+		VAR k: SIGNED32;
+		BEGIN
+			k := 0;
+			WITH sym:
+				  SyntaxTree.Procedure DO k := 1
+				| SyntaxTree.Variable DO k := 2
+				| SyntaxTree.Parameter DO k := 2
+				| SyntaxTree.TypeDeclaration DO k := 3
+				| SyntaxTree.Constant DO k := 4
+			ELSE
+			END;
+			RETURN k
+		END KindOf;
+
+		PROCEDURE SymMatches (sym: SyntaxTree.Symbol): BOOLEAN;
+		VAR nm, onm: ARRAY 128 OF CHAR;
+		BEGIN
+			sym.GetName(nm); IF nm # keyName THEN RETURN FALSE END;
+			IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN FALSE END;
+			sym.scope.ownerModule.GetName(onm);
+			RETURN (onm = keyOwner) & (KindOf(sym) = keyKind)
+		END SymMatches;
 
 		(* Record a candidate hit: matchStart/matchSpan is the clickable span; hitStart/
-		   nameLen is the name token to highlight (the two differ for qualified refs). *)
+		   nameLen is the name token to highlight (the two differ for qualified refs).
+		   In collect mode, every match of the key is recorded; otherwise the innermost
+		   hit containing `target`. *)
 		PROCEDURE Hit (sym: SyntaxTree.Symbol; matchStart: SIGNED64; matchSpan: SIZE; hitStart: SIGNED64; nameLen: SIZE);
 		BEGIN
 			IF sym = NIL THEN RETURN END;
-			IF (matchStart >= 0) & (target >= matchStart) & (target < matchStart + matchSpan) THEN
+			IF collect THEN
+				IF (hitStart >= 0) & (refN < LEN(refOff)) & SymMatches(sym) THEN
+					refOff[refN] := hitStart; refLen[refN] := SIGNED32(nameLen); INC(refN)
+				END
+			ELSIF (matchStart >= 0) & (target >= matchStart) & (target < matchStart + matchSpan) THEN
 				IF ~hasFound OR (matchSpan < bestSpan) THEN
 					hasFound := TRUE; bestSpan := matchSpan;
 					foundSym := sym; foundStart := hitStart; foundNameLen := nameLen
@@ -184,20 +218,33 @@ TYPE
 			WHILE ns # NIL DO WScope(ns); ns := ns.nextScope END
 		END WScope;
 
-		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): BOOLEAN;
+		PROCEDURE Traverse (module: SyntaxTree.Module);
 		VAR ms: SyntaxTree.ModuleScope;
 		BEGIN
-			hasFound := FALSE; bestSpan := 0; target := offset;
-			foundSym := NIL; foundStart := 0; foundNameLen := 0;
-			IF module = NIL THEN RETURN FALSE END;
+			IF module = NIL THEN RETURN END;
 			ms := module.moduleScope;
 			WScope(ms);
 			IF (ms.bodyProcedure # NIL) & (ms.bodyProcedure.procedureScope # NIL)
 				& (ms.bodyProcedure.procedureScope.body # NIL) THEN
 				WSeq(ms.bodyProcedure.procedureScope.body.statements)
-			END;
+			END
+		END Traverse;
+
+		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): BOOLEAN;
+		BEGIN
+			collect := FALSE; hasFound := FALSE; bestSpan := 0; target := offset;
+			foundSym := NIL; foundStart := 0; foundNameLen := 0;
+			Traverse(module);
 			RETURN hasFound
 		END Find;
+
+		(* Collect every use-site of the symbol identified by (name, owner, kind). *)
+		PROCEDURE CollectRefs (module: SyntaxTree.Module; CONST name, owner: ARRAY OF CHAR; kind: SIGNED32);
+		BEGIN
+			collect := TRUE; COPY(name, keyName); COPY(owner, keyOwner); keyKind := kind; refN := 0;
+			Traverse(module);
+			collect := FALSE
+		END CollectRefs;
 	END Finder;
 
 	(* Locates a declaration by (simple) name anywhere in a freshly-analyzed module's
@@ -1208,6 +1255,136 @@ VAR
 		RETURN result
 	END SignatureHelpAt;
 
+	(* ---- find all references ---- *)
+
+	PROCEDURE Contains (s: Strings.String; CONST sub: ARRAY OF CHAR): BOOLEAN;
+	VAR i, j, slen, sublen: SIZE;
+	BEGIN
+		IF s = NIL THEN RETURN FALSE END;
+		slen := Strings.Length(s^); sublen := Strings.Length(sub);
+		IF sublen = 0 THEN RETURN TRUE END;
+		i := 0;
+		WHILE i + sublen <= slen DO
+			j := 0; WHILE (j < sublen) & (s[i+j] = sub[j]) DO INC(j) END;
+			IF j = sublen THEN RETURN TRUE END;
+			INC(i)
+		END;
+		RETURN FALSE
+	END Contains;
+
+	(* "PFX:dir/Name.Mod" -> "Name" *)
+	PROCEDURE ModuleBaseName (CONST fn: ARRAY OF CHAR; VAR base: ARRAY OF CHAR);
+	VAR i, start, n: SIZE;
+	BEGIN
+		start := 0; i := 0;
+		WHILE fn[i] # 0X DO IF (fn[i] = ":") OR (fn[i] = "/") THEN start := i + 1 END; INC(i) END;
+		n := 0; i := start;
+		WHILE (fn[i] # 0X) & (n < LEN(base)-1) DO base[n] := fn[i]; INC(n); INC(i) END;
+		base[n] := 0X;
+		IF (n >= 4) & (base[n-4] = ".") & (base[n-3] = "M") & (base[n-2] = "o") & (base[n-1] = "d") THEN
+			base[n-4] := 0X
+		END
+	END ModuleBaseName;
+
+	PROCEDURE LocExists (arr: JSON.Array; CONST uri: ARRAY OF CHAR; line, char: SIGNED32): BOOLEAN;
+	VAR i: SIZE; v, lv, cv: JSON.Value; o, r, st: JSON.Object;
+	BEGIN
+		i := 0;
+		WHILE i < arr.length DO
+			v := arr.At(i);
+			IF (v # NIL) & (v IS JSON.Object) THEN
+				o := v(JSON.Object); r := AsObject(o.Get("range"));
+				v := o.Get("uri");
+				IF (v # NIL) & (v IS JSON.String) & (v(JSON.String).value^ = uri) & (r # NIL) THEN
+					st := AsObject(r.Get("start"));
+					IF st # NIL THEN
+						lv := st.Get("line"); cv := st.Get("character");
+						IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number)
+							& (SIGNED32(ENTIER(lv(JSON.Number).value)) = line)
+							& (SIGNED32(ENTIER(cv(JSON.Number).value)) = char) THEN RETURN TRUE END
+					END
+				END
+			END;
+			INC(i)
+		END;
+		RETURN FALSE
+	END LocExists;
+
+	(* Turn a Finder's collected offsets (into `text`) into LSP Location objects (deduped). *)
+	PROCEDURE AddLocs (arr: JSON.Array; f: Finder; text: Strings.String; uri: Strings.String);
+	VAR i, line, char: SIGNED32; range, loc: JSON.Object;
+	BEGIN
+		IF uri = NIL THEN RETURN END;
+		i := 0;
+		WHILE i < f.refN DO
+			OffsetToPos(text, f.refOff[i], line, char);
+			IF ~LocExists(arr, uri^, line, char) THEN
+				range := JSON.NewObject();
+				range.Set("start", Position(line, char));
+				range.Set("end", Position(line, char + f.refLen[i]));
+				loc := JSON.NewObject(); loc.Set("uri", JSON.NewString(uri^)); loc.Set("range", range);
+				arr.Add(loc)
+			END;
+			INC(i)
+		END
+	END AddLocs;
+
+	(* textDocument/references: all use-sites of the symbol under the cursor. Project-wide
+	   for module-level / record members; current-buffer only for locals. Always includes
+	   the declaration. *)
+	PROCEDURE ReferencesAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	VAR module, fm: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; arr: JSON.Array;
+		name, owner, modName: ARRAY 128 OF CHAR; readName: ARRAY 256 OF CHAR;
+		kind: SIGNED32; wide: BOOLEAN; en: Files.Enumerator; fn: ARRAY 256 OF CHAR;
+		flags: SET; tm, dt: SIGNED32; sz: Files.Size; ftext, declUri, sibUri: Strings.String;
+		line, char: SIGNED32; range, loc: JSON.Object;
+	BEGIN
+		arr := JSON.NewArray();
+		module := Analyze(text); IF module = NIL THEN RETURN arr END;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN arr END;
+		sym := f.foundSym; sym.GetName(name);
+		IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN arr END;
+		sym.scope.ownerModule.GetName(owner);
+		kind := f.KindOf(sym);
+		wide := (sym.scope IS SyntaxTree.ModuleScope) OR (sym.scope IS SyntaxTree.RecordScope);
+
+		f.CollectRefs(module, name, owner, kind);   (* current buffer *)
+		AddLocs(arr, f, text, uri);
+
+		IF wide THEN
+			NEW(en); en.Open("./*.Mod", {});   (* RelativeFileSystem needs the ./ prefix *)
+			WHILE en.HasMoreEntries() DO
+				IF en.GetEntry(fn, flags, tm, dt, sz) THEN
+					ModuleBaseName(fn, modName);
+					sibUri := SiblingUri(uri, modName);
+					(* skip the current document itself (already collected from the buffer) *)
+					IF (modName[0] # 0X) & (sibUri # NIL) & (sibUri^ # uri^) THEN
+						COPY(modName, readName); Strings.Append(readName, ".Mod");
+						ftext := ReadFile(readName);
+						IF (ftext # NIL) & Contains(ftext, owner) THEN
+							fm := Analyze(ftext);
+							IF fm # NIL THEN
+								f.CollectRefs(fm, name, owner, kind);
+								AddLocs(arr, f, ftext, sibUri)
+							END
+						END
+					END
+				END
+			END;
+			en.Close
+		END;
+
+		declUri := SourceUriFor(uri, owner);   (* declaration site *)
+		IF (declUri # NIL) & FindDeclPos(owner, name, line, char) & ~LocExists(arr, declUri^, line, char) THEN
+			range := JSON.NewObject();
+			range.Set("start", Position(line, char));
+			range.Set("end", Position(line, char + SIGNED32(Strings.Length(name))));
+			loc := JSON.NewObject(); loc.Set("uri", JSON.NewString(declUri^)); loc.Set("range", range);
+			arr.Add(loc)
+		END;
+		RETURN arr
+	END ReferencesAt;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
@@ -1239,6 +1416,7 @@ VAR
 						sigtrig := JSON.NewArray(); sigtrig.Add(JSON.NewString("(")); sigtrig.Add(JSON.NewString(","));
 						sighelp.Set("triggerCharacters", sigtrig);
 						caps.Set("signatureHelpProvider", sighelp);
+						caps.Set("referencesProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1331,6 +1509,16 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := SignatureHelpAt(doc.text, PosToOffset(doc.text, line, char)) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/references" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := ReferencesAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
