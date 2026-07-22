@@ -107,6 +107,9 @@ speaking JSON-RPC over stdio. It provides:
 - **signature help** (trigger `(` / `,`) — while typing a call, shows the procedure's
   parameter list and highlights the active argument. Works for `Mod.Proc(`, `proc(`
   and `obj.Method(`.
+- **find references** — every use-site of the symbol under the cursor, plus its
+  declaration. Project-wide for module-level symbols and record/object members (scans
+  the sibling modules that mention the owner), current-file only for locals.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
