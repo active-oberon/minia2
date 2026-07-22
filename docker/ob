@@ -212,6 +212,10 @@ cmd_lsp() {
   trap 'rm -rf "$w"' RETURN
   # full stdlib symbols so the checker resolves any in-tree import (GUI etc.)
   [ -d "$LIBSYM" ] && ln -sf "$LIBSYM"/*.SymUu "$w"/ 2>/dev/null || true
+  # the project's own prebuilt symbol files (its build output, mounted at /psym) win
+  # over the bundled stdlib: imports then resolve from real build artifacts instead of
+  # fragile on-demand compilation (and module-in-prefixed-file cases resolve too).
+  [ -d /psym ] && ln -sf /psym/*.SymUu "$w"/ 2>/dev/null || true
   # project sources mounted at /work become resolvable via on-demand compilation
   [ -d /work ] && ln -sf /work/*.Mod "$w"/ 2>/dev/null || true
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
