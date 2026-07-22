@@ -3,10 +3,10 @@ MODULE LSP;
 	AUTHOR "minia2 SDK";
 	PURPOSE "Minimal Language Server (LSP) for Active Oberon — diagnostics over JSON-RPC/stdio";
 	LIMITATIONS
-		"- MVP: only publishes diagnostics (syntax + semantic errors/warnings) on
-		   open/change/save. No hover/definition/completion yet.
-		 - Imports resolve against the current working directory only (the SDK seeds
-		   it with the standard library); multi-file user projects are not indexed.
+		"- Diagnostics on open/change/save, hover, and go-to-definition. No completion yet.
+		 - Go-to-definition crosses modules: project modules resolve to a sibling of the
+		   current document; stdlib modules only when the client mounts a source tree at
+		   /libsrc and names its host path in initializationOptions.stdlibSrc.
 		 - Positions assume the source is ASCII/UTF-8 with 1 char = 1 UTF-16 unit."
 *)
 
@@ -128,9 +128,44 @@ TYPE
 		END Find;
 	END Finder;
 
+	(* Locates a declaration by (simple) name anywhere in a freshly-analyzed module's
+	   scope tree. Used for cross-module go-to-definition: positions read back from a
+	   .SymUu are NOT reliable, but re-analyzing the owning module's source yields the
+	   real name position. Module-level declarations win (searched first), then nested
+	   ones (type/object members). *)
+	DeclScan = OBJECT
+	VAR target: ARRAY 128 OF CHAR; found: SyntaxTree.Symbol;
+
+		PROCEDURE Scan (scope: SyntaxTree.Scope);
+		VAR sym: SyntaxTree.Symbol; ns: SyntaxTree.Scope; nm: ARRAY 128 OF CHAR;
+		BEGIN
+			IF (scope = NIL) OR (found # NIL) THEN RETURN END;
+			sym := scope.firstSymbol;
+			WHILE (sym # NIL) & (found = NIL) DO
+				sym.GetName(nm);
+				IF (nm = target) & (sym.position.line > 0) THEN found := sym; RETURN END;
+				sym := sym.nextSymbol
+			END;
+			ns := scope.firstScope;
+			WHILE (ns # NIL) & (found = NIL) DO Scan(ns); ns := ns.nextScope END
+		END Scan;
+
+		PROCEDURE Find (module: SyntaxTree.Module; CONST name: ARRAY OF CHAR): SyntaxTree.Symbol;
+		BEGIN
+			found := NIL; COPY(name, target);
+			IF module # NIL THEN Scan(module.moduleScope) END;
+			RETURN found
+		END Find;
+	END DeclScan;
+
 VAR
 	documents: Document;
 	initialized: BOOLEAN;
+	(* host directory of a standard-library source tree, as sent by the client in
+	   initialize.initializationOptions.stdlibSrc (a plain absolute path, no trailing
+	   slash). The client also mounts that same tree at /libsrc so the server can read
+	   it. Empty => go-to-definition into stdlib modules is disabled. *)
+	stdlibSrcHost: ARRAY 512 OF CHAR;
 
 	PROCEDURE FindDoc (CONST uri: ARRAY OF CHAR): Document;
 	VAR d: Document;
@@ -206,6 +241,16 @@ VAR
 	PROCEDURE FileExists (CONST fn: ARRAY OF CHAR): BOOLEAN;
 	BEGIN RETURN FoxBasic.GetFileReader(fn) # NIL
 	END FileExists;
+
+	(* Read a whole source file into a string (NIL if it can't be opened). *)
+	PROCEDURE ReadFile (CONST fn: ARRAY OF CHAR): Strings.String;
+	VAR reader: Streams.Reader; buf: Streams.Buffer; w: Streams.Writer; ch: CHAR;
+	BEGIN
+		reader := FoxBasic.GetFileReader(fn); IF reader = NIL THEN RETURN NIL END;
+		NEW(buf, 4096); w := buf.GetWriter();
+		LOOP ch := reader.Get(); IF reader.res # Streams.Ok THEN EXIT END; w.Char(ch) END;
+		w.Update; RETURN buf.GetString()
+	END ReadFile;
 
 	(* Compile modFile with symbol-file export to the cwd (no code generation). *)
 	PROCEDURE CompileToSym (CONST modFile: ARRAY OF CHAR);
@@ -485,6 +530,34 @@ VAR
 		RETURN module
 	END Analyze;
 
+	(* Locate the readable source of module <mname>: a project module symlinked into
+	   the cwd (from /work), else the stdlib source tree the client mounted at /libsrc. *)
+	PROCEDURE ModSourceFile (CONST mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		COPY(mname, fn); Strings.Append(fn, ".Mod");
+		IF FileExists(fn) THEN RETURN TRUE END;
+		IF stdlibSrcHost[0] # 0X THEN
+			COPY("/libsrc/", fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
+			IF FileExists(fn) THEN RETURN TRUE END
+		END;
+		RETURN FALSE
+	END ModSourceFile;
+
+	(* Reliable declaration position of symbol <symName> in module <mname>: re-analyze
+	   the module's own source (positions from a .SymUu can't be trusted) and find the
+	   declaration by name. Returns FALSE if the source or the declaration isn't found. *)
+	PROCEDURE FindDeclPos (CONST mname, symName: ARRAY OF CHAR; VAR line, char: SIGNED32): BOOLEAN;
+	VAR fn: ARRAY 256 OF CHAR; text: Strings.String; module: SyntaxTree.Module; ds: DeclScan; sym: SyntaxTree.Symbol;
+	BEGIN
+		IF ~ModSourceFile(mname, fn) THEN RETURN FALSE END;
+		text := ReadFile(fn); IF text = NIL THEN RETURN FALSE END;
+		module := Analyze(text); IF module = NIL THEN RETURN FALSE END;
+		NEW(ds); sym := ds.Find(module, symName); IF sym = NIL THEN RETURN FALSE END;
+		line := SIGNED32(sym.position.line) - 1;
+		char := SIGNED32(sym.position.start - sym.position.linepos);
+		RETURN TRUE
+	END FindDeclPos;
+
 	(* textDocument/hover result, or NIL if nothing under the offset. *)
 	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64): JSON.Value;
 	VAR module: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
@@ -509,37 +582,92 @@ VAR
 		RETURN result
 	END HoverAt;
 
-	(* textDocument/definition Location (same file only), or NIL. *)
+	(* Sibling URI: take curUri (file:// URI of the current document), drop its last
+	   path segment and append "<mname>.Mod". Both the current file and the target
+	   project module live in the same directory, which is what the client mounts at
+	   /work, so this yields a host URI the editor can open. *)
+	PROCEDURE SiblingUri (curUri: Strings.String; CONST mname: ARRAY OF CHAR): Strings.String;
+	VAR i, last: SIZE; s: ARRAY 1024 OF CHAR;
+	BEGIN
+		IF curUri = NIL THEN RETURN NIL END;
+		last := -1; i := 0;
+		WHILE curUri[i] # 0X DO IF curUri[i] = "/" THEN last := i END; INC(i) END;
+		IF last < 0 THEN RETURN NIL END;
+		FOR i := 0 TO last DO s[i] := curUri[i] END;   (* prefix incl. trailing "/" *)
+		s[last+1] := 0X;
+		Strings.Append(s, mname); Strings.Append(s, ".Mod");
+		RETURN Strings.NewString(s)
+	END SiblingUri;
+
+	(* Host file:// URI of module <mname>'s source, or NIL if not addressable.
+	   - project module: its <mname>.Mod is symlinked into the cwd (from /work);
+	     map it to a sibling of the current document.
+	   - stdlib module: the client mounts a host source tree at /libsrc and passes its
+	     host path (stdlibSrcHost) in initializationOptions.stdlibSrc; return the
+	     matching host URI. *)
+	PROCEDURE SourceUriFor (curUri: Strings.String; CONST mname: ARRAY OF CHAR): Strings.String;
+	VAR f, s: ARRAY 1024 OF CHAR;
+	BEGIN
+		COPY(mname, f); Strings.Append(f, ".Mod");
+		IF FileExists(f) THEN RETURN SiblingUri(curUri, mname) END;
+		IF stdlibSrcHost[0] # 0X THEN
+			COPY("/libsrc/", f); Strings.Append(f, mname); Strings.Append(f, ".Mod");
+			IF FileExists(f) THEN
+				COPY("file://", s); Strings.Append(s, stdlibSrcHost);
+				Strings.Append(s, "/"); Strings.Append(s, mname); Strings.Append(s, ".Mod");
+				RETURN Strings.NewString(s)
+			END
+		END;
+		RETURN NIL
+	END SourceUriFor;
+
+	(* textDocument/definition Location. Resolves declarations in the current file
+	   AND in other modules: the imported symbol's position (line/start/linepos) is
+	   preserved in the .SymUu, so we point at the owning module's source file. *)
 	PROCEDURE DefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
-	VAR module: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
-		nm: ARRAY 128 OF CHAR; loc, range: JSON.Object; line, char: SIGNED32;
+	VAR module, owner: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
+		nm, mname: ARRAY 128 OF CHAR; loc, range: JSON.Object; line, char: SIGNED32; targetUri: Strings.String;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
 		NEW(f); d := f.Find(module, offset); IF d = NIL THEN RETURN NIL END;
 		sym := d.symbol;
-		(* only resolve definitions declared in THIS document (we can address only its uri) *)
-		IF (sym.scope = NIL) OR (sym.scope.ownerModule # module) OR (sym.position.start < 0) THEN RETURN NIL END;
-		line := SIGNED32(sym.position.line) - 1;
-		char := SIGNED32(sym.position.start - sym.position.linepos);
+		IF sym.scope = NIL THEN RETURN NIL END;
+		owner := sym.scope.ownerModule;
+		IF owner = NIL THEN RETURN NIL END;
+		IF sym.position.line <= 0 THEN RETURN NIL END;   (* builtin / SYSTEM / no source *)
 		sym.GetName(nm);
+		IF owner = module THEN
+			(* same file: this symbol came from the fresh analysis, so its own position
+			   is reliable *)
+			targetUri := uri;
+			line := SIGNED32(sym.position.line) - 1;
+			char := SIGNED32(sym.position.start - sym.position.linepos)
+		ELSE
+			(* other module: the imported symbol's position (from a .SymUu) is not
+			   reliable — resolve the real coordinates from the module's own source *)
+			owner.GetName(mname);
+			targetUri := SourceUriFor(uri, mname);
+			IF targetUri = NIL THEN RETURN NIL END;
+			IF ~FindDeclPos(mname, nm, line, char) THEN RETURN NIL END
+		END;
 		range := JSON.NewObject();
 		range.Set("start", Position(line, char));
 		range.Set("end", Position(line, char + SIGNED32(Strings.Length(nm))));
 		loc := JSON.NewObject();
-		loc.Set("uri", JSON.NewString(uri^)); loc.Set("range", range);
+		loc.Set("uri", JSON.NewString(targetUri^)); loc.Set("range", range);
 		RETURN loc
 	END DefinitionAt;
 
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
-	VAR msg: JSON.Value; req, params, td, caps, result, pos: JSON.Object;
-		method, uri, text: Strings.String; in: Streams.Reader; out: Streams.Writer;
+	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts: JSON.Object;
+		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
 		changes: JSON.Value; arr: JSON.Array; first, res: JSON.Value;
 		line, char: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
-		documents := NIL; initialized := FALSE;
+		documents := NIL; initialized := FALSE; stdlibSrcHost[0] := 0X;
 		LOOP
 			msg := ReadMessage(in);
 			IF msg = NIL THEN EXIT END;              (* EOF or unrecoverable *)
@@ -554,6 +682,12 @@ VAR
 						caps.Set("definitionProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
+						(* optional: host dir of extracted stdlib sources, for cross-module
+						   go-to-definition into the standard library *)
+						initOpts := AsObject(params.Get("initializationOptions"));
+						IF (initOpts # NIL) & GetStr(initOpts, "stdlibSrc", sopt) THEN
+							COPY(sopt^, stdlibSrcHost)
+						END;
 						Respond(out, req.Get("id"), result)
 					ELSIF method^ = "initialized" THEN
 						initialized := TRUE
