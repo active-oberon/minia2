@@ -196,11 +196,17 @@ TYPE
 		   bodies. This covers module procedures, nested procedures, AND members
 		   declared inside OBJECT/RECORD types (whose scopes are nested scopes). *)
 		PROCEDURE WScope (scope: SyntaxTree.Scope);
-		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol;
+		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol; dnm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF scope = NIL THEN RETURN END;
 			sym := scope.firstSymbol;
 			WHILE sym # NIL DO
+				(* the declaration's own name is also a resolvable site (so hover /
+				   definition / references work when the cursor is on the declaration) *)
+				sym.GetName(dnm);
+				IF (dnm[0] # "@") & (sym.position.line > 0) THEN
+					Hit(sym, sym.position.start, Strings.Length(dnm), sym.position.start, Strings.Length(dnm))
+				END;
 				WITH sym:
 					  SyntaxTree.Variable DO WType(sym.type)
 					| SyntaxTree.Parameter DO WType(sym.type)
