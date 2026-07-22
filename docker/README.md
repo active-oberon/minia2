@@ -119,6 +119,9 @@ speaking JSON-RPC over stdio. It provides:
   constant) and every use of it across the project as one WorkspaceEdit. Locals and
   record/object members are declined (their name+module+kind identity isn't unique
   enough to rename safely yet).
+- **formatting** — reprints the whole module in Fox's canonical style, preserving the
+  IMPORT list and comments. Only syntactically-valid files are formatted; the output
+  is verified to re-parse.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
