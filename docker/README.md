@@ -93,8 +93,10 @@ speaking JSON-RPC over stdio. It provides:
 - **hover** — type, kind and doc-comment of the symbol under the cursor (resolves
   across modules: hovering `KernelLog.Int` shows its real signature). Works on
   use-sites inside procedures and object/record methods.
-- **go-to-definition** — jumps to the declaration (within the current file; symbols
-  declared in other modules aren't addressable yet).
+- **go-to-definition** — jumps to the declaration. Same-file, and **across modules**:
+  a symbol from another project module opens that module's source (a sibling in the
+  mounted directory); a standard-library symbol opens its source too when you expose a
+  source tree (see *stdlib jumps* below).
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
@@ -103,11 +105,17 @@ transitively). So diagnostics/hover work on real multi-module code, not just
 single files against the stdlib. (Hover/definition currently target *statement*
 use-sites, not declaration-site type annotations.)
 
-Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]`
-(the `-v` mount is what makes your project modules resolvable; `-i`, no `-t`).
+**stdlib jumps.** Go-to-definition into a standard-library module needs that module's
+source available to the editor. Two ways:
+- edit inside a full A2 tree (e.g. `a2oberon/source`) — every module is already a
+  sibling in `/work`, so stdlib jumps work with no extra setup; or
+- from a small project, mount a source tree at `/libsrc` and name its host path in
+  `initializationOptions.stdlibSrc`; the server then resolves stdlib symbols to it.
 
-> MVP scope: diagnostics only (no hover/definition/completion yet). Imports resolve
-> against the standard library; other modules in your own project aren't indexed.
+Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--live]`
+(the `-v` mount is what makes your project modules resolvable; `-i`, no `-t`). Add
+`-v <a2-source>:/libsrc:ro` and `initializationOptions.stdlibSrc=<a2-source>` for
+stdlib go-to-definition.
 
 **Neovim** — the config-manager-agnostic way (works with NVChad/LazyVim/etc.
 without touching their files): two standard Neovim runtime files.
@@ -120,15 +128,26 @@ vim.filetype.add({ extension = { Mod = "oberon" } })
 `~/.config/nvim/after/ftplugin/oberon.lua`:
 ```lua
 vim.diagnostic.config({ virtual_lines = { current_line = true } })  -- full error text inline
+local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0)) or vim.fn.getcwd()
+local cmd = { "docker", "run", "--rm", "-i", "-v", dir .. ":/work:ro" }  -- mount project
+local init = {}
+local stdlib = vim.env.A2_STDLIB_SRC   -- optional: a full A2 source tree, for stdlib jumps
+if stdlib and stdlib ~= "" then
+  vim.list_extend(cmd, { "-v", stdlib .. ":/libsrc:ro" }); init.stdlibSrc = stdlib
+end
+vim.list_extend(cmd, { "minia2-sdk", "lsp", "--live" })
 vim.lsp.start({
-  name = "ob",
-  cmd = { "docker", "run", "--rm", "-i", "minia2-sdk", "lsp", "--live" },
-  root_dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0)) or vim.fn.getcwd(),
+  name = "ob", cmd = cmd, root_dir = dir, init_options = init,
   flags = { debounce_text_changes = 500 },   -- live, but only after you pause typing
 })
+-- keymaps: K = hover, gd / <C-]> / Ctrl-Click = go to definition
+vim.keymap.set("n", "K",  vim.lsp.buf.hover, { buffer = true })
+vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = true })
 ```
 Drop `--live` and the `flags` line for on-open/save-only. `vim.diagnostic.config`
-is global — remove that line if you don't want inline text for other filetypes.
+is global — remove that line if you don't want inline text for other filetypes. Set
+`export A2_STDLIB_SRC=$HOME/Projects/A2/a2oberon/source` (a full A2 tree) so
+go-to-definition can reach standard-library modules from any project.
 
 **VS Code**: use a generic LSP bridge extension (e.g. *"Generic LSP Client"*) or a
 tiny extension whose `serverOptions` runs the same `docker … minia2-sdk lsp` command
