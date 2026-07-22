@@ -84,6 +84,9 @@ obit repl                        # interactive A2 shell
 
 ## Editor setup (LSP)
 
+> **Full IDE guide:** installation, every feature, keybindings and environment
+> variables are in [`docs/IDE.md`](../docs/IDE.md).
+
 `ob lsp` is an [LSP](https://microsoft.github.io/language-server-protocol/) server
 speaking JSON-RPC over stdio. It provides:
 
