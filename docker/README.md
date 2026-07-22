@@ -102,8 +102,9 @@ speaking JSON-RPC over stdio. It provides:
 you mount your project sources at `/work` it resolves your own modules too — building
 any missing dependency's symbols on demand from its `.Mod` source (imports resolve
 transitively). So diagnostics/hover work on real multi-module code, not just
-single files against the stdlib. (Hover/definition currently target *statement*
-use-sites, not declaration-site type annotations.)
+single files against the stdlib. Hover and go-to-definition work both on *statement*
+use-sites and on *declaration-site* type annotations (`VAR x: Mod.T`, parameter and
+return types, record/object fields, and type aliases).
 
 **stdlib jumps.** Go-to-definition into a standard-library module needs that module's
 source available to the editor. Two ways:

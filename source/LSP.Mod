@@ -21,21 +21,79 @@ TYPE
 	VAR next: Document; uri: Strings.String; text: Strings.String;
 	END Document;
 
-	(* Locates the innermost resolved use-site (SymbolDesignator) whose token span
-	   contains a byte offset. The designator's .end position is unreliable, so the
-	   token length is taken from the symbol name. *)
+	(* Locates the innermost resolved use-site whose token span contains a byte offset.
+	   A use-site is either a SymbolDesignator (in executable code) or a QualifiedType
+	   (a type annotation in a declaration: VAR/field/parameter/return/base types). The
+	   result is the referenced symbol plus the use-site's name position (for the hover
+	   highlight). Smaller spans win, so the innermost reference is preferred. *)
 	Finder = OBJECT
-	VAR best: SyntaxTree.SymbolDesignator; bestSpan: SIZE; target: SIGNED64;
+	VAR foundSym: SyntaxTree.Symbol; foundStart: SIGNED64; foundNameLen: SIZE;
+		bestSpan: SIZE; target: SIGNED64; hasFound: BOOLEAN;
+
+		(* Record a candidate hit: matchStart/matchSpan is the clickable span; hitStart/
+		   nameLen is the name token to highlight (the two differ for qualified refs). *)
+		PROCEDURE Hit (sym: SyntaxTree.Symbol; matchStart: SIGNED64; matchSpan: SIZE; hitStart: SIGNED64; nameLen: SIZE);
+		BEGIN
+			IF sym = NIL THEN RETURN END;
+			IF (matchStart >= 0) & (target >= matchStart) & (target < matchStart + matchSpan) THEN
+				IF ~hasFound OR (matchSpan < bestSpan) THEN
+					hasFound := TRUE; bestSpan := matchSpan;
+					foundSym := sym; foundStart := hitStart; foundNameLen := nameLen
+				END
+			END
+		END Hit;
 
 		PROCEDURE Consider (d: SyntaxTree.SymbolDesignator);
 		VAR span: SIZE; nm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF d.symbol = NIL THEN RETURN END;
 			d.symbol.GetName(nm); span := Strings.Length(nm);
-			IF (d.position.start >= 0) & (target >= d.position.start) & (target < d.position.start + span) THEN
-				IF (best = NIL) OR (span < bestSpan) THEN best := d; bestSpan := span END
-			END
+			Hit(d.symbol, d.position.start, span, d.position.start, span)
 		END Consider;
+
+		(* Type annotation reference: match anywhere on "prefix.suffix", highlight the
+		   suffix (the type name), resolve to the referenced type declaration. *)
+		PROCEDURE ConsiderType (qt: SyntaxTree.QualifiedType);
+		VAR qi: SyntaxTree.QualifiedIdentifier; td: SyntaxTree.TypeDeclaration;
+			pnm, snm: ARRAY 128 OF CHAR; plen, slen: SIZE;
+		BEGIN
+			(* the type reference's OWN declaration (e.g. the alias NbrInt.Integer), not the
+			   fully-resolved underlying type whose typeDeclaration may be NIL for a builtin *)
+			td := qt.typeDeclaration;
+			IF (td = NIL) & (qt.resolvedType # NIL) THEN td := qt.resolvedType.typeDeclaration END;
+			IF td = NIL THEN RETURN END;
+			qi := qt.qualifiedIdentifier; IF qi = NIL THEN RETURN END;
+			(* GetString on an invalid string index would index the pool out of range *)
+			IF qi.suffix = FoxBasic.invalidString THEN RETURN END;
+			FoxBasic.GetString(qi.suffix, snm); slen := Strings.Length(snm);
+			IF qi.prefix # FoxBasic.invalidString THEN
+				FoxBasic.GetString(qi.prefix, pnm); plen := Strings.Length(pnm);
+				Hit(td, qi.position.start, plen + 1 + slen, qi.position.start + plen + 1, slen)
+			ELSE
+				Hit(td, qi.position.start, slen, qi.position.start, slen)
+			END
+		END ConsiderType;
+
+		(* Recurse a type structure, considering every qualified reference within it. *)
+		PROCEDURE WType (t: SyntaxTree.Type);
+		VAR p: SyntaxTree.Parameter;
+		BEGIN
+			IF t = NIL THEN RETURN END;
+			WITH t:
+				  SyntaxTree.QualifiedType DO ConsiderType(t)
+				| SyntaxTree.ArrayType DO WType(t.arrayBase)
+				| SyntaxTree.MathArrayType DO WType(t.arrayBase)
+				| SyntaxTree.PointerType DO WType(t.pointerBase)
+				| SyntaxTree.RecordType DO
+					WType(t.baseType);
+					WScope(t.recordScope)   (* record/object fields live in their own scope *)
+				| SyntaxTree.ProcedureType DO
+					p := t.firstParameter;
+					WHILE p # NIL DO WType(p.type); p := p.nextParameter END;
+					WType(t.returnType)
+			ELSE
+			END
+		END WType;
 
 		PROCEDURE WList (l: SyntaxTree.ExpressionList);
 		VAR i: SIZE;
@@ -98,13 +156,26 @@ TYPE
 			END
 		END WStmt;
 
-		(* Recurse the whole scope tree, walking every procedure/method body — this
-		   covers module procedures, nested procedures, AND methods declared inside
-		   OBJECT/RECORD types (whose ProcedureScopes are nested scopes). *)
+		(* Recurse the whole scope tree. Per scope: (1) walk declaration-site type
+		   annotations of its symbols (variables, fields, parameters, procedure
+		   signatures, declared types' base/element types); (2) walk procedure/method
+		   bodies. This covers module procedures, nested procedures, AND members
+		   declared inside OBJECT/RECORD types (whose scopes are nested scopes). *)
 		PROCEDURE WScope (scope: SyntaxTree.Scope);
-		VAR ns: SyntaxTree.Scope;
+		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol;
 		BEGIN
 			IF scope = NIL THEN RETURN END;
+			sym := scope.firstSymbol;
+			WHILE sym # NIL DO
+				WITH sym:
+					  SyntaxTree.Variable DO WType(sym.type)
+					| SyntaxTree.Parameter DO WType(sym.type)
+					| SyntaxTree.TypeDeclaration DO WType(sym.declaredType)
+					| SyntaxTree.Procedure DO WType(sym.type)
+				ELSE
+				END;
+				sym := sym.nextSymbol
+			END;
 			WITH scope: SyntaxTree.ProcedureScope DO
 				IF scope.body # NIL THEN WSeq(scope.body.statements) END
 			ELSE
@@ -113,18 +184,19 @@ TYPE
 			WHILE ns # NIL DO WScope(ns); ns := ns.nextScope END
 		END WScope;
 
-		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): SyntaxTree.SymbolDesignator;
+		PROCEDURE Find (module: SyntaxTree.Module; offset: SIGNED64): BOOLEAN;
 		VAR ms: SyntaxTree.ModuleScope;
 		BEGIN
-			best := NIL; bestSpan := 0; target := offset;
-			IF module = NIL THEN RETURN NIL END;
+			hasFound := FALSE; bestSpan := 0; target := offset;
+			foundSym := NIL; foundStart := 0; foundNameLen := 0;
+			IF module = NIL THEN RETURN FALSE END;
 			ms := module.moduleScope;
 			WScope(ms);
 			IF (ms.bodyProcedure # NIL) & (ms.bodyProcedure.procedureScope # NIL)
 				& (ms.bodyProcedure.procedureScope.body # NIL) THEN
 				WSeq(ms.bodyProcedure.procedureScope.body.statements)
 			END;
-			RETURN best
+			RETURN hasFound
 		END Find;
 	END Finder;
 
@@ -560,23 +632,23 @@ VAR
 
 	(* textDocument/hover result, or NIL if nothing under the offset. *)
 	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64): JSON.Value;
-	VAR module: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
+	VAR module: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
 		nm: ARRAY 128 OF CHAR; kd: ARRAY 16 OF CHAR; ts: Strings.String; lf: ARRAY 2 OF CHAR;
 		val: ARRAY 1024 OF CHAR; contents, range, result: JSON.Object; line, char: SIGNED32;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
-		NEW(f); d := f.Find(module, offset); IF d = NIL THEN RETURN NIL END;
-		sym := d.symbol; sym.GetName(nm); Kind(sym, kd); ts := TypeStr(sym);
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
+		sym := f.foundSym; sym.GetName(nm); Kind(sym, kd); ts := TypeStr(sym);
 		COPY(kd, val); Strings.Append(val, " "); Strings.Append(val, nm);
 		IF ts # NIL THEN Strings.Append(val, " : "); Strings.Append(val, ts^) END;
 		IF sym.comment # NIL THEN lf[0] := LF; lf[1] := 0X; Strings.Append(val, lf); Strings.Append(val, sym.comment.source^) END;
 		contents := JSON.NewObject();
 		contents.Set("kind", JSON.NewString("plaintext"));
 		contents.Set("value", JSON.NewString(val));
-		OffsetToPos(text, d.position.start, line, char);
+		OffsetToPos(text, f.foundStart, line, char);
 		range := JSON.NewObject();
 		range.Set("start", Position(line, char));
-		range.Set("end", Position(line, char + SIGNED32(Strings.Length(nm))));
+		range.Set("end", Position(line, char + SIGNED32(f.foundNameLen)));
 		result := JSON.NewObject();
 		result.Set("contents", contents); result.Set("range", range);
 		RETURN result
@@ -625,12 +697,12 @@ VAR
 	   AND in other modules: the imported symbol's position (line/start/linepos) is
 	   preserved in the .SymUu, so we point at the owning module's source file. *)
 	PROCEDURE DefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
-	VAR module, owner: SyntaxTree.Module; f: Finder; d: SyntaxTree.SymbolDesignator; sym: SyntaxTree.Symbol;
+	VAR module, owner: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
 		nm, mname: ARRAY 128 OF CHAR; loc, range: JSON.Object; line, char: SIGNED32; targetUri: Strings.String;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
-		NEW(f); d := f.Find(module, offset); IF d = NIL THEN RETURN NIL END;
-		sym := d.symbol;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
+		sym := f.foundSym;
 		IF sym.scope = NIL THEN RETURN NIL END;
 		owner := sym.scope.ownerModule;
 		IF owner = NIL THEN RETURN NIL END;
