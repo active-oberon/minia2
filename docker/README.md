@@ -97,6 +97,9 @@ speaking JSON-RPC over stdio. It provides:
   a symbol from another project module opens that module's source (a sibling in the
   mounted directory); a standard-library symbol opens its source too when you expose a
   source tree (see *stdlib jumps* below).
+- **document symbols** — a hierarchical outline of the module: types with their fields
+  and methods as children, plus procedures, variables and constants. Powers the
+  editor's outline/breadcrumbs (the equivalent of PET's module-tree side panel).
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
