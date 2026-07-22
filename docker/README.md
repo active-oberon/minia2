@@ -104,6 +104,9 @@ speaking JSON-RPC over stdio. It provides:
   exported symbols; after `var.` the fields and methods of its record/object type
   (following the base-type chain); otherwise keywords, imported module names and the
   current module's own declarations. Each item carries its kind and signature.
+- **signature help** (trigger `(` / `,`) — while typing a call, shows the procedure's
+  parameter list and highlights the active argument. Works for `Mod.Proc(`, `proc(`
+  and `obj.Method(`.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building

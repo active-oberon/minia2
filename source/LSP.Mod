@@ -676,13 +676,17 @@ VAR
 		END
 	END Kind;
 
-	PROCEDURE TypeStr (sym: SyntaxTree.Symbol): Strings.String;
+	PROCEDURE TypeToStr (t: SyntaxTree.Type): Strings.String;
 	VAR buf: Streams.Buffer; w: Streams.Writer; p: Printout.Printer;
 	BEGIN
-		IF (sym.type = NIL) OR (sym.type.resolvedType = NIL) THEN RETURN NIL END;
+		IF (t = NIL) OR (t.resolvedType = NIL) THEN RETURN NIL END;
 		NEW(buf, 256); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SymbolFile, FALSE);
-		p.Type(sym.type.resolvedType); w.Update;
+		p.Type(t.resolvedType); w.Update;
 		RETURN buf.GetString()
+	END TypeToStr;
+
+	PROCEDURE TypeStr (sym: SyntaxTree.Symbol): Strings.String;
+	BEGIN RETURN TypeToStr(sym.type)
 	END TypeStr;
 
 	(* Parse + semantically check `text`, returning the resolved module (or NIL).
@@ -1061,12 +1065,155 @@ VAR
 		RETURN arr
 	END CompletionAt;
 
+	(* ---- signature help ---- *)
+
+	PROCEDURE FindInScope (scope: SyntaxTree.Scope; CONST name: ARRAY OF CHAR): SyntaxTree.Symbol;
+	VAR sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR;
+	BEGIN
+		IF scope = NIL THEN RETURN NIL END;
+		sym := scope.firstSymbol;
+		WHILE sym # NIL DO sym.GetName(nm); IF nm = name THEN RETURN sym END; sym := sym.nextSymbol END;
+		RETURN NIL
+	END FindInScope;
+
+	(* A member named <name> in a record/object type, following the base-type chain. *)
+	PROCEDURE FindMember (t: SyntaxTree.Type; CONST name: ARRAY OF CHAR): SyntaxTree.Symbol;
+	VAR rec: SyntaxTree.RecordType; depth: SIGNED32; sym: SyntaxTree.Symbol;
+	BEGIN
+		depth := 0;
+		WHILE (t # NIL) & (depth < 16) DO
+			t := t.resolvedType;
+			IF (t # NIL) & (t IS SyntaxTree.PointerType) THEN
+				t := t(SyntaxTree.PointerType).pointerBase;
+				IF t # NIL THEN t := t.resolvedType END
+			END;
+			IF (t # NIL) & (t IS SyntaxTree.RecordType) THEN
+				rec := t(SyntaxTree.RecordType);
+				sym := FindInScope(rec.recordScope, name); IF sym # NIL THEN RETURN sym END;
+				t := rec.baseType
+			ELSE
+				t := NIL
+			END;
+			INC(depth)
+		END;
+		RETURN NIL
+	END FindMember;
+
+	(* Lexically find the enclosing call: the callee identifier (with optional qualifier)
+	   just before the unmatched "(" left of the cursor, and the active parameter index
+	   (top-level commas between that "(" and the cursor). *)
+	PROCEDURE SignatureContext (text: Strings.String; offset: SIGNED64;
+		VAR qual, name: ARRAY OF CHAR; VAR activeParam: SIGNED32; VAR inCall: BOOLEAN);
+	VAR i, openPos, j, cs, ce, qs, qe, k: SIZE; depth: SIGNED32; ch: CHAR; foundOpen: BOOLEAN;
+	BEGIN
+		inCall := FALSE; qual[0] := 0X; name[0] := 0X; activeParam := 0;
+		IF text = NIL THEN RETURN END;
+		i := SIZE(offset); depth := 0; foundOpen := FALSE; openPos := 0;
+		LOOP
+			IF i = 0 THEN EXIT END;
+			DEC(i); ch := text[i];
+			IF (ch = ")") OR (ch = "]") OR (ch = "}") THEN INC(depth)
+			ELSIF ch = "(" THEN
+				IF depth = 0 THEN openPos := i; foundOpen := TRUE; EXIT ELSE DEC(depth) END
+			ELSIF (ch = "[") OR (ch = "{") THEN
+				IF depth = 0 THEN RETURN ELSE DEC(depth) END
+			ELSIF (ch = ",") & (depth = 0) THEN INC(activeParam)
+			ELSIF (ch = ";") & (depth = 0) THEN RETURN
+			END
+		END;
+		IF ~foundOpen THEN RETURN END;
+		j := openPos;
+		WHILE (j > 0) & ((text[j-1] = " ") OR (text[j-1] = 09X)) DO DEC(j) END;
+		ce := j; cs := j;
+		WHILE (cs > 0) & IsIdentChar(text[cs-1]) DO DEC(cs) END;
+		IF cs = ce THEN RETURN END;
+		k := 0; WHILE (cs + k < ce) & (k < LEN(name)-1) DO name[k] := text[cs+k]; INC(k) END;
+		name[k] := 0X;
+		IF (cs > 0) & (text[cs-1] = ".") THEN
+			qe := cs - 1; qs := qe;
+			WHILE (qs > 0) & IsIdentChar(text[qs-1]) DO DEC(qs) END;
+			k := 0; WHILE (qs + k < qe) & (k < LEN(qual)-1) DO qual[k] := text[qs+k]; INC(k) END;
+			qual[k] := 0X
+		END;
+		inCall := TRUE
+	END SignatureContext;
+
+	(* Resolve the called procedure symbol (Mod.Proc / Proc / obj.Method). *)
+	PROCEDURE ResolveCallee (text: Strings.String; CONST qual, name: ARRAY OF CHAR; offset: SIGNED64): SyntaxTree.Symbol;
+	VAR pm, am: SyntaxTree.Module; real: ARRAY 256 OF CHAR; ds: DeclScan; sym: SyntaxTree.Symbol;
+		buf: Streams.Buffer; w: Streams.Writer; i: SIZE;
+	BEGIN
+		IF qual[0] # 0X THEN
+			pm := ParsedModule(text);
+			IF (pm # NIL) & ImportRealName(pm, qual, real) THEN
+				RETURN FindInScope(ModuleScopeOf(real), name)
+			END
+		END;
+		(* close the (possibly unbalanced) call with a dummy so the buffer parses *)
+		NEW(buf, 4096); w := buf.GetWriter();
+		FOR i := 0 TO SIZE(offset) - 1 DO w.Char(text[i]) END;
+		w.String("Cmpl0Dummy)");
+		i := SIZE(offset); WHILE text[i] # 0X DO w.Char(text[i]); INC(i) END;
+		w.Update;
+		am := Analyze(buf.GetString());
+		IF am = NIL THEN RETURN NIL END;
+		NEW(ds);
+		IF qual[0] # 0X THEN
+			sym := ds.Find(am, qual);            (* obj.Method: resolve obj, then its member *)
+			IF sym # NIL THEN RETURN FindMember(sym.type, name) END;
+			RETURN NIL
+		ELSE
+			RETURN ds.Find(am, name)             (* bare procedure *)
+		END
+	END ResolveCallee;
+
+	(* textDocument/signatureHelp result, or NIL. *)
+	PROCEDURE SignatureHelpAt (text: Strings.String; offset: SIGNED64): JSON.Value;
+	VAR qual, name: ARRAY 256 OF CHAR; activeParam: SIGNED32; inCall, first: BOOLEAN;
+		callee: SyntaxTree.Symbol; pt: SyntaxTree.ProcedureType; p: SyntaxTree.Parameter;
+		sig, result, pinfo: JSON.Object; params, sigs: JSON.Array;
+		label: ARRAY 1024 OF CHAR; pstr: ARRAY 256 OF CHAR; pnm: ARRAY 128 OF CHAR; ts: Strings.String;
+	BEGIN
+		SignatureContext(text, offset, qual, name, activeParam, inCall);
+		IF ~inCall OR (name[0] = 0X) THEN RETURN NIL END;
+		callee := ResolveCallee(text, qual, name, offset);
+		IF (callee = NIL) OR ~(callee IS SyntaxTree.Procedure) THEN RETURN NIL END;
+		IF (callee.type = NIL) OR ~(callee.type IS SyntaxTree.ProcedureType) THEN RETURN NIL END;
+		pt := callee.type(SyntaxTree.ProcedureType);
+		COPY(name, label); Strings.Append(label, "(");
+		params := JSON.NewArray();
+		p := pt.firstParameter; first := TRUE;
+		WHILE p # NIL DO
+			p.GetName(pnm); COPY(pnm, pstr);
+			ts := TypeToStr(p.type);
+			IF ts # NIL THEN Strings.Append(pstr, ": "); Strings.Append(pstr, ts^) END;
+			IF ~first THEN Strings.Append(label, "; ") END;
+			Strings.Append(label, pstr);
+			pinfo := JSON.NewObject(); pinfo.Set("label", JSON.NewString(pstr)); params.Add(pinfo);
+			first := FALSE; p := p.nextParameter
+		END;
+		Strings.Append(label, ")");
+		IF pt.returnType # NIL THEN
+			ts := TypeToStr(pt.returnType);
+			IF ts # NIL THEN Strings.Append(label, ": "); Strings.Append(label, ts^) END
+		END;
+		sig := JSON.NewObject();
+		sig.Set("label", JSON.NewString(label));
+		sig.Set("parameters", params);
+		sigs := JSON.NewArray(); sigs.Add(sig);
+		result := JSON.NewObject();
+		result.Set("signatures", sigs);
+		result.Set("activeSignature", JSON.NewNumber(0));
+		result.Set("activeParameter", JSON.NewNumber(activeParam));
+		RETURN result
+	END SignatureHelpAt;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
-	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl: JSON.Object;
+	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl, sighelp: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr, trig: JSON.Array; first, res: JSON.Value;
+		changes: JSON.Value; arr, trig, sigtrig: JSON.Array; first, res: JSON.Value;
 		line, char: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
@@ -1088,6 +1235,10 @@ VAR
 						trig := JSON.NewArray(); trig.Add(JSON.NewString("."));
 						compl.Set("triggerCharacters", trig);
 						caps.Set("completionProvider", compl);
+						sighelp := JSON.NewObject();
+						sigtrig := JSON.NewArray(); sigtrig.Add(JSON.NewString("(")); sigtrig.Add(JSON.NewString(","));
+						sighelp.Set("triggerCharacters", sigtrig);
+						caps.Set("signatureHelpProvider", sighelp);
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1170,6 +1321,16 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := CompletionAt(doc.text, PosToOffset(doc.text, line, char)) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/signatureHelp" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := SignatureHelpAt(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
