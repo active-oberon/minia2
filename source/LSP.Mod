@@ -1543,6 +1543,99 @@ VAR
 		RETURN result
 	END SemanticTokens;
 
+	(* ---- rename ---- *)
+
+	PROCEDURE EditExists (earr: JSON.Array; line, char: SIGNED32): BOOLEAN;
+	VAR i: SIZE; v, lv, cv: JSON.Value; o, r, st: JSON.Object;
+	BEGIN
+		i := 0;
+		WHILE i < earr.length DO
+			v := earr.At(i);
+			IF (v # NIL) & (v IS JSON.Object) THEN
+				o := v(JSON.Object); r := AsObject(o.Get("range"));
+				IF r # NIL THEN
+					st := AsObject(r.Get("start"));
+					IF st # NIL THEN
+						lv := st.Get("line"); cv := st.Get("character");
+						IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number)
+							& (SIGNED32(ENTIER(lv(JSON.Number).value)) = line)
+							& (SIGNED32(ENTIER(cv(JSON.Number).value)) = char) THEN RETURN TRUE END
+					END
+				END
+			END;
+			INC(i)
+		END;
+		RETURN FALSE
+	END EditExists;
+
+	(* Append TextEdits (range -> newName) for a Finder's collected offsets to the
+	   per-uri array inside a WorkspaceEdit.changes object (deduped). *)
+	PROCEDURE AddEdits (changes: JSON.Object; f: Finder; text, uri, newName: Strings.String);
+	VAR i, line, char: SIGNED32; edits: JSON.Value; earr: JSON.Array; te, range: JSON.Object;
+	BEGIN
+		IF uri = NIL THEN RETURN END;
+		edits := changes.Get(uri^);
+		IF (edits # NIL) & (edits IS JSON.Array) THEN earr := edits(JSON.Array)
+		ELSE earr := JSON.NewArray(); changes.Set(uri^, earr) END;
+		i := 0;
+		WHILE i < f.refN DO
+			OffsetToPos(text, f.refOff[i], line, char);
+			IF ~EditExists(earr, line, char) THEN
+				range := JSON.NewObject();
+				range.Set("start", Position(line, char));
+				range.Set("end", Position(line, char + f.refLen[i]));
+				te := JSON.NewObject(); te.Set("range", range); te.Set("newText", JSON.NewString(newName^));
+				earr.Add(te)
+			END;
+			INC(i)
+		END
+	END AddEdits;
+
+	(* textDocument/rename -> WorkspaceEdit. Only module-level symbols (types,
+	   procedures, module variables, constants) are renamed: their (name, owner, kind)
+	   identity is unambiguous within a module, so the rename is safe and project-wide.
+	   Locals and record/object members are declined (NIL) to avoid renaming same-named
+	   siblings. *)
+	PROCEDURE RenameAt (text: Strings.String; offset: SIGNED64; uri, newName: Strings.String): JSON.Value;
+	VAR module, fm: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; changes: JSON.Object;
+		name, owner, modName: ARRAY 128 OF CHAR; readName: ARRAY 256 OF CHAR; kind: SIGNED32;
+		en: Files.Enumerator; fn: ARRAY 256 OF CHAR; flags: SET; tm, dt: SIGNED32; sz: Files.Size;
+		ftext: Strings.String; result: JSON.Object;
+	BEGIN
+		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
+		sym := f.foundSym; sym.GetName(name);
+		IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN NIL END;
+		IF ~(sym.scope IS SyntaxTree.ModuleScope) THEN RETURN NIL END;   (* module-level only *)
+		sym.scope.ownerModule.GetName(owner); kind := f.KindOf(sym);
+		changes := JSON.NewObject();
+
+		f.CollectRefs(module, name, owner, kind); AddEdits(changes, f, text, uri, newName);
+
+		NEW(en); en.Open("./*.Mod", {});
+		WHILE en.HasMoreEntries() DO
+			IF en.GetEntry(fn, flags, tm, dt, sz) THEN
+				ModuleBaseName(fn, modName);
+				IF (modName[0] # 0X) & (SiblingUri(uri, modName) # NIL) & (SiblingUri(uri, modName)^ # uri^) THEN
+					COPY(modName, readName); Strings.Append(readName, ".Mod");
+					ftext := ReadFile(readName);
+					IF (ftext # NIL) & Contains(ftext, owner) THEN
+						fm := Analyze(ftext);
+						IF fm # NIL THEN
+							f.CollectRefs(fm, name, owner, kind);
+							AddEdits(changes, f, ftext, SiblingUri(uri, modName), newName)
+						END
+					END
+				END
+			END
+		END;
+		en.Close;
+		(* the declaration is collected too: WScope treats a declaration name as a
+		   resolvable site, and the owner module is always processed above. *)
+		result := JSON.NewObject(); result.Set("changes", changes);
+		RETURN result
+	END RenameAt;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
@@ -1587,6 +1680,7 @@ VAR
 						semtok.Set("legend", legend);
 						semtok.Set("full", JSON.NewBool(TRUE));
 						caps.Set("semanticTokensProvider", semtok);
+						caps.Set("renameProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1697,6 +1791,17 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := SemanticTokens(doc.text) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/rename" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char)
+							& GetStr(params, "newName", sopt) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := RenameAt(doc.text, PosToOffset(doc.text, line, char), uri, sopt) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE

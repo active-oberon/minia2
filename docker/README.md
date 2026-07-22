@@ -115,6 +115,10 @@ speaking JSON-RPC over stdio. It provides:
   colour by *meaning* on top of syntax highlighting (a field vs a local vs a
   parameter). Editors with built-in LSP semantic-token support pick this up
   automatically.
+- **rename** — renames a module-level symbol (type, procedure, module variable,
+  constant) and every use of it across the project as one WorkspaceEdit. Locals and
+  record/object members are declined (their name+module+kind identity isn't unique
+  enough to rename safely yet).
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
