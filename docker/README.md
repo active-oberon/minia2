@@ -122,6 +122,9 @@ speaking JSON-RPC over stdio. It provides:
 - **formatting** — reprints the whole module in Fox's canonical style, preserving the
   IMPORT list and comments. Only syntactically-valid files are formatted; the output
   is verified to re-parse.
+- **code actions** — quick-fixes: **Import &lt;M&gt;** for an undeclared module
+  qualifier (adds it to the IMPORT list, or a new IMPORT after the header), and
+  **Comment / Uncomment** the current selection.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
