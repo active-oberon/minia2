@@ -729,17 +729,89 @@ VAR
 		END
 	END Kind;
 
+	(* Map the compiler's internal basic-type name to the source keyword. *)
+	PROCEDURE BasicName (CONST s: ARRAY OF CHAR; VAR o: ARRAY OF CHAR);
+	BEGIN
+		IF s = "@Integer8" THEN COPY("SIGNED8", o)
+		ELSIF s = "@Integer16" THEN COPY("SIGNED16", o)
+		ELSIF s = "@Integer32" THEN COPY("SIGNED32", o)
+		ELSIF s = "@Integer64" THEN COPY("SIGNED64", o)
+		ELSIF s = "@Unsigned8" THEN COPY("UNSIGNED8", o)
+		ELSIF s = "@Unsigned16" THEN COPY("UNSIGNED16", o)
+		ELSIF s = "@Unsigned32" THEN COPY("UNSIGNED32", o)
+		ELSIF s = "@Unsigned64" THEN COPY("UNSIGNED64", o)
+		ELSIF s = "@Boolean8" THEN COPY("BOOLEAN", o)
+		ELSIF s = "@Character8" THEN COPY("CHAR", o)
+		ELSIF s = "@Character16" THEN COPY("CHAR16", o)
+		ELSIF s = "@Character32" THEN COPY("CHAR32", o)
+		ELSIF s = "@Float32" THEN COPY("FLOAT32", o)
+		ELSIF s = "@Float64" THEN COPY("FLOAT64", o)
+		ELSIF (s = "@Set8") OR (s = "@Set16") OR (s = "@Set32") OR (s = "@Set64") THEN COPY("SET", o)
+		ELSIF (s = "@Size32") OR (s = "@Size64") THEN COPY("SIZE", o)
+		ELSIF s = "ADDRESSTYPE" THEN COPY("ADDRESS", o)
+		ELSE COPY(s, o)
+		END
+	END BasicName;
+
+	(* Concise, readable type name — a reference, not a structural dump. Named types
+	   become "Owner.Name"; composite types recurse; basic types map to keywords. *)
 	PROCEDURE TypeToStr (t: SyntaxTree.Type): Strings.String;
 	VAR buf: Streams.Buffer; w: Streams.Writer; p: Printout.Printer;
+		td: SyntaxTree.TypeDeclaration; par: SyntaxTree.Parameter; sub: Strings.String;
+		res, tmp: ARRAY 1024 OF CHAR; first: BOOLEAN;
 	BEGIN
-		IF (t = NIL) OR (t.resolvedType = NIL) THEN RETURN NIL END;
-		NEW(buf, 256); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SymbolFile, FALSE);
-		p.Type(t.resolvedType); w.Update;
-		RETURN buf.GetString()
+		IF t = NIL THEN RETURN NIL END;
+		t := t.resolvedType; IF t = NIL THEN RETURN NIL END;
+		td := t.typeDeclaration;
+		IF td # NIL THEN
+			res[0] := 0X;
+			IF (td.scope # NIL) & (td.scope.ownerModule # NIL) THEN
+				td.scope.ownerModule.GetName(tmp);
+				IF tmp[0] # 0X THEN Strings.Append(res, tmp); Strings.Append(res, ".") END
+			END;
+			td.GetName(tmp); Strings.Append(res, tmp);
+			RETURN Strings.NewString(res)
+		END;
+		WITH t:
+			  SyntaxTree.PointerType DO
+				COPY("POINTER TO ", res); sub := TypeToStr(t.pointerBase);
+				IF sub # NIL THEN Strings.Append(res, sub^) END; RETURN Strings.NewString(res)
+			| SyntaxTree.ArrayType DO
+				COPY("ARRAY OF ", res); sub := TypeToStr(t.arrayBase);
+				IF sub # NIL THEN Strings.Append(res, sub^) END; RETURN Strings.NewString(res)
+			| SyntaxTree.MathArrayType DO
+				COPY("ARRAY OF ", res); sub := TypeToStr(t.arrayBase);
+				IF sub # NIL THEN Strings.Append(res, sub^) END; RETURN Strings.NewString(res)
+			| SyntaxTree.RecordType DO
+				RETURN Strings.NewString("RECORD")
+			| SyntaxTree.ProcedureType DO
+				COPY("PROCEDURE(", res); par := t.firstParameter; first := TRUE;
+				WHILE par # NIL DO
+					IF ~first THEN Strings.Append(res, "; ") END;
+					par.GetName(tmp); Strings.Append(res, tmp);
+					sub := TypeToStr(par.type);
+					IF sub # NIL THEN Strings.Append(res, ": "); Strings.Append(res, sub^) END;
+					first := FALSE; par := par.nextParameter
+				END;
+				Strings.Append(res, ")");
+				sub := TypeToStr(t.returnType);
+				IF sub # NIL THEN Strings.Append(res, ": "); Strings.Append(res, sub^) END;
+				RETURN Strings.NewString(res)
+		ELSE
+			NEW(buf, 128); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SourceCode, FALSE);
+			p.Type(t); w.Update; sub := buf.GetString();
+			IF sub = NIL THEN RETURN NIL END;
+			BasicName(sub^, res); RETURN Strings.NewString(res)
+		END
 	END TypeToStr;
 
 	PROCEDURE TypeStr (sym: SyntaxTree.Symbol): Strings.String;
-	BEGIN RETURN TypeToStr(sym.type)
+	BEGIN
+		IF sym IS SyntaxTree.TypeDeclaration THEN
+			RETURN TypeToStr(sym(SyntaxTree.TypeDeclaration).declaredType)
+		ELSE
+			RETURN TypeToStr(sym.type)
+		END
 	END TypeStr;
 
 	(* Parse + semantically check `text`, returning the resolved module (or NIL).
