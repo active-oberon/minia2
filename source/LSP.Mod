@@ -846,12 +846,227 @@ VAR
 		NEW(o); RETURN o.Module(module)
 	END DocumentSymbols;
 
+	(* ---- completion ---- *)
+
+	PROCEDURE IsIdentChar (ch: CHAR): BOOLEAN;
+	BEGIN
+		RETURN ((ch >= "a") & (ch <= "z")) OR ((ch >= "A") & (ch <= "Z"))
+			OR ((ch >= "0") & (ch <= "9")) OR (ch = "_")
+	END IsIdentChar;
+
+	(* Lexical context at the cursor (robust to invalid source): the partial word being
+	   typed, and — if it is immediately preceded by "." — the qualifier identifier. *)
+	PROCEDURE CompletionContext (text: Strings.String; offset: SIGNED64;
+		VAR isDot: BOOLEAN; VAR qual, part: ARRAY OF CHAR; VAR partStart, qualStart: SIGNED64);
+	VAR i, ps, qe, qs, k: SIZE;
+	BEGIN
+		isDot := FALSE; qual[0] := 0X; part[0] := 0X; qualStart := 0;
+		IF text = NIL THEN partStart := offset; RETURN END;
+		i := SIZE(offset);
+		ps := i;
+		WHILE (ps > 0) & IsIdentChar(text[ps-1]) DO DEC(ps) END;
+		partStart := ps;
+		k := 0; WHILE (ps + k < i) & (k < LEN(part)-1) DO part[k] := text[ps+k]; INC(k) END;
+		part[k] := 0X;
+		IF (ps > 0) & (text[ps-1] = ".") THEN
+			isDot := TRUE; qe := ps - 1; qs := qe;
+			WHILE (qs > 0) & IsIdentChar(text[qs-1]) DO DEC(qs) END;
+			qualStart := qs;
+			k := 0; WHILE (qs + k < qe) & (k < LEN(qual)-1) DO qual[k] := text[qs+k]; INC(k) END;
+			qual[k] := 0X
+		END
+	END CompletionContext;
+
+	(* text with the partial word [partStart, offset) replaced by a dummy identifier, so
+	   an otherwise-incomplete "qualifier." parses and the qualifier can be resolved. *)
+	PROCEDURE WithDummy (text: Strings.String; partStart, offset: SIGNED64): Strings.String;
+	VAR buf: Streams.Buffer; w: Streams.Writer; i: SIZE;
+	BEGIN
+		NEW(buf, 4096); w := buf.GetWriter();
+		FOR i := 0 TO SIZE(partStart) - 1 DO w.Char(text[i]) END;
+		w.String("Cmpl0Dummy");
+		i := SIZE(offset);
+		WHILE text[i] # 0X DO w.Char(text[i]); INC(i) END;
+		w.Update; RETURN buf.GetString()
+	END WithDummy;
+
+	(* Parse-only (imports are at the top and parse even when the body is invalid). *)
+	PROCEDURE ParsedModule (text: Strings.String): SyntaxTree.Module;
+	VAR srcR: Streams.StringReader; diag: Diagnostics.DiagnosticsList;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser;
+	BEGIN
+		IF text = NIL THEN RETURN NIL END;
+		NEW(diag); Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		RETURN parser.Module()
+	END ParsedModule;
+
+	(* Map a qualifier (local import name / alias) to the real module name. *)
+	PROCEDURE ImportRealName (module: SyntaxTree.Module; CONST qual: ARRAY OF CHAR; VAR real: ARRAY OF CHAR): BOOLEAN;
+	VAR imp: SyntaxTree.Import; nm: ARRAY 128 OF CHAR;
+	BEGIN
+		IF module = NIL THEN RETURN FALSE END;
+		imp := module.moduleScope.firstImport;
+		WHILE imp # NIL DO
+			imp.GetName(nm);
+			IF nm = qual THEN FoxBasic.GetString(imp.moduleName, real); RETURN TRUE END;
+			imp := imp.nextImport
+		END;
+		RETURN FALSE
+	END ImportRealName;
+
+	(* The module scope (exported symbols, from its .SymUu) of module <name>. *)
+	PROCEDURE ModuleScopeOf (CONST name: ARRAY OF CHAR): SyntaxTree.Scope;
+	VAR synth: ARRAY 512 OF CHAR; module: SyntaxTree.Module; imp: SyntaxTree.Import;
+	BEGIN
+		COPY("MODULE Cmpl0; IMPORT ", synth);
+		Strings.Append(synth, name); Strings.Append(synth, "; END Cmpl0.");
+		module := Analyze(Strings.NewString(synth));
+		IF module = NIL THEN RETURN NIL END;
+		imp := module.moduleScope.firstImport;
+		IF (imp # NIL) & (imp.module # NIL) THEN RETURN imp.module.moduleScope END;
+		RETURN NIL
+	END ModuleScopeOf;
+
+	PROCEDURE CompletionKind (sym: SyntaxTree.Symbol): SIGNED32;
+	VAR k: SIGNED32;
+	BEGIN
+		k := 1;   (* Text *)
+		WITH sym:
+			  SyntaxTree.Module DO k := 9
+			| SyntaxTree.TypeDeclaration DO k := 7    (* Class *)
+			| SyntaxTree.Constant DO k := 21          (* Constant *)
+			| SyntaxTree.Procedure DO k := 3          (* Function *)
+			| SyntaxTree.Variable DO k := 6           (* Variable *)
+			| SyntaxTree.Parameter DO k := 6
+		ELSE
+		END;
+		RETURN k
+	END CompletionKind;
+
+	PROCEDURE CompletionItem (sym: SyntaxTree.Symbol): JSON.Object;
+	VAR o: JSON.Object; nm: ARRAY 128 OF CHAR; ts: Strings.String;
+	BEGIN
+		sym.GetName(nm);
+		o := JSON.NewObject();
+		o.Set("label", JSON.NewString(nm));
+		o.Set("kind", JSON.NewNumber(CompletionKind(sym)));
+		ts := TypeStr(sym);
+		IF ts # NIL THEN o.Set("detail", JSON.NewString(ts^)) END;
+		RETURN o
+	END CompletionItem;
+
+	PROCEDURE AddScopeSymbols (arr: JSON.Array; scope: SyntaxTree.Scope);
+	VAR sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR;
+	BEGIN
+		IF scope = NIL THEN RETURN END;
+		sym := scope.firstSymbol;
+		WHILE sym # NIL DO
+			sym.GetName(nm);
+			IF (nm[0] # "@") & ~(sym IS SyntaxTree.Import) THEN arr.Add(CompletionItem(sym)) END;
+			sym := sym.nextSymbol
+		END
+	END AddScopeSymbols;
+
+	(* Add fields and methods of a record/object type (following the base-type chain). *)
+	PROCEDURE AddTypeMembers (arr: JSON.Array; t: SyntaxTree.Type);
+	VAR rec: SyntaxTree.RecordType; depth: SIGNED32;
+	BEGIN
+		depth := 0;
+		WHILE (t # NIL) & (depth < 16) DO
+			t := t.resolvedType;
+			IF (t # NIL) & (t IS SyntaxTree.PointerType) THEN
+				t := t(SyntaxTree.PointerType).pointerBase;
+				IF t # NIL THEN t := t.resolvedType END
+			END;
+			IF (t # NIL) & (t IS SyntaxTree.RecordType) THEN
+				rec := t(SyntaxTree.RecordType);
+				AddScopeSymbols(arr, rec.recordScope);
+				t := rec.baseType
+			ELSE
+				t := NIL
+			END;
+			INC(depth)
+		END
+	END AddTypeMembers;
+
+	PROCEDURE AddImportNames (arr: JSON.Array; module: SyntaxTree.Module);
+	VAR imp: SyntaxTree.Import; nm: ARRAY 128 OF CHAR; o: JSON.Object;
+	BEGIN
+		IF module = NIL THEN RETURN END;
+		imp := module.moduleScope.firstImport;
+		WHILE imp # NIL DO
+			imp.GetName(nm);
+			IF nm[0] # "@" THEN
+				o := JSON.NewObject();
+				o.Set("label", JSON.NewString(nm)); o.Set("kind", JSON.NewNumber(9));  (* Module *)
+				arr.Add(o)
+			END;
+			imp := imp.nextImport
+		END
+	END AddImportNames;
+
+	PROCEDURE AddKeywords (arr: JSON.Array);
+		PROCEDURE K (CONST s: ARRAY OF CHAR);
+		VAR o: JSON.Object;
+		BEGIN
+			o := JSON.NewObject();
+			o.Set("label", JSON.NewString(s)); o.Set("kind", JSON.NewNumber(14));  (* Keyword *)
+			arr.Add(o)
+		END K;
+	BEGIN
+		K("ARRAY"); K("AWAIT"); K("BEGIN"); K("BY"); K("CASE"); K("CONST"); K("DEFINITION");
+		K("DIV"); K("DO"); K("ELSE"); K("ELSIF"); K("END"); K("ENUM"); K("EXIT"); K("EXTERN");
+		K("FALSE"); K("FINALLY"); K("FOR"); K("IF"); K("IGNORE"); K("IMPORT"); K("IN"); K("IS");
+		K("LOOP"); K("MOD"); K("MODULE"); K("NEW"); K("NIL"); K("OBJECT"); K("OF"); K("OPERATOR");
+		K("OR"); K("OUT"); K("POINTER"); K("PROCEDURE"); K("RECORD"); K("REPEAT"); K("RETURN");
+		K("SELF"); K("THEN"); K("TO"); K("TRUE"); K("TYPE"); K("UNTIL"); K("VAR"); K("WHILE"); K("WITH");
+		K("BOOLEAN"); K("CHAR"); K("INTEGER"); K("LONGINT"); K("HUGEINT"); K("REAL"); K("LONGREAL");
+		K("SET"); K("SIZE"); K("ADDRESS"); K("SIGNED8"); K("SIGNED16"); K("SIGNED32"); K("SIGNED64");
+		K("UNSIGNED8"); K("UNSIGNED16"); K("UNSIGNED32"); K("UNSIGNED64"); K("ANY")
+	END AddKeywords;
+
+	(* textDocument/completion: after "Mod." -> that module's exported symbols; otherwise
+	   keywords + imported module names + this module's top-level declarations. *)
+	PROCEDURE CompletionAt (text: Strings.String; offset: SIGNED64): JSON.Value;
+	VAR isDot: BOOLEAN; qual, part, real: ARRAY 256 OF CHAR; partStart, qualStart: SIGNED64;
+		arr: JSON.Array; pm, am: SyntaxTree.Module; scope: SyntaxTree.Scope; ds: DeclScan; sym: SyntaxTree.Symbol;
+	BEGIN
+		arr := JSON.NewArray();
+		CompletionContext(text, offset, isDot, qual, part, partStart, qualStart);
+		IF isDot THEN
+			IF qual[0] = 0X THEN RETURN arr END;
+			pm := ParsedModule(text);
+			IF (pm # NIL) & ImportRealName(pm, qual, real) THEN
+				scope := ModuleScopeOf(real);            (* Mod. -> module's exported symbols *)
+				AddScopeSymbols(arr, scope)
+			ELSE
+				(* variable/field . -> members of its record/object type. Insert a dummy
+				   identifier so the incomplete "qualifier." parses, then resolve the
+				   qualifier by name (a failed selector doesn't keep a findable use-site). *)
+				am := Analyze(WithDummy(text, partStart, offset));
+				IF am # NIL THEN
+					NEW(ds); sym := ds.Find(am, qual);
+					IF sym # NIL THEN AddTypeMembers(arr, sym.type) END
+				END
+			END
+		ELSE
+			AddKeywords(arr);
+			pm := ParsedModule(text);
+			IF pm # NIL THEN AddImportNames(arr, pm) END;
+			am := Analyze(text);   (* best-effort: this module's own top-level declarations *)
+			IF am # NIL THEN AddScopeSymbols(arr, am.moduleScope) END
+		END;
+		RETURN arr
+	END CompletionAt;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
-	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts: JSON.Object;
+	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr: JSON.Array; first, res: JSON.Value;
+		changes: JSON.Value; arr, trig: JSON.Array; first, res: JSON.Value;
 		line, char: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
@@ -869,6 +1084,10 @@ VAR
 						caps.Set("hoverProvider", JSON.NewBool(TRUE));
 						caps.Set("definitionProvider", JSON.NewBool(TRUE));
 						caps.Set("documentSymbolProvider", JSON.NewBool(TRUE));
+						compl := JSON.NewObject();
+						trig := JSON.NewArray(); trig.Add(JSON.NewString("."));
+						compl.Set("triggerCharacters", trig);
+						caps.Set("completionProvider", compl);
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -941,6 +1160,16 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DocumentSymbols(doc.text) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/completion" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := CompletionAt(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
