@@ -110,6 +110,11 @@ speaking JSON-RPC over stdio. It provides:
 - **find references** — every use-site of the symbol under the cursor, plus its
   declaration. Project-wide for module-level symbols and record/object members (scans
   the sibling modules that mention the owner), current-file only for locals.
+- **semantic tokens** — resolved identifiers are classified (namespace, type,
+  function, method, variable, parameter, property, enumMember) so the editor can
+  colour by *meaning* on top of syntax highlighting (a field vs a local vs a
+  parameter). Editors with built-in LSP semantic-token support pick this up
+  automatically.
 
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
