@@ -1636,6 +1636,52 @@ VAR
 		RETURN result
 	END RenameAt;
 
+	(* ---- formatting ---- *)
+
+	(* Remove the printer's "(*unresolved*)" markers (present because we print a
+	   parse-only AST to avoid the checker expanding the IMPORT list). *)
+	PROCEDURE CleanUnresolved (s: Strings.String): Strings.String;
+	CONST pat = "(*unresolved*)";
+	VAR buf: Streams.Buffer; w: Streams.Writer; i, j, plen: SIZE;
+	BEGIN
+		IF s = NIL THEN RETURN NIL END;
+		plen := Strings.Length(pat);
+		NEW(buf, 4096); w := buf.GetWriter(); i := 0;
+		WHILE s[i] # 0X DO
+			j := 0; WHILE (j < plen) & (s[i+j] = pat[j]) DO INC(j) END;
+			IF j = plen THEN INC(i, plen) ELSE w.Char(s[i]); INC(i) END
+		END;
+		w.Update; RETURN buf.GetString()
+	END CleanUnresolved;
+
+	(* textDocument/formatting: reprint the whole module in Fox's canonical style. Only
+	   syntactically-valid files are formatted (else NIL). A single whole-document edit. *)
+	PROCEDURE Formatting (text: Strings.String): JSON.Value;
+	VAR srcR: Streams.StringReader; diag: Diagnostics.DiagnosticsList;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+		buf: Streams.Buffer; w: Streams.Writer; p: Printout.Printer; s: Strings.String;
+		res: JSON.Array; edit, range: JSON.Object; i: SIZE; lastLine, lastChar: SIGNED32;
+	BEGIN
+		IF text = NIL THEN RETURN NIL END;
+		NEW(diag); Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN NIL END;   (* never reformat broken source *)
+		NEW(buf, 8192); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SourceCode, FALSE);
+		p.Module(module); w.Update; s := CleanUnresolved(buf.GetString());
+		IF s = NIL THEN RETURN NIL END;
+		lastLine := 0; lastChar := 0; i := 0;
+		WHILE text[i] # 0X DO
+			IF text[i] = LF THEN INC(lastLine); lastChar := 0 ELSE INC(lastChar) END; INC(i)
+		END;
+		range := JSON.NewObject();
+		range.Set("start", Position(0, 0)); range.Set("end", Position(lastLine, lastChar));
+		edit := JSON.NewObject(); edit.Set("range", range); edit.Set("newText", JSON.NewString(s^));
+		res := JSON.NewArray(); res.Add(edit);
+		RETURN res
+	END Formatting;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
@@ -1681,6 +1727,7 @@ VAR
 						semtok.Set("full", JSON.NewBool(TRUE));
 						caps.Set("semanticTokensProvider", semtok);
 						caps.Set("renameProvider", JSON.NewBool(TRUE));
+						caps.Set("documentFormattingProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1802,6 +1849,14 @@ VAR
 							& GetStr(params, "newName", sopt) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := RenameAt(doc.text, PosToOffset(doc.text, line, char), uri, sopt) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/formatting" THEN
+						td := AsObject(params.Get("textDocument"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := Formatting(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
