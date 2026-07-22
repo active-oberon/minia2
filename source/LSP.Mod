@@ -1682,13 +1682,143 @@ VAR
 		RETURN res
 	END Formatting;
 
+	(* ---- code actions ---- *)
+
+	PROCEDURE IndexOf (text: Strings.String; CONST pat: ARRAY OF CHAR; from: SIZE): SIZE;
+	VAR i, j, plen, tlen: SIZE;
+	BEGIN
+		plen := Strings.Length(pat); tlen := Strings.Length(text^);
+		IF plen = 0 THEN RETURN -1 END;
+		i := from;
+		WHILE i + plen <= tlen DO
+			j := 0; WHILE (j < plen) & (text[i+j] = pat[j]) DO INC(j) END;
+			IF j = plen THEN RETURN i END; INC(i)
+		END;
+		RETURN -1
+	END IndexOf;
+
+	PROCEDURE MakeEdit (sl, sc, el, ec: SIGNED32; newText: Strings.String): JSON.Object;
+	VAR te, r: JSON.Object;
+	BEGIN
+		r := JSON.NewObject(); r.Set("start", Position(sl, sc)); r.Set("end", Position(el, ec));
+		te := JSON.NewObject(); te.Set("range", r); te.Set("newText", JSON.NewString(newText^));
+		RETURN te
+	END MakeEdit;
+
+	PROCEDURE MakeAction (CONST title: ARRAY OF CHAR; uri: Strings.String; edit: JSON.Object): JSON.Object;
+	VAR act, we, changes: JSON.Object; arr: JSON.Array;
+	BEGIN
+		arr := JSON.NewArray(); arr.Add(edit);
+		changes := JSON.NewObject(); changes.Set(uri^, arr);
+		we := JSON.NewObject(); we.Set("changes", changes);
+		act := JSON.NewObject();
+		act.Set("title", JSON.NewString(title)); act.Set("kind", JSON.NewString("quickfix")); act.Set("edit", we);
+		RETURN act
+	END MakeAction;
+
+	(* If (line,char) sits on an identifier that is immediately followed by ".", it's a
+	   module qualifier: return that name. *)
+	PROCEDURE IdentModuleAt (text: Strings.String; line, char: SIGNED32; VAR mod: ARRAY OF CHAR): BOOLEAN;
+	VAR off, e, k: SIZE;
+	BEGIN
+		mod[0] := 0X; off := SIZE(PosToOffset(text, line, char));
+		IF ~IsIdentChar(text[off]) THEN RETURN FALSE END;
+		e := off; WHILE IsIdentChar(text[e]) DO INC(e) END;
+		IF text[e] # "." THEN RETURN FALSE END;
+		k := 0; WHILE (off + k < e) & (k < LEN(mod)-1) DO mod[k] := text[off+k]; INC(k) END;
+		mod[k] := 0X; RETURN mod[0] # 0X
+	END IdentModuleAt;
+
+	PROCEDURE ImportAlreadyThere (text: Strings.String; CONST mod: ARRAY OF CHAR): BOOLEAN;
+	VAR pm: SyntaxTree.Module; imp: SyntaxTree.Import; nm: ARRAY 128 OF CHAR;
+	BEGIN
+		pm := ParsedModule(text); IF pm = NIL THEN RETURN FALSE END;
+		imp := pm.moduleScope.firstImport;
+		WHILE imp # NIL DO imp.GetName(nm); IF nm = mod THEN RETURN TRUE END; imp := imp.nextImport END;
+		RETURN FALSE
+	END ImportAlreadyThere;
+
+	(* A quickfix that adds module <mod> to the IMPORT list (or a new IMPORT after the
+	   module header). *)
+	PROCEDURE AddImportAction (text, uri: Strings.String; CONST mod: ARRAY OF CHAR): JSON.Object;
+	VAR impIdx, semi: SIZE; insOff: SIZE; il, ic: SIGNED32; nt, title: ARRAY 256 OF CHAR;
+	BEGIN
+		impIdx := IndexOf(text, "IMPORT", 0);
+		IF impIdx >= 0 THEN
+			semi := IndexOf(text, ";", impIdx); IF semi < 0 THEN RETURN NIL END;
+			insOff := semi; COPY(", ", nt); Strings.Append(nt, mod)
+		ELSE
+			semi := IndexOf(text, ";", 0); IF semi < 0 THEN RETURN NIL END;
+			insOff := semi + 1; COPY(" IMPORT ", nt); Strings.Append(nt, mod); Strings.Append(nt, ";")
+		END;
+		OffsetToPos(text, insOff, il, ic);
+		COPY("Import ", title); Strings.Append(title, mod);
+		RETURN MakeAction(title, uri, MakeEdit(il, ic, il, ic, Strings.NewString(nt)))
+	END AddImportAction;
+
+	(* textDocument/codeAction: add-import quickfixes for undeclared qualifiers in the
+	   supplied diagnostics, plus comment/uncomment of a non-empty selection. *)
+	PROCEDURE CodeActions (text, uri: Strings.String; diags: JSON.Array;
+		sl, sc, el, ec: SIGNED32): JSON.Value;
+	VAR actions: JSON.Array; i: SIZE; d, dr, dstart: JSON.Object; mv, lv, cv: JSON.Value;
+		dl, dc: SIGNED32; mod, seen: ARRAY 1024 OF CHAR; act: JSON.Object;
+		o1, o2, k: SIZE; buf: Streams.Buffer; w: Streams.Writer; wrapped: BOOLEAN;
+	BEGIN
+		actions := JSON.NewArray(); seen[0] := 0X;
+		IF diags # NIL THEN
+			i := 0;
+			WHILE i < diags.length DO
+				d := AsObject(diags.At(i));
+				IF d # NIL THEN
+					mv := d.Get("message");
+					IF (mv # NIL) & (mv IS JSON.String) & Contains(mv(JSON.String).value, "ndeclared") THEN
+						dr := AsObject(d.Get("range"));
+						IF dr # NIL THEN dstart := AsObject(dr.Get("start")) ELSE dstart := NIL END;
+						IF dstart # NIL THEN
+							lv := dstart.Get("line"); cv := dstart.Get("character");
+							IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number) THEN
+								dl := SIGNED32(ENTIER(lv(JSON.Number).value));
+								dc := SIGNED32(ENTIER(cv(JSON.Number).value));
+								IF IdentModuleAt(text, dl, dc, mod) & ~ImportAlreadyThere(text, mod)
+									& ~Contains(Strings.NewString(seen), mod) THEN
+									Strings.Append(seen, mod); Strings.Append(seen, ";");
+									act := AddImportAction(text, uri, mod);
+									IF act # NIL THEN actions.Add(act) END
+								END
+							END
+						END
+					END
+				END;
+				INC(i)
+			END
+		END;
+		(* comment / uncomment a non-empty selection *)
+		IF (sl # el) OR (sc # ec) THEN
+			o1 := SIZE(PosToOffset(text, sl, sc)); o2 := SIZE(PosToOffset(text, el, ec));
+			IF o2 > o1 THEN
+				wrapped := (text[o1] = "(") & (text[o1+1] = "*") & (o2 >= o1+4)
+					& (text[o2-2] = "*") & (text[o2-1] = ")");
+				NEW(buf, 1024); w := buf.GetWriter();
+				IF wrapped THEN
+					k := o1 + 2; WHILE k < o2 - 2 DO w.Char(text[k]); INC(k) END; w.Update;
+					actions.Add(MakeAction("Uncomment selection", uri, MakeEdit(sl, sc, el, ec, buf.GetString())))
+				ELSE
+					w.String("(*"); k := o1; WHILE k < o2 DO w.Char(text[k]); INC(k) END; w.String("*)"); w.Update;
+					actions.Add(MakeAction("Comment selection", uri, MakeEdit(sl, sc, el, ec, buf.GetString())))
+				END
+			END
+		END;
+		RETURN actions
+	END CodeActions;
+
 	(* Shared server loop. live=TRUE also re-diagnoses on every didChange
 	   (rely on the client to debounce); live=FALSE diagnoses on open/save only. *)
 	PROCEDURE Serve (context: Commands.Context; live: BOOLEAN);
 	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl, sighelp, semtok, legend: JSON.Object;
+		rng, ctx, endO: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr, trig, sigtrig, ttypes: JSON.Array; first, res: JSON.Value;
-		line, char: SIGNED32; doc: Document;
+		changes: JSON.Value; arr, trig, sigtrig, ttypes, diagsArr: JSON.Array; first, res, diagsV: JSON.Value;
+		line, char, line2, char2: SIGNED32; doc: Document;
 	BEGIN
 		in := context.in; out := context.out;
 		documents := NIL; initialized := FALSE; stdlibSrcHost[0] := 0X;
@@ -1728,6 +1858,7 @@ VAR
 						caps.Set("semanticTokensProvider", semtok);
 						caps.Set("renameProvider", JSON.NewBool(TRUE));
 						caps.Set("documentFormattingProvider", JSON.NewBool(TRUE));
+						caps.Set("codeActionProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -1857,6 +1988,28 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := Formatting(doc.text) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/codeAction" THEN
+						td := AsObject(params.Get("textDocument"));
+						rng := AsObject(params.Get("range"));
+						ctx := AsObject(params.Get("context"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (rng # NIL) THEN
+							pos := AsObject(rng.Get("start")); endO := AsObject(rng.Get("end"));
+							IF (pos # NIL) & (endO # NIL)
+								& GetInt(pos, "line", line) & GetInt(pos, "character", char)
+								& GetInt(endO, "line", line2) & GetInt(endO, "character", char2) THEN
+								doc := FindDoc(uri^);
+								IF doc # NIL THEN
+									diagsArr := NIL;
+									IF ctx # NIL THEN
+										diagsV := ctx.Get("diagnostics");
+										IF (diagsV # NIL) & (diagsV IS JSON.Array) THEN diagsArr := diagsV(JSON.Array) END
+									END;
+									res := CodeActions(doc.text, uri, diagsArr, line, char, line2, char2)
+								END
+							END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSE
