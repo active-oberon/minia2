@@ -1,0 +1,21 @@
+{
+  "name": "std/compress",
+  "tier": 1,
+  "context": "A2",
+  "status": "draft",
+  "description": "DEFLATE/zlib (inflate + deflate), gzip, ZIP archive read/write and a zip-backed file system.",
+  "provides": [
+    "GZip", "Zip", "ZipFS", "ZipTool", "Zlib", "ZlibBuffers",
+    "ZlibDeflate", "ZlibInflate", "ZlibReaders", "ZlibWriters",
+    "Archives", "Unzip"
+  ],
+  "requires": {
+    "std/runtime": "*"
+  },
+  "residual": [
+    "Archives, Unzip: mis-classified by the prefix heuristic — they are archive code and belong in this package (added to provides above).",
+    "Archives -> Configuration (misc): a settings module. RESOLUTION: classify Configuration in std/system during misc triage; add as a dependency then.",
+    "Unzip -> Inflate: legacy alias of ZlibInflate; confirm and rewire the import to the package-internal name.",
+    "Locks (imports KernelLog/Objects/Kernel only): shared concurrency leaf used here and by std/crypto. RESOLUTION: absorb into std/runtime (tier 0)."
+  ]
+}

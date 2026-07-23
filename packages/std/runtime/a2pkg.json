@@ -1,0 +1,21 @@
+{
+  "name": "std/runtime",
+  "tier": 0,
+  "context": "A2",
+  "status": "stable",
+  "description": "Sealed A2 runtime: kernel, GC/heaps, module system, object loader, files, streams, shell. Import-closed — depends on nothing.",
+  "provides": [
+    "BitSets", "Builtins", "CRC", "Clock", "Commands", "Dates",
+    "Diagnostics", "Files", "Glue", "Heaps", "Kernel", "KernelLog",
+    "Loader", "Machine", "Modules", "ObjectFile", "Objects", "Options",
+    "Pipes", "Plugins", "ProcessInfo", "ProcessInfo0", "RealConversions",
+    "Reals", "Reflection", "Shell", "StdIO", "StdIOShell", "Streams",
+    "StringPool", "Strings", "System", "SystemVersion", "Trace",
+    "TrapWriters", "Traps", "Unix", "UnixFiles"
+  ],
+  "requires": {},
+  "platform": {
+    "note": "Glue, Machine, Unix, UnixFiles are the Unix64/Linux64 platform layer. On a future multi-platform SDK these resolve to the target's variant ([Platform.]Module.Mod).",
+    "target": "Linux64"
+  }
+}
