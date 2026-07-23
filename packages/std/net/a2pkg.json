@@ -1,0 +1,30 @@
+{
+  "name": "std/net",
+  "tier": 2,
+  "context": "A2",
+  "status": "draft",
+  "description": "Networking: TCP/UDP/IP/DNS/sockets, TLS, an HTTP client/server stack, and protocol clients (FTP, SMTP, POP3, SSH, TFTP, LPR, XModem).",
+  "provides": [
+    "DNS", "FTP", "FTPClient", "FTPFS", "HTTPSession", "HTTPSupport", "IP",
+    "IPBandwidth", "LPR", "MD5", "Mail", "Network", "PKCS1", "POP3Client",
+    "RFC865Client", "SMTPClient", "SSH", "SSHAuthorize", "SSHChannels",
+    "SSHGlobals", "SSHPackets", "SSHTerminal", "SSHTransport", "Sockets",
+    "TCP", "TCPServices", "TCPTools", "TFTP", "TLS", "UDP", "UDPChatBase",
+    "UDPChatClient", "UDPChatServer", "WebHTTP", "WebHTTPClient",
+    "WebHTTPServer", "WebHTTPServerStatistics", "WebHTTPServerTools",
+    "WebHTTPTools", "XModem"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/base": "*",
+    "std/text": "*",
+    "std/web": "*",
+    "std/math": "*",
+    "std/crypto": "*"
+  },
+  "residual": [
+    "Re-homed from misc: protocol clients SMTPClient, POP3Client, LPR, XModem, RFC865Client and the SSH* family.",
+    "UNPLACED: WM* (some WebHTTP server tools ship a GUI admin console) and Beep. Split the GUI net tools into an apps area; drop/replace the Beep use. Then std/net can go stable.",
+    "TLS/SSH depend on std/crypto (same tier) — allowed by the downward-only rule (2 -> 2 is not an up-edge)."
+  ]
+}

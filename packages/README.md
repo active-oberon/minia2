@@ -17,8 +17,31 @@ hard error, checked by the layer-lint (below).
 |------|------|--------|----------------|
 | 0 | `std/runtime` — sealed kernel/GC/modules/loader/files/streams/shell + shared primitives | baked into the image, read-only | nothing |
 | 1 | base stdlib: `std/base`, `std/math`, `std/compress`, `std/text`, … | shipped in the image | tier 0 (+ tier 1) |
-| 2 | higher stdlib: `std/numerics`, `std/archive`, `std/net`, `std/web`, `std/crypto`, `std/data`, `std/gfx`, … | shipped in the image | tiers 0–1 (+ tier 2) |
+| 2 | higher stdlib: `std/numerics`, `std/archive`, `std/net`, `std/web`, `std/media`, `std/crypto`, `std/data`, `std/gfx`, … | shipped in the image | tiers 0–1 (+ tier 2) |
 | 3 | top: `std/compiler`, `std/wm` (GUI, not in the headless image) | shipped / optional | tiers 0–2 |
+
+### Current roster (264 modules placed)
+
+| package | tier | status | modules |
+|---------|------|--------|---------|
+| `std/runtime` | 0 | stable | 41 |
+| `std/base` | 1 | draft | 6 |
+| `std/math` | 1 | stable | 17 |
+| `std/text` | 1 | draft | 3 |
+| `std/compress` | 1 | stable | 8 |
+| `std/crypto` | 2 | stable | 30 |
+| `std/numerics` | 2 | stable | 10 |
+| `std/web` | 2 | draft | 5 |
+| `std/net` | 2 | draft | 40 |
+| `std/media` | 2 | draft | 16 |
+| `std/archive` | 2 | draft | 5 |
+| `std/compiler` | 3 | draft | 91 |
+
+Item-2 re-homing (mis-filed library recovered from the misc sinks): 8 code-gen/decoder
+backends → `std/compiler`; protocol clients (SMTP/POP3/LPR/XModem/SSH) → `std/net`;
+media codecs (MP3/DivX/MPEG/WAV/GIF) → `std/media`. The remaining `draft` residuals are
+all the same shape: split interactive GUI tools (which pull `WM*`) out into an apps area
+so the library cores go headless-stable.
 | ext | third-party packages | fetched to `/work/.a2pkg/` | any std tier + other ext |
 
 `std/runtime` is proven import-closed: **41 modules** (the 38-module boot-closure plus

@@ -1,0 +1,39 @@
+{
+  "name": "std/compiler",
+  "tier": 3,
+  "context": "A2",
+  "status": "draft",
+  "description": "The Fox self-hosting Active Oberon toolchain: frontends (Oberon/C#), semantic checker, intermediate + backends (AMD64/ARM/TRM/interpreter), assemblers, disassemblers, object-file/linker, the older PC* code generators, and CPU instruction decoders.",
+  "provides": [
+    "AMD64Decoder", "ARMDecoder", "ASMAMD64", "Compiler", "CompilerInterface",
+    "Decoder", "FoxA2Interface", "FoxAMD64Assembler", "FoxAMD64InstructionSet",
+    "FoxAMDBackend", "FoxARMAssembler", "FoxARMBackend", "FoxARMInstructionSet",
+    "FoxActiveCells", "FoxArrayBase", "FoxArrayBaseOptimized", "FoxAssembler",
+    "FoxBackend", "FoxBasic", "FoxBinaryCode", "FoxCSharpFrontend",
+    "FoxCSharpParser", "FoxCSharpScanner", "FoxCodeGenerators", "FoxDisassembler",
+    "FoxDocumentationBackend", "FoxDocumentationHtml", "FoxDocumentationParser",
+    "FoxDocumentationPrinter", "FoxDocumentationScanner", "FoxDocumentationTree",
+    "FoxFingerprinter", "FoxFormats", "FoxFrontend", "FoxGenericObjectFile",
+    "FoxGlobal", "FoxHardware", "FoxInterfaceComparison", "FoxIntermediateAssembler",
+    "FoxIntermediateBackend", "FoxIntermediateCode", "FoxIntermediateLinker",
+    "FoxIntermediateObjectFile", "FoxIntermediateParser", "FoxInterpreter",
+    "FoxInterpreterBackend", "FoxInterpreterSymbols", "FoxMinosObjectFile",
+    "FoxOberonFrontend", "FoxParser", "FoxPrintout", "FoxProfiler", "FoxProgTools",
+    "FoxScanner", "FoxSections", "FoxSemanticChecker", "FoxSyntaxTree",
+    "FoxTRMAssembler", "FoxTRMBackend", "FoxTRMInstructionSet", "FoxTest",
+    "FoxTestBackend", "FoxTextualSymbolFile", "FoxTranspilerBackend", "I386Decoder",
+    "Linker", "MinosLinker", "PCA386", "PCAAMD64", "PCAARM", "PCARMCP",
+    "PCARMRegisters", "PCArrays", "PCB", "PCBT", "PCC", "PCDebug", "PCG386",
+    "PCGAMD64", "PCGARM", "PCLIR", "PCM", "PCO", "PCOARM", "PCOF", "PCOFPE",
+    "PCOM", "PCP", "PCS", "PCT", "PCV"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/math": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Re-homed from the misc pile: the 8 code-generator/decoder backends (AMD64Decoder, ARMDecoder, I386Decoder, PCG386, PCGAMD64, PCGARM, PCA386, PCOFPE) plus the whole PC*/ASM* family — they are the compiler, not misc.",
+    "UNPLACED (a few Fox tools drag them): the GUI documentation/progtool front-ends pull WM* (WMComponents/Dialogs/Editors/TextView/Trees/…) and MemoryReader/PersistentObjects/Versioning/TestSuite. Split those interactive tools into an apps area so the toolchain core stays headless; then this package can go stable."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "std/media",
+  "tier": 2,
+  "context": "A2",
+  "status": "draft",
+  "description": "Audio/video/image codecs: MP3, DivX/MPEG video (+ IDCT, tables), WAV, GIF, AVI container, a codec registry and sound-device abstraction.",
+  "provides": [
+    "AVI", "AnimationCodec", "Codecs", "DivXDecoder", "DivXHelper",
+    "DivXTypes", "GIFCodec", "IDCT", "MP3Decoder", "MPEGTables",
+    "MPEGUtilities", "MPEGVideoDecoder", "PictCodec", "PictImages",
+    "SoundDevices", "WAVCodec"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/math": "*",
+    "std/text": "*",
+    "std/web": "*",
+    "std/archive": "*"
+  },
+  "residual": [
+    "Re-homed from misc: the media codecs (MP3Decoder, DivX*, MPEG*, WAVCodec, GIFCodec) that had zero fan-in in this tree but are library, not apps.",
+    "UNPLACED: Raster + WM* (WMGraphics/WMRectangles/WMWindowManager) — the players/viewers need the GUI/raster stack. Split codec cores (headless-usable) from the interactive players (MP3Player, WAVRecorder, MPEG viewer) which go to an apps area; the cores then need only std/gfx (Raster) once that package exists.",
+    "Codecs (the registry hub) pulls Archives -> std/archive; confirm during hub triage."
+  ]
+}
