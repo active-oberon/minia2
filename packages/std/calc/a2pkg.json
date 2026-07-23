@@ -1,0 +1,21 @@
+{
+  "name": "std/calc",
+  "tier": 2,
+  "context": "A2",
+  "status": "draft",
+  "description": "Numerical calculus: Gauss/Grünwald/Diethelm quadrature and differentiation kernels over std/math + std/numerics.",
+  "provides": [
+    "CalcConvolution", "CalcD1", "CalcD2", "CalcD3", "CalcD4",
+    "CalcDiethelm", "CalcFn", "CalcGauss", "CalcGrunwald"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/math": "*",
+    "std/numerics": "*",
+    "std/data": "*"
+  },
+  "residual": [
+    "This closes the MathMitLef -> CalcGauss forward-pointer from std/numerics: MathMitLef (Mittag-Leffler) belongs here or in a numerics-special layer that requires std/calc.",
+    "Verify the std/data edge (CalcFn) before marking stable."
+  ]
+}
