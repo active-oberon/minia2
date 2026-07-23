@@ -35,13 +35,37 @@ hard error, checked by the layer-lint (below).
 | `std/net` | 2 | draft | 40 |
 | `std/media` | 2 | draft | 16 |
 | `std/archive` | 2 | draft | 5 |
+| `std/calc` | 2 | draft | 9 |
+| `std/data` | 2 | draft | 17 |
+| `std/drivers` | 1 | draft | 10 |
 | `std/compiler` | 3 | draft | 91 |
+| `std/gui` | 3 | draft | ~40 core (of 137 WM* + 39 gfx; rest are apps) |
 
 Item-2 re-homing (mis-filed library recovered from the misc sinks): 8 code-gen/decoder
 backends → `std/compiler`; protocol clients (SMTP/POP3/LPR/XModem/SSH) → `std/net`;
-media codecs (MP3/DivX/MPEG/WAV/GIF) → `std/media`. The remaining `draft` residuals are
-all the same shape: split interactive GUI tools (which pull `WM*`) out into an apps area
-so the library cores go headless-stable.
+media codecs (MP3/DivX/MPEG/WAV/GIF) → `std/media`.
+
+Item-3 domain families: `std/drivers` (tier 1, runtime-only core), `std/calc`,
+`std/data`, and `std/gui`. Plus `packages/apps/` — a catalogue (not a package) of the
+applications, CLI tools, specialty families (`sr*` voxel engine, `Od*`/`SVN*`, `TF*`),
+and host bindings that are **not** stdlib.
+
+### The upper-layer finding
+
+The lower stdlib (tiers 0–2) decomposes into a clean **DAG** — every package's core
+imports strictly downward, and five packages are provably `stable`. The **upper layer
+does not**. Two structural facts set it apart:
+
+1. **`std/gfx` and `std/wm` are an irreducible cycle** — graphics and the window manager
+   import each other even at the library-core level. They cannot be separate tiered
+   packages under the downward-only rule, so they are merged into one `std/gui` package
+   (intra-package cycles are allowed; cross-package cycles are not).
+2. **The GUI world is ~60% applications, not library.** Of 137 `WM*` modules only ~40 are
+   framework; the rest are apps. Same for the driver/disk/media families. So item-3's
+   work was as much *subtraction* (moving apps to `packages/apps/`) as packaging.
+
+`std/gui` is the boundary of the headless SDK: everything tiers 0–2 ships headless; the
+GUI unit is an optional install.
 | ext | third-party packages | fetched to `/work/.a2pkg/` | any std tier + other ext |
 
 `std/runtime` is proven import-closed: **41 modules** (the 38-module boot-closure plus

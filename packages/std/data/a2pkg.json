@@ -1,0 +1,23 @@
+{
+  "name": "std/data",
+  "tier": 2,
+  "context": "A2",
+  "status": "draft",
+  "description": "Data structures and persistence: generic collections/sort, lists/queues/stacks/trees, the Models/Repositories/Types object framework, CSV, persistent objects, versioning.",
+  "provides": [
+    "Data", "DataIO", "DataLists", "DataQueues", "DataStacks", "DataTrees",
+    "GenericCollections", "GenericSort", "Models", "Repositories", "Types",
+    "PersistentObjects", "Versioning", "Attributes", "CSV", "SQL", "UndoManager"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/math": "*",
+    "std/text": "*",
+    "std/web": "*"
+  },
+  "residual": [
+    "Hosts the high-fan-in HUBS pulled out of the misc pile (Repositories fan-in 15, Models 8, Types 6) — they fan out to XML (std/web) and text, so they are correctly mid-tier, not std/base.",
+    "OPEN: a data member reaches std/compiler (likely PersistentObjects via reflection/fingerprints). Confirm and either accept the edge or isolate it before stable.",
+    "SQL here is the interface; watch for Bohdan's native SQL engine (Pager/BTree/SQLScan/SQLParse) as a future std/sql package."
+  ]
+}
