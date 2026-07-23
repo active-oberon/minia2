@@ -142,16 +142,26 @@ Packaging respects this: a package's identity is `name` + optional `context` + t
   compiler-level isolation, one level deep. Costs source edits + import rewrites;
   reserved for packages that need hard isolation.
 
-## Populator + layer-lint (design)
+## Tooling (implemented in `docker/ob`)
 
-**Populator.** Each `ob` invocation builds in a private scratch dir (the compiler
-resolves imports from the cwd). The populator symlinks in tier order — 0, then 1, 2,
-3, then `ext` — so resolution precedence is deterministic and the sealed base is never
-shadowed by a higher tier. A name already provided by a lower tier is not overridden
-(collision → clear error naming both packages).
+- **`ob get <host/user/repo>[@version] …`** — clones the package(s) into the project's
+  `.a2pkg/` cache, records them in `a2pkg.json` (`requires`) and pins the exact commit
+  in `a2pkg.lock`, then transitively fetches their external requirements (`std/*` is
+  satisfied by the SDK image and never fetched). Needs `git` + `jq` in the image.
+- **`ob lint`** — builds the module→tier map from the shipped `std/*` manifests plus any
+  installed packages, walks the import graph of the project's `.Mod` files, and reports
+  any **upward** edge (a module importing something in a higher tier). Exit non-zero on
+  violations; run it in CI.
+- **Populator** (`populate_packages` in `ob`) — each `ob` invocation builds in a private
+  scratch dir (the compiler resolves imports from the cwd). Installed packages are
+  symlinked in **tier order (0 first)**, so the sealed base is never shadowed and a name
+  clash between two packages is a hard error naming both (flat A2 namespace). Wired into
+  `build`/`run`/`compile` and `lsp`.
 
-**Layer-lint.** Reuses the import graph the LSP already builds. For every module,
-each import must resolve to a package in the same or a lower tier. An upward edge
-(e.g. `std/math` importing an `ext` module, or `std/runtime` importing anything)
-fails the lint with the offending `module -> import` edge. Run at `publish` time for
-external packages and in CI for the std packages.
+Project files created by `ob get`: **`a2pkg.json`** (the app's own manifest, same schema)
+and **`a2pkg.lock`** (`{ "<repo>": {"version","commit"} }`).
+
+> Verified so far: the tier map + lint logic are self-consistent over the current tree
+> (362 resolved import-edges among the five stable packages, **0 upward edges**); the
+> import extractor handles aliases (`X := Y`) and Fox contexts (`Y IN Ctx`). End-to-end
+> `ob get` (network + git) needs an image rebuilt with the new `git`/`jq` layer.
