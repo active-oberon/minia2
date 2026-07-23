@@ -2,22 +2,15 @@
   "name": "std/math",
   "tier": 1,
   "context": "A2",
-  "status": "draft",
-  "description": "Numeric tower: fixed/arbitrary number types (Nbr*), real/complex math, series and special functions.",
+  "status": "stable",
+  "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
-    "ComplexNumbers", "Math", "Math32", "Math64", "MathCbrt", "MathCplx",
-    "MathCplxSeries", "MathErf", "MathGamma", "MathInt", "MathL",
-    "MathRat", "MathRe", "MathReSeries", "NbrCplx", "NbrInt",
-    "NbrInt16", "NbrInt32", "NbrInt64", "NbrInt8", "NbrRat", "NbrRe",
-    "NbrRe32", "NbrRe64", "NbrStrings", "Random"
+    "ComplexNumbers", "Math", "Math32", "Math64", "MathL", "NbrCplx",
+    "NbrInt", "NbrInt8", "NbrInt16", "NbrInt32", "NbrInt64", "NbrRat",
+    "NbrRe", "NbrRe32", "NbrRe64", "NbrStrings", "Random"
   ],
   "requires": {
     "std/runtime": "*"
   },
-  "residual": [
-    "CLOSED: Random folded in (imports Math32, so it belongs here); this also closes the Random tail in std/crypto and std/compress.",
-    "OPEN (needs a code edit or a sub-split, not just manifest surgery): 10 advanced Math* modules (MathCbrt/Cplx/Erf/Gamma/Int/Rat/Re/ReSeries/CplxSeries) import DataErrors, and DataErrors imports Nbr* (this package) + Beep (a driver). Folding DataErrors in kills the math<->data cycle but then math->Beep is an up-edge that must be cut (an error-reporter should not beep).",
-    "OPEN: Shortreal -> FoxArrayBase (std/compiler) — moved OUT of provides; it is compiler-adjacent, not core math.",
-    "OPEN: MathMitLef -> CalcGauss (std/calc) — moved OUT of provides; belongs in a tier-2 std/math-special that may depend on std/calc."
-  ]
+  "residual": []
 }

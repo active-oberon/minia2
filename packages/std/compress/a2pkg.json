@@ -2,20 +2,14 @@
   "name": "std/compress",
   "tier": 1,
   "context": "A2",
-  "status": "draft",
-  "description": "DEFLATE/zlib (inflate + deflate), gzip, ZIP archive read/write and a zip-backed file system.",
+  "status": "stable",
+  "description": "DEFLATE/zlib primitives (inflate + deflate, buffers, stream readers/writers) and gzip. Container formats (ZIP) live in std/archive.",
   "provides": [
-    "GZip", "Zip", "ZipFS", "ZipTool", "Zlib", "ZlibBuffers",
-    "ZlibDeflate", "ZlibInflate", "ZlibReaders", "ZlibWriters",
-    "Archives", "Unzip"
+    "GZip", "Inflate", "Zlib", "ZlibBuffers", "ZlibDeflate",
+    "ZlibInflate", "ZlibReaders", "ZlibWriters"
   ],
   "requires": {
     "std/runtime": "*"
   },
-  "residual": [
-    "CLOSED: Locks sunk to std/runtime (tier 0).",
-    "CLOSED: Archives, Unzip re-homed here (prefix heuristic missed them).",
-    "OPEN: Archives -> Configuration, and Configuration is a mid-tier HUB that pulls XML (std/web). So core zlib/gzip is tier-1, but Archives drags the package toward tier-2. RESOLUTION: split — keep zlib/gzip/deflate as tier-1 std/compress; move Archives/ZipFS (the config-aware archive layer) to a tier-2 std/archive that requires std/web.",
-    "OPEN: Unzip -> Inflate is a legacy alias of ZlibInflate; rewire the import to the package-internal name (code edit)."
-  ]
+  "residual": []
 }
