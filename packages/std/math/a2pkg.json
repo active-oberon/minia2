@@ -7,17 +7,17 @@
   "provides": [
     "ComplexNumbers", "Math", "Math32", "Math64", "MathCbrt", "MathCplx",
     "MathCplxSeries", "MathErf", "MathGamma", "MathInt", "MathL",
-    "MathMitLef", "MathRat", "MathRe", "MathReSeries", "NbrCplx", "NbrInt",
+    "MathRat", "MathRe", "MathReSeries", "NbrCplx", "NbrInt",
     "NbrInt16", "NbrInt32", "NbrInt64", "NbrInt8", "NbrRat", "NbrRe",
-    "NbrRe32", "NbrRe64", "NbrStrings", "Shortreal"
+    "NbrRe32", "NbrRe64", "NbrStrings", "Random"
   ],
   "requires": {
     "std/runtime": "*"
   },
   "residual": [
-    "DataErrors: pulled by 10 advanced Math* modules (MathCbrt/Cplx/Erf/Gamma/Int/Rat/Re/…) as an error-reporter, and DataErrors itself imports Nbr* (this package) + Beep. RESOLUTION: fold DataErrors into std/math (kills the math<->data cycle); cut the legacy DataErrors->Beep edge.",
-    "Shortreal -> FoxArrayBase (std/compiler): low-level float-array coupling. RESOLUTION: move Shortreal out to a compiler-adjacent package, or drop from core math.",
-    "MathMitLef -> CalcGauss (std/calc): Mittag-Leffler needs Gauss quadrature. RESOLUTION: split MathMitLef into std/math-special (tier 2, may depend on std/calc).",
-    "MathInt -> Random (std/math or util): Random imports Math32, so Random belongs in this package; fold in."
+    "CLOSED: Random folded in (imports Math32, so it belongs here); this also closes the Random tail in std/crypto and std/compress.",
+    "OPEN (needs a code edit or a sub-split, not just manifest surgery): 10 advanced Math* modules (MathCbrt/Cplx/Erf/Gamma/Int/Rat/Re/ReSeries/CplxSeries) import DataErrors, and DataErrors imports Nbr* (this package) + Beep (a driver). Folding DataErrors in kills the math<->data cycle but then math->Beep is an up-edge that must be cut (an error-reporter should not beep).",
+    "OPEN: Shortreal -> FoxArrayBase (std/compiler) — moved OUT of provides; it is compiler-adjacent, not core math.",
+    "OPEN: MathMitLef -> CalcGauss (std/calc) — moved OUT of provides; belongs in a tier-2 std/math-special that may depend on std/calc."
   ]
 }

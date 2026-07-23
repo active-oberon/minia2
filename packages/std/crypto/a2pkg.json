@@ -2,7 +2,7 @@
   "name": "std/crypto",
   "tier": 2,
   "context": "A2",
-  "status": "draft",
+  "status": "stable",
   "description": "Ciphers (AES/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA3/Keccak), public-key (RSA/DSA/DH), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
   "provides": [
     "ASN1", "CryptoAES", "CryptoARC4", "CryptoBase64", "CryptoBigNumbers",
@@ -17,8 +17,5 @@
     "std/runtime": "*",
     "std/math": "*"
   },
-  "residual": [
-    "BIT (empty leaf, imports nothing): shared bit-ops utility. RESOLUTION: absorb into std/runtime (tier 0).",
-    "Random -> Math32: non-cryptographic RNG. RESOLUTION: place Random in std/math; std/crypto already depends on std/math. (Crypto-grade randomness is CryptoFortunaRng, internal.)"
-  ]
+  "residual": []
 }
