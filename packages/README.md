@@ -46,7 +46,12 @@ dependency cycles** (Tarjan SCC), so it decomposes topologically:
 
 Packages are `draft` with a `residual` list until every edge is either resolved by
 re-homing a module (manifest surgery) or by a flagged code edit. Stable so far:
-`std/runtime`, `std/crypto`, `std/math`, `std/compress`.
+`std/runtime`, `std/crypto`, `std/math`, `std/compress`, `std/numerics`.
+
+> **Follow-up (image rebuild):** the SDK image still ships stale prebuilt symbols
+> `Beep.SymUu` and `DataErrors.SymUu` that reference the old Beep→Displays→X11
+> interface and fail to load headless. Regenerate them on the next image build so
+> the prebuilt `/psym` path matches the patched source.
 
 **Split-to-clean pattern.** Two packages reached `stable` by splitting a tier-1 core
 from a tier-2 layer rather than editing source: `std/math` (core number types) vs

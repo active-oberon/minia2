@@ -14,10 +14,10 @@ MODULE DataErrors;   (** AUTHOR "adf, fof"; PURPOSE "For reporting runtime warni
 	Errors are for catostropic events, e.g., division by zero.
 	Warnings are for non-optimal events, e.g., a series did not converge. *)
 
-IMPORT SYSTEM, Machine, Kernel, Modules, Files, Beep, NbrInt, NbrRat, NbrRe, NbrCplx;
+IMPORT SYSTEM, Machine, Modules, Files, NbrInt, NbrRat, NbrRe, NbrCplx;
 
 VAR
-	beepedError, beepedWarning: BOOLEAN;  F: Files.File;  W: Files.Writer;
+	F: Files.File;  W: Files.Writer;
 
 
 	(***! BEGIN part from Traps, todo: simplify and adjust to needs *)
@@ -301,34 +301,23 @@ CONST
 
 (* From antsPortability *)
 	PROCEDURE ErrorCaller( VAR m: Modules.Module;  VAR pc, ebp, eip: NbrInt.Integer );
-	VAR i, reg: NbrInt.Integer;  timer: Kernel.Timer;
+	VAR reg: NbrInt.Integer;
 	BEGIN
 		reg := SIGNED32(SYSTEM.GetFramePointer ());
 		SYSTEM.GET( reg, ebp );   (* stack frame of caller *)
 		SYSTEM.GET( ebp + 4, eip );   (* return address from caller *)
 		m := Modules.ThisModuleByAdr( eip );
-		IF m # NIL THEN pc := SIGNED32(eip - ADDRESSOF( m.code[0] )) ELSE pc := MAX( SIGNED32 ) END;
-		IF ~beepedError THEN
-			beepedError := TRUE;  NEW( timer );
-			FOR i := 1 TO 3 DO Beep.Beep( 125 );  timer.Sleep( 100 );  Beep.Beep( 0 );  timer.Sleep( 100 ) END;
-			FOR i := 1 TO 3 DO Beep.Beep( 100 );  timer.Sleep( 350 );  Beep.Beep( 0 );  timer.Sleep( 150 ) END;
-			FOR i := 1 TO 3 DO Beep.Beep( 125 );  timer.Sleep( 100 );  Beep.Beep( 0 );  timer.Sleep( 100 ) END
-		END
+		IF m # NIL THEN pc := SIGNED32(eip - ADDRESSOF( m.code[0] )) ELSE pc := MAX( SIGNED32 ) END
 	END ErrorCaller;
 
 	PROCEDURE WarningCaller( VAR m: Modules.Module;  VAR pc, ebp, eip: NbrInt.Integer );
-	VAR reg: NbrInt.Integer;  timer: Kernel.Timer;
+	VAR reg: NbrInt.Integer;
 	BEGIN
 		reg := SIGNED32(SYSTEM.GetFramePointer ());
 		SYSTEM.GET( reg, ebp );   (* stack frame of caller *)
 		SYSTEM.GET( ebp + 4, eip );   (* return address from caller *)
 		m := Modules.ThisModuleByAdr( eip );
-		IF m # NIL THEN pc := SIGNED32(eip - ADDRESSOF( m.code[0] )) ELSE pc := MAX( SIGNED32 ) END;
-		IF ~beepedWarning THEN
-			beepedWarning := TRUE;  NEW( timer );  Beep.Beep( 125 );  timer.Sleep( 100 );  Beep.Beep( 0 );
-			timer.Sleep( 100 );  Beep.Beep( 100 );  timer.Sleep( 100 );  Beep.Beep( 0 );  timer.Sleep( 100 );
-			Beep.Beep( 125 );  timer.Sleep( 100 );  Beep.Beep( 0 );  timer.Sleep( 100 )
-		END
+		IF m # NIL THEN pc := SIGNED32(eip - ADDRESSOF( m.code[0] )) ELSE pc := MAX( SIGNED32 ) END
 	END WarningCaller;
 
 	PROCEDURE IdentifyProcedure( VAR m: Modules.Module;  pc: NbrInt.Integer;  VAR module, type, proc: ARRAY OF CHAR );
@@ -521,7 +510,7 @@ VAR refs: Modules.Bytes; refpos: SIGNED32; adr: SIGNED32;
 	PROCEDURE Open*;
 	VAR ignor: INTEGER;  backup, current: Files.FileName;
 	BEGIN
-		beepedError := FALSE;  beepedWarning := FALSE;  COPY( "Error.Log", current );  COPY( "Error.Log.Bak", backup );  Files.Delete( backup, ignor );
+		COPY( "Error.Log", current );  COPY( "Error.Log.Bak", backup );  Files.Delete( backup, ignor );
 		Files.Rename( current, backup, ignor );  F := Files.New( current );  Files.OpenWriter( W, F, 0 )
 	END Open;
 
