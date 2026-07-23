@@ -70,10 +70,18 @@ RUN set -eu; \
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS sdk
 
-# No apt install needed: the A2 runtime is a dynamically-linked glibc ELF
-# (libc.so.6 + libdl.so.2 + ld-linux), all already present in the base image.
-# The desktop `data/` tree (fonts, wallpapers, skins) is deliberately NOT copied
-# — headless compile/run never touches it, and it was ~48MB of the image.
+# The A2 runtime itself needs no apt packages (dynamically-linked glibc ELF —
+# libc.so.6 + libdl.so.2 + ld-linux, all in the base). The desktop `data/` tree
+# (fonts, wallpapers, skins) is deliberately NOT copied — headless compile/run
+# never touches it, and it was ~48MB.
+#
+# `git`, `jq` and `ca-certificates` are added only for the package manager
+# (`ob get` clones package repos; `ob get`/`ob lint` read a2pkg.json via jq). The
+# `ob` script guards both with `have` and degrades gracefully, so a size-minimal
+# variant image can drop this layer if it does not need `ob get`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git jq ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV A2SDK=/opt/a2sdk \
     A2_PLATFORM=Unix64 \
@@ -86,6 +94,10 @@ COPY --from=builder /opt/a2sdk ${A2SDK}
 # A2 is BSD-3-Clause (ETH Zurich); binary redistribution requires reproducing the
 # copyright notice + disclaimer with the distribution. Bundle it in the image.
 COPY license.txt /opt/a2sdk/LICENSE.txt
+
+# Std package manifests (the layered decomposition) so `ob lint` has the
+# module->tier map and `ob get` can satisfy std/* requirements from the image.
+COPY packages ${A2SDK}/packages
 
 COPY docker/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob

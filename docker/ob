@@ -12,6 +12,9 @@
 #                                      -> a Windows PE64 .exe
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
+#   ob get <host/user/repo>[@ver] ...  fetch package(s) into .a2pkg/, pin in
+#                                      a2pkg.lock, add to a2pkg.json, resolve deps
+#   ob lint                            check every import points downward (tier rule)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
 #                                      over stdio: diagnostics on open+save; --live
 #                                      also re-checks on every change)
@@ -37,7 +40,13 @@ BOOT_LIST_WIN="$SDK/boot-modules-win64.txt"
 OBJ_EXT="GofUu"
 SYM_EXT=".SymUu"
 
+PKGDIR="${A2_PACKAGES:-$SDK/packages}"   # shipped std package manifests (std/*/a2pkg.json)
+VENDOR=".a2pkg"                          # per-project package cache (under /work)
+PROJ_MANIFEST="a2pkg.json"               # project manifest (in /work)
+PROJ_LOCK="a2pkg.lock"                   # pinned versions (in /work)
+
 die() { echo "ob: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
 [ -x "$OBERON" ] || die "runtime not found at $OBERON (set A2SDK to the SDK root)"
 [ -d "$LIB" ]    || die "standard library not found at $LIB"
@@ -71,7 +80,55 @@ make_workdir() {
       ln -s "$LIB"/*."$OBJ_EXT" "$w"/ 2>/dev/null || true
       ;;
   esac
+  populate_packages "$w"
   printf '%s' "$w"
+}
+
+# Symlink installed external packages' sources into the scratch dir, tier by tier
+# (lower tiers first). A name already provided by a lower tier is NOT overridden by
+# a higher one — a genuine clash is a hard error naming both packages. This is how a
+# dependency added by `ob get` becomes resolvable to the compiler (which only looks in
+# the cwd) without touching the sealed read-only SDK.
+populate_packages() {
+  local w="$1" pkgroot="/work/$VENDOR" mf tier name f base owner
+  [ -d "$pkgroot" ] || return 0
+  declare -A OWNER=()
+  # sort package manifests by tier so lower tiers populate first
+  while IFS= read -r mf; do
+    [ -f "$mf" ] || continue
+    name="$(_json "$mf" '.name')"
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      owner="${OWNER[$base]:-}"
+      if [ -n "$owner" ]; then
+        die "module clash: $base provided by both $owner and $name (flat A2 namespace — rename or use a Fox context)"
+      fi
+      OWNER[$base]="$name"
+      ln -sf "$f" "$w/$base"
+    done < <(find "$(dirname "$mf")" -maxdepth 1 -name '*.Mod')
+  done < <(_pkg_manifests_by_tier "$pkgroot")
+}
+
+# List package manifests under a root, ordered by ascending tier (0 first).
+_pkg_manifests_by_tier() {
+  local root="$1" mf t
+  for mf in "$root"/*/"$PROJ_MANIFEST" "$root"/*/*/"$PROJ_MANIFEST" "$root"/*/*/*/"$PROJ_MANIFEST"; do
+    [ -f "$mf" ] || continue
+    t="$(_json "$mf" '.tier // 9')"
+    printf '%s\t%s\n' "$t" "$mf"
+  done | sort -n | cut -f2-
+}
+
+# Read a jq path from a JSON file; fall back to a tiny grep if jq is absent.
+_json() {
+  local file="$1" path="$2"
+  if have jq; then jq -r "$path // empty" "$file" 2>/dev/null; return; fi
+  # minimal fallback for the two scalars we need (.name, .tier)
+  case "$path" in
+    *name*) grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" | head -1 | sed -E 's/.*"([^"]*)"$/\1/' ;;
+    *tier*) grep -oE '"tier"[[:space:]]*:[[:space:]]*[0-9]+' "$file" | head -1 | grep -oE '[0-9]+' ;;
+  esac
 }
 
 cmd_compile() {
@@ -216,9 +273,99 @@ cmd_lsp() {
   # over the bundled stdlib: imports then resolve from real build artifacts instead of
   # fragile on-demand compilation (and module-in-prefixed-file cases resolve too).
   [ -d /psym ] && ln -sf /psym/*.SymUu "$w"/ 2>/dev/null || true
+  # installed external packages (ob get) become resolvable too, tier by tier
+  populate_packages "$w"
   # project sources mounted at /work become resolvable via on-demand compilation
   [ -d /work ] && ln -sf /work/*.Mod "$w"/ 2>/dev/null || true
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
+}
+
+# ob get <host/user/repo>[@version] ... — fetch package(s) into /work/.a2pkg, pin them
+# in a2pkg.lock, add them to a2pkg.json, and transitively fetch their external deps.
+# std/* requirements are satisfied by the SDK and are never fetched.
+cmd_get() {
+  have git || die "ob get needs git in the image"
+  have jq  || die "ob get needs jq in the image"
+  [ -d /work ] || die "mount your project at /work"
+  [ $# -ge 1 ] || die "usage: ob get <host/user/repo>[@version] ..."
+  local spec; for spec in "$@"; do _get_one "$spec"; done
+  echo "ob: updated $PROJ_MANIFEST + $PROJ_LOCK ; deps vendored in $VENDOR/"
+}
+
+_get_one() {
+  local spec="$1" repo ver cache sha name dep
+  case "$spec" in *@*) ver="${spec##*@}"; repo="${spec%@*}" ;; *) ver=""; repo="$spec" ;; esac
+  cache="/work/$VENDOR/$repo"
+  if [ -d "$cache/.git" ]; then
+    git -C "$cache" fetch -q --tags origin || true
+  else
+    mkdir -p "$(dirname "$cache")"
+    git clone -q "https://$repo.git" "$cache" || die "clone failed: $repo"
+  fi
+  [ -n "$ver" ] && { git -C "$cache" -c advice.detachedHead=false checkout -q "$ver" \
+                       || die "no such version '$ver' in $repo"; }
+  [ -f "$cache/$PROJ_MANIFEST" ] || die "$repo is not an A2 package (no $PROJ_MANIFEST)"
+  sha="$(git -C "$cache" rev-parse HEAD)"
+  name="$(jq -r '.name' "$cache/$PROJ_MANIFEST")"
+  [ -n "$ver" ] || ver="$(git -C "$cache" describe --tags --always 2>/dev/null || echo "$sha")"
+  _record_dep "$repo" "$ver" "$sha"
+  echo "ob: got $name  ($repo @ $ver, ${sha:0:12})"
+  # transitively fetch external (non-std) requirements
+  while IFS= read -r dep; do
+    [ -n "$dep" ] || continue
+    case "$dep" in std/*) continue ;; esac
+    [ -d "/work/$VENDOR/$dep" ] && continue
+    _get_one "$dep"
+  done < <(jq -r '.requires // {} | keys[]' "$cache/$PROJ_MANIFEST")
+}
+
+_record_dep() {
+  local repo="$1" ver="$2" sha="$3" pm="/work/$PROJ_MANIFEST" lk="/work/$PROJ_LOCK" tmp
+  [ -f "$pm" ] || echo '{"name":"app","requires":{}}' > "$pm"
+  [ -f "$lk" ] || echo '{}' > "$lk"
+  tmp="$(mktemp)"; jq --arg r "$repo" --arg v "$ver" '.requires[$r]=$v' "$pm" > "$tmp" && mv "$tmp" "$pm"
+  tmp="$(mktemp)"; jq --arg r "$repo" --arg v "$ver" --arg s "$sha" \
+      '.[$r]={version:$v,commit:$s}' "$lk" > "$tmp" && mv "$tmp" "$lk"
+}
+
+# ob lint — verify every import points to the same tier or lower. Reads the shipped
+# std manifests + installed packages for the module->tier map, then walks the import
+# graph of the project's .Mod files. An upward edge (e.g. std/math importing a tier-2
+# module) is the layering violation the tier model forbids.
+cmd_lint() {
+  [ -d /work ] || die "mount your project at /work"
+  local mf name tier m f mod mtier iimp itier violations=0
+  declare -A TIER PKG
+  for mf in "$PKGDIR"/std/*/"$PROJ_MANIFEST" \
+            /work/"$VENDOR"/*/"$PROJ_MANIFEST" \
+            /work/"$VENDOR"/*/*/"$PROJ_MANIFEST" \
+            /work/"$VENDOR"/*/*/*/"$PROJ_MANIFEST"; do
+    [ -f "$mf" ] || continue
+    name="$(_json "$mf" '.name')"; tier="$(_json "$mf" '.tier')"; [ -n "$tier" ] || tier=9
+    while IFS= read -r m; do [ -n "$m" ] && { TIER[$m]="$tier"; PKG[$m]="$name"; }; done < <(_provides "$mf")
+  done
+  [ "${#TIER[@]}" -gt 0 ] || die "no package manifests found (looked in $PKGDIR and /work/$VENDOR)"
+  for f in /work/*.Mod; do
+    [ -f "$f" ] || continue
+    mod="$(module_name "$f")"; mtier="${TIER[$mod]:-9}"   # project/app code defaults to top
+    while IFS= read -r iimp; do
+      itier="${TIER[$iimp]:-}"; [ -z "$itier" ] && continue
+      if [ "$itier" -gt "$mtier" ]; then
+        echo "  UP-EDGE  $mod (tier $mtier, ${PKG[$mod]:-project}) -> $iimp (tier $itier, ${PKG[$iimp]:-?})"
+        violations=$((violations+1))
+      fi
+    done < <(_imports "$f")
+  done
+  [ "$violations" -eq 0 ] && echo "ob lint: OK — no upward dependencies" \
+    || die "$violations upward-dependency violation(s)"
+}
+
+_provides() { if have jq; then jq -r '.provides[]?' "$1" 2>/dev/null; fi; }
+_imports() {
+  awk '/(^|[^A-Za-z])IMPORT/{p=1} p{print} /;/{if(p)exit}' "$1" \
+    | sed -E 's/.*IMPORT//; s/;.*//' | tr ',' '\n' \
+    | sed -E 's/\(\*[^*]*\*\)//g; s/.*:=//; s/[[:space:]]+IN[[:space:]]+[A-Za-z0-9_]+//; s/[^A-Za-z0-9_]//g' \
+    | grep -Ev '^$|^SYSTEM$'
 }
 
 cmd_version() {
@@ -235,10 +382,12 @@ case "${1:-}" in
   build)   shift; cmd_build "$@" ;;
   compile) shift; cmd_compile "$@" ;;
   run)     shift; cmd_run "$@" ;;
+  get)     shift; cmd_get "$@" ;;
+  lint)    shift; cmd_lint "$@" ;;
   repl)    shift; cmd_repl ;;
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac
