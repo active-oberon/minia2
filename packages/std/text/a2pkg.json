@@ -1,0 +1,16 @@
+{
+  "name": "std/text",
+  "tier": 1,
+  "context": "A2",
+  "status": "draft",
+  "description": "Rich text model and Unicode text utilities: the Texts piece-list model, TextUtilities (load/store/convert), UTF-8 helpers.",
+  "provides": [
+    "Texts", "TextUtilities", "UTF8Strings"
+  ],
+  "requires": {
+    "std/runtime": "*"
+  },
+  "residual": [
+    "Created to satisfy std/compiler / std/net / std/media requires. Verify Texts/TextUtilities import closure stays runtime-only before marking stable (TextUtilities may pull codecs/converters)."
+  ]
+}
