@@ -313,18 +313,22 @@ _get_one() {
   local spec="$1" repo ver cache sha name dep
   case "$spec" in *@*) ver="${spec##*@}"; repo="${spec%@*}" ;; *) ver=""; repo="$spec" ;; esac
   cache="/work/$VENDOR/$repo"
-  if [ -d "$cache/.git" ]; then
-    git -C "$cache" fetch -q --tags origin || true
+  # Shallow, VCS-free vendoring: clone only the requested tag/branch at depth 1,
+  # capture the exact commit for the lock, then drop .git so the cache holds just
+  # the package source. There is no incremental fetch — a re-get re-clones fresh.
+  rm -rf "$cache"; mkdir -p "$(dirname "$cache")"
+  if [ -n "$ver" ]; then
+    git -c advice.detachedHead=false clone -q --depth 1 --branch "$ver" \
+      "https://$repo.git" "$cache" \
+      || die "clone failed: $repo @ $ver (version must be a tag or branch)"
   else
-    mkdir -p "$(dirname "$cache")"
-    git clone -q "https://$repo.git" "$cache" || die "clone failed: $repo"
+    git clone -q --depth 1 "https://$repo.git" "$cache" || die "clone failed: $repo"
   fi
-  [ -n "$ver" ] && { git -C "$cache" -c advice.detachedHead=false checkout -q "$ver" \
-                       || die "no such version '$ver' in $repo"; }
   [ -f "$cache/$PROJ_MANIFEST" ] || die "$repo is not an A2 package (no $PROJ_MANIFEST)"
   sha="$(git -C "$cache" rev-parse HEAD)"
+  [ -n "$ver" ] || ver="$sha"
+  rm -rf "$cache/.git"                       # vendored source only — no VCS metadata
   name="$(jq -r '.name' "$cache/$PROJ_MANIFEST")"
-  [ -n "$ver" ] || ver="$(git -C "$cache" describe --tags --always 2>/dev/null || echo "$sha")"
   _record_dep "$repo" "$ver" "$sha"
   echo "ob: got $name  ($repo @ $ver, ${sha:0:12})"
   # transitively fetch external (non-std) requirements

@@ -144,10 +144,12 @@ Packaging respects this: a package's identity is `name` + optional `context` + t
 
 ## Tooling (implemented in `docker/ob`)
 
-- **`ob get <host/user/repo>[@version] …`** — clones the package(s) into the project's
-  `.a2pkg/` cache, records them in `a2pkg.json` (`requires`) and pins the exact commit
-  in `a2pkg.lock`, then transitively fetches their external requirements (`std/*` is
-  satisfied by the SDK image and never fetched). Needs `git` + `jq` in the image.
+- **`ob get <host/user/repo>[@version] …`** — shallow-clones (`--depth 1`, tag/branch)
+  the package(s) into the project's `.a2pkg/` cache, **strips `.git`** so only the
+  package source is vendored, records them in `a2pkg.json` (`requires`), pins the exact
+  commit in `a2pkg.lock`, then transitively fetches their external requirements (`std/*`
+  is satisfied by the SDK image and never fetched). `version` is a git tag or branch.
+  Needs `git` + `jq` in the image.
 - **`ob lint`** — builds the module→tier map from the shipped `std/*` manifests plus any
   installed packages, walks the import graph of the project's `.Mod` files, and reports
   any **upward** edge (a module importing something in a higher tier). Exit non-zero on
