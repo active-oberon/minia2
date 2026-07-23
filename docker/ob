@@ -110,6 +110,20 @@ populate_packages() {
   done < <(_pkg_manifests_by_tier "$pkgroot")
 }
 
+# Compile the installed packages' sources (symlinked by the populator) into the
+# scratch dir so their .SymUu/.GofUu exist before the user's module is compiled.
+# The plain compiler needs an import's symbol file; only the LSP resolves source
+# on demand — so this runs for compile/run/build, NOT for lsp.
+build_packages() {
+  local w="$1" srcs
+  srcs="$(cd "$w" && ls *.Mod 2>/dev/null | sed 's|^|./|' | tr '\n' ' ')"
+  [ -n "$srcs" ] || return 0
+  ( cd "$w" && export PWD="$w"
+    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+      $srcs >/dev/null 2>&1 ) || true
+}
+
 # List package manifests under a root, ordered by ascending tier (0 first).
 _pkg_manifests_by_tier() {
   local root="$1" mf t
@@ -147,6 +161,7 @@ cmd_compile() {
   local mod w; mod="$(module_name "$src")"
   w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
+  build_packages "$w"
   cp "$src" "$w/$mod.Mod"
 
   ( cd "$w" && export PWD="$w"
@@ -196,6 +211,7 @@ cmd_build() {
   local fn; fn="$(basename "$dest")"
   w="$(make_workdir "$target")"
   trap 'rm -rf "$w"' RETURN
+  build_packages "$w"
   cp "$src" "$w/$mod.Mod"
 
   # A generated boot driver replaces the interactive shell: its module body runs
@@ -248,6 +264,7 @@ cmd_run() {
   local mod w; mod="$(module_name "$src")"
   w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
+  build_packages "$w"
   cp "$src" "$w/$mod.Mod"
 
   ( cd "$w" && export PWD="$w"
@@ -273,8 +290,8 @@ cmd_lsp() {
   # over the bundled stdlib: imports then resolve from real build artifacts instead of
   # fragile on-demand compilation (and module-in-prefixed-file cases resolve too).
   [ -d /psym ] && ln -sf /psym/*.SymUu "$w"/ 2>/dev/null || true
-  # installed external packages (ob get) become resolvable too, tier by tier
-  populate_packages "$w"
+  # installed external packages (ob get) are already symlinked by make_workdir's
+  # populator; the LSP resolves their source on demand (no precompile needed).
   # project sources mounted at /work become resolvable via on-demand compilation
   [ -d /work ] && ln -sf /work/*.Mod "$w"/ 2>/dev/null || true
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
