@@ -17,7 +17,7 @@ hard error, checked by the layer-lint (below).
 |------|------|--------|----------------|
 | 0 | `std/runtime` — sealed kernel/GC/modules/loader/files/streams/shell + shared primitives | baked into the image, read-only | nothing |
 | 1 | base stdlib: `std/base`, `std/math`, `std/compress`, `std/text`, … | shipped in the image | tier 0 (+ tier 1) |
-| 2 | higher stdlib: `std/net`, `std/web`, `std/crypto`, `std/data`, `std/gfx`, … | shipped in the image | tiers 0–1 (+ tier 2) |
+| 2 | higher stdlib: `std/numerics`, `std/archive`, `std/net`, `std/web`, `std/crypto`, `std/data`, `std/gfx`, … | shipped in the image | tiers 0–1 (+ tier 2) |
 | 3 | top: `std/compiler`, `std/wm` (GUI, not in the headless image) | shipped / optional | tiers 0–2 |
 | ext | third-party packages | fetched to `/work/.a2pkg/` | any std tier + other ext |
 
@@ -45,8 +45,17 @@ dependency cycles** (Tarjan SCC), so it decomposes topologically:
    `std/fonts` (`OpenType*`), `std/audio` (`OpenAL*`), etc.
 
 Packages are `draft` with a `residual` list until every edge is either resolved by
-re-homing a module (manifest surgery) or by a flagged code edit; `std/crypto` is the
-first non-runtime package to reach `stable`.
+re-homing a module (manifest surgery) or by a flagged code edit. Stable so far:
+`std/runtime`, `std/crypto`, `std/math`, `std/compress`.
+
+**Split-to-clean pattern.** Two packages reached `stable` by splitting a tier-1 core
+from a tier-2 layer rather than editing source: `std/math` (core number types) vs
+`std/numerics` (advanced/special functions that share `DataErrors`); `std/compress`
+(zlib/gzip primitives) vs `std/archive` (ZIP containers that pull XML config). The one
+genuinely code-level tail is documented, not silently patched: `DataErrors` beeps on
+error via `Beep`, which on Unix drags X11 — cutting that audible warning is a
+behavioral edit to vendored source and is left as a `std/numerics` blocker for the
+maintainer to decide.
 
 ## Manifest format (`a2pkg.json`)
 

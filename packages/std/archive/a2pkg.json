@@ -1,0 +1,19 @@
+{
+  "name": "std/archive",
+  "tier": 2,
+  "context": "A2",
+  "status": "draft",
+  "description": "ZIP container formats: archive reader/writer, zip-backed file system, zip CLI tool, standalone unzip.",
+  "provides": [
+    "Zip", "ZipFS", "ZipTool", "Unzip", "Archives"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/compress": "*",
+    "std/web": "*"
+  },
+  "residual": [
+    "Split out of std/compress: Archives -> Configuration -> XML, so the container/config-aware layer is tier 2 (needs std/web) while the zlib core stayed tier 1. Confirm std/web is the right home for Configuration/XML during the hub-triage pass.",
+    "ZipTool is a CLI command; may migrate to an apps area rather than a library package."
+  ]
+}
