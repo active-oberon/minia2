@@ -3,16 +3,20 @@
   "tier": 0,
   "context": "A2",
   "status": "stable",
-  "description": "Sealed A2 runtime: kernel, GC/heaps, module system, object loader, files, streams, shell. Import-closed — depends on nothing.",
+  "description": "Sealed A2 runtime: kernel, GC/heaps, module system, object loader, files, streams, shell, shared low-level primitives. Import-closed — depends on nothing.",
   "provides": [
-    "BitSets", "Builtins", "CRC", "Clock", "Commands", "Dates",
-    "Diagnostics", "Files", "Glue", "Heaps", "Kernel", "KernelLog",
-    "Loader", "Machine", "Modules", "ObjectFile", "Objects", "Options",
-    "Pipes", "Plugins", "ProcessInfo", "ProcessInfo0", "RealConversions",
-    "Reals", "Reflection", "Shell", "StdIO", "StdIOShell", "Streams",
-    "StringPool", "Strings", "System", "SystemVersion", "Trace",
+    "BIT", "BitSets", "Builtins", "CRC", "Clock", "Commands", "Dates",
+    "Debugging", "Diagnostics", "Files", "Glue", "Heaps", "Kernel",
+    "KernelLog", "Loader", "Locks", "Machine", "Modules", "ObjectFile",
+    "Objects", "Options", "Pipes", "Plugins", "ProcessInfo", "ProcessInfo0",
+    "RealConversions", "Reals", "Reflection", "Shell", "StdIO", "StdIOShell",
+    "Streams", "StringPool", "Strings", "System", "SystemVersion", "Trace",
     "TrapWriters", "Traps", "Unix", "UnixFiles"
   ],
+  "recovered_from_misc": {
+    "note": "BIT (empty leaf), Locks (runtime-only), Debugging (pulls only Locks) were mis-filed in the misc pile but are import-closed shared primitives with high fan-in. Verified sealed; sunk to tier 0.",
+    "modules": ["BIT", "Locks", "Debugging"]
+  },
   "requires": {},
   "platform": {
     "note": "Glue, Machine, Unix, UnixFiles are the Unix64/Linux64 platform layer. On a future multi-platform SDK these resolve to the target's variant ([Platform.]Module.Mod).",

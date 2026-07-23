@@ -15,16 +15,38 @@ hard error, checked by the layer-lint (below).
 
 | Tier | What | Origin | May depend on |
 |------|------|--------|----------------|
-| 0 | `std/runtime` — sealed kernel/GC/modules/loader/files/streams/shell | baked into the image, read-only | nothing |
-| 1 | base stdlib: `std/math`, `std/compress`, `std/text`, … | shipped in the image | tier 0 (+ tier 1) |
+| 0 | `std/runtime` — sealed kernel/GC/modules/loader/files/streams/shell + shared primitives | baked into the image, read-only | nothing |
+| 1 | base stdlib: `std/base`, `std/math`, `std/compress`, `std/text`, … | shipped in the image | tier 0 (+ tier 1) |
 | 2 | higher stdlib: `std/net`, `std/web`, `std/crypto`, `std/data`, `std/gfx`, … | shipped in the image | tiers 0–1 (+ tier 2) |
 | 3 | top: `std/compiler`, `std/wm` (GUI, not in the headless image) | shipped / optional | tiers 0–2 |
 | ext | third-party packages | fetched to `/work/.a2pkg/` | any std tier + other ext |
 
-`std/runtime` is proven import-closed: the 38 modules import nothing outside the set
-(verified over the full 730-module graph). It is the only package currently locked
-as `stable`; the rest are `draft` with an explicit `residual` list of edges to close
-during the `misc` triage.
+`std/runtime` is proven import-closed: **41 modules** (the 38-module boot-closure plus
+`BIT`, `Locks`, `Debugging` — shared primitives that were mis-filed in the misc pile
+but verified sealed) import nothing outside the set, over the full 730-module graph.
+
+## misc triage — findings
+
+The 338-module `misc` pile is **not one problem but three**, and has **zero internal
+dependency cycles** (Tarjan SCC), so it decomposes topologically:
+
+1. **~135 zero-fan-in sinks split ~half/half.** About half are genuine applications and
+   tools that leave the standard library entirely (`PET`, `WindowManager`, `VNC`,
+   `SambaServer`, `LSP`, media players); the other half is **mis-filed library code** to
+   be re-homed, not discarded — 8 Fox code-generator backends (`AMD64Decoder`,
+   `I386Decoder`, `PCG386`, `PCGAMD64`, `PCGARM`, `PCA386`, `PCOFPE`, `ARMDecoder`) →
+   `std/compiler`; media codecs → `std/media`; protocol clients (`SMTPClient`, `LPR`,
+   `XModem`) → `std/net`; small utilities (`Base64`, `CSV`, `In`, `Out`) → `std/base`.
+2. **Shared foundation** sunk to low tiers — but note **high fan-in ≠ low tier**. A true
+   foundation module has high fan-in *and* low fan-out. Widely-imported HUBS that also
+   fan out (`Configuration`→XML, `Codecs`→Raster, `Repositories`→XML+WMEvents,
+   `Models`→XML) are mid-tier, not base, and were kept out of `std/base`.
+3. **Small domain families** → `std/drivers` (`Display*`, `Serials`, `Beep`), `std/disk`,
+   `std/fonts` (`OpenType*`), `std/audio` (`OpenAL*`), etc.
+
+Packages are `draft` with a `residual` list until every edge is either resolved by
+re-homing a module (manifest surgery) or by a flagged code edit; `std/crypto` is the
+first non-runtime package to reach `stable`.
 
 ## Manifest format (`a2pkg.json`)
 

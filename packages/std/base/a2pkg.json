@@ -1,0 +1,17 @@
+{
+  "name": "std/base",
+  "tier": 1,
+  "context": "A2",
+  "status": "draft",
+  "description": "Shared cross-cutting primitives recovered from the misc pile: input events, dynamic strings, lightweight class/log helpers, an event framework, 16.16 fixed-point.",
+  "provides": [
+    "Inputs", "DynamicStrings", "TFClasses", "Events", "FP1616", "TFLog"
+  ],
+  "requires": {
+    "std/runtime": "*"
+  },
+  "residual": [
+    "Members were selected as high-fan-in AND low-fan-out (true foundation). High-fan-in HUBS were deliberately excluded because they also fan out into higher tiers and belong there, not in base: Configuration/Localization (pull XML -> std/web), Codecs (pull Raster -> std/gfx, SoundDevices), Repositories/Models (pull XML + WMEvents -> std/web + std/gui), Types (pull Texts -> std/text).",
+    "Candidate additions pending confirmation they stay runtime-only: none outstanding in this batch."
+  ]
+}
