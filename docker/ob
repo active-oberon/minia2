@@ -115,8 +115,10 @@ populate_packages() {
 # The plain compiler needs an import's symbol file; only the LSP resolves source
 # on demand — so this runs for compile/run/build, NOT for lsp.
 build_packages() {
-  local w="$1" srcs
-  srcs="$(cd "$w" && ls *.Mod 2>/dev/null | sed 's|^|./|' | tr '\n' ' ')"
+  local w="$1" srcs="" f
+  # find (unlike a bare *.Mod glob) does not fail under set -e when nothing matches
+  while IFS= read -r f; do srcs="$srcs ./$(basename "$f")"; done \
+    < <(find "$w" -maxdepth 1 -name '*.Mod' 2>/dev/null)
   [ -n "$srcs" ] || return 0
   ( cd "$w" && export PWD="$w"
     "$OBERON" Compiler.Compile "-p=$PLATFORM" \
