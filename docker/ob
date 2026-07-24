@@ -15,6 +15,7 @@
 #   ob get <host/user/repo>[@ver] ...  fetch package(s) into .a2pkg/, pin in
 #                                      a2pkg.lock, add to a2pkg.json, resolve deps
 #   ob lint                            check every import points downward (tier rule)
+#   ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
 #                                      over stdio: diagnostics on open+save; --live
 #                                      also re-checks on every change)
@@ -408,6 +409,44 @@ _imports() {
     | grep -Ev '^$|^SYSTEM$'
 }
 
+# ob doc [File.Mod] [-o outdir] — generate pkg.go.dev-style HTML API docs from
+# module doc-comments, via the Fox compiler's Documentation backend. With a file:
+# just that module. Without: every *.Mod in /work + an index.html. Installed
+# packages are compiled first (fixpoint) so imports resolve for the type-check the
+# doc backend runs.
+cmd_doc() {
+  local src="" outdir="doc"
+  while [ $# -gt 0 ]; do
+    case "$1" in -o|--output) outdir="$2"; shift 2 ;; *) src="$1"; shift ;; esac
+  done
+  [ -d /work ] || die "mount your project/package at /work"
+  mkdir -p "$outdir"; outdir="$(realpath "$outdir")"
+  local w; w="$(make_workdir)"; trap 'rm -rf "$w"' RETURN
+  build_packages "$w"                                   # resolve installed-package imports
+  ln -sf /work/*.Mod "$w"/ 2>/dev/null || true          # project siblings resolvable
+  build_packages "$w"                                   # compile siblings too (fixpoint)
+  local list m
+  if [ -n "$src" ]; then list="$(basename "$src")"; else
+    list="$(cd /work && for f in *.Mod; do [ -e "$f" ] && basename "$f"; done)"
+  fi
+  ( cd "$w" && export PWD="$w"
+    for f in $list; do
+      [ -f "$f" ] || continue
+      m="${f%.Mod}"
+      "$OBERON" Compiler.Compile "-p=$PLATFORM" --symbolFileExtension="$SYM_EXT" \
+        --documentation="$m.html" "./$f" >/dev/null 2>&1 || true
+      [ -f "$m.html" ] && cp "$m.html" "$outdir/"
+    done )
+  { echo "<!doctype html><meta charset=utf-8><title>Package docs</title>"
+    echo "<h1>API documentation</h1><ul>"
+    for h in "$outdir"/*.html; do
+      b="$(basename "$h" .html)"; [ "$b" = index ] && continue
+      echo "  <li><a href=\"$b.html\">$b</a></li>"
+    done
+    echo "</ul>"; } > "$outdir/index.html"
+  echo "ob: wrote docs to $outdir ($(ls "$outdir"/*.html | grep -vc '/index.html$') modules + index.html)"
+}
+
 cmd_version() {
   echo "A2 (Active Oberon) SDK — minia2"
   echo "  runtime : $OBERON"
@@ -424,6 +463,7 @@ case "${1:-}" in
   run)     shift; cmd_run "$@" ;;
   get)     shift; cmd_get "$@" ;;
   lint)    shift; cmd_lint "$@" ;;
+  doc)     shift; cmd_doc "$@" ;;
   repl)    shift; cmd_repl ;;
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
