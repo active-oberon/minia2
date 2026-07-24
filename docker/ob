@@ -135,7 +135,9 @@ build_packages() {
     while [ "$changed" = 1 ]; do
       changed=0
       for m in "${mods[@]}"; do
-        sym="${m%.Mod}$SYM_EXT"
+        # the .SymUu is named after the MODULE, not the file — a platform-prefixed
+        # source like Unix.V4L2.Mod compiles to V4L2.SymUu, so derive from the header
+        sym="$(module_name "$m")$SYM_EXT"
         [ -f "$sym" ] && continue
         if "$OBERON" Compiler.Compile "-p=$PLATFORM" \
              --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
