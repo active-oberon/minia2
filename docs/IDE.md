@@ -25,7 +25,7 @@ docker tag  docker.io/puhachenko/minia2-sdk:latest minia2-sdk
 …or build it from this repository:
 
 ```sh
-git clone https://gitlab.com/a25665725/minia2.git && cd minia2
+git clone https://github.com/active-oberon/minia2.git && cd minia2
 docker build -f docker/Dockerfile -t minia2-sdk .
 ```
 
