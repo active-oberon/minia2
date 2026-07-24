@@ -63,4 +63,4 @@ XML, JSON, and **networking** (TCP/UDP/DNS, HTTP client & server). GUI apps are 
 ## License & source
 
 A2 is **BSD-3-Clause** © ETH Zürich (bundled at `/opt/a2sdk/LICENSE.txt`).
-Source & Dockerfile: https://gitlab.com/a25665725/minia2 (`docker/`).
+Source & Dockerfile: https://github.com/active-oberon/minia2 (`docker/`).
