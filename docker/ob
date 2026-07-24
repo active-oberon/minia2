@@ -115,15 +115,32 @@ populate_packages() {
 # The plain compiler needs an import's symbol file; only the LSP resolves source
 # on demand — so this runs for compile/run/build, NOT for lsp.
 build_packages() {
-  local w="$1" srcs="" f
-  # find (unlike a bare *.Mod glob) does not fail under set -e when nothing matches
-  while IFS= read -r f; do srcs="$srcs ./$(basename "$f")"; done \
-    < <(find "$w" -maxdepth 1 -name '*.Mod' 2>/dev/null)
-  [ -n "$srcs" ] || return 0
+  local w="$1"
+  # Compile the populated package sources SINGLE-FILE to a fixpoint. A single
+  # multi-file `Compiler.Compile A B C` does NOT topologically reorder — a module
+  # listed before its in-batch dependency fails — so we iterate: each round compile
+  # every not-yet-compiled module; a module whose imports (stdlib + already-built
+  # siblings) now resolve produces its .SymUu, unlocking dependents next round.
+  # Repeat until a round builds nothing new. Modules that never compile just stay
+  # unresolved and the user-module compile reports the missing import clearly.
   ( cd "$w" && export PWD="$w"
-    "$OBERON" Compiler.Compile "-p=$PLATFORM" \
-      --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
-      $srcs >/dev/null 2>&1 ) || true
+    local mods=() m sym changed
+    for m in *.Mod; do [ -e "$m" ] && mods+=("$m"); done
+    [ ${#mods[@]} -gt 0 ] || exit 0
+    changed=1
+    while [ "$changed" = 1 ]; do
+      changed=0
+      for m in "${mods[@]}"; do
+        sym="${m%.Mod}$SYM_EXT"
+        [ -f "$sym" ] && continue
+        if "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+             --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+             "./$m" >/dev/null 2>&1 && [ -f "$sym" ]; then
+          changed=1
+        fi
+      done
+    done
+  ) || true
 }
 
 # List package manifests under a root, ordered by ascending tier (0 first).
