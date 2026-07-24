@@ -12,8 +12,11 @@
 #                                      -> a Windows PE64 .exe
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
-#   ob get <host/user/repo>[@ver] ...  fetch package(s) into .a2pkg/, pin in
-#                                      a2pkg.lock, add to a2pkg.json, resolve deps
+#   ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin in
+#                                      a2pkg.lock, add to a2pkg.json, resolve deps.
+#                                      <pkg> = git repo (gitlab.com/user/repo) OR a
+#                                      registry name (community/matrix) resolved via
+#                                      $A2_REGISTRY (git URL or path to the registry).
 #   ob lint                            check every import points downward (tier rule)
 #   ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
@@ -329,9 +332,21 @@ cmd_get() {
   echo "ob: updated $PROJ_MANIFEST + $PROJ_LOCK ; deps vendored in $VENDOR/"
 }
 
+# Dispatch a dependency spec. A first path segment that looks like a host
+# (contains a dot) is a git repo: `gitlab.com/user/repo`. A bare name is a
+# registry package resolved via A2_REGISTRY + index.json: `community/matrix`.
 _get_one() {
-  local spec="$1" repo ver cache sha name dep
+  local spec="$1" repo ver first
   case "$spec" in *@*) ver="${spec##*@}"; repo="${spec%@*}" ;; *) ver=""; repo="$spec" ;; esac
+  first="${repo%%/*}"
+  case "$first" in
+    *.*) _get_git "$repo" "$ver" ;;
+    *)   _get_registry "$repo" "$ver" ;;
+  esac
+}
+
+_get_git() {
+  local repo="$1" ver="$2" cache sha name dep
   cache="/work/$VENDOR/$repo"
   # Shallow, VCS-free vendoring: clone only the requested tag/branch at depth 1,
   # capture the exact commit for the lock, then drop .git so the cache holds just
@@ -351,13 +366,49 @@ _get_one() {
   name="$(jq -r '.name' "$cache/$PROJ_MANIFEST")"
   _record_dep "$repo" "$ver" "$sha"
   echo "ob: got $name  ($repo @ $ver, ${sha:0:12})"
-  # transitively fetch external (non-std) requirements
+  _get_transitive "$cache"
+}
+
+# Locate the registry once (a git URL cloned shallow, or a local dir path used
+# in place) and cache the checkout for the rest of this ob invocation.
+_ensure_registry() {
+  [ -n "${A2_REGISTRY:-}" ] || die "ob get by name needs A2_REGISTRY (git URL or path to the registry)"
+  if [ -z "${_REGDIR:-}" ]; then
+    if [ -d "$A2_REGISTRY" ]; then _REGDIR="$A2_REGISTRY"
+    else _REGDIR="/work/$VENDOR/.registry"; rm -rf "$_REGDIR"
+         git clone -q --depth 1 "$A2_REGISTRY" "$_REGDIR" || die "registry clone failed: $A2_REGISTRY"; fi
+    [ -f "$_REGDIR/index.json" ] || die "registry has no index.json: $A2_REGISTRY"
+  fi
+  printf '%s' "$_REGDIR"
+}
+
+_get_registry() {
+  local name="$1" ver="$2" reg path status dest v dep
+  reg="$(_ensure_registry)"
+  path="$(jq -r --arg n "$name" '.packages[$n].path // empty' "$reg/index.json")"
+  status="$(jq -r --arg n "$name" '.packages[$n].status // "unknown"' "$reg/index.json")"
+  [ -n "$path" ] || die "package not in registry: $name (registry: $A2_REGISTRY)"
+  [ -d "$reg/$path" ] || die "registry package $name is '$status' — no installable source at $path yet"
+  dest="/work/$VENDOR/$name"
+  rm -rf "$dest"; mkdir -p "$(dirname "$dest")"
+  cp -r "$reg/$path/." "$dest/"
+  v="$(jq -r '.version // "0.0.0"' "$dest/$PROJ_MANIFEST" 2>/dev/null || echo 0.0.0)"
+  [ -n "$ver" ] && v="$ver"
+  _record_dep "$name" "$v" "registry"
+  echo "ob: got $name  (registry @ $v)"
+  _get_transitive "$dest"
+}
+
+# Recurse into a just-installed package's external (non-std) requirements.
+_get_transitive() {
+  local pkgdir="$1" dep
+  [ -f "$pkgdir/$PROJ_MANIFEST" ] || return 0
   while IFS= read -r dep; do
     [ -n "$dep" ] || continue
     case "$dep" in std/*) continue ;; esac
     [ -d "/work/$VENDOR/$dep" ] && continue
     _get_one "$dep"
-  done < <(jq -r '.requires // {} | keys[]' "$cache/$PROJ_MANIFEST")
+  done < <(jq -r '.requires // {} | keys[]' "$pkgdir/$PROJ_MANIFEST" 2>/dev/null)
 }
 
 _record_dep() {
