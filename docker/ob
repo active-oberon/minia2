@@ -482,13 +482,18 @@ cmd_doc() {
   if [ -n "$src" ]; then list="$(basename "$src")"; else
     list="$(cd /work && for f in *.Mod; do [ -e "$f" ] && basename "$f"; done)"
   fi
-  ( cd "$w" && export PWD="$w"
+  local timo="${A2_DOC_TIMEOUT:-30}"   # per-module guard: the Documentation backend
+  ( cd "$w" && export PWD="$w"          # hangs on some modules — skip, don't stall the run
     for f in $list; do
       [ -f "$f" ] || continue
-      m="${f%.Mod}"
-      "$OBERON" Compiler.Compile "-p=$PLATFORM" --symbolFileExtension="$SYM_EXT" \
-        --documentation="$m.html" "./$f" >/dev/null 2>&1 || true
-      [ -f "$m.html" ] && cp "$m.html" "$outdir/"
+      m="$(module_name "$f")"           # name the page after the MODULE, not the file
+      if timeout -k 5 "$timo" "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+           --symbolFileExtension="$SYM_EXT" --documentation="$m.html" "./$f" \
+           >/dev/null 2>&1 && [ -f "$m.html" ]; then
+        cp "$m.html" "$outdir/"
+      else
+        echo "ob: doc skipped $m (timeout ${timo}s or error)" >&2
+      fi
     done )
   { echo "<!doctype html><meta charset=utf-8><title>Package docs</title>"
     echo "<h1>API documentation</h1><ul>"
