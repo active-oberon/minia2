@@ -18,6 +18,13 @@
 #                                      registry name (community/matrix) resolved via
 #                                      $A2_REGISTRY (git URL or path to the registry).
 #   ob lint                            check every import points downward (tier rule)
+#   ob test [File.Test ...] [-v]       run test files (default: every *.Test here).
+#                                      Each `positive:`/`negative:` case is compiled
+#                                      and executed in its own process; exit 1 if any
+#                                      case does not match its expected outcome.
+#                                      Cases listed in a2test-expected.txt count as
+#                                      known failures (--expect FILE to point
+#                                      elsewhere, --write-expected FILE to regenerate).
 #   ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
 #                                      over stdio: diagnostics on open+save; --live
@@ -43,6 +50,8 @@ BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
 BOOT_LIST_WIN="$SDK/boot-modules-win64.txt"
 OBJ_EXT="GofUu"
 SYM_EXT=".SymUu"
+
+EXPECT_FILE="a2test-expected.txt"        # baseline of known-failing test cases (ob test)
 
 PKGDIR="${A2_PACKAGES:-$SDK/packages}"   # shipped std package manifests (std/*/a2pkg.json)
 VENDOR=".a2pkg"                          # per-project package cache (under /work)
@@ -505,6 +514,202 @@ cmd_doc() {
   echo "ob: wrote docs to $outdir ($(ls "$outdir"/*.html | grep -vc '/index.html$') modules + index.html)"
 }
 
+# ob test [-v] [File.Test ...] — run A2 test files.
+#
+# The test-file format is the one the in-tree tests/ use: `#` comment lines, then a
+# sequence of cases introduced by `positive: <name>` or `negative: <name>`, each
+# followed by the Oberon source of that case (one or more MODULEs). A positive case
+# must compile and run without a trap; a negative case must fail.
+#
+# Deliberately NOT built on FoxTest/TestSuite: their import closure reaches
+# Texts -> TextUtilities -> Codecs -> Displays/Raster/Plugins, i.e. the GUI stack this
+# image excludes on purpose. Instead each case runs in a FRESH oberon process — which
+# also means a trapping case cannot poison the next one, and no System.Free bookkeeping
+# is needed. The A2 runtime always exits 0, so the verdict comes from the output.
+cmd_test() {
+  local verbose=0 files=() a expect="$EXPECT_FILE" write=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -v|--verbose)      verbose=1; shift ;;
+      --expect)          expect="$2"; shift 2 ;;
+      --write-expected)  write="$2"; shift 2 ;;
+      -*)                die "unknown option: $1" ;;
+      *)                 files+=("$1"); shift ;;
+    esac
+  done
+  if [ ${#files[@]} -eq 0 ]; then
+    for a in *.Test; do [ -e "$a" ] && files+=("$a"); done
+    [ ${#files[@]} -gt 0 ] || die "no *.Test files here (usage: ob test [File.Test ...])"
+  fi
+  for a in "${files[@]}"; do [ -f "$a" ] || die "no such file: $a"; done
+
+  # Baseline of cases known to fail in this tree: `<TestFile><TAB><kind>: <name>`,
+  # `#` comments ignored. A listed case that fails is reported `known` and does not
+  # break the run; one that PASSES is reported `FIXED` and does, so the file cannot
+  # quietly rot. Regenerate with --write-expected.
+  declare -gA _T_EXPECT=()
+  if [ -n "$expect" ] && [ -f "$expect" ]; then
+    while IFS= read -r a; do
+      case "$a" in ''|\#*) continue ;; esac
+      _T_EXPECT["$a"]=1
+    done < "$expect"
+    echo "ob test: baseline $expect (${#_T_EXPECT[@]} known failure(s))"
+  fi
+  declare -ga _T_NEWFAIL=()
+
+  local w; w="$(make_workdir)"
+  trap 'rm -rf "$w"' RETURN
+  build_packages "$w"                                    # installed packages resolvable
+  ln -sf "$(pwd)"/*.Mod "$w"/ 2>/dev/null || true        # project modules importable
+  build_packages "$w"                                    # ...and compiled (fixpoint)
+
+  local total=0 passed=0 failed=0 known=0 fixed=0 file
+  for file in "${files[@]}"; do
+    echo "=== $(basename "$file")"
+    _run_test_file "$w" "$(realpath "$file")" "$verbose"
+    total=$((total + _T_TOTAL)); passed=$((passed + _T_PASS)); failed=$((failed + _T_FAIL))
+    known=$((known + _T_KNOWN)); fixed=$((fixed + _T_FIXED))
+  done
+  echo
+  echo "ob test: $total case(s), $passed passed, $failed failed, $known known-failing, $fixed fixed"
+
+  if [ -n "$write" ]; then
+    { echo "# Cases known to fail in this tree — regenerate with: ob test --write-expected $(basename "$write")"
+      echo "# Format: <TestFile><TAB><kind>: <case name>.  A listed case that PASSES is reported"
+      echo "# as FIXED and fails the run, so this file cannot silently go stale."
+      printf '%s\n' "${_T_NEWFAIL[@]:-}" | grep -v '^$' | sort || true
+    } > "$write"
+    echo "ob test: wrote baseline $write ($(grep -vc '^#' "$write") entr(ies))"
+    return 0
+  fi
+
+  if [ "$fixed" -gt 0 ]; then
+    echo "ob test: $fixed case(s) marked known-failing now pass — drop them from the baseline"
+  fi
+  { [ "$failed" -eq 0 ] && [ "$fixed" -eq 0 ]; } || return 1
+}
+
+# Split one test file into cases and run each. Sets _T_TOTAL/_T_PASS/_T_FAIL.
+#
+# A test file may carry its own harness settings on a `# options` line, e.g.
+#   # options --mayTrap --prolog="Compiler.Compile TesterInput.txt" \
+#             --command="System.Free Test B A;System.Load Test"
+# Two of them matter here: extra compiler flags inside the prolog, and whether the
+# command runs the module at all (one file is a compile-only suite). A prolog asking
+# for a different target (-p=Win32 …) cannot work in this image — its symbol files are
+# Unix64 only — so such a file is reported as skipped instead of failing every case.
+_run_test_file() {
+  local w="$1" file="$2" verbose="$3" opts=""
+  _T_TOTAL=0; _T_PASS=0; _T_FAIL=0; _T_KNOWN=0; _T_FIXED=0
+  _T_CFLAGS=""; _T_RUN=1; _T_FILE="$(basename "$file")"
+  opts="$(grep -m1 -a '^#[[:space:]]*options' "$file" || true)"
+  if [ -n "$opts" ]; then
+    _T_CFLAGS="$(printf '%s' "$opts" | sed -nE 's/.*Compiler\.Compile[[:space:]]+(.*)TesterInput\.txt.*/\1/p')"
+    case "$_T_CFLAGS" in
+      *-p=*) echo "  SKIP  whole file: needs a non-default target ($_T_CFLAGS) — this image ships Unix64 symbols only"
+             return 0 ;;
+    esac
+    # no System.Load in the command => the suite only checks that things compile
+    printf '%s' "$opts" | grep -q 'System\.Load' || _T_RUN=0
+  fi
+  local kind="" name="" body="" line
+  # a trailing sentinel flushes the last case without duplicating the run below
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      positive:*|negative:*|__EOF__)
+        if [ -n "$kind" ]; then
+          _run_test_case "$w" "$kind" "$name" "$body" "$verbose"
+          _T_TOTAL=$((_T_TOTAL+1))
+        fi
+        case "$line" in
+          __EOF__)   kind="" ;;
+          positive:*) kind=positive; name="${line#positive:}" ;;
+          *)          kind=negative; name="${line#negative:}" ;;
+        esac
+        name="$(printf '%s' "$name" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        body="" ;;
+      \#*) : ;;                     # comments, incl. the FoxTest `# options` line
+      *)   [ -n "$kind" ] && body="$body$line"$'\n' ;;
+    esac
+  # The leading \n matters: 9 of the in-tree .Test files end WITHOUT a newline, so a
+  # bare sentinel would glue itself onto the last source line and the final case would
+  # never be flushed.
+  done < <(cat "$file"; printf '\n__EOF__\n')
+}
+
+# Compile + execute a single case in a fresh process. A case body may declare several
+# modules; the one to start is `Test` by convention, else the last one declared.
+_run_test_case() {
+  local w="$1" kind="$2" name="$3" body="$4" verbose="$5"
+  local out rc=0 entry mods m
+  # `|| true`: a case may hold no MODULE at all (Files.Test is written in a different,
+  # rider-oriented DSL driven by TFCheck) — that is a skip, not a driver failure.
+  mods="$(printf '%s' "$body" | grep -aoE '^[[:space:]]*MODULE[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
+          | awk '{print $2}' || true)"
+  ( cd "$w" && export PWD="$w"
+    # Drop only THIS case's own artifacts, so a compile failure cannot be masked by a
+    # stale object. Earlier cases' modules are kept on purpose: the in-tree test files
+    # build up shared helper modules in one case and import them in later ones.
+    for m in $mods; do
+      [ -L "$m.$OBJ_EXT" ] || rm -f "$m.$OBJ_EXT"
+      [ -L "$m$SYM_EXT" ]  || rm -f "$m$SYM_EXT"
+    done
+    printf '%s' "$body" > TesterInput.txt
+  )
+  # start `Test` when the case declares it (the convention), else the last module.
+  # NB: two readers of one pipe would race for stdin — compute them separately.
+  entry="$(printf '%s\n' "$mods" | grep -xF Test | head -1 || true)"
+  [ -n "$entry" ] || entry="$(printf '%s\n' "$mods" | { grep -v '^$' || true; } | tail -1)"
+  [ -n "$entry" ] || { printf '  SKIP  %s (no MODULE in case)\n' "$name"; _T_TOTAL=$((_T_TOTAL-1)); return 0; }
+
+  # stdin is closed for both runs: the A2 shell would otherwise swallow the caller's
+  # input (the test-file reader upstream reads from the same stdin).
+  out="$( cd "$w" && export PWD="$w"
+          "$OBERON" Compiler.Compile "-p=$PLATFORM" \
+            --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+            ${_T_CFLAGS:-} ./TesterInput.txt </dev/null 2>&1 \
+          && { [ "${_T_RUN:-1}" = 0 ] \
+               || "$OBERON" do "System.Load $entry ~" </dev/null 2>&1; } )" || rc=$?
+  # The runtime exits 0 regardless, so the verdict is read off the output. A bare
+  # `Trap …` line is NOT a failure: tests may trap on purpose (Oberon.Execution's
+  # FINALLY cases call HALT(100) and expect the handler to unwind and the body to
+  # finish) — the runtime still prints `<Module> loaded.` afterwards. A real failure
+  # says `Could not load module …` / `not successful`, or fails to compile.
+  local bad=0
+  if printf '%s' "$out" | grep -qiE '(^|[^A-Za-z])error:|not successful|Could not load module'; then bad=1; fi
+  # a run must also confirm it got there
+  if [ "${_T_RUN:-1}" = 1 ] && ! printf '%s' "$out" | grep -qF "$entry loaded."; then bad=1; fi
+  if [ "$rc" -ne 0 ]; then bad=1; fi
+
+  local ok=0
+  if [ "$kind" = positive ] && [ "$bad" -eq 0 ]; then ok=1; fi
+  if [ "$kind" = negative ] && [ "$bad" -eq 1 ]; then ok=1; fi
+
+  # cross-check against the known-failing baseline
+  local key expected=0
+  key="$(printf '%s\t%s: %s' "$_T_FILE" "$kind" "$name")"
+  [ -n "${_T_EXPECT[$key]:-}" ] && expected=1
+
+  if [ "$ok" -eq 1 ] && [ "$expected" -eq 0 ]; then
+    _T_PASS=$((_T_PASS+1))
+    printf '  ok    %s: %s\n' "$kind" "$name"
+    if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /'; fi
+  elif [ "$ok" -eq 1 ]; then
+    _T_FIXED=$((_T_FIXED+1))
+    printf '  FIXED %s: %s  (passes now — remove it from the baseline)\n' "$kind" "$name"
+  elif [ "$expected" -eq 1 ]; then
+    _T_KNOWN=$((_T_KNOWN+1))
+    printf '  known %s: %s\n' "$kind" "$name"
+    if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /' | head -20; fi
+  else
+    _T_FAIL=$((_T_FAIL+1))
+    _T_NEWFAIL+=("$key")
+    printf '  FAIL  %s: %s\n' "$kind" "$name"
+    printf '%s\n' "$out" | sed 's/^/        /' | head -20
+  fi
+  return 0
+}
+
 cmd_version() {
   echo "A2 (Active Oberon) SDK — minia2"
   echo "  runtime : $OBERON"
@@ -521,11 +726,12 @@ case "${1:-}" in
   run)     shift; cmd_run "$@" ;;
   get)     shift; cmd_get "$@" ;;
   lint)    shift; cmd_lint "$@" ;;
+  test)    shift; cmd_test "$@" ;;
   doc)     shift; cmd_doc "$@" ;;
   repl)    shift; cmd_repl ;;
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac

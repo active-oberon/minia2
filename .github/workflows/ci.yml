@@ -20,5 +20,17 @@ jobs:
         run: |
           task Linux64
           task Win64
-      - name: Test
+      - name: Test (compiler suites via task)
         run: task test
+      - name: Test (all tests/ suites via ob test)
+        # `task test` only drives the two Oberon.Compilation/Execution suites; this runs
+        # every tests/*.Test file through the SDK's `ob test`. No Docker image needed —
+        # `ob` only wants an SDK layout ($A2SDK/oberon + $A2SDK/lib), which the freshly
+        # built target/Linux64 tree provides. Cases in tests/a2test-expected.txt are
+        # known-failing and do not break the build; one of them starting to pass does.
+        run: |
+          mkdir -p "$RUNNER_TEMP/a2sdk/lib"
+          ln -s "$PWD/target/Linux64/oberon" "$RUNNER_TEMP/a2sdk/oberon"
+          ln -s "$PWD"/target/Linux64/bin/*.SymUu "$PWD"/target/Linux64/bin/*.GofUu \
+                "$RUNNER_TEMP/a2sdk/lib/"
+          cd tests && A2SDK="$RUNNER_TEMP/a2sdk" bash ../docker/ob test
