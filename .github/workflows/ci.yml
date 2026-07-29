@@ -33,4 +33,12 @@ jobs:
           ln -s "$PWD/target/Linux64/oberon" "$RUNNER_TEMP/a2sdk/oberon"
           ln -s "$PWD"/target/Linux64/bin/*.SymUu "$PWD"/target/Linux64/bin/*.GofUu \
                 "$RUNNER_TEMP/a2sdk/lib/"
-          cd tests && A2SDK="$RUNNER_TEMP/a2sdk" bash ../docker/ob test
+          cd tests && A2SDK="$RUNNER_TEMP/a2sdk" bash ../docker/ob test \
+            --report "$RUNNER_TEMP/ob-test-report.json"
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ob-test-report
+          path: ${{ runner.temp }}/ob-test-report.json
+          if-no-files-found: warn
