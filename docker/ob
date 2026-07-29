@@ -14,7 +14,7 @@
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
 #   ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin in
 #                                      a2pkg.lock, add to a2pkg.json, resolve deps.
-#                                      <pkg> = git repo (gitlab.com/user/repo) OR a
+#                                      <pkg> = git repo (github.com/user/repo) OR a
 #                                      registry name (community/matrix) resolved via
 #                                      $A2_REGISTRY (git URL or path to the registry).
 #   ob lint                            check every import points downward (tier rule)
@@ -335,7 +335,7 @@ cmd_get() {
 }
 
 # Dispatch a dependency spec. A first path segment that looks like a host
-# (contains a dot) is a git repo: `gitlab.com/user/repo`. A bare name is a
+# (contains a dot) is a git repo: `github.com/user/repo`. A bare name is a
 # registry package resolved via A2_REGISTRY + index.json: `community/matrix`.
 _get_one() {
   local spec="$1" repo ver first
