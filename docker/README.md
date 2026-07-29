@@ -50,6 +50,9 @@ docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 docker run --rm -v "$PWD:/work" minia2-sdk test
 docker run --rm -v "$PWD:/work" minia2-sdk test CSV.Test -v
 
+# iterate on one case: -r matches part of its name (case-insensitive)
+docker run --rm -v "$PWD:/work" minia2-sdk test Utf8Strings.Execution.Test -r overlong -v
+
 # record the cases that fail today, so only NEW failures break the build
 docker run --rm -v "$PWD:/work" minia2-sdk test --write-expected a2test-expected.txt
 
