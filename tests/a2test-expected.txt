@@ -10,8 +10,50 @@
 # The 15 UTF entries that used to sit here are gone: UTF8Strings and the three
 # Streams.Reader decoders now follow RFC 3629.
 #
-# --- math arrays: not yet triaged --------------------------------------------------
+# --- the language has no procedure overloading -------------------------------------
+# The case declares Exp twice, once for COMPLEX32 and once for COMPLEX64, and expects
+# both to stand. Only operators can be overloaded in Active Oberon, so "Multiply
+# defined identifier" is the right answer; the case asks for a feature that does not
+# exist.
 MathArrays.Compilation.Test	positive: use of COMPLEX32 and COMPLEX64
+#
+# --- value parameters of non-static math arrays are forbidden on purpose -----------
+# FoxSemanticChecker.Mod:6459 rejects a value (non-VAR) parameter of any non-static
+# math array form — open [*], tensor [?] — because passing a descriptor-based array by
+# value would mean the callee allocates and copies it. The case declares exactly those
+# (ProcValO1/O2/O3/OS/T) and expects them to compile, so honouring it means
+# implementing copy semantics, not fixing a typo.
 MathArrays.Compilation.Test	positive: variables and parameters of math array type
+#
+# --- stale 32-bit assumptions ------------------------------------------------------
+# The case keeps SYSTEM.ADR results in SIGNED32 variables and returns an ADDRESS from a
+# SIGNED32 function. That was fine when ADDRESS was 32 bits; on the 64-bit targets this
+# tree builds, "incompatible assignment" and "return type not compatible" are correct.
 MathArrays.Execution.Test	positive: correct use of ADDRESS OF and SYSTEM.VAL for tensors and open math arrays
+#
+# --- REAL COMPILER BUG: math array literal comparison, mixed element sizes ---------
+# ASSERT(a = [[0,1,2],[10,11,12]]) on a local ARRAY [*,*] OF SIGNED32 evaluates FALSE
+# as soon as the SAME MODULE also declares a procedure comparing a SIGNED16 math array
+# against a literal — even when that procedure is never called. Reproduced in isolation
+# (no test harness, no Driver):
+#
+#   MODULE U; IMPORT Trace;
+#     PROCEDURE L16;            (* never called, yet it decides the outcome *)
+#     VAR a: ARRAY [*,*] OF SIGNED16;
+#     BEGIN NEW(a,2,3); a[0,0]:=0; a[0,1]:=1; a[0,2]:=2; a[1,0]:=10; a[1,1]:=11; a[1,2]:=12;
+#       ASSERT(a = [[0,1,2],[10,11,12]])
+#     END L16;
+#     PROCEDURE Main;
+#     VAR a: ARRAY [*,*] OF SIGNED32;
+#     BEGIN NEW(a,2,3); a[0,0]:=0; a[0,1]:=1; a[0,2]:=2; a[1,0]:=10; a[1,1]:=11; a[1,2]:=12;
+#       ASSERT(a = [[0,1,2],[10,11,12]]); Trace.StringLn("ok")
+#     END Main;
+#   BEGIN Main END U.
+#
+# Drop L16 and Main passes; make L16 use SIGNED8 or SIGNED32 and Main passes; declaration
+# order does not matter. So the literal appears to be pooled once per module and the
+# SIGNED32 comparison reads it with the wrong element size. NOT a test defect.
+#
+# (When run with -r in isolation this case reports "could not import Driver" instead: the
+# helper module is built by the earlier "test driver" case, so filtering skips it.)
 MathArrays.Execution.Test	positive: driver tests (fill and compare arrays)
