@@ -51,6 +51,9 @@ TYPE
 		PROCEDURE At* (i: SIZE): Value;
 		VAR it: Item;
 		BEGIN
+			(* a negative index would otherwise fall straight through the loop below and
+				hand back the first element *)
+			IF (i < 0) OR (i >= length) THEN RETURN NIL END;
 			it := items;
 			WHILE (it # NIL) & (i > 0) DO it := it.next; DEC(i) END;
 			IF it = NIL THEN RETURN NIL ELSE RETURN it.value END
