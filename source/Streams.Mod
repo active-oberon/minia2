@@ -1448,10 +1448,16 @@ TYPE
 				SkipBytes( 1 );
 				ucs := Char32( b0 );
 				RETURN TRUE
-			ELSIF ( b0 >= 0xC2 ) & ( b0 < 0xE0 ) THEN
+			ELSIF ( b0 < 0xC2 ) THEN
+				(* 080H..0BFH is a continuation byte, and 0C0H/0C1H could only ever start an
+					overlong form of an ASCII character: none of them begins a character. Reject
+					here, before peeking -- otherwise a lone 080H fell into the three-byte branch
+					below and a short read reported Incomplete on a stream that is perfectly fine. *)
+				RETURN FALSE
+			ELSIF ( b0 < 0xE0 ) THEN
 				IF ~PeekBytes( 2, utf ) THEN IF res = Ok THEN res := Incomplete END; RETURN FALSE END;
 				b1 := ORD32( utf[1] );
-				IF SET32( b1 ) * SET32( 0xC0 ) # SET32 ( 0x80 ) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;
+				IF SET32( b1 ) * SET32( 0xC0 ) # SET32 ( 0x80 ) THEN RETURN FALSE END;
 				temp := LSH( b0 MOD 0x20, 6 ) + ( b1 MOD 0x40 );
 				IF temp >= 0x80 THEN
 					SkipBytes( 2 );
@@ -1462,9 +1468,9 @@ TYPE
 				IF ~PeekBytes( 3, utf ) THEN IF res = Ok THEN res := Incomplete END; RETURN FALSE END;
 				b1 := ORD32( utf[1] ); b2 := ORD32( utf[2] );
 				IF ( SET32( b1 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) OR
-						( SET32( b2 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;
-				IF ( b0 = 0xE0 ) & ( b1 < 0xA0 ) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;  (* overlong *)
-				IF ( b0 = 0xED ) & ( b1 > 0x9F ) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;  (* surrogate *)
+						( SET32( b2 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) THEN RETURN FALSE END;
+				IF ( b0 = 0xE0 ) & ( b1 < 0xA0 ) THEN RETURN FALSE END;  (* overlong *)
+				IF ( b0 = 0xED ) & ( b1 > 0x9F ) THEN RETURN FALSE END;  (* surrogate *)
 				temp := LSH( b0 MOD 0x10, 12 ) + LSH( b1 MOD 0x40, 6 ) + ( b2 MOD 0x40 );
 				IF temp >= 0x800 THEN
 					SkipBytes( 3 );
@@ -1476,9 +1482,9 @@ TYPE
 				b1 := ORD32( utf[1] ); b2 := ORD32( utf[2] ); b3 := ORD32( utf[3] );
 				IF ( SET32( b1 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) OR
 						( SET32( b2 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) OR
-						( SET32( b3 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;
-				IF ( b0 = 0xF0 ) & ( b1 < 0x90 ) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;  (* overlong *)
-				IF ( b0 = 0xF4 ) & ( b1 > 0x8F ) THEN IF res = Ok THEN res := FormatError END; RETURN FALSE END;  (* > U+10FFFF *)
+						( SET32( b3 ) * SET32( 0xC0 ) # SET32 ( 0x80 )) THEN RETURN FALSE END;
+				IF ( b0 = 0xF0 ) & ( b1 < 0x90 ) THEN RETURN FALSE END;  (* overlong *)
+				IF ( b0 = 0xF4 ) & ( b1 > 0x8F ) THEN RETURN FALSE END;  (* > U+10FFFF *)
 				temp := LSH( b0 MOD 0x08, 18 ) + LSH( b1 MOD 0x40, 12 ) + LSH( b2 MOD 0x40, 6 ) + ( b3 MOD 0x40 );
 				IF ( temp >= 0x10000 ) & ( temp <= 0x10FFFF ) THEN
 					SkipBytes( 4 );
@@ -1487,7 +1493,8 @@ TYPE
 				END;
 			END;
 
-			IF res = Ok THEN res := FormatError END;
+			(* malformed input is not a stream error: nothing has been consumed, so the
+				caller can resynchronise and keep reading. res stays for real I/O trouble. *)
 			RETURN FALSE
 		END UTF8Char;
 
@@ -1528,7 +1535,8 @@ TYPE
 				END;
 			END;
 
-			IF res = Ok THEN res := FormatError END;
+			(* malformed input is not a stream error: nothing has been consumed, so the
+				caller can resynchronise and keep reading. res stays for real I/O trouble. *)
 			RETURN FALSE; (* lone surrogate *)
 		END UTF16Char;
 
@@ -1555,7 +1563,8 @@ TYPE
 				RETURN TRUE;
 			END;
 
-			IF res = Ok THEN res := FormatError END;
+			(* malformed input is not a stream error: nothing has been consumed, so the
+				caller can resynchronise and keep reading. res stays for real I/O trouble. *)
 			RETURN FALSE;
 		END UTF32Char;
 

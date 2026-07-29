@@ -9,6 +9,12 @@ IMPORT Strings;
 CONST
 	CmpLess* = -1; CmpEqual* = 0; CmpGreater* = 1;	 CmpError* = 2; (** results for Compare. *)
 
+	(** UTF-8 as restricted by RFC 3629: at most four bytes, no code point above
+		MaxCodePoint, and no UTF-16 surrogate half. The original encoding allowed up to
+		six bytes and 31 bits; those forms are rejected here (see the CodeLength table). *)
+	MaxCodePoint* = 10FFFFH;
+	SurrogateLow* = 0D800H; SurrogateHigh* = 0DFFFH;
+
 TYPE
 	Char32* = UNSIGNED32; (*!Streams.Char32*)
 
@@ -24,6 +30,11 @@ PROCEDURE EncodeChar*(ucs: Char32; VAR str: ARRAY OF CHAR; VAR i: SIZE): BOOLEAN
 VAR len, j: SIZE; byte, mask, max: SIGNED16;
 	buf: ARRAY 6 OF CHAR;
 BEGIN
+	(* RFC 3629: a surrogate half or a value above U+10FFFF is not a character and has
+		no UTF-8 encoding — refuse instead of emitting a sequence no decoder may accept. *)
+	IF (ucs > MaxCodePoint) OR ((ucs >= SurrogateLow) & (ucs <= SurrogateHigh)) THEN
+		RETURN FALSE
+	END;
 	len := LEN(str);
 
 	IF (ucs <= 7FH) THEN
@@ -68,13 +79,17 @@ BEGIN
 				2X: ucs := ch MOD 20H; len := 2; min := 80H
 				|3X: ucs := ch MOD 10H; len := 3; min := 800H
 				|4X: ucs := ch MOD 8; len := 4; min := 10000H
-				|5X: ucs := ch MOD 4; len := 5; min := 200000H
-				|6X: ucs := ch MOD 2; len := 6; min := 4000000H
-				ELSE RETURN FALSE	(* non-starting character *)
+				ELSE RETURN FALSE	(* non-starting character; i is left on it *)
 			END;
+			(* no 5X/6X: RFC 3629 caps the encoding at four bytes, and the table marks the
+				old five- and six-byte lead bytes as non-starting *)
 			LOOP
 				INC(i); DEC(len);
-				IF len = 0 THEN RETURN ucs >= min END;
+				IF len = 0 THEN
+					(* well-formed only if minimally encoded, in range, and not a surrogate *)
+					RETURN (ucs >= min) & (ucs <= MaxCodePoint)
+					     & ((ucs < SurrogateLow) OR (ucs > SurrogateHigh))
+				END;
 				IF i = LEN(str) THEN EXIT END;
 				ch := LONG(ORD(str[i]));
 				IF ASH(ch, -6) # 2 THEN EXIT END;
@@ -509,16 +524,18 @@ BEGIN
 	FOR init := 0 TO 7FH DO CodeLength[init] := 1X END;
 		(* ???? ????-???? ????  10xxxxxx *)
 	FOR init := 80H TO 0BFH DO CodeLength[init] := 7X END;	(* non-starting byte *)
+		(* 0C0H/0C1H could only ever start an overlong form of an ASCII character *)
+	CodeLength[0C0H] := 7X; CodeLength[0C1H] := 7X;
 		(* 0000 0080-0000 07FF  110xxxxx 10xxxxxx *)
-	FOR init := 0C0H TO 0DFH DO CodeLength[init] := 2X END;
+	FOR init := 0C2H TO 0DFH DO CodeLength[init] := 2X END;
 		(* 0000 0800-0000 FFFF  1110xxxx 10xxxxxx 10xxxxxx *)
 	FOR init := 0E0H TO 0EFH DO CodeLength[init] := 3X END;
-		(* 0001 0000-001F FFFF  11110xxx 10xxxxxx 10xxxxxx 10xxxxxx *)
-	FOR init := 0F0H TO 0F7H DO CodeLength[init] := 4X END;
-		(* 0020 0000-03FF FFFF  111110xx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx *)
-	FOR init := 0F8H TO 0FBH DO CodeLength[init] := 5X END;
-		(* 0400 0000-7FFF FFFF  1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx *)
-	FOR init := 0FCH TO 0FDH DO CodeLength[init] := 6X END
+		(* 0001 0000-0010 FFFF  11110xxx 10xxxxxx 10xxxxxx 10xxxxxx *)
+	FOR init := 0F0H TO 0F4H DO CodeLength[init] := 4X END;
+		(* Everything above is not UTF-8 under RFC 3629: 0F5H..0F7H would exceed
+			U+10FFFF, and 0F8H..0FFH are the five- and six-byte lead bytes of the
+			original, wider encoding plus the two bytes it never used at all. *)
+	FOR init := 0F5H TO 0FFH DO CodeLength[init] := 7X END
 END UTF8Strings.
 
 (**
