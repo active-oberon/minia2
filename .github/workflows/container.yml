@@ -12,11 +12,20 @@ jobs:
         with:
           lfs: true
       - uses: docker/setup-buildx-action@v3
+      # Docker Hub's auth endpoint (auth.docker.io, behind Cloudflare) resets
+      # connections often enough to fail a run outright, so both the login and
+      # the build+push retry with backoff instead of using docker/login-action.
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          for i in 1 2 3; do
+            if echo "$HUB_TOKEN" | docker login -u "$HUB_USER" --password-stdin docker.io; then exit 0; fi
+            echo "::warning::docker login attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
       - name: Compute tags
         id: tags
         run: |
@@ -26,10 +35,20 @@ jobs:
           else
             echo "tags=$HUB:latest" >> "$GITHUB_OUTPUT"
           fi
+      # Plain buildx instead of docker/build-push-action so the whole build+push
+      # can be retried in-shell. --provenance=false keeps each tag a single plain
+      # image manifest (no attestation index), matching the pre-Actions builds.
       - name: Build + push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -u
+          TAG_ARGS=""
+          IFS=','; for t in $TAGS; do TAG_ARGS="$TAG_ARGS -t $t"; done; unset IFS
+          for i in 1 2 3; do
+            if docker buildx build --push --provenance=false \
+                 -f docker/Dockerfile $TAG_ARGS .; then exit 0; fi
+            echo "::warning::build+push attempt $i failed; retrying in $((i * 30))s"
+            sleep $((i * 30))
+          done
+          exit 1
