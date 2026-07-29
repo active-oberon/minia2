@@ -1,0 +1,27 @@
+# Cases known to fail in this tree — regenerate with: ob test --write-expected a2test-expected.txt
+# Format: <TestFile><TAB><kind>: <case name>.  A listed case that PASSES is reported
+# as FIXED and fails the run, so this file cannot silently go stale.
+#
+# Verified against the full build (target/Linux64), which is what CI runs. NOTE: the
+# headless SDK image additionally fails JPEG.Execution.Test's "RGB to I420" case,
+# because JPEGEncoder is not among its 384 shipped modules — that is an image scope
+# limit, not a defect, so it is deliberately NOT listed here.
+MathArrays.Compilation.Test	positive: use of COMPLEX32 and COMPLEX64
+MathArrays.Compilation.Test	positive: variables and parameters of math array type
+MathArrays.Execution.Test	positive: correct use of ADDRESS OF and SYSTEM.VAL for tensors and open math arrays
+MathArrays.Execution.Test	positive: driver tests (fill and compare arrays)
+Utf16Stream.Execution.Test	positive: UTF16 read recovery after invalid, BE
+Utf16Stream.Execution.Test	positive: UTF16 read recovery after invalid, LE
+Utf32Stream.Execution.Test	positive: UTF32 read recovery after invalid, BE
+Utf32Stream.Execution.Test	positive: UTF32 read recovery after invalid, LE
+Utf8Stream.Execution.Test	positive: UTF8 read recovery after invalid, ASCII + invalid + ASCII
+Utf8Stream.Execution.Test	positive: UTF8 read recovery after multiple invalid sequences
+Utf8Stream.Execution.Test	positive: UTF8 read recovery after overlong encoding
+Utf8Strings.Execution.Test	positive: Invalid codepoint beyond U+10FFFF (U+110000)
+Utf8Strings.Execution.Test	positive: Invalid start byte 0F8X (5-byte sequence)
+Utf8Strings.Execution.Test	positive: Surrogate codepoint U+D800 (high surrogate)
+Utf8Strings.Execution.Test	positive: Surrogate codepoint U+DFFF (low surrogate)
+Utf8Strings.Execution.Test	positive: UTF8 read recovery after multiple invalid sequences
+Utf8Strings.Execution.Test	positive: UTF8 read recovery after overlong encoding
+Utf8Strings.Execution.Test	positive: UTF8 write invalid codepoint U+110000
+Utf8Strings.Execution.Test	positive: UTF8 write invalid surrogate U+D800

@@ -46,6 +46,13 @@ docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod Main
 # compile a module to an object file (.GofUu) in ./out
 docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 
+# run the test files in the current directory (every *.Test); exit code 1 on failure
+docker run --rm -v "$PWD:/work" minia2-sdk test
+docker run --rm -v "$PWD:/work" minia2-sdk test CSV.Test -v
+
+# record the cases that fail today, so only NEW failures break the build
+docker run --rm -v "$PWD:/work" minia2-sdk test --write-expected a2test-expected.txt
+
 # interactive A2 shell
 docker run --rm -it minia2-sdk repl
 
@@ -264,6 +271,32 @@ in a pristine `debian:bookworm-slim` container (`--network none --read-only`, no
 For `-t win64` the compiler still runs on Linux (it loads its backend modules as
 Linux `.GofUu`) but emits Win64 `.GofWw` type-checked against the Win64 stdlib
 symbols, and the linker writes a PE64 image instead of an ELF.
+
+`test` reads the test-file format the repo's own `tests/*.Test` use: `#` comments,
+then cases introduced by `positive: <name>` or `negative: <name>`, each followed by
+the Oberon source of that case (one or more `MODULE`s). Every case is compiled and —
+unless the file's `# options` line says compile-only — started in a **fresh `oberon`
+process**, so a trapping case cannot poison the next one and no `System.Free`
+bookkeeping is needed. A positive case must compile and run without a trap, a negative
+one must fail; the verdict is read off the output because the A2 runtime always exits 0.
+Modules a case declares are kept in the scratch dir, since the in-tree files build a
+shared helper module in one case and import it from later ones. Your own `*.Mod` in
+`/work` are compiled first, so tests can import the code under test.
+
+This deliberately does *not* use the in-tree `FoxTest`/`TestSuite` harness: their
+import closure reaches `Texts` → `TextUtilities` → `Codecs` → `Displays`/`Raster`/
+`Plugins`, i.e. the GUI stack this image excludes on purpose. One consequence: files
+whose `# options` ask for another target (`-p=Win32 …`) are reported as skipped rather
+than failing every case.
+
+Cases that are known to fail in the tree are listed in a baseline file —
+`a2test-expected.txt` next to the tests by default, `--expect FILE` to point elsewhere —
+as `<TestFile><TAB><kind>: <case name>`, `#` comments allowed. A listed case that fails
+is reported `known` and does **not** break the run; one that starts passing is reported
+`FIXED` and *does*, so the file cannot quietly go stale. `--write-expected FILE`
+regenerates it from the current run. The repo's own baseline is `tests/a2test-expected.txt`
+and CI runs `ob test` over `tests/` against it, so a new failure anywhere in the suite
+fails the build.
 
 ## Limitations (PoC scope)
 
