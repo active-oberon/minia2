@@ -1,0 +1,267 @@
+# Tests for source/JSON.Mod (RFC 8259 parser + serializer).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test JSONTestShared;System.Load Test"
+#
+# Each case is a positive test unless stated otherwise: it must compile and run its
+# module body without a failing ASSERT. Negative cases must fail.
+
+positive: shared helpers for the JSON tests
+
+	MODULE JSONTestShared;
+	IMPORT JSON, Strings;
+
+		(* Serialise a value and compare the text with what is expected. *)
+		PROCEDURE IsText* (v: JSON.Value; CONST expected: ARRAY OF CHAR): BOOLEAN;
+		VAR s: Strings.String;
+		BEGIN
+			s := JSON.ToString(v);
+			IF s = NIL THEN RETURN FALSE END;
+			RETURN s^ = expected
+		END IsText;
+
+		(* Parse, then serialise again, and compare with the expected text. A canonical
+			document survives the round trip unchanged. *)
+		PROCEDURE RoundTrips* (CONST text, expected: ARRAY OF CHAR): BOOLEAN;
+		VAR v: JSON.Value;
+		BEGIN
+			IF ~JSON.Parse(text, v) THEN RETURN FALSE END;
+			RETURN IsText(v, expected)
+		END RoundTrips;
+
+		PROCEDURE Rejects* (CONST text: ARRAY OF CHAR): BOOLEAN;
+		VAR v: JSON.Value;
+		BEGIN
+			RETURN ~JSON.Parse(text, v)
+		END Rejects;
+
+	END JSONTestShared.
+
+positive: parse the six value kinds and recognise their types
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value;
+	BEGIN
+		ASSERT(JSON.Parse("null", v) & (v IS JSON.Null));
+		ASSERT(JSON.Parse("true", v) & (v IS JSON.Bool));
+		ASSERT(JSON.Parse("12", v) & (v IS JSON.Number));
+		ASSERT(JSON.Parse('"s"', v) & (v IS JSON.String));
+		ASSERT(JSON.Parse("[]", v) & (v IS JSON.Array));
+		ASSERT(JSON.Parse("{}", v) & (v IS JSON.Object))
+	END Test.
+
+positive: booleans carry their value
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value;
+	BEGIN
+		ASSERT(JSON.Parse("true", v)); ASSERT(v(JSON.Bool).value = TRUE);
+		ASSERT(JSON.Parse("false", v)); ASSERT(v(JSON.Bool).value = FALSE)
+	END Test.
+
+positive: numbers, including exponent and sign forms
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value;
+
+		PROCEDURE Num (CONST text: ARRAY OF CHAR): FLOAT64;
+		BEGIN ASSERT(JSON.Parse(text, v)); RETURN v(JSON.Number).value
+		END Num;
+
+	BEGIN
+		ASSERT(Num("0") = 0);
+		ASSERT(Num("42") = 42);
+		ASSERT(Num("-7") = -7);
+		ASSERT(Num("2.5") = 2.5);
+		ASSERT(Num("-0.125") = -0.125);
+		ASSERT(Num("1e3") = 1000);
+		ASSERT(Num("1E3") = 1000);
+		ASSERT(Num("1.5e2") = 150);
+		ASSERT(Num("5e-1") = 0.5);
+		ASSERT(Num("1e+2") = 100)
+	END Test.
+
+positive: an integral number is written without a fraction
+
+	MODULE Test;
+	IMPORT JSON, JSONTestShared;
+	BEGIN
+		ASSERT(JSONTestShared.IsText(JSON.NewNumber(42), "42"));
+		ASSERT(JSONTestShared.IsText(JSON.NewNumber(-7), "-7"));
+		ASSERT(JSONTestShared.IsText(JSON.NewNumber(0), "0"))
+	END Test.
+
+positive: strings keep their contents
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value;
+	BEGIN
+		ASSERT(JSON.Parse('""', v)); ASSERT(v(JSON.String).value^ = "");
+		ASSERT(JSON.Parse('"hello"', v)); ASSERT(v(JSON.String).value^ = "hello")
+	END Test.
+
+positive: the two-character escapes are decoded
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value; s: ARRAY 8 OF CHAR;
+	BEGIN
+		ASSERT(JSON.Parse('"a\"b"', v)); ASSERT(v(JSON.String).value^ = 'a"b');
+		ASSERT(JSON.Parse('"a\\b"', v)); s := "a"; s[1] := 5CX; s[2] := "b"; s[3] := 0X;
+		ASSERT(v(JSON.String).value^ = s);
+		ASSERT(JSON.Parse('"a\nb"', v)); s := "a"; s[1] := 0AX; s[2] := "b"; s[3] := 0X;
+		ASSERT(v(JSON.String).value^ = s);
+		ASSERT(JSON.Parse('"a\tb"', v)); s := "a"; s[1] := 09X; s[2] := "b"; s[3] := 0X;
+		ASSERT(v(JSON.String).value^ = s);
+		ASSERT(JSON.Parse('"a\/b"', v)); ASSERT(v(JSON.String).value^ = "a/b")
+	END Test.
+
+positive: \uXXXX becomes UTF-8
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value; s: ARRAY 8 OF CHAR;
+	BEGIN
+		(* U+0041 stays one byte *)
+		ASSERT(JSON.Parse('"A"', v)); ASSERT(v(JSON.String).value^ = "A");
+		(* U+00E9 becomes two bytes, 0C3H 0A9H *)
+		ASSERT(JSON.Parse('"é"', v));
+		s[0] := 0C3X; s[1] := 0A9X; s[2] := 0X;
+		ASSERT(v(JSON.String).value^ = s);
+		(* U+20AC becomes three bytes, 0E2H 082H 0ACH *)
+		ASSERT(JSON.Parse('"€"', v));
+		s[0] := 0E2X; s[1] := 082X; s[2] := 0ACX; s[3] := 0X;
+		ASSERT(v(JSON.String).value^ = s)
+	END Test.
+
+positive: arrays report their length and elements in order
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value; a: JSON.Array;
+	BEGIN
+		ASSERT(JSON.Parse("[1,2,3]", v));
+		a := v(JSON.Array);
+		ASSERT(a.length = 3);
+		ASSERT(a.At(0)(JSON.Number).value = 1);
+		ASSERT(a.At(1)(JSON.Number).value = 2);
+		ASSERT(a.At(2)(JSON.Number).value = 3);
+		ASSERT(JSON.Parse("[]", v)); ASSERT(v(JSON.Array).length = 0)
+	END Test.
+
+positive: an index outside an array yields NIL
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value; a: JSON.Array;
+	BEGIN
+		ASSERT(JSON.Parse("[1]", v)); a := v(JSON.Array);
+		ASSERT(a.At(0) # NIL);
+		ASSERT(a.At(1) = NIL);
+		ASSERT(a.At(-1) = NIL)
+	END Test.
+
+positive: objects look up their members and report a missing key as NIL
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value; o: JSON.Object;
+	BEGIN
+		ASSERT(JSON.Parse('{"a":1,"b":"x"}', v));
+		o := v(JSON.Object);
+		ASSERT(o.size = 2);
+		ASSERT(o.Get("a")(JSON.Number).value = 1);
+		ASSERT(o.Get("b")(JSON.String).value^ = "x");
+		ASSERT(o.Get("c") = NIL)
+	END Test.
+
+positive: Set replaces an existing key instead of adding a second one
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR o: JSON.Object;
+	BEGIN
+		o := JSON.NewObject();
+		o.Set("k", JSON.NewNumber(1));
+		ASSERT(o.size = 1);
+		o.Set("k", JSON.NewNumber(2));
+		ASSERT(o.size = 1);
+		ASSERT(o.Get("k")(JSON.Number).value = 2)
+	END Test.
+
+positive: values built by hand serialise as expected
+
+	MODULE Test;
+	IMPORT JSON, JSONTestShared;
+	VAR o, inner: JSON.Object; a: JSON.Array;
+	BEGIN
+		ASSERT(JSONTestShared.IsText(JSON.NewNull(), "null"));
+		ASSERT(JSONTestShared.IsText(JSON.NewBool(TRUE), "true"));
+		ASSERT(JSONTestShared.IsText(JSON.NewBool(FALSE), "false"));
+		ASSERT(JSONTestShared.IsText(JSON.NewString("hi"), '"hi"'));
+		a := JSON.NewArray();
+		ASSERT(JSONTestShared.IsText(a, "[]"));
+		a.Add(JSON.NewNumber(1)); a.Add(JSON.NewNumber(2));
+		ASSERT(JSONTestShared.IsText(a, "[1,2]"));
+		o := JSON.NewObject();
+		ASSERT(JSONTestShared.IsText(o, "{}"));
+		inner := JSON.NewObject(); inner.Set("n", JSON.NewNumber(3));
+		o.Set("s", JSON.NewString("t")); o.Set("o", inner);
+		ASSERT(JSONTestShared.IsText(o, '{"s":"t","o":{"n":3}}'))
+	END Test.
+
+positive: canonical documents survive a parse and serialise round trip
+
+	MODULE Test;
+	IMPORT JSONTestShared;
+	BEGIN
+		ASSERT(JSONTestShared.RoundTrips("null", "null"));
+		ASSERT(JSONTestShared.RoundTrips("[1,2,3]", "[1,2,3]"));
+		ASSERT(JSONTestShared.RoundTrips('{"a":1}', '{"a":1}'));
+		ASSERT(JSONTestShared.RoundTrips('{"a":[1,{"b":null}],"c":true}', '{"a":[1,{"b":null}],"c":true}'));
+		(* insignificant whitespace is dropped *)
+		ASSERT(JSONTestShared.RoundTrips('  { "a" : [ 1 , 2 ] }  ', '{"a":[1,2]}'))
+	END Test.
+
+positive: serialising escapes what has to be escaped
+
+	MODULE Test;
+	IMPORT JSON, JSONTestShared;
+	VAR s: ARRAY 8 OF CHAR;
+	BEGIN
+		ASSERT(JSONTestShared.IsText(JSON.NewString('a"b'), '"a\"b"'));
+		s := "a"; s[1] := 0AX; s[2] := "b"; s[3] := 0X;
+		ASSERT(JSONTestShared.IsText(JSON.NewString(s), '"a\nb"'));
+		s := "a"; s[1] := 09X; s[2] := "b"; s[3] := 0X;
+		ASSERT(JSONTestShared.IsText(JSON.NewString(s), '"a\tb"'))
+	END Test.
+
+positive: malformed documents are rejected
+
+	MODULE Test;
+	IMPORT JSONTestShared;
+	BEGIN
+		ASSERT(JSONTestShared.Rejects(""));
+		ASSERT(JSONTestShared.Rejects("["));
+		ASSERT(JSONTestShared.Rejects("{"));
+		ASSERT(JSONTestShared.Rejects("[1,]"));
+		ASSERT(JSONTestShared.Rejects("{,}"));
+		ASSERT(JSONTestShared.Rejects('{"a" 1}'));
+		ASSERT(JSONTestShared.Rejects('{a:1}'));
+		ASSERT(JSONTestShared.Rejects('"unterminated'));
+		ASSERT(JSONTestShared.Rejects("tru"));
+		ASSERT(JSONTestShared.Rejects("nul"))
+	END Test.
+
+negative: the harness itself would notice a wrong expectation
+
+	MODULE Test;
+	IMPORT JSON;
+	VAR v: JSON.Value;
+	BEGIN
+		ASSERT(JSON.Parse("1", v));
+		ASSERT(v IS JSON.String)   (* it is a Number, so this must fail *)
+	END Test.
