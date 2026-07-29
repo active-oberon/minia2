@@ -25,6 +25,7 @@
 #                                      Cases listed in a2test-expected.txt count as
 #                                      known failures (--expect FILE to point
 #                                      elsewhere, --write-expected FILE to regenerate).
+#                                      -r <text> runs only cases whose name matches.
 #   ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
 #                                      over stdio: diagnostics on open+save; --live
@@ -528,9 +529,11 @@ cmd_doc() {
 # is needed. The A2 runtime always exits 0, so the verdict comes from the output.
 cmd_test() {
   local verbose=0 files=() a expect="$EXPECT_FILE" write=""
+  _T_FILTER=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -v|--verbose)      verbose=1; shift ;;
+      -r|--run)          _T_FILTER="$2"; shift 2 ;;
       --expect)          expect="$2"; shift 2 ;;
       --write-expected)  write="$2"; shift 2 ;;
       -*)                die "unknown option: $1" ;;
@@ -598,6 +601,14 @@ cmd_test() {
 # command runs the module at all (one file is a compile-only suite). A prolog asking
 # for a different target (-p=Win32 …) cannot work in this image — its symbol files are
 # Unix64 only — so such a file is reported as skipped instead of failing every case.
+# Case filter (-r/--run): a case-insensitive substring of the case name. Without it
+# every case runs, which is what CI wants; with it you can iterate on one failure
+# without waiting for the 5442-case compilation suite.
+_case_selected() {
+  [ -z "${_T_FILTER:-}" ] && return 0
+  printf '%s' "$1" | grep -qiF -- "$_T_FILTER"
+}
+
 _run_test_file() {
   local w="$1" file="$2" verbose="$3" opts=""
   _T_TOTAL=0; _T_PASS=0; _T_FAIL=0; _T_KNOWN=0; _T_FIXED=0
@@ -617,7 +628,7 @@ _run_test_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       positive:*|negative:*|__EOF__)
-        if [ -n "$kind" ]; then
+        if [ -n "$kind" ] && _case_selected "$name"; then
           _run_test_case "$w" "$kind" "$name" "$body" "$verbose"
           _T_TOTAL=$((_T_TOTAL+1))
         fi
@@ -732,6 +743,6 @@ case "${1:-}" in
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac
