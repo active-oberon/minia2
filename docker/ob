@@ -25,7 +25,9 @@
 #                                      Cases listed in a2test-expected.txt count as
 #                                      known failures (--expect FILE to point
 #                                      elsewhere, --write-expected FILE to regenerate).
-#                                      -r <text> runs only cases whose name matches.
+#                                      -r <text> runs only cases whose name matches;
+#                                      --report FILE writes a JSON summary; --github
+#                                      emits Actions annotations (on by default in CI).
 #   ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)
 #   ob lsp [--live]                    run the Active Oberon language server (LSP
 #                                      over stdio: diagnostics on open+save; --live
@@ -529,13 +531,18 @@ cmd_doc() {
 # is needed. The A2 runtime always exits 0, so the verdict comes from the output.
 cmd_test() {
   local verbose=0 files=() a expect="$EXPECT_FILE" write=""
-  _T_FILTER=""
+  _T_FILTER=""; _T_REPORT=""
+  # Actions annotations are on by default inside a workflow, where they are the only way
+  # a failure shows up next to the run instead of buried in the log.
+  _T_GITHUB=0; [ "${GITHUB_ACTIONS:-}" = true ] && _T_GITHUB=1
   while [ $# -gt 0 ]; do
     case "$1" in
       -v|--verbose)      verbose=1; shift ;;
       -r|--run)          _T_FILTER="$2"; shift 2 ;;
       --expect)          expect="$2"; shift 2 ;;
       --write-expected)  write="$2"; shift 2 ;;
+      --report)          _T_REPORT="$2"; shift 2 ;;
+      --github)          _T_GITHUB=1; shift ;;
       -*)                die "unknown option: $1" ;;
       *)                 files+=("$1"); shift ;;
     esac
@@ -559,6 +566,7 @@ cmd_test() {
     echo "ob test: baseline $expect (${#_T_EXPECT[@]} known failure(s))"
   fi
   declare -ga _T_NEWFAIL=()
+  declare -ga _T_CASES=()          # "<status>\t<file>\t<kind>\t<name>" per case, for --report
 
   local w; w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
@@ -586,10 +594,41 @@ cmd_test() {
     return 0
   fi
 
+  if [ -n "$_T_REPORT" ]; then _write_report "$_T_REPORT" "$total" "$passed" "$failed" "$known" "$fixed"; fi
+
   if [ "$fixed" -gt 0 ]; then
     echo "ob test: $fixed case(s) marked known-failing now pass — drop them from the baseline"
   fi
   { [ "$failed" -eq 0 ] && [ "$fixed" -eq 0 ]; } || return 1
+}
+
+# --report FILE: one JSON document with the counts and every case, for CI to consume
+# (test summaries, dashboards, diffing two runs). Strings are escaped by hand — the only
+# characters a case name can realistically carry are quotes and backslashes.
+_write_report() {
+  local out="$1" total="$2" passed="$3" failed="$4" known="$5" fixed="$6" rec status f kind name first=1
+  { printf '{\n  "total": %d,\n  "passed": %d,\n  "failed": %d,\n  "known": %d,\n  "fixed": %d,\n  "cases": [\n' \
+      "$total" "$passed" "$failed" "$known" "$fixed"
+    for rec in "${_T_CASES[@]:-}"; do
+      [ -n "$rec" ] || continue
+      IFS=$'\t' read -r status f kind name <<<"$rec"
+      [ "$first" = 1 ] || printf ',\n'; first=0
+      printf '    {"status": "%s", "file": "%s", "kind": "%s", "name": "%s"}' \
+        "$status" "$(_json_esc "$f")" "$kind" "$(_json_esc "$name")"
+    done
+    [ "$first" = 1 ] || printf '\n'
+    printf '  ]\n}\n'; } > "$out"
+  echo "ob test: wrote report $out"
+}
+
+_json_esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+# One Actions annotation per case that breaks the build, so it shows up on the run
+# instead of only in the log. Anchored at the test file; the format has no line info.
+_annotate() {
+  local kind="$1" file="$2" case_kind="$3" name="$4"
+  [ "${_T_GITHUB:-0}" = 1 ] || return 0
+  printf '::%s file=%s,title=%s::%s: %s\n' "$kind" "$file" "$(basename "$file")" "$case_kind" "$name"
 }
 
 # Split one test file into cases and run each. Sets _T_TOTAL/_T_PASS/_T_FAIL.
@@ -671,7 +710,11 @@ _run_test_case() {
   # NB: two readers of one pipe would race for stdin — compute them separately.
   entry="$(printf '%s\n' "$mods" | grep -xF Test | head -1 || true)"
   [ -n "$entry" ] || entry="$(printf '%s\n' "$mods" | { grep -v '^$' || true; } | tail -1)"
-  [ -n "$entry" ] || { printf '  SKIP  %s (no MODULE in case)\n' "$name"; _T_TOTAL=$((_T_TOTAL-1)); return 0; }
+  if [ -z "$entry" ]; then
+    printf '  SKIP  %s (no MODULE in case)\n' "$name"
+    _record_case skipped "$kind" "$name"
+    _T_TOTAL=$((_T_TOTAL-1)); return 0
+  fi
 
   # stdin is closed for both runs: the A2 shell would otherwise swallow the caller's
   # input (the test-file reader upstream reads from the same stdin).
@@ -705,20 +748,31 @@ _run_test_case() {
     _T_PASS=$((_T_PASS+1))
     printf '  ok    %s: %s\n' "$kind" "$name"
     if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /'; fi
+    _record_case ok "$kind" "$name"
   elif [ "$ok" -eq 1 ]; then
     _T_FIXED=$((_T_FIXED+1))
     printf '  FIXED %s: %s  (passes now — remove it from the baseline)\n' "$kind" "$name"
+    _record_case fixed "$kind" "$name"
+    _annotate warning "$_T_FILE" "$kind" "$name passes now — remove it from the baseline"
   elif [ "$expected" -eq 1 ]; then
     _T_KNOWN=$((_T_KNOWN+1))
     printf '  known %s: %s\n' "$kind" "$name"
     if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /' | head -20; fi
+    _record_case known "$kind" "$name"
   else
     _T_FAIL=$((_T_FAIL+1))
     _T_NEWFAIL+=("$key")
     printf '  FAIL  %s: %s\n' "$kind" "$name"
     printf '%s\n' "$out" | sed 's/^/        /' | head -20
+    _record_case failed "$kind" "$name"
+    _annotate error "$_T_FILE" "$kind" "$name"
   fi
   return 0
+}
+
+_record_case() {
+  [ -n "${_T_REPORT:-}" ] || return 0
+  _T_CASES+=("$(printf '%s\t%s\t%s\t%s' "$1" "$_T_FILE" "$2" "$3")")
 }
 
 cmd_version() {
@@ -743,6 +797,6 @@ case "${1:-}" in
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac

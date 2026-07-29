@@ -56,6 +56,9 @@ docker run --rm -v "$PWD:/work" minia2-sdk test Utf8Strings.Execution.Test -r ov
 # record the cases that fail today, so only NEW failures break the build
 docker run --rm -v "$PWD:/work" minia2-sdk test --write-expected a2test-expected.txt
 
+# machine-readable summary for CI (counts + one entry per case)
+docker run --rm -v "$PWD:/work" minia2-sdk test --report report.json
+
 # interactive A2 shell
 docker run --rm -it minia2-sdk repl
 
@@ -291,6 +294,14 @@ import closure reaches `Texts` → `TextUtilities` → `Codecs` → `Displays`/`
 `Plugins`, i.e. the GUI stack this image excludes on purpose. One consequence: files
 whose `# options` ask for another target (`-p=Win32 …`) are reported as skipped rather
 than failing every case.
+
+`--report FILE` writes one JSON document with the counts and an entry per case
+(`{"status": "ok|failed|known|fixed|skipped", "file": …, "kind": …, "name": …}`), which is
+what CI keeps as an artifact. `--github` prints an Actions annotation per failing case, so
+it lands on the run rather than inside the log; it turns itself on when `GITHUB_ACTIONS`
+is set. `-r <text>` runs only the cases whose name contains `<text>`, which is how you
+iterate on one failure without waiting out the 5442-case compilation suite — mind that a
+case relying on a helper module built by an earlier case cannot run alone.
 
 Cases that are known to fail in the tree are listed in a baseline file —
 `a2test-expected.txt` next to the tests by default, `--expect FILE` to point elsewhere —
