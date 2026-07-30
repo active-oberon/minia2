@@ -1842,8 +1842,8 @@ TYPE
 						END;
 						op2 := registerOperands[index];
 					END;
-					Move(op1,op2,PhysicalOperandType(op1));
 				END;
+				Move(op1,op2,PhysicalOperandType(op1)); (* also for an immediate source: it was silently not moved before *)
 			ELSIF destType.sizeInBits > srcType.sizeInBits THEN (* (implicit) LONG *)
 				IF part = High THEN
 					IF destType.form = IntermediateCode.SignedInteger THEN
