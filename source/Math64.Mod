@@ -350,7 +350,11 @@ CONST fmod* = mod;
 PROCEDURE power*(x, y: Value): Value;
 VAR trunc, frac := modf(y, trunc): Value;
 BEGIN
-	IF isnan(x) OR isnan(y) THEN
+	(* pow(x, +-0) = 1 and pow(1, y) = 1 hold for every x and y, NaN included (IEEE 754 / C99),
+		so these two cases have to be settled before NaN is propagated *)
+	IF iszero(y) OR (x = 1.0) THEN
+		RETURN 1.0;
+	ELSIF isnan(x) OR isnan(y) THEN
 		RETURN NaN();
 	ELSIF isinf(y) THEN
 		IF ABS(x) = 1.0 THEN
