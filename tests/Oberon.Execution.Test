@@ -7963,3 +7963,37 @@ positive: variable initializations with record and pointer to record types
 
 	END Test.
 	
+positive: float comparisons against NaN are unordered in both contexts
+	MODULE Test;
+	IMPORT SYSTEM;
+	VAR nan, one: FLOAT64;  nan32, one32: FLOAT32;  taken, b: BOOLEAN;
+	BEGIN
+		nan := SYSTEM.VAL(FLOAT64, 07FF8000000000000H);  one := 1.0;
+		nan32 := SYSTEM.VAL(FLOAT32, 07FC00001H);  one32 := 1.0;
+
+		(* an unordered comparison is false for every relation but # -- in a condition,
+			which is lowered by negating the relation, ... *)
+		taken := FALSE;  IF nan =  one THEN taken := TRUE END;  ASSERT(~taken, 900);
+		taken := FALSE;  IF nan <  one THEN taken := TRUE END;  ASSERT(~taken, 901);
+		taken := FALSE;  IF nan <= one THEN taken := TRUE END;  ASSERT(~taken, 902);
+		taken := FALSE;  IF nan >  one THEN taken := TRUE END;  ASSERT(~taken, 903);
+		taken := FALSE;  IF nan >= one THEN taken := TRUE END;  ASSERT(~taken, 904);
+		taken := FALSE;  IF nan #  one THEN taken := TRUE END;  ASSERT(taken, 905);
+
+		(* ... and as a value, which is lowered from the positive relation *)
+		b := nan =  one;  ASSERT(~b, 910);
+		b := nan <  one;  ASSERT(~b, 911);
+		b := nan <= one;  ASSERT(~b, 912);
+		b := nan >  one;  ASSERT(~b, 913);
+		b := nan >= one;  ASSERT(~b, 914);
+		b := nan #  one;  ASSERT(b, 915);
+
+		(* NaN compares unordered with itself, too *)
+		taken := FALSE;  IF nan = nan THEN taken := TRUE END;  ASSERT(~taken, 920);
+		taken := FALSE;  IF nan # nan THEN taken := TRUE END;  ASSERT(taken, 921);
+
+		(* FLOAT32 goes through COMISS rather than COMISD *)
+		taken := FALSE;  IF nan32 <  one32 THEN taken := TRUE END;  ASSERT(~taken, 930);
+		taken := FALSE;  IF nan32 >= one32 THEN taken := TRUE END;  ASSERT(~taken, 931);
+		b := nan32 < one32;  ASSERT(~b, 932);
+	END Test.
