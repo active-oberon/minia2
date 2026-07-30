@@ -2910,16 +2910,25 @@ TYPE
 				RETURN
 			END;
 
-			failPC := 0;
+			failPC := 0;  fail := 0;
 			IF instruction.opcode = IntermediateCode.br THEN
 				hit := InstructionSet.opJMP
 			ELSIF instruction.op2.type.form = IntermediateCode.Float THEN
 				CmpFloat;
+				(* an unordered comparison (one operand is a NaN) leaves ZF=PF=CF=1, i.e. it looks
+					both equal and below. The parity flag therefore has to be taken into account:
+					= and < must not be taken, # must be taken. *)
 				CASE instruction.opcode OF
-				IntermediateCode.breq:	hit := InstructionSet.opJE;
-				|IntermediateCode.brne:hit := InstructionSet.opJNE;
-				|IntermediateCode.brge: hit := InstructionSet.opJAE
-				|IntermediateCode.brlt: hit := InstructionSet.opJB
+				IntermediateCode.breq:	hit := InstructionSet.opJE;  fail := InstructionSet.opJP;
+				|IntermediateCode.brne:hit := InstructionSet.opJNE;  JmpDest(InstructionSet.opJP);
+				|IntermediateCode.brge: hit := InstructionSet.opJAE  (* CF=1 when unordered, so not taken *)
+				|IntermediateCode.brlt: hit := InstructionSet.opJB;  fail := InstructionSet.opJP
+				END;
+				IF fail # 0 THEN (* skip the branch below when unordered *)
+					failPC := out.pc;
+					Assembler.InitOffset8(failOp,failPC);
+					emitter.Emit1(fail,failOp);
+					failPC := failOp.pc;
 				END;
 			ELSE
 				IF ~IsComplex(instruction.op2) THEN
