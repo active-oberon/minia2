@@ -17,6 +17,7 @@ CONST
   	libcname* = "libc.so.6";
 	libX11name* = "libX11.so.6";
 	libpthreadname = "libpthread.so.0";
+	librtname = "librt.so.1";   (* before glibc 2.17 the POSIX clock functions live here, not in libc *)
 
 	LittleEndian* = TRUE;   (** byte order of basic types *)
 	LsbIs0* = TRUE;   (** bit order of SET type *)
@@ -673,6 +674,7 @@ VAR
 	libc-: ADDRESS;
 	libp-: ADDRESS;
 	libx-: ADDRESS;
+	librt-: ADDRESS;
 
 	libraryPaths: ARRAY 8 OF ARRAY 32 OF CHAR;
 	noPaths: SIZE;
@@ -1017,6 +1019,15 @@ VAR
 		END
 	END Dlsym;
 
+	(** resolve a symbol that need not be present; unlike Dlsym this stays silent when it is missing **)
+	PROCEDURE DlsymOptional*( lib: ADDRESS;  CONST sym: ARRAY OF CHAR;  objAddr: ADDRESS ): BOOLEAN;
+	VAR val: ADDRESS;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		Glue.Dlsym( lib, sym, objAddr );
+		S.GET( objAddr, val );
+		RETURN val # 0
+	END DlsymOptional;
+
 	PROCEDURE Dlopen*( CONST libname: ARRAY OF CHAR;  mode: SIGNED32 ): ADDRESS;
 	VAR h: ADDRESS;  i, j, k: SIGNED16;
 		p: ARRAY 256 OF CHAR;
@@ -1330,8 +1341,19 @@ VAR
 		Dlsym( libc, "alarm",	ADDRESSOF( alarm ) );
 		Dlsym( libc, "setitimer",	ADDRESSOF( setitimer ) );
 		Dlsym( libc, "getitimer",	ADDRESSOF( getitimer ) );
-		Dlsym( libc, "clock_gettime", ADDRESSOF(clock_gettime) );
-		Dlsym( libc, "clock_getres", ADDRESSOF(clock_getres) );
+		(* glibc exports the POSIX clock functions from libc only since 2.17, before that from librt *)
+		IF ~DlsymOptional( libc, "clock_gettime", ADDRESSOF(clock_gettime) )
+			OR ~DlsymOptional( libc, "clock_getres", ADDRESSOF(clock_getres) )
+		THEN
+			librt := Dlopen( librtname, 2 );
+			IF librt # 0 THEN
+				IF clock_gettime = NIL THEN Dlsym( librt, "clock_gettime", ADDRESSOF(clock_gettime) ) END;
+				IF clock_getres = NIL THEN Dlsym( librt, "clock_getres", ADDRESSOF(clock_getres) ) END;
+			ELSE
+				Trace.String( "Unix: no clock_gettime in " );  Trace.String( libcname );
+				Trace.String( " and " );  Trace.String( librtname );  Trace.String( " is not available" );  Trace.Ln;
+			END
+		END;
 		Dlsym( libc, "clock", ADDRESSOF(clock) );
 
 		Dlsym( libc, "gettimeofday", ADDRESSOF( gettimeofday ) );
