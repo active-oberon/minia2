@@ -5703,13 +5703,13 @@ VAR
 
 	PROCEDURE MatMulAXAXLoopA( ladr, radr, dadr: ADDRESS; linc, rinc, len: SIZE );
 	BEGIN
-		SYSTEM.PUT( dadr, 0.0D0 );   (* initialization of scalar product to 0 *)
+		SYSTEM.PUT64( dadr, 0 );   (* initialization of scalar product to 0: eight bytes, SPAXAXLoopA reads FLD QWORD *)
 		SPAXAXLoopA( ladr, radr, dadr, linc, rinc, len );   (* apply scalar product *)
 	END MatMulAXAXLoopA;
 
 	PROCEDURE MatMulAXAXLoopSSE( ladr, radr, dadr: ADDRESS; linc, rinc, len: SIZE );
 	BEGIN
-		SYSTEM.PUT( dadr, 0.0D0 );   (* initialization of scalar product to 0 *)
+		SYSTEM.PUT64( dadr, 0 );   (* initialization of scalar product to 0: eight bytes, see above *)
 		SPAXAXLoopSSE( ladr, radr, dadr, linc, rinc, len );   (* apply scalar product *)
 	END MatMulAXAXLoopSSE;
 
