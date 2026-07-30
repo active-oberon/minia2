@@ -56,6 +56,13 @@ CONST
 	sfTypeENUM* = 2BX;
 	sfTypeCELL* = 2CX;
 	sfTypePORT* = 2DX;
+	(* sfTypeAnyRecord = 2EX; *)
+	(* sfTypeSET stands for the default SET; the sized set types need their own codes, otherwise
+		their values are read with the wrong width (see issue #100) *)
+	sfTypeSET8* = 2FX;
+	sfTypeSET16* = 30X;
+	sfTypeSET32* = 31X;
+	sfTypeSET64* = 32X;
 
 
 	sfIN* = 0X;
@@ -104,7 +111,8 @@ CONST
 			| sfTypeWORD | sfTypeLONGWORD
 			| sfTypeREAL | sfTypeLONGREAL
 			| sfTypeCOMPLEX | sfTypeLONGCOMPLEX
-			| sfTypeSET | sfTypeANY | sfTypeOBJECT | sfTypeBYTE | sfTypeADDRESS | sfTypeSIZE
+			| sfTypeSET | sfTypeSET8 | sfTypeSET16 | sfTypeSET32 | sfTypeSET64
+			| sfTypeANY | sfTypeOBJECT | sfTypeBYTE | sfTypeADDRESS | sfTypeSIZE
 			| sfTypeIndirect offset:SIZE.
 	*)
 
@@ -367,6 +375,21 @@ CONST
 			w.Hex(i,-2*size);
 		END Unsigned;
 
+		(* print the elements of a set of nofBits bits; independent of SIZEOF(SET), which may be
+			narrower (SET64 on a 32 bit machine) or wider (SET8) than the set at hand *)
+		PROCEDURE WriteSetBits(bits: SIGNED64; nofBits: SIGNED32);
+		VAR i: SIGNED32; first: BOOLEAN;
+		BEGIN
+			w.Char("{"); first := TRUE;
+			FOR i := 0 TO nofBits-1 DO
+				IF ODD(ASH(bits, -i)) THEN
+					IF first THEN first := FALSE ELSE w.Char(",") END;
+					w.Int(i, 1)
+				END
+			END;
+			w.Char("}")
+		END WriteSetBits;
+
 	BEGIN
 		CASE type OF
 		| sfTypePointerToRecord, sfTypeANY, sfTypeOBJECT:
@@ -442,6 +465,18 @@ CONST
 		| sfTypeSET:
 			size := SIZEOF(SET);
 			SYSTEM.GET(adr, set); w.Set(set);
+		| sfTypeSET8:
+			size := SIZEOF(SET8);
+			SYSTEM.GET(adr, u8); WriteSetBits(u8, 8);
+		| sfTypeSET16:
+			size := SIZEOF(SET16);
+			SYSTEM.GET(adr, u16); WriteSetBits(u16, 16);
+		| sfTypeSET32:
+			size := SIZEOF(SET32);
+			SYSTEM.GET(adr, u32); WriteSetBits(u32, 32);
+		| sfTypeSET64:
+			size := SIZEOF(SET64);
+			SYSTEM.GET(adr, s64); WriteSetBits(s64, 64);
 		| sfTypeBYTE:
 			size := SIZEOF(SYSTEM.BYTE);
 			SYSTEM.GET(adr, c); Unsigned(ORD(c), 1);
@@ -1124,6 +1159,10 @@ TYPE
 		| sfTypeCOMPLEX: w.String("COMPLEX32");
 		| sfTypeLONGCOMPLEX: w.String("COMPLEX64");
 		| sfTypeSET: w.String("SET");
+		| sfTypeSET8: w.String("SET8");
+		| sfTypeSET16: w.String("SET16");
+		| sfTypeSET32: w.String("SET32");
+		| sfTypeSET64: w.String("SET64");
 		| sfTypeANY: w.String("ANY");
 		| sfTypeOBJECT: w.String("OBJECT");
 		| sfTypeBYTE: w.String("BYTE");

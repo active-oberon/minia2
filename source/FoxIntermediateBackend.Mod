@@ -6645,6 +6645,12 @@ TYPE
 						ELSIF expression.type.resolvedType IS SyntaxTree.BooleanType THEN
 							Boolean(res.op);
 						ELSIF expression.type.resolvedType IS SyntaxTree.SetType THEN
+							(* the trace procedure takes a default SET, so a narrower set has to be zero
+								extended first -- otherwise the elements beyond its size are read from
+								whatever happens to sit next to the value *)
+							IF res.op.type.sizeInBits < system.setType.sizeInBits THEN
+								Convert(res.op,IntermediateCode.GetType(system,system.setType))
+							END;
 							Set(res.op);
 						ELSIF expression.type.resolvedType IS SyntaxTree.FloatType THEN
 							IF res.op.type.sizeInBits = IntermediateCode.Bits32 THEN
@@ -12681,6 +12687,10 @@ TYPE
 (*				sfTypeCELL = 2CX; *)
 				sfTypePORT = 2DX;
 				sfTypeAnyRecord = 2EX;
+				sfTypeSET8 = 2FX;
+				sfTypeSET16 = 30X;
+				sfTypeSET32 = 31X;
+				sfTypeSET64 = 32X;
 
 				sfIN = 0X;
 				sfOUT = 1X;
@@ -12744,7 +12754,8 @@ TYPE
 						| sfTypeWORD | sfTypeLONGWORD
 						| sfTypeREAL | sfTypeLONGREAL
 						| sfTypeCOMPLEX | sfTypeLONGCOMPLEX
-						| sfTypeSET | sfTypeANY | sfTypeOBJECT | sfTypeBYTE | sfTypeADDRESS | sfTypeSIZE
+						| sfTypeSET | sfTypeSET8 | sfTypeSET16 | sfTypeSET32 | sfTypeSET64
+						| sfTypeANY | sfTypeOBJECT | sfTypeBYTE | sfTypeADDRESS | sfTypeSIZE
 						| sfTypeIndirect offset:SIZE.
 		*)
 
@@ -12966,8 +12977,26 @@ TYPE
 								HALT(100);
 							END;
 						|SyntaxTree.SetType DO
-							IF RefInfo THEN Info(section,"SET") END;
-							Char(section, sfTypeSET);
+							(* the default SET keeps sfTypeSET; the other widths need their own code so that
+								a reader knows how many bytes the value occupies *)
+							IF type.sizeInBits = module.system.setType.sizeInBits THEN
+								IF RefInfo THEN Info(section,"SET") END;
+								Char(section, sfTypeSET);
+							ELSIF type.sizeInBits = 8 THEN
+								IF RefInfo THEN Info(section,"SET8") END;
+								Char(section, sfTypeSET8);
+							ELSIF type.sizeInBits = 16 THEN
+								IF RefInfo THEN Info(section,"SET16") END;
+								Char(section, sfTypeSET16);
+							ELSIF type.sizeInBits = 32 THEN
+								IF RefInfo THEN Info(section,"SET32") END;
+								Char(section, sfTypeSET32);
+							ELSIF type.sizeInBits = 64 THEN
+								IF RefInfo THEN Info(section,"SET64") END;
+								Char(section, sfTypeSET64);
+							ELSE
+								HALT(100)
+							END;
 						|SyntaxTree.AnyType DO
 							IF RefInfo THEN Info(section,"ANY") END;
 							Char(section, sfTypeANY);
