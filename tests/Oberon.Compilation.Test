@@ -39690,3 +39690,53 @@ positive: initializer assigned with type conversion
 	END Test.
 
 	
+negative: INCL with an element beyond the range of a SET16
+	(* the range was checked against the default SET, so 20 < 32 passed the checker and
+		the runtime check in the backend caught it instead *)
+	MODULE Test;
+	VAR s16: SET16;
+	BEGIN
+		INCL(s16, 20);
+	END Test.
+
+negative: EXCL with an element beyond the range of a SET8
+	MODULE Test;
+	VAR s8: SET8;
+	BEGIN
+		EXCL(s8, 8);
+	END Test.
+
+positive: INCL and EXCL on the last element of every sized set
+	MODULE Test;
+	VAR s8: SET8;  s16: SET16;  s32: SET32;  s64: SET64;  s: SET;
+	BEGIN
+		INCL(s8, 7);   EXCL(s8, 7);
+		INCL(s16, 15); EXCL(s16, 15);
+		INCL(s32, 31); EXCL(s32, 31);
+		INCL(s64, 63); EXCL(s64, 63);
+		INCL(s, 31);   EXCL(s, 31);
+	END Test.
+
+negative: comparing a SIZE variable with NIL
+	(* SIZE is address-like, so the pointer branch accepted this, converted NIL to SIZE
+		and the backend then failed its own assertion: "operands 2 and 3 not of same type" *)
+	MODULE Test;
+	VAR size: SIZE;  b: BOOLEAN;
+	BEGIN
+		b := size = NIL;
+	END Test.
+
+negative: comparing a SIZE variable with NIL the other way round
+	MODULE Test;
+	VAR size: SIZE;  b: BOOLEAN;
+	BEGIN
+		b := NIL # size;
+	END Test.
+
+positive: comparing an ADDRESS with NIL stays legal
+	MODULE Test;
+	VAR address: ADDRESS;  b: BOOLEAN;
+	BEGIN
+		b := address = NIL;
+		b := address # NIL;
+	END Test.
