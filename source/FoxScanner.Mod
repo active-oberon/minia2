@@ -790,7 +790,8 @@ TYPE
 				END;
 				DEC( e, i - d - m );   (* decimal point shift *)
 				token.numberType := Real;
-				IF e > MaxRealExponent THEN
+				IF (expCh = "D") OR (e > MaxRealExponent) THEN
+					(* the D scale factor denotes a FLOAT64 literal, as E denotes a FLOAT32 one *)
 					token.numberType := Longreal;
 				END;
 				IF (1 - MaxLongrealExponent < e) & (e <= MaxLongrealExponent) THEN
