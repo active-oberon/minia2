@@ -7997,3 +7997,77 @@ positive: float comparisons against NaN are unordered in both contexts
 		taken := FALSE;  IF nan32 >= one32 THEN taken := TRUE END;  ASSERT(~taken, 931);
 		b := nan32 < one32;  ASSERT(~b, 932);
 	END Test.
+
+positive: INCL and EXCL with a constant element on a sized set
+	MODULE Test;
+	IMPORT SYSTEM;
+	VAR s8: SET8;  s16: SET16;  s64: SET64;  i: SIGNED32;
+	BEGIN
+		(* a narrowing conversion of a constant used to skip the move entirely, so the
+			element index was read from an uninitialized register: Trap 5.7 on a correct
+			INCL, or a set with the wrong bits set *)
+		s8 := {};   INCL(s8, 1);   ASSERT(s8 = {1}, 940);
+		ASSERT(SYSTEM.VAL(SIGNED8, s8) = 2, 941);
+		INCL(s8, 7);               ASSERT(s8 = {1, 7}, 942);
+		ASSERT(SYSTEM.VAL(SIGNED8, s8) = -126, 943);
+		EXCL(s8, 1);               ASSERT(s8 = {7}, 944);
+		s16 := {};  INCL(s16, 9);  ASSERT(SYSTEM.VAL(SIGNED16, s16) = 512, 945);
+		s64 := {};  INCL(s64, 63); ASSERT(s64 = {63}, 946);
+		ASSERT(SYSTEM.VAL(SIGNED64, s64) = 08000000000000000H, 947);
+
+		(* the same through a variable, which always worked -- keep both so that a
+			regression cannot hide in whichever path is not covered *)
+		i := 1;  s8 := {};   INCL(s8, i);   ASSERT(s8 = {1}, 948);
+		i := 9;  s16 := {};  INCL(s16, i);  ASSERT(SYSTEM.VAL(SIGNED16, s16) = 512, 949);
+	END Test.
+
+positive: real literals round to the exact IEEE 754 value
+	MODULE Test;
+	IMPORT SYSTEM;
+
+	PROCEDURE Bits(x: FLOAT64): SIGNED64;
+	BEGIN RETURN SYSTEM.VAL(SIGNED64, x) END Bits;
+
+	BEGIN
+		(* the mantissa used to be assembled by repeated division by ten and then scaled
+			by a squared power of ten, so long literals landed one ULP off -- pi among them *)
+		ASSERT(Bits(3.14159265358979) = 0400921FB54442D11H, 960);
+		ASSERT(Bits(86400.0)          = 040F5180000000000H, 961);
+		ASSERT(Bits(123456789.0)      = 0419D6F3454000000H, 962);
+		ASSERT(Bits(0.007)            = 03F7CAC083126E979H, 963);
+		ASSERT(Bits(0.1)              = 03FB999999999999AH, 964);
+
+		(* a constant expression is folded at the maximum available precision, and the
+			scale factor makes no difference to that: E, D and no scale factor agree *)
+		ASSERT(Bits(1.0 / 3.0)     = 03FD5555555555555H, 965);
+		ASSERT(Bits(0.1)           = Bits(0.1E0), 966);
+		ASSERT(Bits(0.1)           = Bits(0.1D0), 967);
+		ASSERT(Bits(43403.0 / 7.0) = 040B8386DB6DB6DB7H, 968);
+	END Test.
+
+positive: a real constant meeting an integer variable is typed FLOAT32 (upstream #133)
+	MODULE Test;
+	IMPORT SYSTEM;
+	VAR d: SIGNED32;
+
+	PROCEDURE Bits(x: FLOAT64): SIGNED64;
+	BEGIN RETURN SYSTEM.VAL(SIGNED64, x) END Bits;
+
+	BEGIN
+		d := 43403;
+
+		(* This pins today's behaviour rather than blessing it. The constant is held at
+			full precision but typed FLOAT32, so ConvertOperands takes the integer down to
+			FLOAT32 and the whole expression is computed in single precision -- with D,
+			with E and with no scale factor alike. That is upstream #133 and the second
+			half of #95, and it is open: the fix is a decision about how a constant operand
+			is typed, so when it lands these four assertions are what changes. *)
+		ASSERT(Bits(d / 7.0)     = 040B8386DC0000000H, 970);
+		ASSERT(Bits(d / 7.0E0)   = 040B8386DC0000000H, 971);
+		ASSERT(Bits(d / 7.0D0)   = 040B8386DC0000000H, 972);
+		ASSERT(Bits(d * 86400.0) = 041EBF09800000000H, 973);
+
+		(* an explicit conversion is how full precision is reached today *)
+		ASSERT(Bits(FLOAT64(d) / 7.0)     = 040B8386DB6DB6DB7H, 974);
+		ASSERT(Bits(FLOAT64(d) * 86400.0) = 041EBF09810000000H, 975);
+	END Test.

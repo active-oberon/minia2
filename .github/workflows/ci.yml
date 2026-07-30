@@ -22,6 +22,37 @@ jobs:
           task Win64
       - name: Test (compiler suites via task)
         run: task test
+      - name: Second stage (compile the tree with the freshly built compiler)
+        # `task Linux64` compiles the tree with the committed bootstrap in compilers/, so a
+        # patch to the compiler itself is never exercised by it -- the new binary is produced
+        # but nothing is compiled by it. This step feeds the tree back through the compiler
+        # just built, which is what catches a patch that changes what the compiler accepts.
+        # Run on a copy: Release.Build writes into bin/ next to the binary it is running.
+        run: |
+          STAGE2="$RUNNER_TEMP/stage2"
+          cp -a target/Linux64 "$STAGE2"
+          cp target/Linux64/oberon "$RUNNER_TEMP/oberon-stage1"
+          chmod +x "$RUNNER_TEMP/oberon-stage1"
+          cat > "$STAGE2/oberonCompile.cfg" <<EOF
+          Heaps.SetMetaData~
+          Files.AddSearchPath $STAGE2/bin~
+          Files.AddSearchPath data~
+          Files.AddSearchPath source~
+          Configuration.Init~
+          EOF
+          cd "$STAGE2"
+          export PWD="$(pwd)"
+          "$RUNNER_TEMP/oberon-stage1" do "
+            System.DoFile oberonCompile.cfg ~
+            Files.SetWorkPath $STAGE2 ~
+            Release.Build --build --path=bin/ --exclude=\"Oberon OberonGadgets OberonApplications OberonVoyager OberonAnts OberonDocumentation Fun Education Testing EFI CjkFonts Pr3Fonts Pr6Fonts\" Linux64 ~
+          " | tee "$RUNNER_TEMP/stage2.log"
+          # Release.Build reports a failed module as an error line and still exits 0
+          if grep -qE '^\s+[A-Za-z0-9_.]+\.Mod.*error:' "$RUNNER_TEMP/stage2.log"; then
+            echo "::error::second stage failed to compile the tree"
+            grep -E '^\s+[A-Za-z0-9_.]+\.Mod.*error:' "$RUNNER_TEMP/stage2.log"
+            exit 1
+          fi
       - name: Test (all tests/ suites via ob test)
         # `task test` only drives the two Oberon.Compilation/Execution suites; this runs
         # every tests/*.Test file through the SDK's `ob test`. No Docker image needed —
