@@ -2486,11 +2486,18 @@ TYPE
 						Error(binaryExpression.position,"incompatible operands");
 					END;
 				ELSIF (operator = Scanner.Equal) OR (operator = Scanner.Unequal) THEN
-					ConvertOperands(left, right);
-					binaryExpression.SetLeft(left);
-					binaryExpression.SetRight(right);
-					IF (left IS SyntaxTree.NilValue) & (right IS SyntaxTree.NilValue) THEN
-						IF operator = Scanner.Equal THEN NewBool(TRUE) ELSE NewBool(FALSE) END;
+					IF (leftType IS SyntaxTree.SizeType) & (rightType IS SyntaxTree.NilType)
+						OR (rightType IS SyntaxTree.SizeType) & (leftType IS SyntaxTree.NilType) THEN
+						(* SIZE is not a pointer type; converting NIL to it makes the backend emit
+							a comparison of operands of different form *)
+						Error(binaryExpression.position,"incompatible operands");
+					ELSE
+						ConvertOperands(left, right);
+						binaryExpression.SetLeft(left);
+						binaryExpression.SetRight(right);
+						IF (left IS SyntaxTree.NilValue) & (right IS SyntaxTree.NilValue) THEN
+							IF operator = Scanner.Equal THEN NewBool(TRUE) ELSE NewBool(FALSE) END;
+						END;
 					END;
 					type := system.booleanType;
 				ELSE
