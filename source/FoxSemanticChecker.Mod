@@ -4736,7 +4736,8 @@ TYPE
 				ELSIF ((id = Global.Excl) OR (id = Global.Incl)) & CheckArity(2,2) THEN
 					IF CheckVariable(parameter[0]) & CheckSetType(parameter[0]) & CheckIntegerType(parameter[1]) THEN
 						IF IsIntegerValue(parameter[1],i0) THEN
-							IF (i0 < 0) OR (i0>= system.setType.sizeInBits) THEN
+							(* the range is the one of the set at hand (SET8 .. SET64), not the one of the default SET *)
+							IF (i0 < 0) OR (i0 >= parameter[0].type.resolvedType.sizeInBits) THEN
 								Error(position, "parameter out of SET range")
 							END;
 						END;
