@@ -14,6 +14,8 @@ CONST
 	MaxHugeHexDigits* = 16;   (* maximal hexadecimal hugeint length *)
 	MaxRealExponent* = 38;   (* maximal real exponent *)
 	MaxLongrealExponent* = 308;   (* maximal longreal exponent *)
+	MaxExactTen = 22;   (* 10^22 is the largest power of ten exactly representable in FLOAT64 *)
+	MaxExactMantissa = 9007199254740992;   (* 2^53: largest integer exactly representable in FLOAT64 *)
 
 	(* scanner constants *)
 	EOT* = 0X; LF* = 0AX; CR* = 0DX; TAB* = 09X; ESC* = 1BX;
@@ -602,6 +604,7 @@ TYPE
 			result: Symbol;
 			hugeint, number, nextInt: SIGNED64;
 			digits: SIGNED32;
+			mantissaInt: SIGNED64;  mantissaDigits, mi, mdig: SIGNED32;  exactMantissa: BOOLEAN;
 
 			(** 10^e **)
 			PROCEDURE Ten( e: SIGNED32 ): FLOAT64;
@@ -759,6 +762,17 @@ TYPE
 				END
 			ELSE  (* fraction *)
 				f := 0;  e := 0;  expCh := "E";
+				(* the digit string read as an integer, as long as it stays exact in FLOAT64, so that
+					ScaleTen below can round the literal exactly. f, built up by repeated division,
+					is only kept as a fallback for literals out of that range. *)
+				mantissaDigits := n;  mantissaInt := 0;  exactMantissa := TRUE;
+				FOR mi := 0 TO n-1 DO
+					mdig := Decimal( dig[mi] );
+					IF exactMantissa & (mantissaInt <= (MaxExactMantissa - mdig) DIV 10) THEN
+						mantissaInt := mantissaInt * 10 + mdig
+					ELSE exactMantissa := FALSE
+					END
+				END;
 				WHILE n > 0 DO  (* 0 <= f < 1 *) DEC( n );  f := (Decimal( dig[n] ) + f) / 10 END;
 				IF (ch = "E") OR (ch = "D") THEN
 					expCh := ch;  token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  neg := FALSE;
@@ -780,7 +794,8 @@ TYPE
 					token.numberType := Longreal;
 				END;
 				IF (1 - MaxLongrealExponent < e) & (e <= MaxLongrealExponent) THEN
-					IF e < 0 THEN token.real := f / Ten( -e ) ELSE token.real := f * Ten( e ) END
+					IF e < 0 THEN token.real := f / Ten( -e ) ELSE token.real := f * Ten( e ) END;
+					token.real := ScaleTen( mantissaInt, exactMantissa, e - mantissaDigits, token.real )
 				ELSE Error( Basic.NumberTooLarge )
 				END
 			END;
@@ -1160,6 +1175,34 @@ TYPE
 		reservedCharacter: ARRAY 256 OF BOOLEAN;
 		symbols-: ARRAY EndOfText+1 OF Keyword;
 		keywordsLower, keywordsUpper: KeywordTable;
+		exactTen: ARRAY MaxExactTen+1 OF FLOAT64; (* 10^0 .. 10^22, all exact *)
+
+	PROCEDURE InitExactTen;
+	VAR i: SIGNED32;
+	BEGIN
+		exactTen[0] := 1;
+		FOR i := 1 TO MaxExactTen DO exactTen[i] := exactTen[i-1] * 10 END
+	END InitExactTen;
+
+	(** mantissa * 10^q, correctly rounded whenever mantissa and 10^q are both exactly representable
+		(single IEEE operation on exact operands), otherwise the inexact value computed by the caller.
+		exact tells whether mantissa still is the full digit string of the literal.
+	**)
+	PROCEDURE ScaleTen( mantissa: FLOAT64; exact: BOOLEAN; q: SIGNED32; inexact: FLOAT64 ): FLOAT64;
+	BEGIN
+		IF exact THEN
+			IF (q >= 0) & (q <= MaxExactTen) THEN
+				RETURN mantissa * exactTen[q]
+			ELSIF (q < 0) & (-q <= MaxExactTen) THEN
+				RETURN mantissa / exactTen[-q]
+			ELSIF (q > MaxExactTen) & (q - MaxExactTen <= MaxExactTen)
+				& (mantissa * exactTen[q-MaxExactTen] <= MaxExactMantissa) THEN
+				(* mantissa * 10^(q-22) is still exact, so a single rounding remains *)
+				RETURN mantissa * exactTen[q-MaxExactTen] * exactTen[MaxExactTen]
+			END
+		END;
+		RETURN inexact
+	END ScaleTen;
 
 	(** return a new scanner on a stream, error output via diagnostics  **)
 	PROCEDURE NewScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; position: Streams.Position; diagnostics: Diagnostics.Diagnostics ): Scanner;
@@ -1556,7 +1599,7 @@ TYPE
 	*)
 
 BEGIN
-	InitReservedCharacters; InitSymbols; InitKeywords
+	InitReservedCharacters; InitSymbols; InitKeywords; InitExactTen
 END FoxScanner.
 
 FoxScanner.ReportKeywords
