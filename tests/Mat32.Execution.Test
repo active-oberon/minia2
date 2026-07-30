@@ -312,8 +312,8 @@ positive: TestRoundingComprehensive
 		(* 0 < |x| < 1 *)
 		ASSERT(Math.trunc(0.75) = 0.0, 604);
 		ASSERT(Math.trunc(-0.75) = -0.0, 605);
-		ASSERT(Math.trunc(1.0E-20) = 0.0, 606);
-		ASSERT(Math.trunc(-1.0E-20) = -0.0, 607);
+		ASSERT(Math.trunc(1.0D-20) = 0.0, 606);
+		ASSERT(Math.trunc(-1.0D-20) = -0.0, 607);
 		(* x = 0 *)
 		ASSERT(Math.iszero(Math.trunc(0.5), 1), 608);
 		ASSERT(Math.iszero(Math.trunc(-0.5), -1), 609);
@@ -371,7 +371,7 @@ positive: TestAdvancedMath -- hypot, power
 		ASSERT(Math.isinf(log1p(-1.0), -1), 702);
 		ASSERT(Math.isnan(log1p(-2.0)), 703);
 
-		ASSERT(ABS(log1p(1.0E-20) - 1.0E-20) < eps, 704);
+		ASSERT(ABS(log1p(1.0D-20) - 1.0D-20) < eps, 704);
 		ASSERT(log1p(0.0) = 0.0, 705);
 
 		ASSERT(ABS(log1p(1.0) - ln(2.0)) < eps, 706);
