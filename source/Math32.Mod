@@ -359,7 +359,7 @@ BEGIN
 		RETURN NaN();
 	ELSIF isinf(y) THEN
 		IF ABS(x) = 1.0 THEN
-			RETURN 1.0D0
+			RETURN 1.0
 		ELSIF (ABS(x) < 1.0) = isinf(y, 1) THEN
 			RETURN 0.0;
 		ELSE
@@ -376,7 +376,7 @@ BEGIN
 			RETURN 1.0
 		END;
 	ELSIF iszero(x) THEN
-		IF y > 0.0D0 THEN
+		IF y > 0.0 THEN
 			IF (x < 0.0) & ODD(IntValue(trunc)) THEN
 				RETURN Zero(-1);
 			ELSE
@@ -389,7 +389,7 @@ BEGIN
 
 	IF (ABS(y) <= MAX(IntValue)) & (frac = 0.0) THEN
 		RETURN intpower(x, IntValue(trunc));
-	ELSIF (x < 0.0D0) & (frac # 0.0D0) THEN
+	ELSIF (x < 0.0) & (frac # 0.0) THEN
 		RETURN NaN();
 	END;
 
