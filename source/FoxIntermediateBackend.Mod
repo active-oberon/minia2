@@ -2011,6 +2011,8 @@ TYPE
 						ELSE
 							IF reason THEN
 								BrgeL(label,right.op,left.op);
+							ELSIF leftType IS SyntaxTree.FloatType THEN
+								BrNotL(BrgeL,label,right.op,left.op);
 							ELSE
 								BrltL(label,right.op,left.op);
 							END;
@@ -2038,6 +2040,8 @@ TYPE
 						Evaluate(x.right,right);
 						IF reason THEN
 							BrltL(label,left.op,right.op);
+						ELSIF leftType IS SyntaxTree.FloatType THEN
+							BrNotL(BrltL,label,left.op,right.op);
 						ELSE
 							BrgeL(label,left.op,right.op);
 						END;
@@ -2064,6 +2068,8 @@ TYPE
 						Evaluate(x.right,right);
 						IF reason THEN
 							BrltL(label, right.op,left.op);
+						ELSIF leftType IS SyntaxTree.FloatType THEN
+							BrNotL(BrltL,label,right.op,left.op);
 						ELSE
 							BrgeL(label, right.op,left.op);
 						END;
@@ -2093,6 +2099,8 @@ TYPE
 						ELSE
 							IF reason THEN
 								BrgeL(label,left.op,right.op);
+							ELSIF leftType IS SyntaxTree.FloatType THEN
+								BrNotL(BrgeL,label,left.op,right.op);
 							ELSE
 								BrltL(label, left.op,right.op);
 							END;
@@ -2815,6 +2823,22 @@ TYPE
 		BEGIN
 			Emit(Brne(position,LabelOperand(label),left,right));
 		END BrneL;
+
+		(* Negate an ordered comparison by control flow rather than by swapping the opcode.
+			For a total order the two are the same, but for FLOAT they are not: when an operand is
+			a NaN the comparison is unordered and both x < y and x >= y are false (IEEE 754), so
+			brge cannot serve as ~brlt. The negation branches over the positive test instead,
+			which leaves an unordered comparison falling through to the label -- and it needs no
+			notion of unorderedness in the intermediate code, hence no new opcode for the
+			backends. *)
+		PROCEDURE BrNotL(br: ConditionalBranch; label: Label; left,right: IntermediateCode.Operand);
+		VAR over: Label;
+		BEGIN
+			over := NewLabel();
+			br(over,left,right);
+			BrL(label);
+			SetLabel(over);
+		END BrNotL;
 
 		PROCEDURE Convert(VAR operand: IntermediateCode.Operand; type: IntermediateCode.Type);
 		VAR new: IntermediateCode.Operand;
