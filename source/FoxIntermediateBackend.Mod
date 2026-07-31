@@ -741,8 +741,12 @@ TYPE
 									ir.Emit(Mov(Basic.invalidPosition,dest, src));
 									implementationEmitter.ReleaseIntermediateOperand(src);
 								ELSE
+									(* passed on the stack: the slots start above the saved frame pointer and the
+										return address, not at the frame pointer itself -- an offset counted from
+										there reads the return address for the first of them and every later one
+										one slot too low *)
+									formalParameter.SetOffset(system.offsetFirstParameter + nonParameterRegisters * addressType.sizeInBits);
 									INC(nonParameterRegisters);
-									formalParameter.SetOffset(nonParameterRegisters * addressType.sizeInBits);
 								END;
 							END;
 							formalParameter := formalParameter.nextParameter;
