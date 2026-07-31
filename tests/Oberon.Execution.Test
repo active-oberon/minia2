@@ -8359,3 +8359,329 @@ positive: a real constant meeting an integer variable is typed FLOAT32 (upstream
 		ASSERT(Bits(FLOAT64(d) / 7.0)     = 040B8386DB6DB6DB7H, 974);
 		ASSERT(Bits(FLOAT64(d) * 86400.0) = 041EBF09810000000H, 975);
 	END Test.
+
+# calls mixing integer and float arguments
+# Every backend has to place these two forms in two different register files, and the Oberon
+# calling convention hides the question by pushing everything: the interesting paths are the
+# ones where a value is computed, converted or returned, not the ones where it is pushed.
+
+positive: a call mixing integer and float arguments
+	MODULE Test;
+
+	PROCEDURE Alternating(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64; c: SIGNED32; z: FLOAT64);
+	BEGIN
+		ASSERT(a = 1, 1000);  ASSERT(x = 2.5, 1001);  ASSERT(b = 3, 1002);
+		ASSERT(y = 4.25, 1003);  ASSERT(c = 5, 1004);  ASSERT(z = 6.125, 1005);
+	END Alternating;
+
+	PROCEDURE FloatFirst(x: FLOAT64; a: SIGNED32; y: FLOAT32; b: SIGNED8; z: FLOAT64; c: UNSIGNED64);
+	BEGIN
+		ASSERT(x = 0.5, 1006);  ASSERT(a = -7, 1007);  ASSERT(y = 1.5, 1008);
+		ASSERT(b = -128, 1009);  ASSERT(z = 3.25, 1010);  ASSERT(c = MAX(UNSIGNED64), 1011);
+	END FloatFirst;
+
+	PROCEDURE NonNumeric(ch: CHAR; x: FLOAT32; bits: SET; y: FLOAT64; f: BOOLEAN; n: SIGNED16);
+	BEGIN
+		ASSERT(ch = 'q', 1012);  ASSERT(x = 2.25, 1013);  ASSERT(bits = {1, 5}, 1014);
+		ASSERT(y = -8.5, 1015);  ASSERT(f, 1016);  ASSERT(n = -300, 1017);
+	END NonNumeric;
+
+	PROCEDURE Widths(w: FLOAT32; a: SIGNED64; v: FLOAT64; b: UNSIGNED8; u: FLOAT32; c: SIGNED16; t: FLOAT64);
+	BEGIN
+		ASSERT(w = 0.75, 1018);  ASSERT(a = MIN(SIGNED64), 1019);  ASSERT(v = 16.5, 1020);
+		ASSERT(b = 255, 1021);  ASSERT(u = 32.25, 1022);  ASSERT(c = 300, 1023);  ASSERT(t = 64.125, 1024);
+	END Widths;
+
+	VAR a8: SIGNED8;  a16: SIGNED16;  a32: SIGNED32;  a64: SIGNED64;  u8: UNSIGNED8;  u64: UNSIGNED64;
+		x, y, z: FLOAT64;  s, t: FLOAT32;  ch: CHAR;  bits: SET;  f: BOOLEAN;
+	BEGIN
+		(* constants, where the value never lives in a register of either file *)
+		Alternating(1, 2.5, 3, 4.25, 5, 6.125);
+		FloatFirst(0.5, -7, 1.5, -128, 3.25, MAX(UNSIGNED64));
+		NonNumeric('q', 2.25, {1, 5}, -8.5, TRUE, -300);
+		Widths(0.75, MIN(SIGNED64), 16.5, 255, 32.25, 300, 64.125);
+
+		(* and the same arguments through variables, which the allocator does have to place *)
+		a32 := 1;  x := 2.5;  y := 4.25;  z := 6.125;
+		Alternating(a32, x, a32 + 2, y, a32 + 4, z);
+		x := 0.5;  a32 := -7;  s := 1.5;  a8 := -128;  z := 3.25;  u64 := MAX(UNSIGNED64);
+		FloatFirst(x, a32, s, a8, z, u64);
+		ch := 'q';  s := 2.25;  bits := {1, 5};  y := -8.5;  f := TRUE;  a16 := -300;
+		NonNumeric(ch, s, bits, y, f, a16);
+		s := 0.75;  a64 := MIN(SIGNED64);  x := 16.5;  u8 := 255;  t := 32.25;  a16 := 300;  z := 64.125;
+		Widths(s, a64, x, u8, t, a16, z);
+	END Test.
+
+positive: more mixed arguments than a register file holds
+	MODULE Test;
+
+	PROCEDURE Fourteen(a1: SIGNED32; x1: FLOAT64; a2: SIGNED32; x2: FLOAT64;
+			a3: SIGNED32; x3: FLOAT64; a4: SIGNED32; x4: FLOAT64;
+			a5: SIGNED32; x5: FLOAT64; a6: SIGNED32; x6: FLOAT64;
+			a7: SIGNED32; x7: FLOAT64);
+	BEGIN
+		ASSERT(a1 = 1, 1030);  ASSERT(a2 = 2, 1031);  ASSERT(a3 = 3, 1032);  ASSERT(a4 = 4, 1033);
+		ASSERT(a5 = 5, 1034);  ASSERT(a6 = 6, 1035);  ASSERT(a7 = 7, 1036);
+		ASSERT(x1 = 1.5, 1037);  ASSERT(x2 = 2.5, 1038);  ASSERT(x3 = 3.5, 1039);  ASSERT(x4 = 4.5, 1040);
+		ASSERT(x5 = 5.5, 1041);  ASSERT(x6 = 6.5, 1042);  ASSERT(x7 = 7.5, 1043);
+	END Fourteen;
+
+	(* ten floats exhaust the eight of the C convention on AMD64 while the integers are
+		still in registers, so an argument that spills has to find the right stack slot *)
+	PROCEDURE TenFloats(x1, x2, x3, x4, x5: FLOAT64; a: SIGNED32; x6, x7, x8, x9, x10: FLOAT64; b: SIGNED32);
+	BEGIN
+		ASSERT(x1 = 1.5, 1044);  ASSERT(x5 = 5.5, 1045);  ASSERT(a = 100, 1046);
+		ASSERT(x6 = 6.5, 1047);  ASSERT(x10 = 10.5, 1048);  ASSERT(b = 200, 1049);
+		ASSERT(x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 = 60.0, 1050);
+	END TenFloats;
+
+	VAR n: SIGNED32;  x: FLOAT64;
+	BEGIN
+		Fourteen(1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5);
+		TenFloats(1.5, 2.5, 3.5, 4.5, 5.5, 100, 6.5, 7.5, 8.5, 9.5, 10.5, 200);
+
+		(* through variables, and with an expression in the middle of each run *)
+		n := 3;  x := 3.5;
+		Fourteen(n - 2, x - 2.0, n - 1, x - 1.0, n, x, n + 1, x + 1.0, n + 2, x + 2.0, n + 3, x + 3.0, n + 4, x + 4.0);
+		TenFloats(x - 2.0, x - 1.0, x, x + 1.0, x + 2.0, n * 100 DIV 3, x + 3.0, x + 4.0, x + 5.0, x + 6.0, x + 7.0, n * 200 DIV 3);
+	END Test.
+
+positive: mixed integer and float VAR parameters
+	MODULE Test;
+
+	PROCEDURE Scale(VAR n: SIGNED32; x: FLOAT64; VAR y: FLOAT64; m: SIGNED32);
+	BEGIN
+		ASSERT(n = 3, 1060);  ASSERT(x = 1.5, 1061);  ASSERT(y = 2.5, 1062);  ASSERT(m = 9, 1063);
+		n := n * m;  y := y * x;
+	END Scale;
+
+	PROCEDURE Advance(VAR a: SIGNED64; VAR w: FLOAT32; x: FLOAT64; VAR u: UNSIGNED32; ch: CHAR);
+	BEGIN
+		ASSERT(ch = 'z', 1064);  ASSERT(x = 0.25, 1065);
+		INC(a);  w := w + 0.5;  u := u + 1;
+	END Advance;
+
+	VAR n, m: SIGNED32;  x, y: FLOAT64;  a: SIGNED64;  w: FLOAT32;  u: UNSIGNED32;
+	BEGIN
+		n := 3;  x := 1.5;  y := 2.5;  m := 9;
+		Scale(n, x, y, m);
+		ASSERT(n = 27, 1066);  ASSERT(y = 3.75, 1067);  ASSERT(x = 1.5, 1068);
+
+		a := MAX(SIGNED64) - 1;  w := 1.5;  u := MAX(UNSIGNED32) - 1;
+		Advance(a, w, 0.25, u, 'z');
+		ASSERT(a = MAX(SIGNED64), 1069);  ASSERT(w = 2.0, 1070);  ASSERT(u = MAX(UNSIGNED32), 1071);
+	END Test.
+
+positive: a float result as an argument beside integer arguments
+	MODULE Test;
+
+	PROCEDURE Int(n: SIGNED32): SIGNED32;
+	BEGIN RETURN n * 2 END Int;
+
+	PROCEDURE Flt(x: FLOAT64): FLOAT64;
+	BEGIN RETURN x * 2 END Flt;
+
+	PROCEDURE Take(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64);
+	BEGIN
+		ASSERT(a = 2, 1080);  ASSERT(x = 5.0, 1081);  ASSERT(b = 6, 1082);  ASSERT(y = 9.0, 1083);
+	END Take;
+
+	PROCEDURE Mixed(a: SIGNED32; x: FLOAT64): FLOAT64;
+	BEGIN RETURN x + a END Mixed;
+
+	BEGIN
+		(* every argument is itself a call, so each callee clobbers the registers the
+			argument before it was computed in -- of both files, alternately *)
+		Take(Int(1), Flt(2.5), Int(3), Flt(4.5));
+		ASSERT(Mixed(1, 2.5) = 3.5, 1084);
+
+		(* and a call whose arguments are calls with mixed arguments of their own *)
+		ASSERT(Mixed(Int(2), Mixed(3, Flt(0.25))) = 7.5, 1085);
+		ASSERT(Mixed(Int(Int(1)), Flt(Flt(0.5))) = 6.0, 1086);
+	END Test.
+
+positive: mixed integer and float arguments computed in place
+	MODULE Test;
+	VAR i: SIGNED32;  x: FLOAT64;
+
+	PROCEDURE Take(a: SIGNED32; y: FLOAT64; b: SIGNED32; z: FLOAT64);
+	BEGIN
+		ASSERT(a = 7, 1090);  ASSERT(y = 7.5, 1091);  ASSERT(b = -3, 1092);  ASSERT(z = 2.0, 1093);
+	END Take;
+
+	PROCEDURE TakeFloat(z: FLOAT64);
+	BEGIN ASSERT(z = 3.0, 1094) END TakeFloat;
+
+	PROCEDURE TakeInt(n: SIGNED32);
+	BEGIN ASSERT(n = 2, 1095) END TakeInt;
+
+	PROCEDURE TakeShort(w: FLOAT32);
+	BEGIN ASSERT(w = 2.5, 1096) END TakeShort;
+
+	BEGIN
+		i := 3;  x := 2.5;
+		Take(i * 2 + 1, x * 3, -i, x - 0.5);
+
+		(* an integer reaching a float parameter is converted at the boundary, a float
+			reaching an integer parameter is not and needs ENTIER, and a FLOAT64 reaching
+			a FLOAT32 parameter is narrowed *)
+		TakeFloat(i);
+		TakeInt(ENTIER(x));
+		TakeShort(SHORT(x));
+	END Test.
+
+positive: function results of mixed forms with mixed arguments
+	MODULE Test;
+
+	PROCEDURE F32(a: SIGNED32; x: FLOAT32; b: SIGNED32): FLOAT32;
+	BEGIN RETURN x + (a * b) END F32;
+
+	PROCEDURE F64(x: FLOAT64; a: SIGNED64; y: FLOAT64): FLOAT64;
+	BEGIN RETURN x * y + a END F64;
+
+	PROCEDURE Int(x: FLOAT64; a: SIGNED32; y: FLOAT64): SIGNED32;
+	BEGIN RETURN ENTIER(x + y) + a END Int;
+
+	BEGIN
+		ASSERT(F32(2, 0.5, 3) = 6.5, 1100);
+		ASSERT(F64(1.5, 4, 2.0) = 7.0, 1101);
+		ASSERT(Int(1.5, 10, 2.25) = 13, 1102);
+
+		(* the result of each feeds an argument of the next, and the form changes on the way *)
+		ASSERT(Int(F64(1.5, 4, 2.0), Int(1.5, 10, 2.25), F32(2, 0.5, 3)) = 26, 1103);
+	END Test.
+
+positive: mixed integer and float arguments through a method and a procedure variable
+	MODULE Test;
+	TYPE
+		Handler = PROCEDURE {DELEGATE} (a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64): FLOAT64;
+		Object = OBJECT
+			VAR n: SIGNED32;  acc: FLOAT64;
+
+			PROCEDURE Add(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64);
+			BEGIN INC(n, a + b);  acc := acc + x + y;
+			END Add;
+
+			PROCEDURE Sum(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64): FLOAT64;
+			BEGIN RETURN x + y + (a + b) END Sum;
+		END Object;
+
+	PROCEDURE Sum(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64): FLOAT64;
+	BEGIN RETURN x + y + (a + b) END Sum;
+
+	VAR o: Object;  h: Handler;
+	BEGIN
+		NEW(o);
+		o.Add(1, 2.5, 3, 4.5);
+		ASSERT(o.n = 4, 1110);  ASSERT(o.acc = 7.0, 1111);
+		ASSERT(o.Sum(1, 2.5, 3, 4.5) = 11.0, 1112);
+
+		h := Sum;  ASSERT(h(1, 2.5, 3, 4.5) = 11.0, 1113);
+		(* a delegate carries the receiver ahead of the mixed arguments *)
+		h := o.Sum;  ASSERT(h(1, 2.5, 3, 4.5) = 11.0, 1114);
+	END Test.
+
+positive: recursion with an integer counter and a float accumulator
+	MODULE Test;
+
+	PROCEDURE Sum(n: SIGNED32; acc, step: FLOAT64; m: SIGNED32): FLOAT64;
+	BEGIN
+		IF n = 0 THEN RETURN acc + m END;
+		RETURN Sum(n - 1, acc + step, step, m)
+	END Sum;
+
+	(* mutual recursion, so neither procedure's saved float registers are its own *)
+	PROCEDURE Even(n: SIGNED32; x: FLOAT64): FLOAT64;
+	BEGIN
+		IF n = 0 THEN RETURN x END;
+		RETURN Odd(n - 1, x + 0.25)
+	END Even;
+
+	PROCEDURE Odd(n: SIGNED32; x: FLOAT64): FLOAT64;
+	BEGIN
+		IF n = 0 THEN RETURN x * 2 END;
+		RETURN Even(n - 1, x + 0.5)
+	END Odd;
+
+	BEGIN
+		ASSERT(Sum(4, 0.0, 0.5, 3) = 5.0, 1120);
+		ASSERT(Even(4, 0.0) = 1.5, 1121);
+	END Test.
+
+positive: mixed integer and float arguments crossing a module boundary
+	MODULE A;
+	PROCEDURE Take* (a: SIGNED32; x: FLOAT64; b: SIGNED16; y: FLOAT32; c: UNSIGNED64): FLOAT64;
+	BEGIN
+		ASSERT(a = 1, 1130);  ASSERT(x = 2.5, 1131);  ASSERT(b = -3, 1132);
+		ASSERT(y = 4.5, 1133);  ASSERT(c = MAX(UNSIGNED64), 1134);
+		RETURN x + y
+	END Take;
+	END A.
+
+	MODULE Test;
+	IMPORT A;
+	VAR n: SIGNED32;  x: FLOAT64;
+	BEGIN
+		ASSERT(A.Take(1, 2.5, -3, 4.5, MAX(UNSIGNED64)) = 7.0, 1135);
+		n := 1;  x := 2.5;
+		ASSERT(A.Take(n, x, -3, 4.5, MAX(UNSIGNED64)) = 7.0, 1136);
+	END Test.
+
+positive: mixed integer and float arguments through the C and WINAPI conventions
+	MODULE Test;
+
+	(* The only place in the suite where the two register files are used at all: the Oberon
+		convention pushes every parameter, the C convention on AMD64 counts integers and floats
+		in two separate files and WINAPI counts them in one. Caller and callee are generated by
+		the same compiler here, so a classification that is wrong the same way on both sides
+		still passes -- what this pins is the spill: the first parameter that finds no register
+		used to be read at the frame pointer plus one slot, which is the return address. *)
+
+	PROCEDURE {C} CMixed(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64; c: SIGNED32; z: FLOAT64): FLOAT64;
+	BEGIN
+		ASSERT(a = 1, 1140);  ASSERT(b = 3, 1141);  ASSERT(c = 5, 1142);
+		RETURN x + y + z
+	END CMixed;
+
+	PROCEDURE {WINAPI} WMixed(a: SIGNED32; x: FLOAT64; b: SIGNED32; y: FLOAT64): FLOAT64;
+	BEGIN
+		ASSERT(a = 1, 1143);  ASSERT(b = 3, 1144);
+		RETURN x + y
+	END WMixed;
+
+	(* nine floats outrun the eight float registers while the three integers are still in
+		registers of their own, so the ninth is the one that has to find a stack slot *)
+	PROCEDURE {C} CFloatSpill(a1: SIGNED32; x1, x2, x3, x4: FLOAT64; a2: SIGNED32;
+			x5, x6, x7, x8, x9: FLOAT64; a3: SIGNED32): FLOAT64;
+	BEGIN
+		ASSERT(a1 = 1, 1145);  ASSERT(a2 = 2, 1146);  ASSERT(a3 = 3, 1147);  ASSERT(x9 = 9.5, 1148);
+		RETURN x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9
+	END CFloatSpill;
+
+	(* and the other way round: eight integers outrun the six integer registers, and the two
+		that spill are consecutive, so an offset that is one slot low shows up as a shift *)
+	PROCEDURE {C} CIntSpill(a1: SIGNED32; x1: FLOAT64; a2, a3, a4, a5, a6, a7, a8: SIGNED32; x2: FLOAT64): FLOAT64;
+	BEGIN
+		ASSERT(a7 = 7, 1149);  ASSERT(a8 = 8, 1150);
+		RETURN x1 + x2 + (a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8)
+	END CIntSpill;
+
+	PROCEDURE {C} CNarrow(w: FLOAT32; a: SIGNED8; v: FLOAT32; b: SIGNED16; u: FLOAT64; c: UNSIGNED32): FLOAT64;
+	BEGIN
+		ASSERT(a = -128, 1151);  ASSERT(b = -300, 1152);  ASSERT(c = MAX(UNSIGNED32), 1153);
+		RETURN w + v + u
+	END CNarrow;
+
+	VAR n: SIGNED32;  x: FLOAT64;
+	BEGIN
+		ASSERT(CMixed(1, 2.5, 3, 4.25, 5, 6.125) = 12.875, 1154);
+		ASSERT(WMixed(1, 2.5, 3, 4.5) = 7.0, 1155);
+		ASSERT(CFloatSpill(1, 1.5, 2.5, 3.5, 4.5, 2, 5.5, 6.5, 7.5, 8.5, 9.5, 3) = 49.5, 1156);
+		ASSERT(CIntSpill(1, 0.5, 2, 3, 4, 5, 6, 7, 8, 0.25) = 36.75, 1157);
+		ASSERT(CNarrow(0.75, -128, 1.25, -300, 8.5, MAX(UNSIGNED32)) = 10.5, 1158);
+
+		(* through variables, so the arguments are moved into place rather than materialised *)
+		n := 1;  x := 2.5;
+		ASSERT(CMixed(n, x, n + 2, x + 1.75, n + 4, x + 3.625) = 12.875, 1159);
+		ASSERT(WMixed(n, x, n + 2, x + 2.0) = 7.0, 1160);
+	END Test.
