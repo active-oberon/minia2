@@ -608,6 +608,10 @@ BEGIN
 	DoAddPlatform("UnixARM","-b=ARM --useFPU32 --useFPU64 --mergeSections --traceModule=Trace --objectFileExtension=.GofA --symbolFileExtension=.SymA --trackLeave --preciseGC --writeBarriers --cellsAreObjects --platformCC=C --define=UNIX,ARM");
 	DoAddPlatform("Unix32","-b=AMD --bits=32 --mergeSections --traceModule=Trace --objectFileExtension=.GofU --symbolFileExtension=.SymU --trackLeave --preciseGC --writeBarriers --cellsAreObjects --platformCC=C --define=UNIX,I386");
 	DoAddPlatform("Unix64","-b=AMD --bits=64 --mergeSections --traceModule=Trace --objectFileExtension=.GofUu --symbolFileExtension=.SymUu --trackLeave --preciseGC --writeBarriers --cellsAreObjects --platformCC=C --define=UNIX,AMD64");
+	(* AArch64 userspace. Deliberately without --preciseGC, --writeBarriers, --trackLeave and
+		--cellsAreObjects, which Unix64 carries: each adds a requirement on the code generator,
+		and the port turns them on one at a time once it produces code at all. *)
+	DoAddPlatform("UnixA64","-b=A64 --mergeSections --traceModule=Trace --objectFileExtension=.GofU8 --symbolFileExtension=.SymU8 --platformCC=C --define=UNIX,ARM64");
 
 	SetupDefaults;
 END Compiler.
