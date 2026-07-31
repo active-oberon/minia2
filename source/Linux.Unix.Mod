@@ -209,8 +209,23 @@ TYPE
 	Mutex_t* = ADDRESS;
 	Condition_t* = ADDRESS;
 
-	MutexType = ARRAY 10 OF INTEGER;
-	MutexAttributeType = ARRAY 1 OF INTEGER;
+	(* the opaque pthread types, whose size glibc fixes per architecture: a mutex is 40 bytes on
+		x86-64 and 48 on AArch64, which is __SIZEOF_PTHREAD_MUTEX_T of bits/pthreadtypes-arch.h. Too
+		small is not a detail -- pthread_mutex_init writes the whole structure, and what follows it is
+		then gone, which on a mutex out of malloc is the allocator's own bookkeeping. *)
+	#IF ARM64 THEN
+		MutexType = ARRAY 12 OF INTEGER;
+	#ELSE
+		MutexType = ARRAY 10 OF INTEGER;
+	#END
+	(* and the attribute of a mutex is eight bytes on AArch64 against four on x86-64, which matters
+		as much: it lives on the stack next to the mutex it is about, and pthread_mutexattr_init
+		clears the whole of it *)
+	#IF ARM64 THEN
+		MutexAttributeType = ARRAY 2 OF INTEGER;
+	#ELSE
+		MutexAttributeType = ARRAY 1 OF INTEGER;
+	#END
 	ConditionType = ARRAY 12 OF INTEGER;
 
 	Key_t* = ADDRESS;
@@ -371,6 +386,26 @@ TYPE
 				atime-	: Timeval;
 				mtime-	: Timeval;
 				ctime-	: Timeval;
+			#ELSIF ARM64 THEN
+				(* the generic 64 bit `struct stat` of include/uapi/asm-generic/stat.h, which is what
+					AArch64 uses: 128 bytes, with the link count, the owner, the group and the block
+					size four bytes each rather than eight, and a padding word behind the device and
+					behind the block size *)
+				dev-		: dev_t;
+				ino-		: ino_t;
+				mode-	: mode_t;
+				nlink-		: INTEGER;
+				uid-		: INTEGER;
+				gid-		: INTEGER;
+				rdev-		: dev_t;
+				pad1		: LONGINTEGER;
+				size-		: SIZE;
+				blksize-	: INTEGER;
+				pad2		: INTEGER;
+				blocks-	: blkcnt_t;
+				atime-	: Timeval;
+				mtime-	: Timeval;
+				ctime-	: Timeval;
 			#ELSE
 				unimplemented
 			#END
@@ -431,6 +466,14 @@ TYPE
 				flags-		: SET;
 				link-		: ADDRESS;
 				stack-	: Stack;
+				#IF ARM64 THEN
+					(* AArch64 is one of the architectures that put the signal mask in front of the
+						machine context rather than behind it. The mask the kernel reserves room for is
+						1024 bits whatever the size of sigset_t, and the machine context behind it is 16
+						byte aligned, which is where the eight bytes of padding come from. *)
+					sigmask-	: ARRAY 128 OF CHAR;
+					pad			: LONGINTEGER;
+				#END
 				mc-		: McontextDesc
 			END;
 
@@ -490,15 +533,35 @@ TYPE
   				r_0-, r_1-, r_2-, r_3-, r_4-, r_5-, r_6-, r_7-, r_8-, r_9-, r_10-, r_bp-, r_ip-, r_sp-, r_lr-, r_pc-: ADDRESS;
   				cpsr-: ADDRESS;
   				fault_address-: ADDRESS
+  			#ELSIF ARM64 THEN
+  				(* `struct sigcontext` of arch/arm64: the faulting address, the thirty one general
+  					purpose registers, and then SP, PC and PSTATE. The four kilobytes of floating point
+  					state behind them are not named, because nothing here reads them and their absence
+  					only makes SIZE OF McontextDesc smaller than the frame the kernel wrote. *)
+  				fault_address-: ADDRESS;
+  				r_0-, r_1-, r_2-, r_3-, r_4-, r_5-, r_6-, r_7-: ADDRESS;
+  				r_8-, r_9-, r_10-, r_11-, r_12-, r_13-, r_14-, r_15-: ADDRESS;
+  				r_16-, r_17-, r_18-, r_19-, r_20-, r_21-, r_22-, r_23-: ADDRESS;
+  				r_24-, r_25-, r_26-, r_27-, r_28-: ADDRESS;
+  				r_bp-: ADDRESS;		(* X29 *)
+  				r_lr-: ADDRESS;		(* X30 *)
+  				r_sp-: ADDRESS;
+  				r_pc-: ADDRESS;
+  				pstate-: ADDRESS
   			#ELSE
   				unimplemented
   			#END
 		END;
 
 
+	(* 56 bytes on x86-64, 64 on AArch64 *)
 	PThreadAttr = RECORD
 		reserved1-: ARRAY 5 OF ADDRESS;
-		reserved2-: ARRAY 4 OF INTEGER;
+		#IF ARM64 THEN
+			reserved2-: ARRAY 6 OF INTEGER;
+		#ELSE
+			reserved2-: ARRAY 4 OF INTEGER;
+		#END
 	END;
 
 
@@ -626,6 +689,14 @@ VAR
 	xstat-			: PROCEDURE {C} ( ver: SIGNED32; name: ADDRESS;  VAR buf: Status ): SIGNED32;
 	lxstat-		: PROCEDURE {C} ( ver: SIGNED32; name: ADDRESS;  VAR buf: Status ): SIGNED32;
 	fxstat-		: PROCEDURE {C} ( ver: SIGNED32; fd: SIGNED32;  VAR buf: Status ): SIGNED32;
+
+	(* glibc 2.33 and later export stat, fstat and lstat as functions of their own; before that a
+		program reached them through the versioned __xstat family, and the header did the rewriting.
+		Both are looked up, because which of the two a libc has depends on its age rather than on the
+		architecture. *)
+	statPlain-	: PROCEDURE {C} ( name: ADDRESS;  VAR buf: Status ): SIGNED32;
+	lstatPlain-	: PROCEDURE {C} ( name: ADDRESS;  VAR buf: Status ): SIGNED32;
+	fstatPlain-	: PROCEDURE {C} ( fd: SIGNED32;  VAR buf: Status ): SIGNED32;
 
 	getpid-		: PROCEDURE {C} ( ): SIGNED32;
 	getuid-		: PROCEDURE {C} ( ): SIGNED32;
@@ -1138,8 +1209,13 @@ VAR
 
 	PROCEDURE fstat*  ( fd: SIGNED32;  VAR buf: Status ): SIGNED32;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF fstatPlain # NIL THEN RETURN fstatPlain( fd, buf ) END;
 	#IF AMD64 THEN
 		RETURN  fxstat( 1, fd, buf );
+	#ELSIF ARM64 THEN
+		(* the version number of the structure, which the architectures that use the generic kernel
+			layout -- AArch64 among them -- number zero rather than one *)
+		RETURN  fxstat( 0, fd, buf );
 	#ELSE
 		RETURN  fxstat( 3, fd, buf );
 	#END
@@ -1147,8 +1223,11 @@ VAR
 
 	PROCEDURE stat*  ( path: ADDRESS;  VAR buf: Status ): SIGNED32;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF statPlain # NIL THEN RETURN statPlain( path, buf ) END;
 	#IF AMD64 THEN
 		RETURN  xstat( 1, path, buf );
+	#ELSIF ARM64 THEN
+		RETURN  xstat( 0, path, buf );
 	#ELSE
 		RETURN  xstat( 3, path, buf );
 	#END
@@ -1229,6 +1308,14 @@ VAR
 		libraryPaths[2] := "/usr/lib";
 		libraryPaths[3] := "/usr/lib/arm-linux-gnueabihf/";
 		noPaths := 4;
+#ELSIF ARM64 THEN
+		libraryPaths[0] := "/lib/aarch64-linux-gnu";
+		libraryPaths[1] := "/lib64";
+		libraryPaths[2] := "/lib";
+		libraryPaths[3] := "/usr/lib/aarch64-linux-gnu";
+		libraryPaths[4] := "/usr/lib64";
+		libraryPaths[5] := "/usr/lib";
+		noPaths := 6;
 #ELSE
 	=== error
 #END
@@ -1331,9 +1418,17 @@ VAR
 		Dlsym( libc, "mkdir",	ADDRESSOF( mkdir ) );
 		Dlsym( libc, "rmdir",	ADDRESSOF( rmdir ) );
 
-		Dlsym( libc, "__xstat",		ADDRESSOF( xstat ) );
-		Dlsym( libc, "__lxstat",	ADDRESSOF( lxstat ) );
-		Dlsym( libc, "__fxstat",	ADDRESSOF( fxstat ) );
+		(* one of the two families has to be there, and on a libc old enough to have both, the
+			versioned one is what the program used to be linked against *)
+		IF ~DlsymOptional( libc, "__xstat", ADDRESSOF( xstat ) ) THEN
+			Dlsym( libc, "stat", ADDRESSOF( statPlain ) )
+		END;
+		IF ~DlsymOptional( libc, "__lxstat", ADDRESSOF( lxstat ) ) THEN
+			Dlsym( libc, "lstat", ADDRESSOF( lstatPlain ) )
+		END;
+		IF ~DlsymOptional( libc, "__fxstat", ADDRESSOF( fxstat ) ) THEN
+			Dlsym( libc, "fstat", ADDRESSOF( fstatPlain ) )
+		END;
 
 		Dlsym( libc, "getpid",	ADDRESSOF( getpid ) );
 		Dlsym( libc, "getuid",	ADDRESSOF( getuid ) );

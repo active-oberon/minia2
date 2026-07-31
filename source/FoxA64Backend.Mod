@@ -199,7 +199,7 @@ TYPE
 	VAR
 		backend: BackendA64;
 		emptyOperand: Operand;
-		opSP, opFP, opLR, opZR, opIP0: Operand;
+		opSP, opFP, opLR, opZR, opIP0, opIP1: Operand;
 
 		(* bytes allocated below the frame pointer for locals; the spill area starts under it *)
 		localsSize: SIZE;
@@ -219,6 +219,7 @@ TYPE
 			InstructionSet.InitRegister(opLR, LR, 64);
 			InstructionSet.InitRegister(opZR, ZR, 64);
 			InstructionSet.InitRegister(opIP0, IP0, 64);
+			InstructionSet.InitRegister(opIP1, IP1, 64);
 			dump := NIL
 		END InitGeneratorA64;
 
@@ -509,14 +510,25 @@ TYPE
 		END Load;
 
 		PROCEDURE Store(CONST sourceRegister, memoryOperand: Operand; CONST type: IntermediateCode.Type);
+		VAR source: Operand;
 		BEGIN
+			(* No store can name SP as the value it writes: in that field register 31 is the zero
+				register and nothing else. So the stack pointer is copied into a register first, which
+				is what `mov x, sp` does with an ADD of zero. The intermediate code asks for this
+				wherever a process saves its own stack pointer. *)
+			IF sourceRegister.isStackPointer THEN
+				source := GetFreeRegister(AddressType());
+				Emit2(InstructionSet.opMOV, source, opSP)
+			ELSE
+				source := sourceRegister
+			END;
 			IF type.form = IntermediateCode.Float THEN
-				Emit2(InstructionSet.opSTR, sourceRegister, memoryOperand)
+				Emit2(InstructionSet.opSTR, source, memoryOperand)
 			ELSE
 				CASE type.sizeInBits OF
-				| 8: Emit2(InstructionSet.opSTRB, sourceRegister, memoryOperand)
-				| 16: Emit2(InstructionSet.opSTRH, sourceRegister, memoryOperand)
-				| 32, 64: Emit2(InstructionSet.opSTR, sourceRegister, memoryOperand)
+				| 8: Emit2(InstructionSet.opSTRB, source, memoryOperand)
+				| 16: Emit2(InstructionSet.opSTRH, source, memoryOperand)
+				| 32, 64: Emit2(InstructionSet.opSTR, source, memoryOperand)
 				ELSE
 					Error(Basic.invalidPosition, "cannot store a value of this size")
 				END
@@ -845,17 +857,36 @@ TYPE
 			END
 		END ModifyStackPointer;
 
+		(** clear the locals of the frame just entered
+
+			Up to a point one store per word is the shortest code there is. Past it the loop is
+			shorter, and past 32760 bytes the straight line does not encode at all: the scaled offset
+			of a store reaches 4095 words and a frame can be larger than that -- Files.CopyFile has
+			34040 bytes of locals.
+		**)
 		PROCEDURE ClearStack(size: SIZE);
-		VAR offset: SIZE; base, memory: Operand;
+		CONST Unrolled = 16 * 8;		(* the size up to which a store per word is emitted *)
+		VAR offset: SIZE; base, count, memory: Operand;
 		BEGIN
 			IF size <= 0 THEN RETURN END;
 			base := opIP0;
 			Emit2(InstructionSet.opMOV, base, opSP);
-			offset := 0;
-			WHILE offset < size DO
-				InstructionSet.InitImmediateOffsetMemory(memory, base.register, offset, InstructionSet.indexOffset);
+			InstructionSet.InitImmediateOffsetMemory(memory, base.register, 0, InstructionSet.indexOffset);
+			IF size <= Unrolled THEN
+				offset := 0;
+				WHILE offset < size DO
+					InstructionSet.InitImmediateOffsetMemory(memory, base.register, offset, InstructionSet.indexOffset);
+					Emit2(InstructionSet.opSTR, opZR, memory);
+					INC(offset, 8)
+				END
+			ELSE
+				count := opIP1;
+				EmitConstant(count, size);
+				(* str xzr, [base]; add base, base, #8; sub count, count, #8; cbnz count, back *)
 				Emit2(InstructionSet.opSTR, opZR, memory);
-				INC(offset, 8)
+				Emit3(InstructionSet.opADD, base, base, Immediate(8));
+				Emit3(InstructionSet.opSUB, count, count, Immediate(8));
+				Emit2(InstructionSet.opCBNZ, count, Immediate(-12))
 			END
 		END ClearStack;
 
@@ -1424,7 +1455,9 @@ TYPE
 			value := GetFreeRegister(IntermediateCode.UnsignedIntegerType(32));
 			loop := out.pc;
 			Emit2(InstructionSet.opCMP, source, last);
-			Emit2(InstructionSet.opBCOND, Condition(InstructionSet.conditionCS), Immediate(20));
+			(* over the three instructions of the body -- the two byte accesses and the branch back --
+				and a branch displacement counts from the branch itself, so sixteen and not twenty *)
+			Emit2(InstructionSet.opBCOND, Condition(InstructionSet.conditionCS), Immediate(16));
 			InstructionSet.InitImmediateOffsetMemory(memory, source.register, 1, InstructionSet.indexPost);
 			Emit2(InstructionSet.opLDRB, value, memory);
 			InstructionSet.InitImmediateOffsetMemory(memory, destination.register, 1, InstructionSet.indexPost);

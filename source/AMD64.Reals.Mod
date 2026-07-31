@@ -176,6 +176,8 @@ CODE {SYSTEM.i386, SYSTEM.FPU}
 END fcr;
 *)
 
+#IF AMD64 THEN
+
 (** Return state of the floating-point control register. *)
 PROCEDURE FCR*(): SET;
 CODE {SYSTEM.AMD64, SYSTEM.FPU}
@@ -211,6 +213,48 @@ CODE {SYSTEM.AMD64, SYSTEM.FPU}
 	FWAIT
 	POP RAX	; return value
 END RoundL;
+
+#ELSIF ARM64 THEN
+
+(* The same four procedures on AArch64, where the control register is a system register and the
+	conversions are single instructions. The rounding of Round and RoundL is the instruction's own --
+	to the nearest, ties to even -- rather than whatever FPCR says: the convert that follows FPCR is
+	FRINTX and then a truncation, and FRINTX is not in the instruction set the assembler encodes.
+	Nearest-ties-to-even is the mode a floating point unit is in unless something changed it, so the
+	two agree unless SetFCR was used to change the rounding, which nothing in the system does. *)
+
+(** Return state of the floating-point control register. *)
+PROCEDURE FCR*(): SET;
+CODE
+	mrs x0, fpcr
+END FCR;
+
+(** Set state of floating-point control register. *)
+PROCEDURE SetFCR*(s: SET);
+CODE
+	ldr w0, [fp, #s]
+	msr fpcr, x0
+END SetFCR;
+
+(** Round x to an integer, to the nearest and ties to even. *)
+PROCEDURE -Round*(x: FLOAT32): SIGNED32;	(** non-portable *)
+CODE
+	mov x16, sp					; A64 checks the alignment of SP when SP is the base of an access
+	ldr s0, [x16, #x]
+	add sp, sp, #8					; the parameter is removed by the procedure, its caller having pushed it
+	fcvtns w0, s0
+END Round;
+
+(** Round x to an integer, to the nearest and ties to even. *)
+PROCEDURE -RoundL*(x: FLOAT64): SIGNED32;	(** non-portable *)
+CODE
+	mov x16, sp
+	ldr d0, [x16, #x]
+	add sp, sp, #8
+	fcvtns w0, d0
+END RoundL;
+
+#END
 
 PROCEDURE RealX (hh, hl: SIGNED64; adr: ADDRESS);
 VAR h,l: SIGNED32;

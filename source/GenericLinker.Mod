@@ -412,7 +412,10 @@ VAR
 				FOR i := 0 TO pattern.patterns-1 DO
 					INC(nobits,pattern.pattern[i].bits);
 				END;
-				remainder := ObjectFile.Bits(ASH(address,-nobits));
+				(* on a signed number, because a relative displacement is negative when it points
+					backwards and ADDRESS is unsigned: the shift of an unsigned value fills with zeros,
+					and every backward reference would then read as far out of range *)
+				remainder := ObjectFile.Bits(ASH(SYSTEM.VAL(SIGNED64, address),-nobits));
 
 				IF  (nobits <32) & ((remainder > 0) OR (remainder < -1)) THEN
 					IF pattern.mode = ObjectFile.Relative THEN (* negative values allowed *)
@@ -436,7 +439,9 @@ VAR
 				IF pattern.mode = ObjectFile.Relative THEN
 					DEC(address,target)
 				END;
-				address := ASH (address, pattern.scale);
+				(* likewise signed: the scale of a fixup that counts instructions rather than bytes is
+					a shift to the right, and it has to keep the sign of a backward displacement *)
+				address := SYSTEM.VAL(Address, ASH (SYSTEM.VAL(SIGNED64, address), pattern.scale));
 				CheckBits(pattern, patch.offset);
 				FOR j := 0 TO pattern.patterns-1 DO PatchPattern(pattern.pattern[j]) END;
 			END ApplyPatch;

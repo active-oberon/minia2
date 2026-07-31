@@ -491,6 +491,8 @@ tasks:
       - task: a64-check
       - task: a64-codegen
       - task: a64-run
+      - task: a64-runtime
+      - task: a64-system
 
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)
@@ -515,6 +517,34 @@ tasks:
           status=$?
           if [ "$status" -eq 2 ]; then
             echo "[SKIP] running A64 code needs qemu-user-static and llvm"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-runtime:
+    desc: Compile the Unix runtime for UnixA64 and report how much of it gets through
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-runtime-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] compiling the runtime for A64 needs a built host compiler"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-system:
+    desc: Link the A64 runtime and run the system in it under qemu (A64_SYSROOT=… for the C library)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-system-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] running the A64 system needs qemu-user and an AArch64 C library"
           else
             exit "$status"
           fi
