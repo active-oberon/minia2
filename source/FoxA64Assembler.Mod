@@ -248,6 +248,15 @@ TYPE
 					InstructionSet.InitImmediate(operand, value);
 					IF ~ParseTrailingModifier(operand) THEN RETURN END
 
+				ELSIF (token.symbol = Scanner.Identifier)
+						& ((opCode = InstructionSet.opMRS) OR (opCode = InstructionSet.opMSR))
+						& (InstructionSet.SystemRegisterFromName(token.identifierString) # InstructionSet.None) THEN
+					(* a system register, which only these two instructions take and which is
+						therefore not looked for anywhere else: FPCR is a plausible name for a
+						variable of a module *)
+					InstructionSet.InitImmediate(operand, InstructionSet.SystemRegisterFromName(token.identifierString));
+					NextToken
+
 				ELSIF (token.symbol = Scanner.Identifier) & GetNonConstant(errorPosition, token.identifierString, result) THEN
 					(* a label that is not resolved yet: the encoder turns it into a fixup *)
 					InstructionSet.InitImmediate(operand, result.value);

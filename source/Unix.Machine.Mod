@@ -13,7 +13,10 @@ CONST
 		DefaultObjectFileExtension* = ".GofUu";
 	#ELSIF ARM THEN
 		Version = "A2 Gen. ARM, ";
-		DefaultObjectFileExtension* = ".GofA";	
+		DefaultObjectFileExtension* = ".GofA";
+	#ELSIF ARM64 THEN
+		Version = "A2 Gen. AArch64, ";
+		DefaultObjectFileExtension* = ".GofU8";
 	#END
 
 	Second* = 1000; (* frequency of ticks increments in Hz *)
@@ -334,7 +337,23 @@ VAR
 		STR	R0, [R3, #0]			; put(destAdr + counter, filler)
 		ADD	R3, R3, #4				; R3 := R3 + 4
 		B		Loop
-	Exit:	
+	Exit:
+	#ELSIF ARM64 THEN
+		ldr w0, [fp, #filler]
+		ldr x1, [fp, #size]
+		ldr x3, [fp, #destAdr]
+		tst x1, #3						; ASSERT(size MOD 4 = 0)
+		b.eq sizeIsWords
+		brk #8							; ASSERT failure
+	sizeIsWords:
+		add x4, x3, x1					; one past the last word
+	loop:
+		cmp x3, x4
+		b.hs exit
+		str w0, [x3, #0]
+		add x3, x3, #4
+		b loop
+	exit:
 	#ELSE
 		unimplemented
 	#END
@@ -380,6 +399,20 @@ CODE
 		STREX	R2, R1, R0
 		CMP	R2, #0
 		BNE	loop
+#ELSIF ARM64 THEN
+	(* A procedure without an activation frame reads its parameters off the stack and removes them
+		itself, its caller having pushed them. The stack pointer is copied into a register first
+		because A64 faults on a load whose base is SP while SP is not sixteen byte aligned, and the
+		A2 stack is eight byte granular. X16 and X17 are the two registers the code generator never
+		allocates. *)
+	mov x16, sp
+	ldr x0, [x16, #x]
+	add sp, sp, #8
+loop:
+	ldaxr w1, [x0]
+	add w1, w1, #1
+	stlxr w2, w1, [x0]
+	cbnz w2, loop
 #ELSE
 	unimplemented
 #END
@@ -396,7 +429,7 @@ CODE
 	POP RAX
 	LOCK
 	DEC DWORD [RAX]
-#ELSIF ARM THEN 
+#ELSIF ARM THEN
 	LDR	R0, [SP], #4
 loop:
 	LDREX	R1, R0
@@ -404,6 +437,15 @@ loop:
 	STREX	R2, R1, R0
 	CMP	R2, #0
 	BNE	loop
+#ELSIF ARM64 THEN
+	mov x16, sp
+	ldr x0, [x16, #x]
+	add sp, sp, #8
+loop:
+	ldaxr w1, [x0]
+	sub w1, w1, #1
+	stlxr w2, w1, [x0]
+	cbnz w2, loop
 #ELSE
 	unimplemented
 #END
@@ -432,6 +474,16 @@ loop:
 	CMP R2, #0
 	BNE loop			; if store failed, try again, else exit
 	ADD SP, SP, #8
+#ELSIF ARM64 THEN
+	mov x16, sp
+	ldr x0, [x16, #x]		; the address of x
+	ldr w3, [x16, #y]		; the amount
+	add sp, sp, #16
+loop:
+	ldaxr w1, [x0]
+	add w1, w1, w3
+	stlxr w2, w1, [x0]
+	cbnz w2, loop
 #ELSE
 	unimplemented
 #END
@@ -484,6 +536,17 @@ loop:
 	BNE	loop					; store exclusive failed: retry
 
 exit:
+#ELSIF ARM64 THEN
+	mov x16, sp
+	ldr x3, [x16, #x]			; the address of x
+	add sp, sp, #8
+	mov w2, #1					; TRUE
+loop:
+	ldaxrb w0, [x3]				; the old value, which is the result
+	cbnz w0, exit					; already TRUE: leave it, and return TRUE
+	stlxrb w4, w2, [x3]
+	cbnz w4, loop					; the store did not hold: read again
+exit:
 #ELSE
 	unimplemented
 #END
@@ -517,6 +580,19 @@ loop:
 	BNE	loop					; store exclusive failed: retry
 
 exit:
+#ELSIF ARM64 THEN
+	mov x16, sp
+	ldr x3, [x16, #x]			; the address of x
+	ldr w1, [x16, #old]
+	ldr w2, [x16, #new]
+	add sp, sp, #24
+loop:
+	ldaxr w0, [x3]				; the old value, which is the result
+	cmp w0, w1
+	b.ne exit						; x # old: leave it alone
+	stlxr w4, w2, [x3]
+	cbnz w4, loop					; the store did not hold: read again
+exit:
 #ELSE
 	unimplemented
 #END
@@ -531,6 +607,8 @@ CODE
 	PAUSE
 #ELSIF ARM THEN
 	MOV R0, R0
+#ELSIF ARM64 THEN
+	nop
 #ELSE
 	unimplemented
 #END
@@ -543,8 +621,10 @@ CODE
 	MOV EAX, [EBP+4]
 #ELSIF AMD64 THEN
 	MOV RAX, [RBP + 8]
-#ELSIF ARM THEN 
+#ELSIF ARM THEN
 	MOV R0, PC
+#ELSIF ARM64 THEN
+	ldr x0, [fp, #8]				; the link register the prologue saved: where this procedure returns to
 #ELSE
 	unimplemented
 #END
@@ -563,7 +643,10 @@ CODE
 	SHL RDX, 32
 	OR RAX, RDX
 END GetTimer;
-#ELSIF ARM THEN
+#ELSIF ARM OR ARM64 THEN
+(* the cycle counter is readable from user space on AArch64 as CNTVCT_EL0, but a system register
+	move is not in the instruction set the assembler encodes, and the clock the kernel offers is
+	the same clock *)
 PROCEDURE GetTimer* (): SIGNED64;
 VAR t: Unix.Timespec;
 BEGIN
@@ -667,6 +750,9 @@ END GetTimer;
 		LSR R3, R3, #8
 		BIC R3, R3, #65280
 		EOR R0, R3, R0, ROR #8 ; result is returned in R0
+	#ELSIF ARM64 THEN
+		ldr w0, [fp, #n]
+		rev w0, w0						; the result is returned in W0
 	#ELSE
 		unimplemented
 	#END

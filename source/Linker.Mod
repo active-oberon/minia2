@@ -1097,6 +1097,9 @@ BEGIN
 	defaults.Add("Linux32","--fileFormat=Raw --fileName=oberon --extension=.GofU --displacement=08048000H");
 	defaults.Add("Linux64","--fileFormat=Raw --fileName=oberon --extension=.GofUu --displacement=08048000H");
 	defaults.Add("LinuxARM","--fileFormat=Raw --fileName=oberon --extension=.GofA --displacement=010000H");	
+	(* AArch64: the displacement is a whole 64 kilobyte page, because a kernel built with a page that
+		large only maps a segment whose address and file offset agree modulo the page size *)
+	defaults.Add("LinuxA64","--fileFormat=Raw --fileName=oberon --extension=.GofU8 --displacement=0400000H");
 	defaults.Add("RPI","--fileName=kernel.img --extension=.Goa --displacement=8000H -sa ");
 	defaults.Add("Solaris32", "--fileFormat=UnixRaw --fileName=oberon.bin --extension=.GofU --displacement=0" );
 	defaults.Add("Solaris64", "--fileFormat=UnixRaw --fileName=oberon.bin --extension=.GofUu --displacement=0" );

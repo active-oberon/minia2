@@ -8,6 +8,11 @@ IMPORT SYSTEM, Trace;
 CONST
 	#IF ARM THEN
 		base* = 10000H;
+	#ELSIF ARM64 THEN
+		(* a whole 64 kilobyte page: an AArch64 kernel may be built with a page size of 4, 16 or 64
+			kilobytes, and the loader only maps a segment whose virtual address and file offset agree
+			modulo the page size. 08048000H does not, on a 64 kilobyte page. *)
+		base* = 400000H;
 	#ELSE
 		base* = 08048000H;
 	#END
@@ -265,7 +270,119 @@ VAR
 		ALIGN 8
 
 		entry:
-	#ELSE 
+	#ELSIF ARM64 THEN
+		(* the same 64 bit ELF the AMD64 branch writes, differing in the three places the
+			architecture appears: the machine number, the relocation type of the one dynamic symbol,
+			and the name of the interpreter that resolves it *)
+		; ELF header
+		DB 07FH, 'ELF', 2, 1, 1, 0
+		DD 0, 0
+		DW 02, 183 ; EM_AARCH64
+		DD 01
+		DQ entry + base; program entry point
+		DQ elfheadersize
+		DQ 0
+		DD 0
+		DW elfheadersize
+		DW 38H
+		DW 3 ; #program header table entries
+		DW 0
+		DW 0
+		DW 0
+
+		elfheadersize:
+
+		; program header
+		DD 1
+		DD 07
+		DQ 0
+		DQ base;
+		DQ base;
+		(* `last` rather than `@last`: the '@' of the AMD64 assembler resolves the identifier in the
+			scope around the code block and writes the module qualified name of it, and the shared
+			assembler behind the A64 one makes a linker symbol out of the bare text instead, which
+			nothing defines. The ARM branch writes it without the '@' for the same reason. *)
+		DQ last - base; segment size (file)
+		DQ last - base; segment size (memory)
+		DQ 1000H; alignment
+
+		; interpreter header
+		DD 3
+		DD 4H
+		DQ interpretername; interpreter name offset
+		DQ interpretername + base; interpreter name
+		DQ interpretername + base; interpreter name
+		DQ interpretername_end - interpretername ; interpreter name length
+		DQ interpretername_end - interpretername ; interpreter name length
+		DQ 1H
+
+		; dynamic header
+		DD 02H
+		DD 06H
+		DQ dynamicsection
+		DQ dynamicsection + base
+		DQ dynamicsection + base
+		DQ dynamicsection_end - dynamicsection ; size of dynamic section
+		DQ dynamicsection_end - dynamicsection ; size of dynamic section
+		DQ 08H
+
+		dynamicsection:
+		DQ 05H, base + stringtable
+		DQ 06H, symboltablebegin + base
+		DQ 07H, dlsymrelocation + base
+		DQ 08H, dlsymrelocation_end-dlsymrelocation ; size (relocationtable)
+		DQ 09H, 18H
+		DQ 0AH, stringtable_end - stringtable; size (stringtable)
+		DQ 0BH, 18H
+
+		DQ 01H, libname - stringtable; position of libname
+		DQ 0H, 0H ; sentinel
+		dynamicsection_end:
+
+	 	dlsymrelocation:
+		DQ dlsym
+		DD 0101H ; R_AARCH64_ABS64
+		DD 01H ; index of the symbol
+		DQ 0H
+		dlsymrelocation_end:
+
+		stringtable:
+		DB 0H ; sentinel
+
+		libname:
+		DB 'libdl.so.2', 0
+
+		dlsymname:
+		DB 'dlsym', 0
+
+
+		stringtable_end:
+
+		ALIGN 8
+		symboltablebegin:
+		DD	0;
+		DB	0
+		DB	0
+		DW 0
+		DQ	0
+		DQ	0
+
+		; dlsym symbol
+		DD dlsymname - stringtable; position of dlsymname
+		DB	12H ; info: global + function
+		DB 0
+		DW	0
+		DQ	0
+		DQ	0
+
+		interpretername:
+		DB '/lib/ld-linux-aarch64.so.1', 0
+		interpretername_end:
+
+		ALIGN 8
+
+		entry:
+	#ELSE
 		unimplemented
 	#END
 	END EntryPoint;
@@ -297,7 +414,13 @@ VAR
 		add r1, fp, #c
 		mov	r2, #1
 		mov	r7, #4
-		swi	#0	; sys_write	
+		swi	#0	; sys_write
+	#ELSIF ARM64 THEN
+		ldr x0, [fp, #file]
+		add x1, fp, #c
+		mov x2, #1
+		mov x8, #64	; __NR_write
+		svc #0
 	#ELSE
 		unimplemented
 	#END
@@ -382,6 +505,31 @@ VAR
 			Aargc: 		DD argc
 			Aargv: 		DD argv
 			Aenv: 		DD environ ;
+			cont:
+		#ELSIF ARM64 THEN
+			; argc at sp
+			; argv at sp+8
+			; 0 at sp+8+argc*8
+			; env at sp+16+argc*8
+			;
+			; An {OPENING} procedure has no prologue -- the intermediate backend emits none -- so this
+			; runs on the stack the kernel built, with sp still pointing at argc and every register
+			; free. The addresses of the three variables cannot be built by an instruction, so they
+			; are read out of a literal behind the branch, which is how the code generator does it too.
+			ldr x0, [sp, #0]
+			ldr x7, Aargc
+			str w0, [x7, #0]
+			add x1, sp, #8
+			ldr x7, Aargv
+			str x1, [x7, #0]
+			add x2, sp, #16
+			add x2, x2, x0, lsl #3
+			ldr x7, Aenv
+			str x2, [x7, #0]
+			b cont
+			Aargc:		DQ argc
+			Aargv:		DQ argv
+			Aenv:		DQ environ
 			cont:
 	 #ELSE
 			unimplemented

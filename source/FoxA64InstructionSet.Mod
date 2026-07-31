@@ -139,10 +139,35 @@ CONST
 	opFCVTMS* = 135; opFCVTMU* = 136;
 	opFCSEL* = 137;
 
-	NumberMnemonics = 138;
+	(* the byte wide exclusive and ordered accesses. The width of these is in the instruction rather
+		than in the register -- the register is a W register in every one of them -- so each needs a
+		mnemonic of its own, unlike the loads and stores above. *)
+	opLDXRB* = 138; opSTXRB* = 139; opLDAXRB* = 140; opSTLXRB* = 141;
+	opLDARB* = 142; opSTLRB* = 143;
+
+	(* the conversions that round to the nearest, ties to even, which is the mode a floating point
+		unit is in unless something changed it *)
+	opFCVTNS* = 144; opFCVTNU* = 145;
+
+	(* the two moves between a general purpose register and a system register *)
+	opMRS* = 146; opMSR* = 147;
+
+	NumberMnemonics = 148;
+
+	(* the system registers the encoder knows by name. The value of each is the sixteen bits the
+		instruction carries -- op0, op1, CRn, CRm and op2, in that order -- so that the encoder has
+		nothing to assemble and the name is only a name. *)
+	NumberSystemRegisters = 6;
+	sysFPCR* = 0DA20H;			(* the floating point control register *)
+	sysFPSR* = 0DA21H;			(* ... and its status register *)
+	sysNZCV* = 0DA10H;
+	sysTPIDREL0* = 0DE82H;		(* the thread pointer, which is where a thread local variable is *)
+	sysCNTVCTEL0* = 0DF02H;		(* the virtual counter, readable from user space *)
+	sysCNTFRQEL0* = 0DF00H;		(* ... and the frequency it counts at *)
 
 TYPE
 	Name = ARRAY 10 OF CHAR;
+	SystemRegisterName = ARRAY 16 OF CHAR;	(* CNTVCT_EL0 does not fit in a Name *)
 
 	(** one operand of an A64 instruction
 
@@ -176,6 +201,8 @@ TYPE
 VAR
 	mnemonicNames: ARRAY NumberMnemonics OF Name;
 	conditionNames: ARRAY NumberConditions OF Name;
+	systemRegisterNames: ARRAY NumberSystemRegisters OF SystemRegisterName;
+	systemRegisterValues: ARRAY NumberSystemRegisters OF SIGNED32;
 
 (* ---- 64 bit bit twiddling ---------------------------------------------------------------------
 
@@ -1143,12 +1170,19 @@ VAR
 		(* size 001000 o2 L o1 Rs o0 Rt2 Rn Rt -- the exclusive and ordered accesses.
 			The address has no offset at all in these forms, which is why they take [Rn] and
 			nothing else. *)
-		PROCEDURE LoadStoreExclusive(CONST rs, rt, mem: Operand; o2, l, o0: SIGNED32; hasStatus: BOOLEAN);
+		PROCEDURE LoadStoreExclusive(CONST rs, rt, mem: Operand; o2, l, o0, size: SIGNED32; hasStatus: BOOLEAN);
 		VAR sizeField: SIGNED32;
 		BEGIN
 			IF mem.mode # modeMemory THEN Fail; RETURN END;
 			IF (mem.index # None) OR (mem.immediate # 0) OR (mem.indexing # indexOffset) THEN Fail; RETURN END;
-			IF rt.size = 32 THEN sizeField := 2 ELSIF rt.size = 64 THEN sizeField := 3 ELSE Fail; RETURN END;
+			IF size >= 0 THEN
+				(* a byte or halfword form, whose width the mnemonic named: the register is a W one *)
+				IF rt.size # 32 THEN Fail; RETURN END;
+				sizeField := size
+			ELSIF rt.size = 32 THEN sizeField := 2
+			ELSIF rt.size = 64 THEN sizeField := 3
+			ELSE Fail; RETURN
+			END;
 			Put(sizeField, 30, 31);
 			Put(8, 24, 29);
 			Put(o2, 23, 23);
@@ -1240,6 +1274,21 @@ VAR
 			IF rn.register >= V0 THEN Put(Vec(rn), 5, 9) ELSE Put(GpZ(rn), 5, 9) END;
 			IF rd.register >= V0 THEN Put(Vec(rd), 0, 4) ELSE Put(GpZ(rd), 0, 4) END
 		END FpConvert;
+
+		(* --- system registers --- *)
+
+		(* 1101010100 L 1 op1(3) CRn(4) CRm(4) op2(3) Rt -- the sixteen bits between the L bit and the
+			register are the system register itself, which is how SystemRegisterFromName hands it over *)
+		PROCEDURE SystemRegisterMove(CONST rt, systemRegister: Operand; load: SIGNED32);
+		BEGIN
+			IF systemRegister.mode # modeImmediate THEN Fail; RETURN END;
+			IF (systemRegister.immediate < 0) OR (systemRegister.immediate > 0FFFFH) THEN Fail; RETURN END;
+			IF rt.size # 64 THEN Fail; RETURN END;
+			Put(354H, 22, 31);
+			Put(load, 21, 21);
+			Put(systemRegister.immediate, 5, 20);
+			Put(GpZ(rt), 0, 4)
+		END SystemRegisterMove;
 
 		(* 000 11110 type 1 Rm cond(4) 11 Rn Rd *)
 		PROCEDURE FpCondSelect(CONST rd, rn, rm, cond: Operand);
@@ -1453,12 +1502,18 @@ VAR
 
 		(* the exclusive and ordered accesses; a store returns its status in a register, a load
 			does not, which is why the operands are shifted along *)
-		| opLDXR:  LoadStoreExclusive(o0, o0, o1, 0, 1, 0, FALSE)
-		| opLDAXR: LoadStoreExclusive(o0, o0, o1, 0, 1, 1, FALSE)
-		| opLDAR:  LoadStoreExclusive(o0, o0, o1, 1, 1, 1, FALSE)
-		| opSTXR:  LoadStoreExclusive(o0, o1, o2, 0, 0, 0, TRUE)
-		| opSTLXR: LoadStoreExclusive(o0, o1, o2, 0, 0, 1, TRUE)
-		| opSTLR:  LoadStoreExclusive(o0, o0, o1, 1, 0, 1, FALSE)
+		| opLDXR:  LoadStoreExclusive(o0, o0, o1, 0, 1, 0, -1, FALSE)
+		| opLDAXR: LoadStoreExclusive(o0, o0, o1, 0, 1, 1, -1, FALSE)
+		| opLDAR:  LoadStoreExclusive(o0, o0, o1, 1, 1, 1, -1, FALSE)
+		| opSTXR:  LoadStoreExclusive(o0, o1, o2, 0, 0, 0, -1, TRUE)
+		| opSTLXR: LoadStoreExclusive(o0, o1, o2, 0, 0, 1, -1, TRUE)
+		| opSTLR:  LoadStoreExclusive(o0, o0, o1, 1, 0, 1, -1, FALSE)
+		| opLDXRB:  LoadStoreExclusive(o0, o0, o1, 0, 1, 0, 0, FALSE)
+		| opLDAXRB: LoadStoreExclusive(o0, o0, o1, 0, 1, 1, 0, FALSE)
+		| opLDARB:  LoadStoreExclusive(o0, o0, o1, 1, 1, 1, 0, FALSE)
+		| opSTXRB:  LoadStoreExclusive(o0, o1, o2, 0, 0, 0, 0, TRUE)
+		| opSTLXRB: LoadStoreExclusive(o0, o1, o2, 0, 0, 1, 0, TRUE)
+		| opSTLRB:  LoadStoreExclusive(o0, o0, o1, 1, 0, 1, 0, FALSE)
 
 		(* scalar floating point *)
 		| opFMOV: FpMove(o0, o1)
@@ -1484,6 +1539,10 @@ VAR
 		| opFCVTZU: FpConvert(o0, o1, o0, o1, 3, 1)
 		| opFCVTMS: FpConvert(o0, o1, o0, o1, 2, 0)
 		| opFCVTMU: FpConvert(o0, o1, o0, o1, 2, 1)
+		| opFCVTNS: FpConvert(o0, o1, o0, o1, 0, 0)
+		| opFCVTNU: FpConvert(o0, o1, o0, o1, 0, 1)
+		| opMRS: SystemRegisterMove(o0, o1, 1)
+		| opMSR: SystemRegisterMove(o1, o0, 0)
 		| opFCSEL: FpCondSelect(o0, o1, o2, o3)
 		ELSE
 			error := TRUE
@@ -1550,6 +1609,16 @@ VAR
 		IF amount # 0 THEN w.String(" #"); w.Int(amount, 0) END
 	END WriteExtend;
 
+	(** the name of a system register, or the number itself when it has none **)
+	PROCEDURE WriteSystemRegister*(w: Streams.Writer; value: Basic.Integer);
+	VAR i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO NumberSystemRegisters - 1 DO
+			IF systemRegisterValues[i] = value THEN w.String(systemRegisterNames[i]); RETURN END
+		END;
+		w.String("#"); w.Int(value, 0)
+	END WriteSystemRegister;
+
 	PROCEDURE WriteOperand*(w: Streams.Writer; CONST operand: Operand);
 	BEGIN
 		CASE operand.mode OF
@@ -1615,7 +1684,9 @@ VAR
 				(* the condition was printed as part of the mnemonic *)
 			ELSE
 				IF (i = 0) OR ((instruction.mnemonic = opBCOND) & (i = 1)) THEN w.Char(09X) ELSE w.String(", ") END;
-				IF ((instruction.mnemonic = opFCMP) OR (instruction.mnemonic = opFCMPE))
+				IF ((instruction.mnemonic = opMRS) & (i = 1)) OR ((instruction.mnemonic = opMSR) & (i = 0)) THEN
+					WriteSystemRegister(w, instruction.operands[i].immediate)
+				ELSIF ((instruction.mnemonic = opFCMP) OR (instruction.mnemonic = opFCMPE))
 						& (instruction.operands[i].mode = modeImmediate) THEN
 					(* the only immediate a floating point comparison takes, and it is written as
 						a floating point number rather than as the integer it is stored as *)
@@ -1715,6 +1786,19 @@ VAR
 		END;
 		RETURN None
 	END ConditionFromName;
+
+	(** the sixteen bits that name a system register, or None when the identifier names none **)
+	PROCEDURE SystemRegisterFromName*(CONST registerName: ARRAY OF CHAR): SIGNED32;
+	VAR name: ARRAY 16 OF CHAR; i: SIGNED32;
+	BEGIN
+		IF Strings.Length(registerName) >= LEN(name) THEN RETURN None END;
+		COPY(registerName, name);
+		Strings.LowerCase(name);
+		FOR i := 0 TO NumberSystemRegisters - 1 DO
+			IF name = systemRegisterNames[i] THEN RETURN systemRegisterValues[i] END
+		END;
+		RETURN None
+	END SystemRegisterFromName;
 
 	PROCEDURE ShiftFromName*(CONST shiftName: ARRAY OF CHAR): SIGNED32;
 	VAR name: ARRAY 8 OF CHAR;
@@ -2056,6 +2140,9 @@ VAR
 		Check1(opDMB, Im(15));
 		Check1(opDSB, Im(15));
 		Check1(opISB, Im(15));
+		Check2(opMRS, X(0), Im(sysFPCR));
+		Check2(opMSR, Im(sysFPCR), X(1));
+		Check2(opMRS, X(2), Im(sysCNTVCTEL0));
 
 		(* loads and stores: every addressing form, every width, both signednesses *)
 		Check2(opLDR, X(3), Im(8));								(* the literal form *)
@@ -2105,6 +2192,12 @@ VAR
 		Check3(opSTLXR, Wr(2), Wr(0), Mem(1, 0));
 		Check2(opLDAR, X(0), Mem(1, 0));
 		Check2(opSTLR, X(0), Mem(1, 0));
+		Check2(opLDXRB, Wr(0), Mem(1, 0));
+		Check2(opLDAXRB, Wr(0), Mem(1, 0));
+		Check2(opLDARB, Wr(0), Mem(1, 0));
+		Check3(opSTXRB, Wr(2), Wr(0), Mem(1, 0));
+		Check3(opSTLXRB, Wr(2), Wr(0), Mem(1, 0));
+		Check2(opSTLRB, Wr(0), Mem(1, 0));
 
 		(* floating point loads and stores go through the same forms with V set *)
 		Check2(opLDR, Dr(0), Mem(1, 16));
@@ -2143,6 +2236,9 @@ VAR
 		Check2(opFCVTZU, X(0), Dr(1));
 		Check2(opFCVTMS, X(0), Dr(1));
 		Check2(opFCVTMS, Wr(0), Sr(1));
+		Check2(opFCVTNS, X(0), Dr(1));
+		Check2(opFCVTNS, Wr(0), Sr(1));
+		Check2(opFCVTNU, X(0), Dr(1));
 		Check2(opFCVTMU, X(0), Dr(1));
 		Check4(opFCSEL, Dr(0), Dr(1), Dr(2), Cc(conditionEQ));
 
@@ -2175,6 +2271,13 @@ VAR
 		conditionNames[conditionGE] := "ge"; conditionNames[conditionLT] := "lt";
 		conditionNames[conditionGT] := "gt"; conditionNames[conditionLE] := "le";
 		conditionNames[conditionAL] := "al"; conditionNames[conditionNV] := "nv";
+
+		systemRegisterNames[0] := "fpcr";        systemRegisterValues[0] := sysFPCR;
+		systemRegisterNames[1] := "fpsr";        systemRegisterValues[1] := sysFPSR;
+		systemRegisterNames[2] := "nzcv";        systemRegisterValues[2] := sysNZCV;
+		systemRegisterNames[3] := "tpidr_el0";   systemRegisterValues[3] := sysTPIDREL0;
+		systemRegisterNames[4] := "cntvct_el0";  systemRegisterValues[4] := sysCNTVCTEL0;
+		systemRegisterNames[5] := "cntfrq_el0";  systemRegisterValues[5] := sysCNTFRQEL0;
 
 		SetMnemonic(opADD, "add");    SetMnemonic(opADDS, "adds");
 		SetMnemonic(opSUB, "sub");    SetMnemonic(opSUBS, "subs");
@@ -2251,6 +2354,12 @@ VAR
 		SetMnemonic(opLDXR, "ldxr");  SetMnemonic(opSTXR, "stxr");
 		SetMnemonic(opLDAXR, "ldaxr"); SetMnemonic(opSTLXR, "stlxr");
 		SetMnemonic(opLDAR, "ldar");  SetMnemonic(opSTLR, "stlr");
+		SetMnemonic(opFCVTNS, "fcvtns"); SetMnemonic(opFCVTNU, "fcvtnu");
+		SetMnemonic(opMRS, "mrs");    SetMnemonic(opMSR, "msr");
+
+		SetMnemonic(opLDXRB, "ldxrb");  SetMnemonic(opSTXRB, "stxrb");
+		SetMnemonic(opLDAXRB, "ldaxrb"); SetMnemonic(opSTLXRB, "stlxrb");
+		SetMnemonic(opLDARB, "ldarb");  SetMnemonic(opSTLRB, "stlrb");
 
 		SetMnemonic(opFMOV, "fmov");  SetMnemonic(opFADD, "fadd");
 		SetMnemonic(opFSUB, "fsub");  SetMnemonic(opFMUL, "fmul");

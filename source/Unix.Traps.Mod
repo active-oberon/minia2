@@ -150,7 +150,35 @@ VAR
 			w.Ln;
 			Register(w,"cpsr",mc.cpsr);
 			Register(w,"fault",mc.fault_address);
-		
+
+		#ELSIF ARM64 THEN
+			Register(w,"X0",mc.r_0);
+			Register(w,"X1",mc.r_1);
+			Register(w,"X2",mc.r_2);
+			Register(w,"X3",mc.r_3);
+			w.Ln;
+			Register(w,"X4",mc.r_4);
+			Register(w,"X5",mc.r_5);
+			Register(w,"X6",mc.r_6);
+			Register(w,"X7",mc.r_7);
+			w.Ln;
+			Register(w,"X8",mc.r_8);
+			Register(w,"X9",mc.r_9);
+			Register(w,"X10",mc.r_10);
+			Register(w,"X11",mc.r_11);
+			w.Ln;
+			Register(w,"X12",mc.r_12);
+			Register(w,"X13",mc.r_13);
+			Register(w,"X14",mc.r_14);
+			Register(w,"X15",mc.r_15);
+			w.Ln;
+			Register(w,"X16",mc.r_16);
+			Register(w,"X17",mc.r_17);
+			Register(w,"LR",mc.r_lr);
+			w.Ln;
+			Register(w,"pstate",mc.pstate);
+			Register(w,"fault",mc.fault_address);
+
 		#ELSE
 			unimplemented
 		#END
