@@ -745,7 +745,7 @@ PACKAGE Compiler ARCHIVE "Compiler.zip" SOURCE "CompilerSrc.zip" DESCRIPTION "Ac
 	FoxAMD64InstructionSet.Mod FoxAMD64Assembler.Mod FoxAMDBackend.Mod
 	FoxAssembler.Mod FoxIntermediateAssembler.Mod FoxDisassembler.Mod
 	FoxARMInstructionSet.Mod FoxARMAssembler.Mod FoxARMBackend.Mod	FoxMinosObjectFile.Mod
-	FoxA64Backend.Mod
+	FoxA64InstructionSet.Mod FoxA64Assembler.Mod FoxA64Backend.Mod
 	FoxIntermediateParser.Mod FoxIntermediateObjectFile.Mod FoxIntermediateLinker.Mod
 	FoxTRMInstructionSet.Mod FoxTRMAssembler.Mod FoxTRMBackend.Mod
 

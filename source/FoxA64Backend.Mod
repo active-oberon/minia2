@@ -1,4 +1,4 @@
-MODULE FoxA64Backend; (** AUTHOR ""; PURPOSE "backend for AArch64 (ARMv8-A, A64 instruction set)"; *)
+MODULE FoxA64Backend; (** AUTHOR "Andrii Puhachenko"; PURPOSE "backend for AArch64 (ARMv8-A, A64 instruction set)"; *)
 
 (*
 	Phase 0 of the AArch64 port: the wiring, without a code generator.
