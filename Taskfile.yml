@@ -87,7 +87,11 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}/{{.HOST}}
       - |
         set -eo pipefail
-        AOSPATH={{.DATA}} {{.TOOL}} Release.Build --list {{.HOST}} \
+        # --exclude has to match create-compile-cfg. Without it Release.Build lists the
+        # whole host release, GUI packages included, and minia2 is a trimmed tree that
+        # ships none of them -- the list then names modules like WMTetris that have no
+        # source here, and every consumer of it dies on the first one.
+        AOSPATH={{.DATA}} {{.TOOL}} Release.Build --list --exclude=\"{{.MINI_EXCLUDE}}\" {{.HOST}} \
         | tr -d '\r' \
         | grep -E "^[^ ]+\.Mod[[:space:]]" \
         | tr -d ' ' \
@@ -171,7 +175,20 @@ tasks:
         done
 
   oberon:
-    desc: Build a specific compiler for host
+    # Builds the bootstrap in compilers/, which is a different artifact from the platform
+    # build: `task {{.HOST}}` links only configs/moduleList*.txt (32 modules) and gets the
+    # thin runtime that loads the rest from bin/*.GofUu, whereas the bootstrap links
+    # configs/oberon_modules.txt (117 modules) and carries Configuration, Compiler and the
+    # Fox* front end and back ends inside itself. It has to: it compiles the tree when no
+    # object file exists yet. Promoting the thin runtime into compilers/ instead yields a
+    # bootstrap that dies with "Configuration.GofUu not found" wherever bin/ is absent,
+    # a fresh container being the usual place.
+    #
+    # The binary this produces was compiled by the *previous* bootstrap, so it emits the
+    # current code generator but is not yet built by it. Run the task twice for a compiler
+    # that is fixed both ways -- that is the second pass, and it is the pass that catches
+    # code generation defects the first one cannot see.
+    desc: Build the self-contained bootstrap compiler for host and replace compilers/
     vars:
       PLATFORM: "{{.HOST}}"
       PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
