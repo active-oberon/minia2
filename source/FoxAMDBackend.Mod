@@ -2400,6 +2400,8 @@ TYPE
 				remainder := opAH;
 				IF instruction.op1.type.form = IntermediateCode.SignedInteger THEN
 					emitter.Emit0(InstructionSet.opCBW);
+				ELSE
+					emitter.Emit2(InstructionSet.opXOR,opAH,opAH);
 				END;
 			| IntermediateCode.Bits16:
 				Spill(physicalRegisters.Mapped(AX)); ra := ReservePhysicalRegister(IntermediateCode.GeneralPurposeRegister,IntermediateCode.int16,AX,inPC);
@@ -2410,6 +2412,8 @@ TYPE
 				remainder := opDX;
 				IF instruction.op1.type.form = IntermediateCode.SignedInteger THEN
 					emitter.Emit0(InstructionSet.opCWD);
+				ELSE
+					emitter.Emit2(InstructionSet.opXOR,opDX,opDX);
 				END;
 			| IntermediateCode.Bits32:
 				Spill(physicalRegisters.Mapped(EAX)); ra := ReservePhysicalRegister(IntermediateCode.GeneralPurposeRegister,IntermediateCode.int32,EAX,inPC);
