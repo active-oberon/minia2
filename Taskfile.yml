@@ -61,7 +61,8 @@ tasks:
 
         echo "[INFO] Setting env for platform: {{.PLATFORM}}"
 
-        mkdir -p $(dirname {{.PLATFORM_ENV}})
+        env_dir="{{.PLATFORM_ENV}}"
+        mkdir -p "${env_dir%/*}"
 
         platform="{{.PLATFORM}}"
         inside=0
@@ -410,7 +411,16 @@ tasks:
           Files.SetWorkPath {{.BUILD_DIR}}/{{.PLATFORM}} ~
           System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt ~
         " 2>&1 | tee "$log"
-        if grep -qE '^Error\(s\) in file|^System\.DoCommands: Command: .* failed:' "$log"; then
+        compile_failed=0
+        while IFS= read -r log_line || [ -n "$log_line" ]; do
+          case "$log_line" in
+            "Error(s) in file"*|"System.DoCommands: Command: "*" failed:"*)
+              compile_failed=1
+              break
+              ;;
+          esac
+        done < "$log"
+        if [ "$compile_failed" = 1 ]; then
           echo "[ERROR] the compiler reported errors building {{.PLATFORM}}; the log is $log" >&2
           exit 1
         fi
@@ -610,23 +620,29 @@ tasks:
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.SymUu
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.GofUu
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.txt
-      - task: a64-check
-      - task: a64-codegen
-      - task: a64-run
-      - task: a64-runtime
-      - task: a64-system
-      - task: a64-loader
-      - task: a64-gc
-      - task: sigchain
-      - task: hostlibs
-      - task: bind
-      - task: display
-      - task: wm
-      - task: zoom
-      - task: gui-repaint
-      - task: win-gui
-      - task: terminal
-      - task: treesitter
+      - |
+        set -eo pipefail
+        if [ "{{OS}}" = "windows" ]; then
+          echo "[SKIP] POSIX shell board checks need a working bash on Windows"
+        else
+          task a64-check
+          task a64-codegen
+          task a64-run
+          task a64-runtime
+          task a64-system
+          task a64-loader
+          task a64-gc
+          task sigchain
+          task hostlibs
+          task bind
+          task display
+          task wm
+          task zoom
+          task gui-repaint
+          task win-gui
+          task terminal
+          task treesitter
+        fi
 
   display:
     desc: What a display driver is handed -- the picture, checked without a screen
