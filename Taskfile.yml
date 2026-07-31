@@ -472,6 +472,71 @@ tasks:
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.GofUu
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.txt
 
+  sdk:
+    desc: Rebuild the SDK image that `ob` runs (IMAGE=… TAG=…)
+    vars:
+      IMAGE: '{{.IMAGE | default "minia2-sdk"}}'
+      TAG: '{{.TAG | default "latest"}}'
+    preconditions:
+      - sh: "command -v docker >/dev/null"
+        msg: "docker not found — the SDK image cannot be rebuilt without it"
+      - sh: "test -f {{.CURRENT_DIR}}/docker/Dockerfile"
+        msg: "docker/Dockerfile not found"
+    cmds:
+      # The compiler `ob` runs is neither source/ nor target/: it is the object files
+      # baked into the image — /opt/a2sdk/lib/*.GofUu, the code generator among them —
+      # and they are copied in once, at image build time. Editing source/ does not touch
+      # them, and neither does `task Linux64`; only rebuilding the image does, because
+      # the tree is compiled inside the builder stage. Skipping this step is why a fixed
+      # compiler can still look broken under `ob`: the image keeps serving the code
+      # generator it was built with.
+      #
+      # TAG defaults to latest because the usual alias is untagged
+      # (`docker run --rm -v "$PWD:/work" minia2-sdk`), which resolves to :latest. Pass
+      # TAG=… to build a throwaway tag and leave :latest alone.
+      - echo "Building SDK image {{.IMAGE}}:{{.TAG}} — the tree is compiled inside the image"
+      - docker build -f docker/Dockerfile -t {{.IMAGE}}:{{.TAG}} .
+      - task: sdk-check
+        vars:
+          IMAGE: "{{.IMAGE}}"
+          TAG: "{{.TAG}}"
+
+  sdk-check:
+    desc: Smoke-test the compiler inside an SDK image (IMAGE=… TAG=…)
+    vars:
+      IMAGE: '{{.IMAGE | default "minia2-sdk"}}'
+      TAG: '{{.TAG | default "latest"}}'
+    preconditions:
+      - sh: "command -v docker >/dev/null"
+        msg: "docker not found"
+      - sh: "docker image inspect {{.IMAGE}}:{{.TAG}} >/dev/null 2>&1"
+        msg: "no such image: {{.IMAGE}}:{{.TAG}} — build it with `task sdk`"
+    cmds:
+      # Compiles and runs one module through `ob` inside the image, so the check covers
+      # the code generator the image actually serves rather than the one in target/.
+      # The divisions below are unsigned and by a variable -- the shape that traps when
+      # the code generator forgets to clear the high half of the dividend. A trap makes
+      # `ob run` exit non-zero, so a stale image fails this task instead of passing
+      # quietly. Keep the module dependency-free: it has to compile against nothing but
+      # the SDK's own library.
+      - |
+        set -eo pipefail
+        d="$(mktemp -d)"
+        trap 'rm -rf "$d"' EXIT
+        cat > "$d/SdkCheck.Mod" <<'MOD'
+        MODULE SdkCheck;
+        PROCEDURE Do*;
+        VAR x16, d16, q16: UNSIGNED16; x8, d8, q8: UNSIGNED8;
+        BEGIN
+        	x16 := 65535; d16 := 10; q16 := x16 DIV d16; ASSERT (q16 = 6553);
+        	x16 := 65535; d16 := 10; q16 := x16 MOD d16; ASSERT (q16 = 5);
+        	x8 := 255; d8 := 2; q8 := x8 DIV d8; ASSERT (q8 = 127);
+        END Do;
+        END SdkCheck.
+        MOD
+        docker run --rm -v "$d:/work" {{.IMAGE}}:{{.TAG}} run SdkCheck.Mod
+        echo "{{.IMAGE}}:{{.TAG}}: the compiler inside the image generates correct code"
+
   clean:
     desc: Remove build artifacts for one platform (PLATFORM=… or host)
     vars:
@@ -493,6 +558,8 @@ tasks:
       - 'echo "task build-platform PLATFORM=Linux64 — same, generic form"'
       - echo "task platforms             — build all platforms"
       - echo "task test                  — run compiler tests"
+      - 'echo "task sdk [IMAGE=… TAG=…]    — rebuild the SDK image that ob runs (default minia2-sdk:latest)"'
+      - 'echo "task sdk-check [IMAGE=… TAG=…] — check the compiler inside an existing SDK image"'
       - 'echo "task clean [PLATFORM=…]     — remove build artifacts for one platform (host by default)"'
       - echo "task clean-all             — remove build artifacts for every platform"
       - echo "task help                  — display this help message"
