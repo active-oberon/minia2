@@ -488,6 +488,24 @@ tasks:
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.SymUu
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.GofUu
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.txt
+      - task: a64-check
+
+  a64-check:
+    desc: Check the A64 encoder and assembler against llvm-mc
+    # Skipped rather than failed where llvm-mc is absent: the check needs an assembler that is
+    # known to be right to compare against, and there is no point pretending otherwise. The
+    # script exits 2 to say so, which is neither a pass nor a failure.
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-encoding-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] the A64 encoding check needs llvm-mc"
+          else
+            exit "$status"
+          fi
+        }
 
   sdk:
     desc: Rebuild the SDK image that `ob` runs (IMAGE=… TAG=…)
