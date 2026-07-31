@@ -843,6 +843,43 @@ positive: relational operations on character arrays
 		ASSERT (value[0] = 't'); ASSERT (value[1] = 'e'); ASSERT (value[2] = 'x'); ASSERT (value[3] = 't'); ASSERT (value[4] = 0X);
 	END Test.
 
+positive: relational operations on unsigned values with the top bit set
+
+	MODULE Test;
+	VAR u8: UNSIGNED8; u16: UNSIGNED16; u32: UNSIGNED32; u64: UNSIGNED64;
+	BEGIN
+		u8 := MAX (UNSIGNED8);
+		ASSERT (u8 > 1); ASSERT (u8 >= 1); ASSERT (~(u8 < 1)); ASSERT (~(u8 <= 1)); ASSERT (u8 # 1);
+		u16 := MAX (UNSIGNED16);
+		ASSERT (u16 > 1); ASSERT (u16 >= 1); ASSERT (~(u16 < 1)); ASSERT (~(u16 <= 1)); ASSERT (u16 # 1);
+		u32 := MAX (UNSIGNED32);
+		ASSERT (u32 > 1); ASSERT (u32 >= 1); ASSERT (~(u32 < 1)); ASSERT (~(u32 <= 1)); ASSERT (u32 # 1);
+		u64 := MAX (UNSIGNED64);
+		ASSERT (u64 > 1); ASSERT (u64 >= 1); ASSERT (~(u64 < 1)); ASSERT (~(u64 <= 1)); ASSERT (u64 # 1);
+	END Test.
+
+positive: relational operations in value context
+
+	MODULE Test;
+	VAR u32: UNSIGNED32; u64: UNSIGNED64; s32: SIGNED32; f: FLOAT64; ch: CHAR; r: BOOLEAN;
+	BEGIN
+		u32 := MAX (UNSIGNED32); r := u32 > 1; ASSERT (r); r := u32 < 1; ASSERT (~r);
+		u64 := MAX (UNSIGNED64); r := u64 > 1; ASSERT (r); r := u64 < 1; ASSERT (~r);
+		s32 := -5; r := s32 < 1; ASSERT (r); r := s32 > 1; ASSERT (~r);
+		f := -5.0; r := f < 1.0; ASSERT (r); r := f > 1.0; ASSERT (~r);
+		ch := 'a'; r := ch < 'b'; ASSERT (r); r := ch > 'b'; ASSERT (~r);
+	END Test.
+
+positive: unsigned comparison as a loop condition
+
+	MODULE Test;
+	VAR a: UNSIGNED32; n: SIGNED32;
+	BEGIN
+		a := MAX (UNSIGNED32) - 2; n := 0;
+		WHILE a > MAX (UNSIGNED32) - 5 DO DEC (a); INC (n) END;
+		ASSERT (n = 3);
+	END Test.
+
 
 # negation
 
@@ -1561,6 +1598,43 @@ positive: entier on long reals
 		value := -1.75; ASSERT (ENTIER (value) = -2);
 	END Test.
 
+positive: conversions between the signed and the unsigned types
+
+	MODULE Test;
+	VAR s8: SIGNED8; s32: SIGNED32; u8: UNSIGNED8; u16: UNSIGNED16; u32: UNSIGNED32; f: FLOAT64;
+	BEGIN
+		s8 := -1; u8 := UNSIGNED8 (s8); ASSERT (u8 = MAX (UNSIGNED8));
+		u32 := MAX (UNSIGNED32); s32 := SIGNED32 (u32); ASSERT (s32 = -1);
+		u8 := MAX (UNSIGNED8); u32 := u8; ASSERT (u32 = 255);
+		u16 := MAX (UNSIGNED16); u32 := u16; ASSERT (u32 = 65535);
+		u32 := 511; u8 := UNSIGNED8 (u32); ASSERT (u8 = 255);
+		u32 := MAX (UNSIGNED32); f := u32; ASSERT (f > 0); ASSERT (f = 4294967295.0);
+	END Test.
+
+positive: hexadecimal literals covering the full unsigned range
+
+	MODULE Test;
+	VAR u32: UNSIGNED32; u64: UNSIGNED64;
+	BEGIN
+		u32 := 0FFFFFFFFH; ASSERT (u32 = MAX (UNSIGNED32));
+		u64 := 0FFFFFFFFFFFFFFFFH; ASSERT (u64 = MAX (UNSIGNED64));
+	END Test.
+
+positive: unsigned values across a procedure boundary
+
+	MODULE Test;
+	PROCEDURE Take (u: UNSIGNED64): BOOLEAN;
+	BEGIN RETURN u > 1
+	END Take;
+	PROCEDURE Give (): UNSIGNED64;
+	BEGIN RETURN MAX (UNSIGNED64)
+	END Give;
+	VAR a: UNSIGNED64;
+	BEGIN
+		a := MAX (UNSIGNED64); ASSERT (Take (a));
+		ASSERT (Give () DIV 2 = MAX (SIGNED64));
+	END Test.
+
 
 # arithmetic operations
 
@@ -2042,6 +2116,220 @@ positive: arithmetic shift on huge integer
 		a := 6; b := 2; ASSERT (ASH (a, b) = 24); ASSERT (ASH (a, b) = ASH (a, 2)); ASSERT (ASH (a, b) = ASH (6, 2));
 		a := 6; b := 0; ASSERT (ASH (a, b) = 6); ASSERT (ASH (a, b) = ASH (a, 0)); ASSERT (ASH (a, b) = ASH (6, 0));
 		a := 6; b := -2; ASSERT (ASH (a, b) = 1); ASSERT (ASH (a, b) = ASH (a, -2)); ASSERT (ASH (a, b) = ASH (6, -2));
+	END Test.
+
+
+# unsigned arithmetic operations
+# Division and modulo are the interesting part: they are the only arithmetic where the unsigned
+# and the signed instruction differ, so a backend that reaches for the signed one is silent
+# everywhere else. Every expected value below is one the signed instruction gets wrong.
+
+positive: wrapping arithmetic on UNSIGNED8
+
+	MODULE Test;
+	VAR a, b: UNSIGNED8;
+	BEGIN
+		a := 200; b := 55; ASSERT (a + b = 255);
+		a := MAX (UNSIGNED8); b := 1; ASSERT (a + b = 0);
+		a := 0; b := 1; ASSERT (a - b = MAX (UNSIGNED8));
+		a := 16; b := 16; ASSERT (a * b = 0);
+	END Test.
+
+positive: wrapping arithmetic on UNSIGNED16
+
+	MODULE Test;
+	VAR a, b: UNSIGNED16;
+	BEGIN
+		a := 60000; b := 5535; ASSERT (a + b = 65535);
+		a := MAX (UNSIGNED16); b := 1; ASSERT (a + b = 0);
+		a := 0; b := 1; ASSERT (a - b = MAX (UNSIGNED16));
+		a := 256; b := 256; ASSERT (a * b = 0);
+	END Test.
+
+positive: wrapping arithmetic on UNSIGNED32
+
+	MODULE Test;
+	VAR a, b: UNSIGNED32;
+	BEGIN
+		a := MAX (UNSIGNED32) - 1; b := 1; ASSERT (a + b = MAX (UNSIGNED32));
+		a := MAX (UNSIGNED32); b := 1; ASSERT (a + b = 0);
+		a := 0; b := 1; ASSERT (a - b = MAX (UNSIGNED32));
+		a := 10000H; b := 10000H; ASSERT (a * b = 0);
+	END Test.
+
+positive: wrapping arithmetic on UNSIGNED64
+
+	MODULE Test;
+	VAR a, b: UNSIGNED64;
+	BEGIN
+		a := MAX (UNSIGNED64) - 1; b := 1; ASSERT (a + b = MAX (UNSIGNED64));
+		a := MAX (UNSIGNED64); b := 1; ASSERT (a + b = 0);
+		a := 0; b := 1; ASSERT (a - b = MAX (UNSIGNED64));
+	END Test.
+
+positive: division on UNSIGNED8
+
+	MODULE Test;
+	VAR a, b, q: UNSIGNED8;
+	BEGIN
+		a := 100; b := 2; ASSERT (a DIV b = 50);
+		a := MAX (UNSIGNED8); b := 2; ASSERT (a DIV b = 127); q := a DIV b; ASSERT (q = 127);
+		a := 80H; b := 2; ASSERT (a DIV b = 40H);
+	END Test.
+
+negative: division by zero on UNSIGNED8
+
+	MODULE Test;
+	VAR a, b: UNSIGNED8;
+	BEGIN a := 1; b := 0; ASSERT (a DIV b = 0);
+	END Test.
+
+positive: division on UNSIGNED16
+
+	MODULE Test;
+	VAR a, b, q: UNSIGNED16;
+	BEGIN
+		a := 100; b := 2; ASSERT (a DIV b = 50);
+		a := MAX (UNSIGNED16); b := 2; ASSERT (a DIV b = 32767); q := a DIV b; ASSERT (q = 32767);
+		a := 8000H; b := 2; ASSERT (a DIV b = 4000H);
+	END Test.
+
+negative: division by zero on UNSIGNED16
+
+	MODULE Test;
+	VAR a, b: UNSIGNED16;
+	BEGIN a := 1; b := 0; ASSERT (a DIV b = 0);
+	END Test.
+
+positive: division on UNSIGNED32
+
+	MODULE Test;
+	VAR a, b, q: UNSIGNED32;
+	BEGIN
+		a := 100; b := 2; ASSERT (a DIV b = 50);
+		a := MAX (UNSIGNED32); b := 2; ASSERT (a DIV b = 2147483647); q := a DIV b; ASSERT (q = 2147483647);
+		a := 80000000H; b := 2; ASSERT (a DIV b = 40000000H);
+	END Test.
+
+negative: division by zero on UNSIGNED32
+
+	MODULE Test;
+	VAR a, b: UNSIGNED32;
+	BEGIN a := 1; b := 0; ASSERT (a DIV b = 0);
+	END Test.
+
+positive: division on UNSIGNED64
+
+	MODULE Test;
+	VAR a, b, q: UNSIGNED64;
+	BEGIN
+		a := 100; b := 2; ASSERT (a DIV b = 50);
+		a := MAX (UNSIGNED64); b := 2; ASSERT (a DIV b = MAX (SIGNED64)); q := a DIV b; ASSERT (q = MAX (SIGNED64));
+	END Test.
+
+negative: division by zero on UNSIGNED64
+
+	MODULE Test;
+	VAR a, b: UNSIGNED64;
+	BEGIN a := 1; b := 0; ASSERT (a DIV b = 0);
+	END Test.
+
+positive: modulo on UNSIGNED8
+
+	MODULE Test;
+	VAR a, b, m: UNSIGNED8;
+	BEGIN
+		a := 100; b := 10; ASSERT (a MOD b = 0);
+		a := MAX (UNSIGNED8); b := 10; ASSERT (a MOD b = 5); m := a MOD b; ASSERT (m = 5);
+	END Test.
+
+negative: modulo by zero on UNSIGNED8
+
+	MODULE Test;
+	VAR a, b: UNSIGNED8;
+	BEGIN a := 1; b := 0; ASSERT (a MOD b = 0);
+	END Test.
+
+positive: modulo on UNSIGNED16
+
+	MODULE Test;
+	VAR a, b, m: UNSIGNED16;
+	BEGIN
+		a := 100; b := 10; ASSERT (a MOD b = 0);
+		a := MAX (UNSIGNED16); b := 10; ASSERT (a MOD b = 5); m := a MOD b; ASSERT (m = 5);
+	END Test.
+
+negative: modulo by zero on UNSIGNED16
+
+	MODULE Test;
+	VAR a, b: UNSIGNED16;
+	BEGIN a := 1; b := 0; ASSERT (a MOD b = 0);
+	END Test.
+
+positive: modulo on UNSIGNED32
+
+	MODULE Test;
+	VAR a, b, m: UNSIGNED32;
+	BEGIN
+		a := 100; b := 10; ASSERT (a MOD b = 0);
+		a := MAX (UNSIGNED32); b := 10; ASSERT (a MOD b = 5); m := a MOD b; ASSERT (m = 5);
+	END Test.
+
+negative: modulo by zero on UNSIGNED32
+
+	MODULE Test;
+	VAR a, b: UNSIGNED32;
+	BEGIN a := 1; b := 0; ASSERT (a MOD b = 0);
+	END Test.
+
+positive: modulo on UNSIGNED64
+
+	MODULE Test;
+	VAR a, b, m: UNSIGNED64;
+	BEGIN
+		a := 100; b := 10; ASSERT (a MOD b = 0);
+		a := MAX (UNSIGNED64); b := 10; ASSERT (a MOD b = 5); m := a MOD b; ASSERT (m = 5);
+	END Test.
+
+negative: modulo by zero on UNSIGNED64
+
+	MODULE Test;
+	VAR a, b: UNSIGNED64;
+	BEGIN a := 1; b := 0; ASSERT (a MOD b = 0);
+	END Test.
+
+positive: unsigned division after an operation that leaves the high half dirty
+
+	MODULE Test;
+	VAR a, b: UNSIGNED8; w, v: UNSIGNED16; u: UNSIGNED32; i: SIGNED32;
+	PROCEDURE F (): UNSIGNED32;
+	BEGIN RETURN 0FFFFFFFFH
+	END F;
+	BEGIN
+		w := MAX (UNSIGNED16); v := 2; w := w DIV v;
+		a := 255; b := 2; ASSERT (a DIV b = 127);
+		u := F ();
+		a := 255; b := 2; ASSERT (a DIV b = 127);
+		a := 255; b := 10; ASSERT (a MOD b = 5);
+		FOR i := 1 TO 3 DO
+			w := MAX (UNSIGNED16); v := 2; w := w DIV v;
+			a := 255; b := 2; ASSERT (a DIV b = 127);
+		END;
+	END Test.
+
+positive: shifts on unsigned values do not sign extend
+
+	MODULE Test;
+	VAR u8: UNSIGNED8; u32: UNSIGNED32; u64: UNSIGNED64; s32: SIGNED32; s64: SIGNED64;
+	BEGIN
+		u32 := MAX (UNSIGNED32); ASSERT (ASH (u32, -1) = 2147483647); ASSERT (LSH (u32, -1) = 2147483647);
+		u64 := MAX (UNSIGNED64); ASSERT (ASH (u64, -63) = 1); ASSERT (LSH (u64, -63) = 1);
+		u8 := 128; ASSERT (LSH (u8, 1) = 0);
+		u8 := 3; ASSERT (LSH (u8, 7) = 128);
+		s32 := -2; ASSERT (ASH (s32, -1) = -1);
+		s64 := -1; ASSERT (ASH (s64, -63) = -1);
+		u32 := 1; ASSERT (ROT (u32, 1) = 2);
+		u32 := 80000000H; ASSERT (ROT (u32, 1) = 1);
 	END Test.
 
 
