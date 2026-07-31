@@ -136,9 +136,10 @@ CONST
 	opFNEG* = 123; opFABS* = 124; opFSQRT* = 125; opFMAX* = 126; opFMIN* = 127;
 	opFCMP* = 128; opFCMPE* = 129; opFCVT* = 130;
 	opSCVTF* = 131; opUCVTF* = 132; opFCVTZS* = 133; opFCVTZU* = 134;
-	opFCSEL* = 135;
+	opFCVTMS* = 135; opFCVTMU* = 136;
+	opFCSEL* = 137;
 
-	NumberMnemonics = 136;
+	NumberMnemonics = 138;
 
 TYPE
 	Name = ARRAY 10 OF CHAR;
@@ -1477,8 +1478,12 @@ VAR
 		| opFCMPE: FpCompare(o0, o1, TRUE)
 		| opSCVTF:  FpConvert(o0, o1, o1, o0, 0, 2)
 		| opUCVTF:  FpConvert(o0, o1, o1, o0, 0, 3)
+		(* rmode names the rounding: 11 is towards zero, 10 towards minus infinity, which is the
+			one Oberon's ENTIER asks for *)
 		| opFCVTZS: FpConvert(o0, o1, o0, o1, 3, 0)
 		| opFCVTZU: FpConvert(o0, o1, o0, o1, 3, 1)
+		| opFCVTMS: FpConvert(o0, o1, o0, o1, 2, 0)
+		| opFCVTMU: FpConvert(o0, o1, o0, o1, 2, 1)
 		| opFCSEL: FpCondSelect(o0, o1, o2, o3)
 		ELSE
 			error := TRUE
@@ -2136,6 +2141,9 @@ VAR
 		Check2(opFCVTZS, X(0), Dr(1));
 		Check2(opFCVTZS, Wr(0), Sr(1));
 		Check2(opFCVTZU, X(0), Dr(1));
+		Check2(opFCVTMS, X(0), Dr(1));
+		Check2(opFCVTMS, Wr(0), Sr(1));
+		Check2(opFCVTMU, X(0), Dr(1));
 		Check4(opFCSEL, Dr(0), Dr(1), Dr(2), Cc(conditionEQ));
 
 		IF failures # 0 THEN
@@ -2254,6 +2262,7 @@ VAR
 		SetMnemonic(opFCVT, "fcvt");
 		SetMnemonic(opSCVTF, "scvtf"); SetMnemonic(opUCVTF, "ucvtf");
 		SetMnemonic(opFCVTZS, "fcvtzs"); SetMnemonic(opFCVTZU, "fcvtzu");
+		SetMnemonic(opFCVTMS, "fcvtms"); SetMnemonic(opFCVTMU, "fcvtmu");
 		SetMnemonic(opFCSEL, "fcsel");
 
 		(* every mnemonic constant is named: an unnamed slot is a miscounted constant *)
