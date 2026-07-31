@@ -1074,6 +1074,31 @@ VAR
 			LoadStore(rt, mem, sizeField, v, opc, scale, unscaled)
 		END LoadStoreOfWidth;
 
+		(* opc(2) 011 V 00 imm19 Rt -- load from a literal placed near the instruction.
+			The offset counts instructions from the load itself and reaches a megabyte either way,
+			which is what makes an inline constant cheaper than building one. *)
+		PROCEDURE LoadLiteral(CONST rt, target: Operand);
+		VAR opc, v: SIGNED32;
+		BEGIN
+			IF rt.register >= V0 THEN
+				v := 1;
+				CASE rt.size OF
+				| 32: opc := 0
+				| 64: opc := 1
+				| 128: opc := 2
+				ELSE Fail; RETURN
+				END
+			ELSE
+				v := 0;
+				IF rt.size = 32 THEN opc := 0 ELSIF rt.size = 64 THEN opc := 1 ELSE Fail; RETURN END
+			END;
+			Put(opc, 30, 31);
+			Put(3, 27, 29); Put(v, 26, 26);
+			Put(0, 24, 25);
+			IF rt.register >= V0 THEN Put(Vec(rt), 0, 4) ELSE Put(GpZ(rt), 0, 4) END;
+			BranchOffset(target, 5, 19)
+		END LoadLiteral;
+
 		(* opc(2) 101 V idx(3) L imm7 Rt2 Rn Rt -- a pair, whose offset is scaled and signed *)
 		PROCEDURE LoadStorePair(CONST rt, rt2, mem: Operand; load: BOOLEAN);
 		VAR opc, v, scale, idx: SIGNED32; offset: SIGNED64;
@@ -1400,7 +1425,11 @@ VAR
 		| opISB: Barrier(o0, 6)
 
 		(* loads and stores; the width of a plain LDR or STR is the width of the register *)
-		| opLDR:   LoadStoreOfWidth(o0, o1, o0.size, TRUE, FALSE, FALSE)
+		| opLDR:
+			(* an immediate rather than an address means the literal form *)
+			IF o1.mode = modeImmediate THEN LoadLiteral(o0, o1)
+			ELSE LoadStoreOfWidth(o0, o1, o0.size, TRUE, FALSE, FALSE)
+			END
 		| opLDRB:  LoadStoreOfWidth(o0, o1, 8, TRUE, FALSE, FALSE)
 		| opLDRH:  LoadStoreOfWidth(o0, o1, 16, TRUE, FALSE, FALSE)
 		| opLDRSB: LoadStoreOfWidth(o0, o1, 8, TRUE, TRUE, FALSE)
@@ -2024,6 +2053,8 @@ VAR
 		Check1(opISB, Im(15));
 
 		(* loads and stores: every addressing form, every width, both signednesses *)
+		Check2(opLDR, X(3), Im(8));								(* the literal form *)
+		Check2(opLDR, Dr(3), Im(-8));
 		Check2(opLDR, X(3), Mem(4, 16));
 		Check2(opLDR, X(3), Mem(4, 32760));					(* the top of the scaled range *)
 		Check2(opLDR, Wr(3), Mem(4, 16));
