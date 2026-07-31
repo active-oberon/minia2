@@ -490,6 +490,7 @@ tasks:
       - rm -f {{.BUILD_DIR}}/{{.HOST}}/work/*.txt
       - task: a64-check
       - task: a64-codegen
+      - task: a64-run
 
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)
@@ -500,6 +501,20 @@ tasks:
           status=$?
           if [ "$status" -eq 2 ]; then
             echo "[SKIP] the A64 code generation check needs llvm-mc"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-run:
+    desc: Run A64 code the compiler produced, under qemu, and check what it computes
+    cmds:
+      - |
+        set -eo pipefail
+        python3 {{.CURRENT_DIR}}/tests/a64-run-check.py {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] running A64 code needs qemu-user-static and llvm"
           else
             exit "$status"
           fi

@@ -767,7 +767,16 @@ TYPE
 			RETURN RegisterFromIrOperand(irOperand, registerHint)
 		END RegisterOrImmediateFromIrOperand;
 
+		(** the register an instruction writes its result into
+
+			A destination that is the stack pointer is given a temporary instead: only the immediate
+			and extended-register forms of ADD and SUB can name SP, and everything else -- a load, a
+			logical operation, a multiply -- reads a 31 in that field as the zero register and would
+			throw the result away. WriteBack moves the temporary into SP afterwards, which is the
+			one form that can.
+		**)
 		PROCEDURE AcquireDestinationRegister(CONST irDestinationOperand: IntermediateCode.Operand; CONST registerHint: Operand): Operand;
+		VAR register: SIGNED32;
 		BEGIN
 			IF irDestinationOperand.mode = IntermediateCode.ModeMemory THEN
 				RETURN GetFreeRegisterOrHint(irDestinationOperand.type, registerHint)
@@ -776,11 +785,29 @@ TYPE
 				IF virtualRegisters.Mapped(irDestinationOperand.register, Low) = NIL THEN
 					TryAllocate(irDestinationOperand, Low)
 				END;
-				RETURN RegisterOperand(PhysicalRegisterNumber(irDestinationOperand.register), irDestinationOperand.type)
+				register := PhysicalRegisterNumber(irDestinationOperand.register);
+				IF register = SP THEN
+					RETURN GetFreeRegisterOrHint(irDestinationOperand.type, registerHint)
+				END;
+				RETURN RegisterOperand(register, irDestinationOperand.type)
 			END;
 			Error(Basic.invalidPosition, "destination is neither a register nor a memory location");
 			RETURN emptyOperand
 		END AcquireDestinationRegister;
+
+		(** the same value in a register that is not the stack pointer
+
+			Register 31 is the zero register everywhere except in the few forms that name SP, so an
+			operand that reads `sp` has to be copied before it can be an ordinary source. `MOV Xd,
+			SP` is ADD with a zero immediate, which is one of the forms that can. *)
+		PROCEDURE WithoutStackPointer(CONST register: Operand): Operand;
+		VAR copy: Operand;
+		BEGIN
+			IF ~register.isStackPointer THEN RETURN register END;
+			copy := GetFreeRegister(AddressType());
+			Emit2(InstructionSet.opMOV, copy, opSP);
+			RETURN copy
+		END WithoutStackPointer;
 
 		PROCEDURE WriteBack(VAR irDestinationOperand: IntermediateCode.Operand; CONST register: Operand);
 		VAR mapped: Operand;
@@ -998,10 +1025,14 @@ TYPE
 				ELSE Emit2(InstructionSet.opFCVT, destination, source)
 				END
 			ELSIF (from.form = IntermediateCode.Float) & (to.form IN IntermediateCode.Integer) THEN
+				(* rounding towards minus infinity rather than towards zero: the intermediate code
+					means ENTIER by this conversion, and ENTIER is the floor. AMD64 has to convert
+					towards zero and then correct in six instructions; A64 has the rounding mode in
+					the instruction. *)
 				IF to.form = IntermediateCode.UnsignedInteger THEN
-					Emit2(InstructionSet.opFCVTZU, AddressOrWord(destination, to), source)
+					Emit2(InstructionSet.opFCVTMU, AddressOrWord(destination, to), source)
 				ELSE
-					Emit2(InstructionSet.opFCVTZS, AddressOrWord(destination, to), source)
+					Emit2(InstructionSet.opFCVTMS, AddressOrWord(destination, to), source)
 				END;
 				NarrowInteger(destination, to)
 			ELSIF (from.form IN IntermediateCode.Integer) & (to.form = IntermediateCode.Float) THEN
@@ -1084,7 +1115,10 @@ TYPE
 			VAR destination, left, right: Operand);
 		BEGIN
 			left := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
+			(* the second source is Rm, which is the zero register when it is 31; the first is Rn,
+				which the extended-register form of ADD and SUB can read as SP *)
 			right := RegisterOrImmediateFromIrOperand(irInstruction.op3, limit, emptyOperand);
+			IF right.mode = InstructionSet.modeRegister THEN right := WithoutStackPointer(right) END;
 			destination := AcquireDestinationRegister(irInstruction.op1, emptyOperand)
 		END PrepareThree;
 
@@ -1127,7 +1161,7 @@ TYPE
 		BEGIN
 			(* the immediate a logical instruction takes is a bit pattern rather than a range, so
 				the encoder is asked rather than a limit compared against *)
-			left := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
+			left := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
 			right := LogicalOperand(irInstruction.op3, left.size);
 			destination := AcquireDestinationRegister(irInstruction.op1, emptyOperand);
 			Emit3(mnemonic, destination, left, right);
@@ -1142,7 +1176,7 @@ TYPE
 					& InstructionSet.EncodeLogicalImmediate(irOperand.intValue, width, n, immr, imms) THEN
 				RETURN Immediate(irOperand.intValue)
 			END;
-			RETURN RegisterFromIrOperand(irOperand, emptyOperand)
+			RETURN WithoutStackPointer(RegisterFromIrOperand(irOperand, emptyOperand))
 		END LogicalOperand;
 
 		PROCEDURE EmitMul(VAR irInstruction: IntermediateCode.Instruction);
@@ -1151,8 +1185,8 @@ TYPE
 			IF IsFloat(irInstruction.op1) THEN
 				EmitFloatArithmetic(irInstruction, InstructionSet.opFMUL); RETURN
 			END;
-			left := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
-			right := RegisterFromIrOperand(irInstruction.op3, emptyOperand);
+			left := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
+			right := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op3, emptyOperand));
 			destination := AcquireDestinationRegister(irInstruction.op1, emptyOperand);
 			Emit3(InstructionSet.opMUL, destination, left, right);
 			NarrowInteger(destination, irInstruction.op1.type);
@@ -1177,8 +1211,8 @@ TYPE
 			type := irInstruction.op1.type;
 			unsigned := type.form = IntermediateCode.UnsignedInteger;
 
-			left := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
-			right := RegisterFromIrOperand(irInstruction.op3, emptyOperand);
+			left := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
+			right := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op3, emptyOperand));
 			quotient := GetFreeRegister(type);
 			IF unsigned THEN Emit3(InstructionSet.opUDIV, quotient, left, right)
 			ELSE Emit3(InstructionSet.opSDIV, quotient, left, right)
@@ -1230,7 +1264,7 @@ TYPE
 		PROCEDURE EmitNot(VAR irInstruction: IntermediateCode.Instruction);
 		VAR destination, source: Operand;
 		BEGIN
-			source := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
+			source := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
 			destination := AcquireDestinationRegister(irInstruction.op1, emptyOperand);
 			Emit2(InstructionSet.opMVN, destination, source);
 			NarrowInteger(destination, irInstruction.op1.type);
@@ -1264,7 +1298,7 @@ TYPE
 		PROCEDURE EmitShiftOrRotation(VAR irInstruction: IntermediateCode.Instruction);
 		VAR destination, left, right, amount: Operand; width: SIGNED32; mnemonic: SIGNED32;
 		BEGIN
-			left := RegisterFromIrOperand(irInstruction.op2, emptyOperand);
+			left := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
 			width := left.size;
 
 			IF irInstruction.opcode = IntermediateCode.rol THEN
@@ -1348,6 +1382,7 @@ TYPE
 				Emit2(InstructionSet.opFCMP, left, right)
 			ELSE
 				right := RegisterOrImmediateFromIrOperand(irInstruction.op3, 4095, emptyOperand);
+				IF right.mode = InstructionSet.modeRegister THEN right := WithoutStackPointer(right) END;
 				Emit2(InstructionSet.opCMP, left, right)
 			END;
 
