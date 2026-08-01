@@ -295,8 +295,11 @@ EOF
     "$OBERON" Compiler.Compile "-p=$c_plat" \
       --objectFileExtension="$c_ext" --symbolFileExtension="$s_ext" \
       "./$mod.Mod" "./ObEntry.Mod" >/dev/null
+    # The output name is quoted for the linker's own option parser, which otherwise reads an
+    # unquoted value up to the first character that cannot be in a name: 'hello-arm64' would
+    # become the file 'hello' followed by the flags -a -r -m -6 -4.
     "$OBERON" do "
-      Linker.Link --path=./ $linkopts --fileName=$fn
+      Linker.Link --path=./ $linkopts --fileName='$fn'
       $boot $mod ObEntry
       ~
     " | tr -d '\r' | grep -vE '^GC mode|^WORK:' || true

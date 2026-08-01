@@ -109,6 +109,9 @@ Fido
 FileHandlers
 FileTrapWriter
 Files
+FoxA64Assembler
+FoxA64Backend
+FoxA64InstructionSet
 FoxAMD64Assembler
 FoxAMD64InstructionSet
 FoxAMDBackend
