@@ -1813,17 +1813,38 @@ TYPE
 
 	END BackendA64;
 
+	(**	the least a section of this kind may be aligned to.
+
+		Code is four, because every A64 instruction is four bytes and has to be four byte aligned.
+		Everything else is eight, because anything that is not code can hold an address, and the
+		exclusive accesses the runtime makes to those -- the mark word of a heap block, the fields
+		of a module descriptor the collector walks -- are a bus error unless the address they touch
+		is eight byte aligned. Plain unaligned loads are not, which is why this only shows up once
+		the collector runs: the ARM backend this was taken from is right at four, where nothing is
+		wider than a word.
+	**)
+	PROCEDURE MinimumAlignment(sectionType: SIGNED8): BinaryCode.Unit;
+	BEGIN
+		CASE sectionType OF
+			Sections.EntryCodeSection, Sections.ExitCodeSection, Sections.InitCodeSection,
+			Sections.BodyCodeSection, Sections.CodeSection, Sections.InlineCodeSection: RETURN 4
+		ELSE
+			RETURN 8
+		END
+	END MinimumAlignment;
+
 	(** the binary section an intermediate section writes into, created on first demand **)
 	PROCEDURE ResolvedSection(irSection: IntermediateCode.Section): BinaryCode.Section;
-	VAR result: BinaryCode.Section;
+	VAR result: BinaryCode.Section; alignment: BinaryCode.Unit;
 	BEGIN
 		IF irSection.resolved = NIL THEN
 			NEW(result, irSection.type, 8, irSection.name, irSection.comments # NIL, FALSE);
-			(* every A64 instruction is four bytes and must be four byte aligned *)
-			IF ~irSection.fixed & (irSection.positionOrAlignment < 4) THEN
-				result.SetAlignment(FALSE, 4)
+			IF irSection.fixed THEN
+				result.SetAlignment(TRUE, irSection.positionOrAlignment)
 			ELSE
-				result.SetAlignment(irSection.fixed, irSection.positionOrAlignment)
+				alignment := MinimumAlignment(irSection.type);
+				IF irSection.positionOrAlignment > alignment THEN alignment := irSection.positionOrAlignment END;
+				result.SetAlignment(FALSE, alignment)
 			END;
 			irSection.SetResolved(result)
 		ELSE

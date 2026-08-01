@@ -13,6 +13,11 @@ The driver talks to the kernel directly, which is two system calls, and reports 
 character per test and exiting with the number of failures.
 
 Only leaf procedures are used: a call to another section leaves a fixup that nothing resolves.
+For the same reason the module is not compiled for UnixA64 as such but for the backend underneath
+it, without the four flags that platform carries: --trackLeave alone has every procedure name its
+own descriptor section, and a fixup to that is one more thing there is no linker here to resolve.
+What the generated arithmetic computes does not depend on them, and what does -- that the collector
+and the barriers work on AArch64 -- is what tests/a64-gc-check.sh runs instead.
 
 Usage: tests/a64-run-check.py [build directory]
 """
@@ -27,6 +32,13 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = 0x400000                     # where the one loadable segment lands
+# UnixA64 without --trackLeave, --preciseGC, --writeBarriers and --cellsAreObjects: see above.
+# It is registered as a platform of its own rather than passed as bare options, because options
+# outside a platform are read on top of the default one -- Unix64 here -- and would inherit the
+# four flags from it.
+PLATFORM = "A64Bare"
+PLATFORM_OPTIONS = ("-b=A64 --mergeSections --traceModule=Trace --objectFileExtension=.GofU8"
+                    " --symbolFileExtension=.SymU8 --platformCC=C --define=UNIX,ARM64")
 EHDR_SIZE, PHDR_SIZE = 64, 56
 
 
@@ -49,7 +61,7 @@ def die(message):
 
 
 def compile_for_a64(build, work):
-    """Compile the test module for UnixA64 and return the binary listing."""
+    """Compile the test module for bare A64 and return the binary listing."""
     oberon = os.path.join(build, "oberon")
     if not os.access(oberon, os.X_OK):
         oberon = os.path.join(build, "oberon.exe")
@@ -60,7 +72,9 @@ def compile_for_a64(build, work):
     script = (
         "System.DoFile oberon.cfg ~\n"
         "Files.AddSearchPath %s ~\n"
-        "Compiler.Compile -p=UnixA64 --destPath=%s/ --trace=* A64Codegen.Mod ~\n" % (work, work)
+        "Compiler.AddPlatform %s \"%s\" ~\n"
+        "Compiler.Compile -p=%s --destPath=%s/ --trace=* A64Codegen.Mod ~\n"
+        % (work, PLATFORM, PLATFORM_OPTIONS, PLATFORM, work)
     )
     # A2 reads its working directory from $PWD rather than from getcwd().
     environment = dict(os.environ, PWD=build)

@@ -493,6 +493,7 @@ tasks:
       - task: a64-run
       - task: a64-runtime
       - task: a64-system
+      - task: a64-gc
 
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)
@@ -545,6 +546,34 @@ tasks:
           status=$?
           if [ "$status" -eq 2 ]; then
             echo "[SKIP] running the A64 system needs qemu-user and an AArch64 C library"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-sysroot:
+    desc: Unpack an AArch64 C library into target/A64/sysroot, for running A64 images under qemu
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-sysroot.sh {{.BUILD_DIR}}/A64/sysroot || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] unpacking an AArch64 C library needs docker"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-gc:
+    desc: Run the collector, the write barriers and the leave tracking on A64 under qemu
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-gc-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] the A64 collector check needs qemu-user and an AArch64 C library"
           else
             exit "$status"
           fi
