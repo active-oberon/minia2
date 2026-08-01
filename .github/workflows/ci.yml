@@ -16,11 +16,23 @@ jobs:
           wget -qO "$HOME/.local/bin/yq" https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           chmod +x "$HOME/.local/bin/yq"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install the AArch64 toolchain the A64 checks run against
+        # Without these the A64 checks skip, and a skip reads exactly like a pass: the code
+        # generator, the collector and the write barriers on AArch64 would then be covered by
+        # nothing. A64_REQUIRE below turns a skip into a failure, so this step is what keeps
+        # that from firing. qemu-user-static runs the AArch64 binaries, libc6-arm64-cross is
+        # the C library they are dynamically linked against, and llvm brings llvm-mc, which the
+        # encoder is checked against.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static libc6-arm64-cross llvm
       - name: Build (Linux64 + Win64)
         run: |
           task Linux64
           task Win64
       - name: Test (compiler suites via task)
+        env:
+          A64_REQUIRE: "1"
         run: task test
       - name: Second stage (compile the tree with the freshly built compiler)
         # `task Linux64` compiles the tree with the committed bootstrap in compilers/, so a

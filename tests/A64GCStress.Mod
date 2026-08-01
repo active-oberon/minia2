@@ -15,13 +15,21 @@ MODULE A64GCStress; (** AUTHOR "Andrii Puhachenko; co-author Claude (Opus 5)"; P
 		procedure rather than by guessing what looks like a pointer. A wrong offset there loses a
 		live object, and the tree that is rebuilt after every collection is what notices.
 	-	--writeBarriers: a pointer written into an object the collector has already seen has to be
-		reported, or the concurrent collector frees it while it is reachable. Grafting fresh nodes
-		into an old tree between collections is what asks for that.
+		reported, or the collector frees it while it is reachable. The barrier the compiler emits
+		is `IF Heaps.marking THEN Heaps.MarkPointer(p)`, so what has to happen for it to matter is
+		a store racing another thread's mark phase: the four workers graft chains of fresh nodes
+		into an old tree while the others collect, and the main thread does the same while they
+		run. Each chain is walked again after the next collection -- not before it, where nothing
+		has been decided yet -- and a node the collector took is a wrong answer there.
 	-	--trackLeave: a thread that leaves for C has to say so, or the collector waits for it or
 		walks its stack while the C library is on it. The file this writes and reads back is in
 		libc, and it runs while the other threads allocate.
-	-	--cellsAreObjects: not exercised here -- it changes what an ACTIVE CELL compiles to, and
-		there are no cells in the runtime.
+	-	--cellsAreObjects: not exercised, and not exercisable in this tree on any platform. Every
+		use of it in the compiler is under a test for a cell or a cell scope, so it changes what
+		an ACTIVE CELL compiles to and nothing else; and a module with a cell in it does not
+		compile here at all, for UnixA64 no differently from Unix64, because `ActiveCellsRuntime`
+		is not among the sources minia2 carries. The flag stays on so that UnixA64 reads the same
+		as Unix64, Win64 and UnixARM, which all carry it.
 
 	`tests/a64-gc-check.sh` links it into the image and runs it under qemu.
 *)
@@ -102,19 +110,50 @@ BEGIN
 END Drop;
 
 (*	Writes fresh pointers into an object the collector has already marked. Without a write barrier
-	a concurrent collector never sees them and frees what they point at. The nodes are read back
-	afterwards, so a lost one is a wrong answer rather than a silent one. *)
+	a concurrent collector never sees them and frees what they point at.
+
+	The nodes are chained rather than written one over the other, so that all of them stay reachable
+	and every one of them is reachable only through the store the barrier is on. Reading a node back
+	here proves nothing about the barrier -- no collection has run yet -- which is what `Chain` is
+	for, after one has. *)
 PROCEDURE Graft(root: Node; count: SIGNED32): SIGNED32;
 VAR i, bad: SIGNED32; node: Node;
 BEGIN
 	bad := 0;
+	root.left := NIL;                         (* the chain starts empty; what was there is dropped *)
 	FOR i := 1 TO count DO
 		node := NewNode(i);
-		root.left := node;                    (* the barrier is on this store *)
+		node.left := root.left;               (* into a fresh object, which needs no barrier *)
+		root.left := node;                    (* into one the collector has seen: the barrier is here *)
 		IF (root.left = NIL) OR (root.left.magic # Magic) OR (root.left.value # i) THEN INC(bad) END
 	END;
 	RETURN bad
 END Graft;
+
+(*	Walks what `Graft` chained and returns the number of nodes that are gone or are not what they
+	were written as. This is what a missing write barrier shows up in: the nodes hang off an object
+	the collector had already marked, so a collector that was not told about them frees them while
+	they are reachable. Iterative, because the chain is thousands of nodes long and a recursion
+	that deep would take the stack with it. *)
+PROCEDURE Chain(root: Node; count: SIGNED32): SIGNED32;
+VAR node: Node; bad, expected, i: SIGNED32;
+BEGIN
+	bad := 0; expected := count; node := root.left;
+	WHILE (node # NIL) & (expected > 0) DO
+		IF node.magic # Magic THEN INC(bad) END;
+		IF node.value # expected THEN INC(bad) END;
+		IF node.payload = NIL THEN INC(bad)
+		ELSIF LEN(node.payload) # Payload THEN INC(bad)
+		ELSE
+			FOR i := 0 TO Payload - 1 DO
+				IF node.payload[i] # expected + i THEN INC(bad) END
+			END
+		END;
+		node := node.left; DEC(expected)
+	END;
+	INC(bad, expected);                       (* the chain ended early: one for each node not there *)
+	RETURN bad
+END Chain;
 
 (* One worker's share: allocate, collect, verify, and do it again. *)
 PROCEDURE Cycle(rounds: SIGNED32): SIGNED32;
@@ -126,6 +165,7 @@ BEGIN
 		Drop(Garbage);
 		INC(bad, Graft(mine, Grafts DIV 4));
 		Kernel.GC;
+		INC(bad, Chain(mine, Grafts DIV 4));  (* what the barrier had to keep alive across that *)
 		INC(bad, Broken(mine.right, 3));      (* the half of the tree the grafts do not touch *)
 		Objects.Yield
 	END;
@@ -217,17 +257,25 @@ BEGIN
 		END
 	END;
 
+	(*	The workers start here rather than after the grafting, so that the grafting below races
+		their collections: the barrier is only reached while some thread is marking, and a store
+		that waits for the collector to be done with is a store the barrier never sees. *)
+	Phase(out, "starting workers");
+	FOR i := 0 TO Threads - 1 DO NEW(worker[i], Rounds) END;
+
 	(* what the write barrier has to catch *)
 	Phase(out, "grafting");
 	bad := Graft(live, Grafts);
 	IF bad # 0 THEN out.String("  grafts lost: "); out.Int(bad, 0); out.Ln; INC(failures, bad) END;
 	Kernel.GC;
+	bad := Chain(live, Grafts);
+	IF bad # 0 THEN
+		out.String("  grafts the collector took: "); out.Int(bad, 0); out.Ln; INC(failures, bad)
+	END;
 	bad := Broken(live.right, 3);
 	IF bad # 0 THEN out.String("  after grafting: "); out.Int(bad, 0); out.Ln; INC(failures, bad) END;
 
 	(* what leaving for C has to survive: threads allocating while this one is in the file system *)
-	Phase(out, "starting workers");
-	FOR i := 0 TO Threads - 1 DO NEW(worker[i], Rounds) END;
 	Phase(out, "file round trips");
 	bad := Roundtrip("A64GCStress.Work", FileRounds);
 	IF bad # 0 THEN out.String("  file round trips wrong: "); out.Int(bad, 0); out.Ln; INC(failures, bad) END;
@@ -242,6 +290,10 @@ BEGIN
 
 	Phase(out, "last collection");
 	Kernel.GC;
+	bad := Chain(live, Grafts);             (* the grafts have to be there after every collection *)
+	IF bad # 0 THEN
+		out.String("  grafts gone at the end: "); out.Int(bad, 0); out.Ln; INC(failures, bad)
+	END;
 	bad := Broken(live.right, 3);
 	IF bad # 0 THEN out.String("  at the end: "); out.Int(bad, 0); out.Ln; INC(failures, bad) END;
 
