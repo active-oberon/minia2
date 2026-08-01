@@ -5,11 +5,14 @@
 # Hides the .cfg / System.DoFile / search-path mechanics of the bare `oberon`
 # binary behind these verbs:
 #
-#   ob build   <File.Mod> [-o name] [-t linux64|win64] [Proc]
+#   ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [Proc]
 #                                      link a standalone native executable (runtime
 #                                      baked in) that auto-runs Module.Proc (default
 #                                      Do). linux64 -> ELF runs as `./name`; win64
-#                                      -> a Windows PE64 .exe
+#                                      -> a Windows PE64 .exe; a64 -> an AArch64 ELF
+#                                      (Linux on a Raspberry Pi 4/5, an Android
+#                                      chroot, an ARM server), runnable here under
+#                                      qemu-aarch64
 #   ob compile <File.Mod> [-o <dir>]   compile one module to a .GofUu object file
 #   ob run     <File.Mod> [Proc]       compile then execute a command (default: Do)
 #   ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin in
@@ -46,6 +49,7 @@ SDK="${A2SDK:-/opt/a2sdk}"
 OBERON="$SDK/oberon"
 LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runtime
 LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
+LIBA64="$SDK/lib-a64"          # AArch64 stdlib (.GofU8/.SymU8), if present
 LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
 PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux)
 LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
@@ -90,6 +94,12 @@ make_workdir() {
       ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
       ln -s "$LIBWIN"/*.SymWw "$w"/ 2>/dev/null || true   # Win64 target symbols
       ln -s "$LIBWIN"/*.GofWw "$w"/ 2>/dev/null || true   # Win64 link objects
+      ;;
+    a64)
+      [ -d "$LIBA64" ] || die "a64 target unavailable: $LIBA64 not in this image"
+      ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
+      ln -s "$LIBA64"/*.SymU8 "$w"/ 2>/dev/null || true   # AArch64 target symbols
+      ln -s "$LIBA64"/*.GofU8 "$w"/ 2>/dev/null || true   # AArch64 link objects
       ;;
     *)
       ln -s "$LIB"/*"$SYM_EXT"  "$w"/ 2>/dev/null || true
@@ -222,7 +232,7 @@ cmd_build() {
       *) if [ -z "$src" ]; then src="$1"; else proc="$1"; fi; shift ;;
     esac
   done
-  [ -n "$src" ] || die "usage: ob build <File.Mod> [-o <name>] [-t linux64|win64] [Proc]"
+  [ -n "$src" ] || die "usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [Proc]"
   [ -f "$src" ] || die "no such file: $src"
   src="$(realpath "$src")"
 
@@ -235,10 +245,21 @@ cmd_build() {
     win64)
       c_ext="GofWw"; s_ext=".SymWw"; bootfile="$BOOT_LIST_WIN"; suffix=".exe"
       linkopts="--fileFormat=PE64CUI --extension=GofWw --displacement=401000H" ;;
-    *) die "unknown target: $target (use linux64 or win64)" ;;
+    a64)
+      # The same boot list as linux64 -- it names modules, and every one of them has an AArch64
+      # build. Glue writes the ELF header itself, so the linker only needs the displacement the
+      # module was compiled against, which -p=LinuxA64 carries.
+      c_ext="GofU8"; s_ext=".SymU8"; bootfile="$BOOT_LIST"; suffix=""
+      linkopts="-p=LinuxA64 --extension=GofU8" ;;
+    *) die "unknown target: $target (use linux64, win64 or a64)" ;;
   esac
   [ -f "$bootfile" ] || die "boot module list not found: $bootfile"
-  local c_plat; [ "$target" = win64 ] && c_plat="Win64" || c_plat="$PLATFORM"
+  local c_plat
+  case "$target" in
+    win64) c_plat="Win64" ;;
+    a64)   c_plat="UnixA64" ;;
+    *)     c_plat="$PLATFORM" ;;
+  esac
 
   local mod w boot dest; mod="$(module_name "$src")"
   [ -n "$outname" ] || outname="$mod$suffix"

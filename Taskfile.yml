@@ -550,6 +550,20 @@ tasks:
           fi
         }
 
+  a64-stdlib:
+    desc: Compile the headless standard library for UnixA64 (minutes; not part of `task test`)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-stdlib-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] compiling the standard library for A64 needs a built host compiler"
+          else
+            exit "$status"
+          fi
+        }
+
   a64-check:
     desc: Check the A64 encoder and assembler against llvm-mc
     # Skipped rather than failed where llvm-mc is absent: the check needs an assembler that is

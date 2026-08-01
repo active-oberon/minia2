@@ -652,6 +652,13 @@ CODE
 		MOV R0, R0, LSR #8
 		STRB R0, [R2, #3]
 	#END
+#ELSIF ARM64 THEN
+	; AArch64 allows an unaligned access to ordinary memory -- the alignment check the ARM
+	; branch works around is only on the stack pointer -- so the value goes in one access
+	ldr w0, [fp, #val]
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	str w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -683,6 +690,11 @@ CODE
 		MOV R0, R0, LSR #8
 		STRB R0, [R2, #1]
 	#END
+#ELSIF ARM64 THEN
+	ldr w0, [fp, #val]
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	strh w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -715,6 +727,10 @@ CODE
 		LDRB R1, [R2, #3]
 		ORR R0, R0, R1, LSL #24
 	#END
+#ELSIF ARM64 THEN
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	ldr w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -745,6 +761,10 @@ CODE
 		LDRB R1, [R2, #1]
 		ORR R0, R0, R1, LSL #8
 	#END
+#ELSIF ARM64 THEN
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	ldrh w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -787,6 +807,12 @@ CODE
 		MOV R0, R0, LSR #8
 		STRB R0, [R2, #0]
 	#END
+#ELSIF ARM64 THEN
+	ldr w0, [fp, #val]
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	rev w0, w0
+	str w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -821,6 +847,12 @@ CODE
 		MOV R0, R0, LSR #8
 		STRB R0, [R2, #0]
 	#END
+#ELSIF ARM64 THEN
+	ldr w0, [fp, #val]
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	rev16 w0, w0
+	strh w0, [x2, x1]
 #ELSE
 	unimplemented
 #END
@@ -860,6 +892,11 @@ CODE
 		LDRB R1, [R2, #0]
 		ORR R0, R0, R1, LSL #24
 	#END
+#ELSIF ARM64 THEN
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	ldr w0, [x2, x1]
+	rev w0, w0
 #ELSE
 	unimplemented
 #END
@@ -893,6 +930,11 @@ CODE
 		LDRB R1, [R2, #0]
 		ORR R0, R0, R1, LSL #8
 	#END
+#ELSIF ARM64 THEN
+	ldr x1, [fp, #ofs]
+	ldr x2, [fp, #buf]
+	ldrh w0, [x2, x1]
+	rev16 w0, w0
 #ELSE
 	unimplemented
 #END

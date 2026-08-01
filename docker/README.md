@@ -7,7 +7,8 @@ via Docker Desktop / WSL2). The compiled output is a Linux glibc ELF.
 It wraps the repo's self-hosting toolchain (the `oberon` runtime + the precompiled
 standard library that `task` produces) behind an `ob` CLI that feels like Go:
 `ob run` (compile+run), `ob build` (standalone native executable with the runtime
-baked in — Linux ELF or, via `-t win64`, a Windows PE `.exe`), `ob compile`, and
+baked in — Linux ELF or, via `-t win64` / `-t a64`, a Windows PE `.exe` or an
+AArch64 ELF), `ob compile`, and
 `ob lsp` (a language server with diagnostics for your editor). See *Limitations*
 for the current scope.
 
@@ -39,6 +40,10 @@ docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -o hello
 # cross-build a Windows .exe from the same Linux image
 docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -t win64 -o hello.exe
 # -> hello.exe : PE32+ console executable for Windows x86-64
+
+# ... or an AArch64 binary, for a Raspberry Pi 4/5, an ARM server, an Android chroot
+docker run --rm -v "$PWD:/work" minia2-sdk build Hello.Mod -t a64 -o hello-arm64
+# -> hello-arm64 : ELF 64-bit, ARM aarch64 -- run it there, or here under qemu-aarch64
 
 # run a named exported command instead of Do
 docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod Main
@@ -84,6 +89,7 @@ ob run     Hello.Mod             # compile + run (go run)
 ob build   Hello.Mod -o hello    # standalone Linux binary (go build)
 ./hello                          # run it — no A2 needed, auto-runs Hello.Do
 ob build   Hello.Mod -t win64 -o hello.exe   # cross-build a Windows .exe
+ob build   Hello.Mod -t a64 -o hello-arm64  # cross-build an AArch64 binary
 ob compile Hello.Mod -o out      # just the .GofUu object file
 ob version                       # SDK banner
 obit repl                        # interactive A2 shell
@@ -239,6 +245,7 @@ END Hello.
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
 | `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 384 modules (symbol + object files) |
 | `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 380 modules, for `build -t win64` |
+| `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 380 modules plus the 59 of the runtime, for `build -t a64` |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
@@ -277,6 +284,14 @@ in a pristine `debian:bookworm-slim` container (`--network none --read-only`, no
 For `-t win64` the compiler still runs on Linux (it loads its backend modules as
 Linux `.GofUu`) but emits Win64 `.GofWw` type-checked against the Win64 stdlib
 symbols, and the linker writes a PE64 image instead of an ELF.
+
+`-t a64` works the same way through the A64 backend: the compiler emits `.GofU8`
+against the AArch64 stdlib symbols, and the linker (`-p=LinuxA64`) writes an ELF at
+`400000H` whose header the `Glue` module wrote itself. The output is dynamically
+linked against `libdl.so.2` and reaches the rest of the C library through `dlopen`,
+so it needs a glibc AArch64 system to run on — a Raspberry Pi 4/5 running 64 bit
+Linux, an ARM server, an Android chroot, or `qemu-aarch64` with an AArch64 sysroot
+(`libc6-arm64-cross` on Debian and Ubuntu).
 
 `test` reads the test-file format the repo's own `tests/*.Test` use: `#` comments,
 then cases introduced by `positive: <name>` or `negative: <name>`, each followed by

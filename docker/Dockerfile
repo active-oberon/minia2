@@ -36,13 +36,19 @@ COPY . /src
 # stdlib .SymWw/.GofWw) — both cross-built from the same Linux host toolchain.
 RUN task Linux64 && task Win64
 
+# The AArch64 standard library: compiled by the same Linux host compiler with
+# -p=UnixA64 into target/A64/bin. There is no `task A64` -- an A64 build cannot run
+# its own compiler here -- so the modules are compiled straight from the list.
+RUN tests/a64-runtime-check.sh target/Linux64 target/A64/bin \
+    && tests/a64-stdlib-check.sh target/Linux64 target/A64/bin
+
 # Assemble the SDK payload: the Linux runtime + headless-core stdlib for both
 # targets (see docker/headless-core.txt — everything whose import closure never
 # reaches the window manager / display / raster). The Win64 lib enables
 # `ob build -t win64` (cross-compiled .exe); the win-specific boot modules
 # (Kernel32, WinFS) come from configs/moduleListWin.txt.
 RUN set -eu; \
-    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64 /opt/a2sdk/lib-sym; \
+    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64 /opt/a2sdk/lib-a64 /opt/a2sdk/lib-sym; \
     cp target/Linux64/oberon      /opt/a2sdk/oberon; \
     cp target/Linux64/oberon.cfg  /opt/a2sdk/oberon.cfg; \
     cp configs/moduleListLinux.txt /opt/a2sdk/boot-modules.txt; \
@@ -61,7 +67,9 @@ RUN set -eu; \
                 cp "target/Win64/bin/$m.$e" /opt/a2sdk/lib-win64/ || true; \
         done; \
     done; \
+    cp target/A64/bin/*.SymU8 target/A64/bin/*.GofU8 /opt/a2sdk/lib-a64/; \
     echo "SDK lib (linux64): $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"; \
+    echo "SDK lib (a64):     $(ls /opt/a2sdk/lib-a64/*.SymU8 | wc -l) modules, $(du -sh /opt/a2sdk/lib-a64 | cut -f1)"; \
     echo "SDK lib (win64):   $(ls /opt/a2sdk/lib-win64/*.SymWw | wc -l) modules, $(du -sh /opt/a2sdk/lib-win64 | cut -f1)"; \
     echo "SDK lib-sym (LSP): $(ls /opt/a2sdk/lib-sym/*.SymUu | wc -l) symbols, $(du -sh /opt/a2sdk/lib-sym | cut -f1)"
 
