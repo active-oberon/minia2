@@ -634,6 +634,16 @@ VAR
 		LDR	R1, [R0, #0]
 		REV	R1, R1
 		STR	R1, [R0, #0]
+	#ELSIF ARM64 THEN
+		(* a procedure without an activation frame: the address of the parameter was pushed by the
+			caller and is removed here. SP is copied into a register first, because A64 checks the
+			alignment of SP when SP itself is the base of an access. *)
+		mov x16, sp
+		ldr x0, [x16, #adr]
+		add sp, sp, #8
+		ldr w1, [x0]
+		rev w1, w1
+		str w1, [x0]
 	#ELSE
 		unimplemented
 	#END
