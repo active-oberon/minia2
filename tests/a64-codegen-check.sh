@@ -11,8 +11,19 @@
 
 set -eo pipefail
 
+# Directories given on the command line are made absolute: every one of them is used after a `cd`
+# into the build directory, and a relative one would be read from there rather than from where it
+# was given. The output directory need not exist yet, so this does not go through `cd`.
+absolute() {
+	case "$1" in
+		/*) printf '%s\n' "$1" ;;
+		*) printf '%s\n' "$PWD/$1" ;;
+	esac
+}
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/target/Linux64}"
+build="$(absolute "$build")"
 verbose="${2:-}"
 
 llvm_mc="$(command -v llvm-mc || command -v llvm-mc-18 || true)"

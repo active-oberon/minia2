@@ -16,9 +16,28 @@
 
 set -eo pipefail
 
+# Directories given on the command line are made absolute: every one of them is used after a `cd`
+# into the build directory, and a relative one would be read from there rather than from where it
+# was given. The output directory need not exist yet, so this does not go through `cd`.
+absolute() {
+	case "$1" in
+		/*) printf '%s\n' "$1" ;;
+		*) printf '%s\n' "$PWD/$1" ;;
+	esac
+}
+
+# What went wrong, as far as the compiler said so. A failure with no line mentioning an error --
+# a directory that is not there, say -- would otherwise be reported as nothing at all, because a
+# `grep` that matches nothing ends the script under `set -e`.
+Reason() {
+	printf '%s\n' "$1" | grep -E 'error' | head -"$2" || printf '%s\n' "$1" | tail -"$2"
+}
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/target/Linux64}"
+build="$(absolute "$build")"
 objects="${2:-$root/target/A64/bin}"
+objects="$(absolute "$objects")"
 
 oberon="$build/oberon"
 [ -x "$oberon" ] || oberon="$build/oberon.exe"
@@ -45,7 +64,7 @@ output=$( (cd "$build" && PWD="$build" "$oberon" do "
 
 if ! printf '%s\n' "$output" | grep -q 'Link successful'; then
 	echo "the AArch64 runtime did not link:" >&2
-	printf '%s\n' "$output" | grep -E 'error' | head -10 >&2
+	Reason "$output" 10 >&2
 	exit 1
 fi
 chmod +x "$work/oberonA64"

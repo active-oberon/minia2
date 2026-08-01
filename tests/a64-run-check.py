@@ -294,7 +294,10 @@ def write_elf(path, code):
 
 
 def main():
-    build = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "target", "Linux64")
+    # Absolute, because the compiler is run with the build directory as its working directory and
+    # a relative path would then be read from there rather than from where it was given.
+    build = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
+                            else os.path.join(ROOT, "target", "Linux64"))
 
     qemu = tool("qemu-aarch64-static", "qemu-aarch64")
     llvm_mc = tool("llvm-mc", "llvm-mc-18")
