@@ -21,14 +21,27 @@ absolute() {
 	esac
 }
 
+# llvm-mc is versioned on Debian and Ubuntu -- llvm-mc-18, llvm-mc-19 -- and which of them is
+# installed depends on the machine. The plain name is tried first and the newest versioned one
+# after it, so a runner whose image moved to another release still finds it.
+LlvmTool() {
+	local found newest
+	found="$(command -v "$1" || true)"
+	if [ -z "$found" ]; then
+		newest="$(compgen -c "$1-" 2>/dev/null | sort -uV | tail -1 || true)"
+		[ -n "$newest" ] && found="$(command -v "$newest" || true)"
+	fi
+	printf '%s\n' "$found"
+}
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/target/Linux64}"
 build="$(absolute "$build")"
 verbose="${2:-}"
 
-llvm_mc="$(command -v llvm-mc || command -v llvm-mc-18 || true)"
+llvm_mc="$(LlvmTool llvm-mc)"
 if [ -z "$llvm_mc" ]; then
-	echo "llvm-mc not found; install llvm (Debian: apt install llvm-18)" >&2
+	echo "llvm-mc not found; install llvm (Debian: apt install llvm)" >&2
 	exit 2
 fi
 
@@ -48,7 +61,7 @@ cp "$root/tests/A64Codegen.Mod" "$work/"
 output=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.AddSearchPath $work ~
-	Compiler.Compile -p=UnixA64 --destPath=$work/ --trace=* A64Codegen.Mod ~
+	Compiler.Compile -p=UnixA64 --destPath='$work/' --trace=* A64Codegen.Mod ~
 ") 2>&1 | tr -d '\r' )
 
 if ! printf '%s\n' "$output" | grep -q 'A64Codegen done\.'; then

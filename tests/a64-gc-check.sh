@@ -57,7 +57,7 @@ trap 'rm -rf "$work"' EXIT
 compile=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.AddSearchPath $objects ~
-	Compiler.Compile -p=UnixA64 --destPath=$objects/ $root/tests/A64GCStress.Mod ~
+	Compiler.Compile -p=UnixA64 --destPath='$objects/' '$root/tests/A64GCStress.Mod' ~
 ") 2>&1 | tr -d '\r' )
 if ! printf '%s\n' "$compile" | grep -q ' done\.'; then
 	echo "A64GCStress did not compile for UnixA64:" >&2
@@ -69,7 +69,7 @@ modules=$(sed 's/#.*//' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\
 output=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath $work ~
-	Linker.Link -p=LinuxA64 --path=$objects/ --fileName=oberonA64 $modules A64GCStress ~
+	Linker.Link -p=LinuxA64 --path='$objects/' --fileName=oberonA64 $modules A64GCStress ~
 ") 2>&1 | tr -d '\r' )
 
 if ! printf '%s\n' "$output" | grep -q 'Link successful'; then
@@ -100,14 +100,24 @@ log="${A64_GC_LOG:-$(dirname "$objects")/a64-gc-check.log}"
 # Nothing filters the transcript on the way in -- a `tr` in front of the file would hold the
 # phases in its buffer until the run ended, which is the one thing this is not for. The carriage
 # returns come off on the way out instead.
+status=0
 (cd "$work" && PWD="$work" printf 'A64GCStress.Run\nexit\n' \
-	| timeout "${A64_GC_TIMEOUT:-900}" "$qemu" -L "$sysroot" "$work/oberonA64" > "$log" 2>&1) || true
+	| timeout "${A64_GC_TIMEOUT:-900}" "$qemu" -L "$sysroot" "$work/oberonA64" > "$log" 2>&1) || status=$?
 
-if grep -q 'A64GCStress: passed' "$log"; then
+# Both, and not just the line: the module prints its verdict before the system shuts down, so a
+# timeout or a trap on the way out would otherwise be read as a pass. `timeout` answers 124.
+if [ "$status" -eq 0 ] && grep -q 'A64GCStress: passed' "$log"; then
 	echo "AArch64 collector, write barriers and leave tracking: passed under qemu"
 	exit 0
 fi
 
-echo "the AArch64 collector check did not pass; the whole of it is in $log:" >&2
+if [ "$status" -eq 124 ]; then
+	echo "the AArch64 collector check did not finish in ${A64_GC_TIMEOUT:-900} seconds;" >&2
+elif [ "$status" -ne 0 ]; then
+	echo "the AArch64 collector check left with $status;" >&2
+else
+	echo "the AArch64 collector check did not pass;" >&2
+fi
+echo "  the whole of it is in $log:" >&2
 tail -40 "$log" | tr -d '\r' >&2
 exit 1

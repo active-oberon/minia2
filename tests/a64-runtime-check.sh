@@ -68,7 +68,7 @@ for module in "${modules[@]}"; do
 		System.DoFile oberon.cfg ~
 		Files.AddSearchPath $root/source ~
 		Files.AddSearchPath $out ~
-		Compiler.Compile -p=UnixA64 --destPath=$out/ $root/source/$module ~
+		Compiler.Compile -p=UnixA64 --destPath='$out/' '$root/source/$module' ~
 	") 2>&1 | tr -d '\r' ) || true
 	if printf '%s\n' "$output" | grep -q ' done\.'; then
 		printf '  %-28s ok\n' "$module"

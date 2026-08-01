@@ -503,6 +503,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-codegen-check.sh {{.BUILD_DIR}}/{{.HOST}} {{if .VERBOSE}}--verbose{{end}} || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the A64 code generation check needs llvm-mc, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the A64 code generation check needs llvm-mc"
           else
             exit "$status"
@@ -517,6 +521,10 @@ tasks:
         python3 {{.CURRENT_DIR}}/tests/a64-run-check.py {{.BUILD_DIR}}/{{.HOST}} || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] running A64 code needs qemu-user-static and llvm, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] running A64 code needs qemu-user-static and llvm"
           else
             exit "$status"
@@ -531,6 +539,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-runtime-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] compiling the runtime for A64 needs a built host compiler, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] compiling the runtime for A64 needs a built host compiler"
           else
             exit "$status"
@@ -545,6 +557,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-system-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] running the A64 system needs qemu-user and an AArch64 C library, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] running the A64 system needs qemu-user and an AArch64 C library"
           else
             exit "$status"
@@ -559,6 +575,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-sysroot.sh {{.BUILD_DIR}}/A64/sysroot || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] unpacking an AArch64 C library needs docker, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] unpacking an AArch64 C library needs docker"
           else
             exit "$status"
@@ -573,6 +593,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-gc-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the A64 collector check needs qemu-user and an AArch64 C library, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the A64 collector check needs qemu-user and an AArch64 C library"
           else
             exit "$status"
@@ -587,6 +611,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-stdlib-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] compiling the standard library for A64 needs a built host compiler, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] compiling the standard library for A64 needs a built host compiler"
           else
             exit "$status"
@@ -604,6 +632,10 @@ tasks:
         {{.CURRENT_DIR}}/tests/a64-encoding-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
           status=$?
           if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the A64 encoding check needs llvm-mc, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the A64 encoding check needs llvm-mc"
           else
             exit "$status"

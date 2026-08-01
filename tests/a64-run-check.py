@@ -50,6 +50,26 @@ def tool(*names):
     return None
 
 
+def llvm_tool(name):
+    """llvm-mc and llvm-objcopy are versioned on Debian and Ubuntu -- llvm-mc-18, llvm-mc-19 --
+    and which of them is installed depends on the machine. The plain name first, the newest
+    versioned one after it, so a runner whose image moved to another release still finds it."""
+    found = shutil.which(name)
+    if found:
+        return found
+    versioned = []
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        for entry in entries:
+            suffix = entry[len(name) + 1:]
+            if entry.startswith(name + "-") and suffix.isdigit():
+                versioned.append((int(suffix), os.path.join(directory, entry)))
+    return max(versioned)[1] if versioned else None
+
+
 def die_skip(message):
     print(message, file=sys.stderr)
     sys.exit(2)
@@ -300,8 +320,8 @@ def main():
                             else os.path.join(ROOT, "target", "Linux64"))
 
     qemu = tool("qemu-aarch64-static", "qemu-aarch64")
-    llvm_mc = tool("llvm-mc", "llvm-mc-18")
-    objcopy = tool("llvm-objcopy", "llvm-objcopy-18")
+    llvm_mc = llvm_tool("llvm-mc")
+    objcopy = llvm_tool("llvm-objcopy")
     if not qemu or not llvm_mc or not objcopy:
         die_skip("need qemu-aarch64-static, llvm-mc and llvm-objcopy "
                  "(Debian: apt install qemu-user-static llvm-18)")
