@@ -8,8 +8,9 @@
 #
 # Running needs a sysroot with ld-linux-aarch64.so.1 and libc.so.6 in it, because the image is
 # dynamically linked against libdl and reaches the rest of libc through dlopen. On Debian and Ubuntu
-# that is the libc6-arm64-cross package, which installs into /usr/aarch64-linux-gnu; A64_SYSROOT
-# names another one. Without it the link is still checked and the run is skipped.
+# that is the libc6-arm64-cross package, which installs into /usr/aarch64-linux-gnu; `task
+# a64-sysroot` unpacks one into target/A64/sysroot where the package is not to be had, and
+# A64_SYSROOT names any other. Without it the link is still checked and the run is skipped.
 #
 # Usage: tests/a64-system-check.sh [build directory] [object directory]
 
@@ -53,7 +54,7 @@ echo "AArch64 runtime linked: $(wc -c < "$work/oberonA64") bytes"
 qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
 sysroot="${A64_SYSROOT:-}"
 if [ -z "$sysroot" ]; then
-	for candidate in /usr/aarch64-linux-gnu /usr/local/aarch64-linux-gnu; do
+	for candidate in "$root/target/A64/sysroot" /usr/aarch64-linux-gnu /usr/local/aarch64-linux-gnu; do
 		[ -f "$candidate/lib/ld-linux-aarch64.so.1" ] && sysroot="$candidate" && break
 	done
 fi
