@@ -1,0 +1,62 @@
+# Oberon language test and validation suite
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test B A;System.Load Test" --logFile="FoxExecutionTest.Log" --result="Math.Execution.Test.Diff"
+
+# The special cases of power, which IEEE 754 and C99 fix and which a naive NaN-first
+# implementation gets wrong. pow(x, +-0) = 1 and pow(1, y) = 1 hold for every x and y,
+# NaN included; everything else with a NaN in it is a NaN.
+#
+# The order the implementation asks these questions in matters as much as the answers:
+# `x = 1.0` is a float comparison against a NaN whenever x is one, and a code generator
+# that ignores the parity flag answers TRUE to it. Asking isnan(x) before that comparison
+# is what makes power(NaN, 2) a NaN even on such a backend, and these cases are what
+# notice if the order is ever put back.
+
+positive: power special cases, FLOAT64
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR nan, inf: FLOAT64;
+	BEGIN
+		nan := Math.NaN(); inf := Math.Inf(1);
+
+		(* pow(x, +-0) = 1 for every x *)
+		ASSERT(Math.power(nan, 0.0) = 1.0);
+		ASSERT(Math.power(inf, 0.0) = 1.0);
+		ASSERT(Math.power(2.0, 0.0) = 1.0);
+		ASSERT(Math.power(nan, -0.0) = 1.0);
+
+		(* pow(1, y) = 1 for every y *)
+		ASSERT(Math.power(1.0, nan) = 1.0);
+		ASSERT(Math.power(1.0, inf) = 1.0);
+		ASSERT(Math.power(1.0, 3.0) = 1.0);
+
+		(* everything else with a NaN in it is a NaN *)
+		ASSERT(Math.isnan(Math.power(nan, 2.0)));
+		ASSERT(Math.isnan(Math.power(2.0, nan)));
+		ASSERT(Math.isnan(Math.power(nan, nan)));
+
+		(* and the ordinary case still works *)
+		ASSERT(Math.power(2.0, 10.0) = 1024.0);
+	END Test.
+
+positive: power special cases, FLOAT32
+
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR nan, inf: FLOAT32;
+	BEGIN
+		nan := Math.NaN(); inf := Math.Inf(1);
+
+		ASSERT(Math.power(nan, 0.0) = 1.0);
+		ASSERT(Math.power(inf, 0.0) = 1.0);
+		ASSERT(Math.power(2.0, 0.0) = 1.0);
+
+		ASSERT(Math.power(1.0, nan) = 1.0);
+		ASSERT(Math.power(1.0, inf) = 1.0);
+
+		ASSERT(Math.isnan(Math.power(nan, 2.0)));
+		ASSERT(Math.isnan(Math.power(2.0, nan)));
+		ASSERT(Math.isnan(Math.power(nan, nan)));
+
+		ASSERT(Math.power(2.0, 10.0) = 1024.0);
+	END Test.
