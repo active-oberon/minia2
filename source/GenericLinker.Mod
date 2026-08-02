@@ -414,8 +414,10 @@ VAR
 				END;
 				(* on a signed number, because a relative displacement is negative when it points
 					backwards and ADDRESS is unsigned: the shift of an unsigned value fills with zeros,
-					and every backward reference would then read as far out of range *)
-				remainder := ObjectFile.Bits(ASH(SYSTEM.VAL(SIGNED64, address),-nobits));
+					and every backward reference would then read as far out of range. SIZE and not
+					SIGNED64: it is the signed type of the address width, so this reinterprets the
+					same bytes on a 32 bit target as it does on a 64 bit one. *)
+				remainder := ObjectFile.Bits(ASH(SYSTEM.VAL(SIZE, address),-nobits));
 
 				IF  (nobits <32) & ((remainder > 0) OR (remainder < -1)) THEN
 					IF pattern.mode = ObjectFile.Relative THEN (* negative values allowed *)
@@ -439,9 +441,10 @@ VAR
 				IF pattern.mode = ObjectFile.Relative THEN
 					DEC(address,target)
 				END;
-				(* likewise signed: the scale of a fixup that counts instructions rather than bytes is
-					a shift to the right, and it has to keep the sign of a backward displacement *)
-				address := SYSTEM.VAL(Address, ASH (SYSTEM.VAL(SIGNED64, address), pattern.scale));
+				(* likewise signed, and likewise SIZE rather than SIGNED64: the scale of a fixup that
+					counts instructions rather than bytes is a shift to the right, and it has to keep
+					the sign of a backward displacement *)
+				address := SYSTEM.VAL(Address, ASH (SYSTEM.VAL(SIZE, address), pattern.scale));
 				CheckBits(pattern, patch.offset);
 				FOR j := 0 TO pattern.patterns-1 DO PatchPattern(pattern.pattern[j]) END;
 			END ApplyPatch;

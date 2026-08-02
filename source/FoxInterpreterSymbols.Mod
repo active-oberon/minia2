@@ -19,6 +19,22 @@ TYPE
 		offset*: SIZE;
 	END;
 
+(*	Clears the bits a set of the given width does not have. The reference format gives every set
+	width a code of its own, and a value that arrives in a register or from a caller carries above
+	those bits whatever happened to be there. The default SET is as wide as an address, so SET64 is
+	already the whole of it on a 64 bit target and needs no clearing; on a 32 bit one a SET64 does
+	not fit into a SET at all, which is a limit of this interpreter's value type, not of the code. *)
+PROCEDURE Narrow(set: SET; type: CHAR): SET;
+BEGIN
+	CASE type OF
+		Reflection.sfTypeSET8: RETURN SET(SET8(set))
+	| Reflection.sfTypeSET16: RETURN SET(SET16(set))
+	| Reflection.sfTypeSET32: RETURN SET(SET32(set))
+	ELSE
+		RETURN set
+	END
+END Narrow;
+
 	PROCEDURE FindSymbol*(CONST name: ARRAY OF CHAR; meta: Meta): Meta;
 	BEGIN
 		meta.offset := Reflection.FindByName(meta.refs, meta.offset, name,TRUE);
@@ -502,6 +518,18 @@ TYPE
 								stack.PushSet(set);
 								RETURN TRUE
 							END;
+						|Reflection.sfTypeSET8, Reflection.sfTypeSET16, Reflection.sfTypeSET32:
+							(*	a set narrower than the default one takes the slot a narrow integer
+								takes above, with the bits beyond its width cleared *)
+							IF v.GetSet(set) THEN
+								stack.PushL(SYSTEM.VAL(SIGNED32, Narrow(set, type)));
+								RETURN TRUE
+							END;
+						|Reflection.sfTypeSET64:
+							IF v.GetSet(set) THEN
+								stack.PushH(SYSTEM.VAL(SIZE, set));
+								RETURN TRUE
+							END;
 						|Reflection.sfTypePointerToRecord:
 							IF v.GetAddress(a) THEN
 								stack.PushA(a);
@@ -556,9 +584,13 @@ TYPE
 			set: SetValue;
 			any: AnyValue;
 			type: Meta;
+			code: CHAR;
 		BEGIN
 			type := ReturnType();
-			CASE Reflection.GetChar(type.refs, type.offset) OF
+			(*	read once and kept: GetChar advances the offset it is given, so asking a second
+				time would answer with the byte behind the type code rather than with it *)
+			code := Reflection.GetChar(type.refs, type.offset);
+			CASE code OF
 				Reflection.sfTypeSHORTINT,Reflection.sfTypeSIGNED8 :
 					NEW(int, SIGNED8(stack.CallH(address)));
 					RETURN int;
@@ -585,6 +617,11 @@ TYPE
 				RETURN bool;
 			|Reflection.sfTypeSET:
 				NEW(set,  SET(stack.CallH(address)));
+				RETURN set;
+			| Reflection.sfTypeSET8, Reflection.sfTypeSET16, Reflection.sfTypeSET32, Reflection.sfTypeSET64:
+				(*	only the bits of the set are the result; what the register holds above them is
+					whatever was there, so they are cleared before the value is handed on *)
+				NEW(set, Narrow(SYSTEM.VAL(SET, SIZE(stack.CallH(address))), code));
 				RETURN set;
 			| Reflection.sfTypeANY, Reflection.sfTypeOBJECT, Reflection.sfTypePointerToRecord:  (* pointers are passed as varpars *)
 				stack.Call(address);
@@ -665,7 +702,7 @@ TYPE
 			s: SIGNED8; i: SIGNED16; l: SIGNED32; h: SIGNED64; w: INTEGER;
 			r: FLOAT32; x: FLOAT64;
 			b: BOOLEAN;
-			set: SET;
+			set: SET; set8: SET8; set16: SET16; set32: SET32; set64: SET64;
 			type: Meta;
 			c: CHAR;
 		BEGIN
@@ -715,6 +752,28 @@ TYPE
 			|Reflection.sfTypeSET:
 				IF v.GetSet(set) THEN
 					SYSTEM.PUT(address,set);
+					RETURN TRUE
+				END;
+			(*	each width is written through a variable of that width, so that SYSTEM.PUT stores
+				exactly as many bytes as the set occupies and leaves what follows it alone *)
+			|Reflection.sfTypeSET8:
+				IF v.GetSet(set) THEN
+					set8 := SET8(set); SYSTEM.PUT(address,set8);
+					RETURN TRUE
+				END;
+			|Reflection.sfTypeSET16:
+				IF v.GetSet(set) THEN
+					set16 := SET16(set); SYSTEM.PUT(address,set16);
+					RETURN TRUE
+				END;
+			|Reflection.sfTypeSET32:
+				IF v.GetSet(set) THEN
+					set32 := SET32(set); SYSTEM.PUT(address,set32);
+					RETURN TRUE
+				END;
+			|Reflection.sfTypeSET64:
+				IF v.GetSet(set) THEN
+					set64 := SET64(set); SYSTEM.PUT(address,set64);
 					RETURN TRUE
 				END;
 			ELSE

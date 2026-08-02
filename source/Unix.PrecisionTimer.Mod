@@ -68,13 +68,22 @@ VAR
 		END;
 	END GetFrequency;
 
+	(*	Resolves one of the POSIX clock functions. Before glibc 2.17 they are not in libc but in
+		librt, which `Unix` has then already opened for its own pair of pointers; this module keeps
+		its own, because it declares them with the argument types it wants rather than as addresses,
+		so the lookup has to be repeated here rather than the pointer copied. *)
+	PROCEDURE Resolve(CONST name: ARRAY OF CHAR; address: ADDRESS): BOOLEAN;
+	BEGIN
+		IF Unix.DlsymOptional(Unix.libc, name, address) THEN RETURN TRUE END;
+		IF Unix.librt = 0 THEN RETURN FALSE END;
+		RETURN Unix.DlsymOptional(Unix.librt, name, address)
+	END Resolve;
+
 	PROCEDURE InitMod;
 	VAR frequency: Counter;
 	BEGIN
-		Unix.Dlsym(Unix.libc, "clock_gettime", ADDRESSOF(clock_gettime));
-		ASSERT(clock_gettime # NIL);
-		Unix.Dlsym(Unix.libc, "clock_getres", ADDRESSOF(clock_getres));
-		ASSERT(clock_getres # NIL);
+		ASSERT(Resolve("clock_gettime", ADDRESSOF(clock_gettime)));
+		ASSERT(Resolve("clock_getres", ADDRESSOF(clock_getres)));
 
 		KernelLog.String("PrecisionTimer: timer tick frequency is "); KernelLog.Int(GetFrequency(),0); KernelLog.String(" Hz"); KernelLog.Ln;
 	END InitMod;

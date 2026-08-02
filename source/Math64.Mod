@@ -350,11 +350,19 @@ CONST fmod* = mod;
 PROCEDURE power*(x, y: Value): Value;
 VAR trunc, frac := modf(y, trunc): Value;
 BEGIN
-	(* pow(x, +-0) = 1 and pow(1, y) = 1 hold for every x and y, NaN included (IEEE 754 / C99),
-		so these two cases have to be settled before NaN is propagated *)
-	IF iszero(y) OR (x = 1.0) THEN
+	(*	pow(x, +-0) = 1 and pow(1, y) = 1 hold for every x and y, NaN included (IEEE 754 / C99),
+		so these two cases have to be settled before NaN is propagated. The order within them is
+		not free: `x = 1.0` is a float comparison against a NaN whenever x is one, and a backend
+		that gets the parity flag wrong answers TRUE to it. Asking `isnan(x)` first means this
+		procedure is right even there, and the one case that still needs the comparison to see a
+		NaN -- pow(1, NaN) -- does not reach it, because x is 1 and not NaN. *)
+	IF iszero(y) THEN
 		RETURN 1.0;
-	ELSIF isnan(x) OR isnan(y) THEN
+	ELSIF isnan(x) THEN
+		RETURN NaN();
+	ELSIF x = 1.0 THEN
+		RETURN 1.0;
+	ELSIF isnan(y) THEN
 		RETURN NaN();
 	ELSIF isinf(y) THEN
 		IF ABS(x) = 1.0 THEN
