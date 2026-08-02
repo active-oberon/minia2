@@ -6,3 +6,5 @@ target
 **/*.Test.Diff
 **/TesterInput.txt
 .codex
+__pycache__/
+*.pyc
