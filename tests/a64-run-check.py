@@ -218,6 +218,13 @@ def build_tests():
     t.add("Shifts", "Shifts", [bits(value, 32), bits(amount, 32)],
           (shifted + (value >> amount) + rotated) & 0xFFFFFFFF, mask=0xFFFFFFFF)
 
+    # Swap16/Rotate16/Rotate8 -- a rotation in the width of the type, not of the register.
+    # The three of them cover both amounts (a constant and a register) and both widths.
+    t.add("Swap16", "Swap16", [bits(0x1234, 32)], 0x3412, mask=0xFFFF)
+    t.add("Rotate16", "Rotate16", [bits(0x1234, 32), bits(4, 32)], 0x2341, mask=0xFFFF)
+    t.add("Rotate16.full", "Rotate16", [bits(0x1234, 32), bits(0, 32)], 0x1234, mask=0xFFFF)
+    t.add("Rotate8", "Rotate8", [bits(0x12, 32)], 0x21, mask=0xFF)
+
     # Narrow(v: SIGNED8): SIGNED64 -- sign extension all the way up
     t.add("Narrow", "Narrow", [bits(-3, 32)], bits(-3, 64))
 
@@ -229,7 +236,7 @@ def build_tests():
 
 
 PROCEDURES = ["Add", "Arith", "Unsigned", "Floats", "Mixed", "Truncate",
-              "Bits", "Shifts", "Narrow", "Compare"]
+              "Bits", "Shifts", "Swap16", "Rotate16", "Rotate8", "Narrow", "Compare"]
 
 DRIVER_TAIL = r"""
 	// exit(failures)

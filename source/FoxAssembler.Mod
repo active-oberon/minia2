@@ -769,6 +769,18 @@ TYPE
 			scanner.GetContext(context);
 			NextToken;
 			IgnoreNewLines;
+
+			(*	`CODE{SYSTEM.i386}` and its like name the processor the block is written for, and the
+				AMD64 assembler reads that as a limitation on which instructions it may use. Here
+				there is nothing to limit: the names are those of one family of processors, and an
+				assembler for another family cannot honour any of them. Saying so beats what used to
+				happen -- the prescan below asked for an identifier, found a brace, and reported
+				"identifier expected" about a construct that is spelled exactly as intended. *)
+			IF token.symbol = Scanner.LeftBrace THEN
+				Error(token.position, "inline code is declared for a processor this assembler does not know");
+				RETURN
+			END;
+
 			WHILE ~error & (token.symbol # Scanner.Period) & (token.symbol # Scanner.EndOfText) DO
 				IF ThisSymbol(Scanner.Number) THEN
 					line := token.integer;

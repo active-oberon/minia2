@@ -73,6 +73,26 @@ BEGIN
 	RETURN LSH(a, n) + ASH(a, -n) + ROT(a, n)
 END Shifts;
 
+(* A rotation narrower than a register, which the machine has no instruction for: it is the one
+	operation whose answer depends on the width of the type rather than the width of the register it
+	is computed in, and it was wrong for both of these widths. Byte order swapping in the library is
+	written this way (Streams.RawChar16), which is how it was found. *)
+
+PROCEDURE Swap16*(v: UNSIGNED16): UNSIGNED16;
+BEGIN
+	RETURN ROL(v, 8)
+END Swap16;
+
+PROCEDURE Rotate16*(v: UNSIGNED16; n: SIGNED32): UNSIGNED16;
+BEGIN
+	RETURN ROL(v, n)
+END Rotate16;
+
+PROCEDURE Rotate8*(v: UNSIGNED8): UNSIGNED8;
+BEGIN
+	RETURN ROR(v, 4)
+END Rotate8;
+
 PROCEDURE Narrow*(v: SIGNED8): SIGNED64;
 BEGIN
 	RETURN LONG(LONG(v))

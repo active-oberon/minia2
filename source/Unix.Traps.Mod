@@ -221,13 +221,26 @@ VAR
 				IF instruction DIV 0x10000 = 0xF000 THEN
 					trapno := instruction MOD 0x10 + instruction DIV 0x100 MOD 0x10000 * 0x10;
 					sig := 5;
-				END; 
+				END;
+			END;
+		#ELSIF ARM64 THEN
+			(*	The number of the trap is in the instruction, as it is on ARM and unlike on the Intel
+				machines, where it is pushed before the interrupt and read back off the stack. A64
+				traps with `BRK #imm16`: bits 31 to 21 are 11010100001 and the number is the sixteen
+				bits above the low five. Reading the stack instead, which is what this did, reported
+				every ASSERT and every HALT as trap 5.0 and lost the one number that says which of
+				them it was. *)
+			IF sig = 5 THEN
+				instruction := S.VAL(UNSIGNED32, S.GET32(mc.r_pc));
+				IF instruction DIV 200000H MOD 800H = 6A1H THEN
+					trapno := SIGNED32(instruction DIV 20H MOD 10000H)
+				END
 			END;
 		#ELSE
-			IF sig = 5 THEN 
-				S.GET( mc.r_sp, trapno );  
+			IF sig = 5 THEN
+				S.GET( mc.r_sp, trapno );
 			END;
-		#END; 
+		#END;
 		
 		CASE sig OF
 		| 1:		w.String( "1 (Hangup signal)" );

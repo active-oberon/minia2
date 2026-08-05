@@ -25,6 +25,13 @@
 #                                      Each `positive:`/`negative:` case is compiled
 #                                      and executed in its own process; exit 1 if any
 #                                      case does not match its expected outcome.
+#                                      -t a64 compiles every case for AArch64 and runs
+#                                      the ones that run under qemu-aarch64, in an
+#                                      AArch64 image linked for the occasion; without
+#                                      qemu or an AArch64 C library the suites that
+#                                      execute are skipped and the ones that only
+#                                      compile still run. The baseline defaults to
+#                                      a2test-expected-a64.txt for that target.
 #                                      Cases listed in a2test-expected.txt count as
 #                                      known failures (--expect FILE to point
 #                                      elsewhere, --write-expected FILE to regenerate).
@@ -52,6 +59,8 @@ LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
 LIBA64="$SDK/lib-a64"          # AArch64 stdlib (.GofU8/.SymU8), if present
 LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
 PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux)
+HOST_PLATFORM="$PLATFORM"                    # what this process can execute; PLATFORM may be
+                                             # retargeted by a verb (`ob test -t a64`)
 LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
 BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
 BOOT_LIST_WIN="$SDK/boot-modules-win64.txt"
@@ -554,7 +563,7 @@ cmd_doc() {
 # also means a trapping case cannot poison the next one, and no System.Free bookkeeping
 # is needed. The A2 runtime always exits 0, so the verdict comes from the output.
 cmd_test() {
-  local verbose=0 files=() a expect="$EXPECT_FILE" write=""
+  local verbose=0 files=() a expect="" write="" target=linux64
   _T_FILTER=""; _T_REPORT=""
   # Actions annotations are on by default inside a workflow, where they are the only way
   # a failure shows up next to the run instead of buried in the log.
@@ -562,6 +571,7 @@ cmd_test() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -v|--verbose)      verbose=1; shift ;;
+      -t|--target)       target="$2"; shift 2 ;;
       -r|--run)          _T_FILTER="$2"; shift 2 ;;
       --expect)          expect="$2"; shift 2 ;;
       --write-expected)  write="$2"; shift 2 ;;
@@ -576,6 +586,22 @@ cmd_test() {
     [ ${#files[@]} -gt 0 ] || die "no *.Test files here (usage: ob test [File.Test ...])"
   fi
   for a in "${files[@]}"; do [ -f "$a" ] || die "no such file: $a"; done
+
+  # The target the cases are compiled for. It is the compiler's platform and the file
+  # extensions that follow from it; what runs them is settled further down, because a
+  # case compiled for another architecture cannot run in this process.
+  case "$target" in
+    linux64) ;;
+    a64)  PLATFORM="UnixA64"; OBJ_EXT="GofU8"; SYM_EXT=".SymU8" ;;
+    *)    die "unknown test target: $target (use linux64 or a64)" ;;
+  esac
+  # A baseline is per target: what fails on one architecture is not what fails on another.
+  if [ -z "$expect" ]; then
+    case "$target" in
+      linux64) expect="$EXPECT_FILE" ;;
+      *)       expect="${EXPECT_FILE%.txt}-$target.txt" ;;
+    esac
+  fi
 
   # Baseline of cases known to fail in this tree: `<TestFile><TAB><kind>: <name>`,
   # `#` comments ignored. A listed case that fails is reported `known` and does not
@@ -592,11 +618,17 @@ cmd_test() {
   declare -ga _T_NEWFAIL=()
   declare -ga _T_CASES=()          # "<status>\t<file>\t<kind>\t<name>" per case, for --report
 
-  local w; w="$(make_workdir)"
+  local w; w="$(make_workdir "$target")"
   trap 'rm -rf "$w"' RETURN
   build_packages "$w"                                    # installed packages resolvable
   ln -sf "$(pwd)"/*.Mod "$w"/ 2>/dev/null || true        # project modules importable
   build_packages "$w"                                    # ...and compiled (fixpoint)
+
+  # What executes a case, once it is compiled. On the host that is this process; for
+  # another architecture it is an emulator with an image of that architecture, and
+  # where there is none the suites that execute are skipped rather than reported.
+  _T_QEMU=""; _T_SYSROOT=""; _T_IMAGE=""
+  [ "$target" = a64 ] && _a64_runner "$w"
 
   local total=0 passed=0 failed=0 known=0 fixed=0 file
   for file in "${files[@]}"; do
@@ -672,6 +704,75 @@ _case_selected() {
   printf '%s' "$1" | grep -qiF -- "$_T_FILTER"
 }
 
+# Find an emulator and an AArch64 C library, and link an AArch64 image to run cases in.
+# Leaves _T_QEMU empty when any of it is missing, which is how the caller knows that only
+# the suites that merely compile can run. A2_QEMU and A2_A64_SYSROOT override the search.
+_a64_runner() {
+  local w="$1" candidate qemu sysroot boot
+  qemu="${A2_QEMU:-}"
+  [ -n "$qemu" ] || qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
+  sysroot="${A2_A64_SYSROOT:-}"
+  if [ -z "$sysroot" ]; then
+    for candidate in /usr/aarch64-linux-gnu /usr/local/aarch64-linux-gnu; do
+      [ -f "$candidate/lib/ld-linux-aarch64.so.1" ] && sysroot="$candidate" && break
+    done
+  fi
+  if [ -z "$qemu" ] || [ -z "$sysroot" ] || [ ! -f "$sysroot/lib/ld-linux-aarch64.so.1" ]; then
+    echo "ob test: no qemu-aarch64 or AArch64 C library — cases that execute will be skipped"
+    return 0
+  fi
+  [ -f "$BOOT_LIST" ] || { echo "ob test: no boot module list ($BOOT_LIST) — cases that execute will be skipped"; return 0; }
+
+  # The interactive shell stays in this image, unlike the one `ob build` links: the case is
+  # loaded by a command fed to that shell on standard input.
+  boot="$(sed 's/#.*//' "$BOOT_LIST" | tr -d '\r' | tr '\n' ' ')"
+  ( cd "$w" && export PWD="$w"
+    "$OBERON" do "
+      Linker.Link --path=./ -p=LinuxA64 --extension=GofU8 --fileName='oberonA64'
+      $boot
+      ~
+    " ) >/dev/null 2>&1 || true
+  if [ ! -f "$w/oberonA64" ]; then
+    echo "ob test: could not link an AArch64 image — cases that execute will be skipped"
+    return 0
+  fi
+  chmod +x "$w/oberonA64"
+  _T_QEMU="$qemu"; _T_SYSROOT="$sysroot"; _T_IMAGE="$w/oberonA64"
+  echo "ob test: AArch64 cases run under $(basename "$qemu") in a linked image"
+}
+
+# Load a compiled module and report what the runtime said about it. On the host this is
+# the same runtime that compiled it; for AArch64 it is the linked image under the
+# emulator, which needs the directory of the object on its search path -- what a process
+# is started in is not on it by itself -- and `exit`, because on end of input the shell
+# spins rather than stopping.
+#
+# The wait is bounded, because a case that damages the frame it returns through leaves the
+# shell unable to read the `exit` it was given, and it then sits there for as long as it is
+# allowed to. That is the one failure the run cannot report by itself: the suite reads as
+# still going, and the case it is on is the only thing that says otherwise. A2_TEST_CASE_TIMEOUT
+# sets the bound; being generous costs nothing, because it is only ever reached by a case
+# that is not coming back.
+_load_module() {
+  local entry="$1" limit="${A2_TEST_CASE_TIMEOUT:-180}"
+  if [ -n "${_T_QEMU:-}" ]; then
+    printf 'Files.AddSearchPath %s\nSystem.Load %s\nexit\n' "$PWD" "$entry" \
+      | timeout "$limit" "$_T_QEMU" -L "$_T_SYSROOT" "$_T_IMAGE" 2>&1
+  else
+    timeout "$limit" "$OBERON" do "System.Load $entry ~" </dev/null 2>&1
+  fi
+}
+
+# An indented excerpt of one case's output, at most the given number of lines and all of
+# it for 0. `sed | head` reads the same, and is what this was: `head` leaves as soon as it
+# has its lines, `sed` dies of SIGPIPE, and `pipefail` with `set -e` takes the whole run
+# down on the first failing case whose output is longer than the bound -- which is every
+# trap, so the run stopped at the first real failure and wrote neither its summary nor its
+# report. awk reads its input to the end.
+_excerpt() {
+  awk -v n="${2:-20}" 'n <= 0 || NR <= n { print "        " $0 }' <<<"$1"
+}
+
 _run_test_file() {
   local w="$1" file="$2" verbose="$3" opts=""
   _T_TOTAL=0; _T_PASS=0; _T_FAIL=0; _T_KNOWN=0; _T_FIXED=0
@@ -680,11 +781,17 @@ _run_test_file() {
   if [ -n "$opts" ]; then
     _T_CFLAGS="$(printf '%s' "$opts" | sed -nE 's/.*Compiler\.Compile[[:space:]]+(.*)TesterInput\.txt.*/\1/p')"
     case "$_T_CFLAGS" in
-      *-p=*) echo "  SKIP  whole file: needs a non-default target ($_T_CFLAGS) — this image ships Unix64 symbols only"
+      *-p=*) echo "  SKIP  whole file: it names its own target ($_T_CFLAGS), which is not the one being tested"
              return 0 ;;
     esac
     # no System.Load in the command => the suite only checks that things compile
     printf '%s' "$opts" | grep -q 'System\.Load' || _T_RUN=0
+  fi
+  # Compiled for another architecture with nothing to run it: the cases that only compile
+  # are still worth running, the ones that execute would be reported on no evidence.
+  if [ "${_T_RUN:-1}" = 1 ] && [ "$PLATFORM" != "$HOST_PLATFORM" ] && [ -z "${_T_QEMU:-}" ]; then
+    echo "  SKIP  whole file: its cases execute, and nothing here can execute $PLATFORM code"
+    return 0
   fi
   local kind="" name="" body="" line
   # a trailing sentinel flushes the last case without duplicating the run below
@@ -746,8 +853,7 @@ _run_test_case() {
           "$OBERON" Compiler.Compile "-p=$PLATFORM" \
             --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
             ${_T_CFLAGS:-} ./TesterInput.txt </dev/null 2>&1 \
-          && { [ "${_T_RUN:-1}" = 0 ] \
-               || "$OBERON" do "System.Load $entry ~" </dev/null 2>&1; } )" || rc=$?
+          && { [ "${_T_RUN:-1}" = 0 ] || _load_module "$entry"; } )" || rc=$?
   # The runtime exits 0 regardless, so the verdict is read off the output. A bare
   # `Trap …` line is NOT a failure: tests may trap on purpose (Oberon.Execution's
   # FINALLY cases call HALT(100) and expect the handler to unwind and the body to
@@ -771,7 +877,7 @@ _run_test_case() {
   if [ "$ok" -eq 1 ] && [ "$expected" -eq 0 ]; then
     _T_PASS=$((_T_PASS+1))
     printf '  ok    %s: %s\n' "$kind" "$name"
-    if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /'; fi
+    if [ "$verbose" = 1 ]; then _excerpt "$out" 0; fi
     _record_case ok "$kind" "$name"
   elif [ "$ok" -eq 1 ]; then
     _T_FIXED=$((_T_FIXED+1))
@@ -781,13 +887,13 @@ _run_test_case() {
   elif [ "$expected" -eq 1 ]; then
     _T_KNOWN=$((_T_KNOWN+1))
     printf '  known %s: %s\n' "$kind" "$name"
-    if [ "$verbose" = 1 ]; then printf '%s\n' "$out" | sed 's/^/        /' | head -20; fi
+    if [ "$verbose" = 1 ]; then _excerpt "$out"; fi
     _record_case known "$kind" "$name"
   else
     _T_FAIL=$((_T_FAIL+1))
     _T_NEWFAIL+=("$key")
     printf '  FAIL  %s: %s\n' "$kind" "$name"
-    printf '%s\n' "$out" | sed 's/^/        /' | head -20
+    _excerpt "$out"
     _record_case failed "$kind" "$name"
     _annotate error "$_T_FILE" "$kind" "$name"
   fi

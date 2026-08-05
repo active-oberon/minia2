@@ -1,0 +1,39 @@
+# Cases known to fail when the suites are compiled for AArch64 (`ob test -t a64`).
+# Format: <TestFile><TAB><kind>: <case name>.  A listed case that PASSES is reported
+# as FIXED and fails the run, so this file cannot silently go stale.
+#
+# The four entries this file shares with a2test-expected.txt are the same defects for
+# the same reasons -- no procedure overloading, value parameters of non-static math
+# arrays forbidden on purpose, a case with stale 32-bit assumptions, and the math array
+# literal pooling bug -- and the reasoning for each is written out there rather than
+# repeated here.
+#
+# --- also failing on x86-64, see tests/a2test-expected.txt --------------------------
+MathArrays.Compilation.Test	positive: use of COMPLEX32 and COMPLEX64
+MathArrays.Compilation.Test	positive: variables and parameters of math array type
+MathArrays.Execution.Test	positive: correct use of ADDRESS OF and SYSTEM.VAL for tensors and open math arrays
+MathArrays.Execution.Test	positive: driver tests (fill and compare arrays)
+#
+# --- inline assembly written for another processor ----------------------------------
+# Both declare `CODE{SYSTEM.i386}` with x86 mnemonics in it. There is nothing for an
+# AArch64 assembler to do with that, and it says so ("inline code is declared for a
+# processor this assembler does not know") rather than reporting a parse error about a
+# construct spelled as intended. They pass on x86-64, where the code is the
+# architecture's own; the same two fail on ARM32 for the same reason.
+Oberon.Compilation.Test	positive: call an empty inline code
+Oberon.Compilation.Test	positive: export inline code with reference to (local) constant
+#
+# --- not in the AArch64 library ----------------------------------------------------
+# The case imports JPEGEncoder, and the A64 library is the headless set
+# (docker/headless-core.txt), which does not carry it. That is a scope limit of the
+# library, not a defect of the target -- the same case is noted as failing in the SDK
+# image for the same reason.
+JPEG.Execution.Test	positive: test RGB to I420 2x2x8x8 block conversion used for encoding
+#
+# --- written for an instruction set this one is not ---------------------------------
+# The case imports Shortreal, which is AMD64.Shortreal.Mod: half precision floats
+# through the AVX F16C instructions, and one of the four modules configs/moduleListA64.txt
+# names as unable to exist on this architecture. AArch64 has half precision of its own
+# (FEAT_FP16), so a Shortreal for it is writable; there is none, and until there is, the
+# one case of this suite has nothing to import.
+Shortreal.Execution.Test	positive: test scalar SHORTREAL operators

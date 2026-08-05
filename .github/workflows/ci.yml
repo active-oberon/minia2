@@ -45,6 +45,15 @@ jobs:
         run: |
           task a64-stdlib
           task a64-selfhost
+      - name: A64 test suites (push to main only — it is the better part of an hour)
+        # Every tests/*.Test case compiled for AArch64, and executed under qemu where the suite
+        # executes: the two language suites are 5450 compilation and 695 execution cases, the same
+        # ones that run on x86-64, which is what turns "the backend looks correct" into a number.
+        # Only on push: an emulated hour on every pull request would cost more than it catches.
+        if: github.event_name == 'push'
+        env:
+          A64_REQUIRE: "1"
+        run: task a64-suites
       - name: Second stage (compile the tree with the freshly built compiler)
         # `task Linux64` compiles the tree with the committed bootstrap in compilers/, so a
         # patch to the compiler itself is never exercised by it -- the new binary is produced
