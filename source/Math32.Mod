@@ -783,6 +783,16 @@ BEGIN
 		#END
 	END;
 	RETURN RESULT;
+#ELSIF ARM64 THEN
+	(*	A64 takes a square root in hardware, and it has to be used: the fallback below is
+		exp(0.5 * ln(x)), which is close to the root and not equal to it, so hypot(3, 4) came out
+		as something other than 5 -- and everything built on this, from Mat32 to a distance in a
+		graphics routine, inherited the error. *)
+	CODE
+		LDR S0, [FP, #x]
+		FSQRT S0, S0
+	END;
+	RETURN RESULT;
 #ELSE
 	RETURN exp(0.5 * ln(x));
 #END

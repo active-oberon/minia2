@@ -700,11 +700,23 @@ TYPE
 								IF backend.GetParameterRegister(callingConvention, type, register) THEN
 									IntermediateCode.InitParameterRegisterClass(registerClass, register);
 									src := IntermediateCode.Register(type, registerClass, implementationEmitter.AcquireRegister(type, registerClass));
-									IF callingConvention # SyntaxTree.WinAPICallingConvention THEN
+									(*	The spill goes to the parameter's own slot, and this is still before the
+										prologue has pushed anything, so the offset has to be measured from the stack
+										pointer as it is on entry. The parameter offsets themselves are relative to the
+										frame pointer, and the distance between the two is what differs: with a link
+										register the prologue pushes the return address as well as the old frame
+										pointer, so `fp` ends up two addresses below entry, and without one the call
+										instruction has already pushed the return address, so it ends up one address
+										below. WINAPI took the second for granted -- it is Microsoft's x64 protocol and
+										there the call instruction does push -- and on a target with a link register
+										every argument was then written one address above its slot: the first
+										overwrote the second's, the last overwrote what the prologue was about to push,
+										and a procedure returned with a parameter value in `SP`. *)
+									IF (callingConvention # SyntaxTree.WinAPICallingConvention) OR backend.hasLinkRegister THEN
 										IntermediateCode.InitMemory(dest,type,implementationEmitter.sp,ToMemoryUnits(system,formalParameter.offsetInBits - 2*system.addressSize));
 									ELSE
 										IntermediateCode.InitMemory(dest,type,implementationEmitter.sp,ToMemoryUnits(system,formalParameter.offsetInBits - system.addressSize));
-									END;									
+									END;
 									ir.Emit(Mov(Basic.invalidPosition,dest, src));
 									implementationEmitter.ReleaseIntermediateOperand(src);
 								END;

@@ -74,6 +74,8 @@ CONST
 	(* AAPCS64 5.4.2: the first eight arguments of each class travel in registers *)
 	NumIntegerParameterRegisters = 8;
 	NumFloatParameterRegisters = 8;
+	(* WINAPI: four, and a float takes one of the four with it -- see GetParameterRegister *)
+	NumWinAPIParameterRegisters = 4;
 
 	None = -1;
 
@@ -370,6 +372,14 @@ TYPE
 		VAR result: Operand;
 		BEGIN InstructionSet.InitImmediate(result, value); RETURN result
 		END Immediate;
+
+		(* the same register, shifted, as the second source of a data processing instruction *)
+		PROCEDURE Shifted(CONST register: Operand; shiftMode: SIGNED8; amount: SIGNED32): Operand;
+		VAR result: Operand;
+		BEGIN
+			InstructionSet.InitShiftedRegister(result, register.register, register.size, shiftMode, amount);
+			RETURN result
+		END Shifted;
 
 		PROCEDURE PhysicalRegisterNumber(virtualRegisterNumber: SIZE): SIGNED32;
 		VAR ticket: Ticket;
@@ -955,7 +965,15 @@ TYPE
 			it has been taken down again by the time this runs, except the return address: that one
 			is the machine's business, because only the machine knows it lives in a register. So
 			exit pops it back into the link register, drops whatever the caller left on the stack,
-			and branches through it. *)
+			and branches through it.
+
+			Who drops the parameters is the convention's business, and in one of them it is not the
+			callee: WINAPI on 64 bits is Microsoft's x64 protocol, where the caller reserves the
+			space and the caller reclaims it. Doing it here as well removed it twice, and the caller
+			-- which restores the stack pointer from a copy it pushed below the parameters -- then
+			read that copy from eight bytes past where it lay. The AMD64 backend draws the same
+			distinction in the same place (FoxAMDBackend.EmitExit): `RET` for WINAPI on 64 bits,
+			`RET n` otherwise. *)
 		PROCEDURE EmitExit(CONST irInstruction: IntermediateCode.Instruction);
 		VAR base, memory: Operand;
 		BEGIN
@@ -964,7 +982,8 @@ TYPE
 			InstructionSet.InitImmediateOffsetMemory(memory, base.register, 0, InstructionSet.indexOffset);
 			Emit2(InstructionSet.opLDR, opLR, memory);
 			ModifyStackPointer(-8);
-			IF irInstruction.op3.intValue # 0 THEN
+			IF (irInstruction.op3.intValue # 0)
+				& (irInstruction.op2.intValue # SyntaxTree.WinAPICallingConvention) THEN
 				ModifyStackPointer(-irInstruction.op3.intValue)
 			END;
 			Emit1(InstructionSet.opRET, opLR)
@@ -1375,12 +1394,41 @@ TYPE
 			A64 has no rotate left, so a rotation by n to the left is a rotation by width minus n
 			to the right; and no shift instruction takes a register operand wider than the value,
 			so everything happens in the width the value is held in.
+
+			For a rotation that width is the type's and not the register's, which is the one place
+			where the two have to be told apart. A shift may be done in a wider register and
+			narrowed afterwards, because the bits that leave the type are discarded either way; a
+			rotation has to bring them back at the other end, and in a wider register they come back
+			too far up. `ROL` of a 16 bit 1234H by eight answered 3400H instead of 3412H, and with it
+			every byte order swap in the library was wrong on this target -- `Streams.SetByteOrder`
+			is written as a rotation of a `Char16` -- while the same code was right on x86-64, where
+			the instruction rotates in the width of the operand it is given.
+
+			A64 rotates 32 and 64 bit registers only, so a narrower rotation is made out of one: the
+			value goes into the register twice, side by side, and the pair is rotated right as a
+			whole. What leaves the low half then comes back into it from the copy above, and the
+			copy itself is dropped when the result is narrowed to its type.
 		**)
 		PROCEDURE EmitShiftOrRotation(VAR irInstruction: IntermediateCode.Instruction);
-		VAR destination, left, right, amount: Operand; width: SIGNED32; mnemonic: SIGNED32;
+		VAR destination, left, right, amount, doubled: Operand; width: SIGNED32; mnemonic: SIGNED32;
+			doubling: BOOLEAN;
 		BEGIN
 			left := WithoutStackPointer(RegisterFromIrOperand(irInstruction.op2, emptyOperand));
 			width := left.size;
+			doubling := (irInstruction.opcode IN {IntermediateCode.rol, IntermediateCode.ror})
+				& (irInstruction.op2.type.sizeInBits < left.size);
+			IF doubling THEN
+				width := SIGNED32(irInstruction.op2.type.sizeInBits);
+				doubled := GetFreeRegister(irInstruction.op2.type);
+				(* zero extended rather than moved: the bits above the type would otherwise be
+					rotated in as if they were part of the value *)
+				IF width = 8 THEN Emit2(InstructionSet.opUXTB, doubled, left)
+				ELSE Emit2(InstructionSet.opUXTH, doubled, left)
+				END;
+				Emit3(InstructionSet.opORR, doubled, doubled,
+					Shifted(doubled, InstructionSet.shiftLSL, width));
+				left := doubled
+			END;
 
 			IF irInstruction.opcode = IntermediateCode.rol THEN
 				(* rotate left by n = rotate right by width - n *)
@@ -1412,6 +1460,7 @@ TYPE
 
 			destination := AcquireDestinationRegister(irInstruction.op1, emptyOperand);
 			Emit3(mnemonic, destination, left, right);
+			IF doubling THEN ReleaseHint(doubled.register) END;
 			NarrowInteger(destination, irInstruction.op1.type);
 			WriteBack(irInstruction.op1, destination)
 		END EmitShiftOrRotation;
@@ -1476,6 +1525,16 @@ TYPE
 				END
 			| IntermediateCode.brlt:
 				IF unsigned THEN condition := InstructionSet.conditionCC
+				ELSIF IsFloat(irInstruction.op2) THEN
+					(*	MI rather than LT. FCMP against a NaN leaves the flags unordered -- N clear,
+						Z clear, C set, V set -- and LT tests N # V, which is then true: `nan < one`
+						answered TRUE, and so did `nan > one`, because the intermediate code compiles
+						`a > b` as `b < a` and lands here as well. Every relation but # has to be
+						false for an unordered pair, and of the four that matter only the sign flag
+						on its own gives that. GE, EQ and NE need no such care: N = V, Z set and Z
+						clear are already false, false and true when the flags are unordered, which
+						is why `<=` and `>=` were right while `<` and `>` were not. *)
+					condition := InstructionSet.conditionMI
 				ELSE condition := InstructionSet.conditionLT
 				END
 			END;
@@ -1713,6 +1772,31 @@ TYPE
 		**)
 		PROCEDURE GetParameterRegister*(callingConvention: SyntaxTree.CallingConvention; type: IntermediateCode.Type; VAR register: INTEGER): BOOLEAN;
 		BEGIN
+			(*	WINAPI is Microsoft's x64 protocol here, and not Windows on AArch64. That is not a
+				choice this table gets to make: the intermediate code around it implements exactly
+				that protocol -- the caller reserves 32 bytes of shadow space for four register
+				arguments, and the prologue of the callee spills into it -- so the backend has to
+				answer with four registers, a float taking one of the four with it, the way the AMD64
+				backend does. Answering FALSE for the convention, which is what this did, put every
+				argument on the stack and a `{WINAPI}` procedure read the wrong ones; answering with
+				AAPCS64's eight put the fifth argument in a register the caller had made no room for.
+				Windows on AArch64 does pass arguments the AAPCS64 way, and supporting it means
+				changing that shared protocol rather than this table. *)
+			IF callingConvention = SyntaxTree.WinAPICallingConvention THEN
+				IF intParameterIndex >= NumWinAPIParameterRegisters THEN
+					register := -1; RETURN FALSE
+				END;
+				IF type.form = IntermediateCode.Float THEN
+					register := V0 + intParameterIndex
+				ELSIF type.form IN IntermediateCode.Integer THEN
+					register := X0 + intParameterIndex
+				ELSE
+					register := -1; RETURN FALSE
+				END;
+				INC(intParameterIndex);
+				RETURN TRUE
+			END;
+
 			IF callingConvention # SyntaxTree.CCallingConvention THEN
 				register := -1; RETURN FALSE
 			END;
