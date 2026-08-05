@@ -135,6 +135,9 @@ FoxARMInstructionSet.Mod
 FoxARMAssembler.Mod
 FoxARMBackend.Mod
 FoxMinosObjectFile.Mod
+FoxA64InstructionSet.Mod
+FoxA64Assembler.Mod
+FoxA64Backend.Mod
 FoxIntermediateParser.Mod
 FoxIntermediateObjectFile.Mod
 FoxIntermediateLinker.Mod

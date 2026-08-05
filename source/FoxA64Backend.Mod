@@ -436,10 +436,20 @@ TYPE
 		BEGIN RETURN OperandFromTicket(TemporaryTicket(IntermediateCode.GeneralPurposeRegister, type))
 		END GetFreeRegister;
 
+		(** a register for `type`, the hinted one where the hint can carry it
+
+			The hint says which register; the type says how wide, and it has to be the type's width
+			rather than the hint's. A hint arrives from the destination of the value being computed,
+			so it is as wide as that value -- eight or thirty two bits for a byte or an integer --
+			while what it gets reused for on the way there is an address. Handing an address a 32 bit
+			register truncates it, and that is invisible in an image, where every address is below
+			four gigabytes, and fatal on the heap, where they are not: the loaded module read its own
+			data at 0B38418H instead of 400000B38418H.
+		**)
 		PROCEDURE GetFreeRegisterOrHint(CONST type: IntermediateCode.Type; CONST registerHint: Operand): Operand;
 		BEGIN
 			IF (registerHint.mode = InstructionSet.modeRegister) & IsRegisterForType(registerHint.register, type) THEN
-				RETURN registerHint
+				RETURN RegisterOperand(registerHint.register, type)
 			END;
 			RETURN GetFreeRegister(type)
 		END GetFreeRegisterOrHint;
@@ -960,6 +970,40 @@ TYPE
 			Emit1(InstructionSet.opRET, opLR)
 		END EmitExit;
 
+		(** call a procedure outside this object file, through its address read out of a literal
+
+			`BL` carries a 26 bit displacement, which reaches 128 megabytes. That is more than a
+			module ever needs inside itself and nothing like enough between one module and another:
+			the code of a loaded module is allocated on the heap while the kernel it calls lies
+			where the image was loaded, and the two are 70 terabytes apart. So the address goes into
+			the instruction stream as data and the call is indirect -- what the AMD64 backend does
+			for every call on 64 bits, and the ARM backend for every call at all.
+
+			There is a second reason, and it is the harder one: the runtime loader can only apply
+			fixups that are whole bytes (`Loader.Arrangement.Patch`), and 26 bits are not. An
+			absolute 64 bit address is.
+
+			IP0 carries the address. The register is reserved -- the allocator is told it is
+			unusable -- so the sequence costs nothing in allocation right in front of a call.
+		**)
+		PROCEDURE EmitLongCall(CONST symbol: ObjectFile.Identifier; symbolOffset: SIZE);
+		VAR literal: Operand; patterns: ObjectFile.FixupPatterns; fixup: BinaryCode.Fixup;
+		BEGIN
+			(* LDR IP0, #8 -- the literal is two instructions along *)
+			InstructionSet.InitImmediate(literal, 8);
+			Emit2(InstructionSet.opLDR, opIP0, literal);
+			(* B #12 -- over the eight bytes of the literal *)
+			Emit1(InstructionSet.opB, Immediate(12));
+
+			NEW(patterns, 1);
+			patterns[0].offset := 0; patterns[0].bits := 64;
+			fixup := BinaryCode.NewFixup(BinaryCode.Absolute, out.pc, symbol, symbolOffset, 0, 0, patterns);
+			out.fixupList.AddFixup(fixup);
+			out.PutBits(0, 32); out.PutBits(0, 32);
+
+			Emit1(InstructionSet.opBLR, opIP0)
+		END EmitLongCall;
+
 		(* call <address>, <parSize> *)
 		PROCEDURE EmitCall(VAR irInstruction: IntermediateCode.Instruction);
 		VAR code: BinaryCode.Section; fixup, newFixup: BinaryCode.Fixup;
@@ -983,14 +1027,20 @@ TYPE
 				END
 			ELSIF (irInstruction.op1.mode = IntermediateCode.ModeImmediate) & (irInstruction.op1.symbol.name # "")
 					& (irInstruction.op1.offset = 0) THEN
-				(* a direct call: BL reaches 128 megabytes either way, which is every call inside a
-					module and every call the loader places nearby *)
-				NEW(patterns, 1);
-				patterns[0].offset := 0; patterns[0].bits := 26;
-				fixup := BinaryCode.NewFixup(BinaryCode.Relative, out.pc, irInstruction.op1.symbol,
-					irInstruction.op1.symbolOffset, 0, -2, patterns);
-				out.fixupList.AddFixup(fixup);
-				Emit1(InstructionSet.opBL, Immediate(0));
+				IF irInstruction.op1.resolved # NIL THEN
+					(* a call to a section of this object file: BL reaches 128 megabytes, and the
+						sections of one compilation are laid down next to each other -- merged into one
+						block by the object file writer, and allocated from one arena by the loader --
+						so the displacement stays as small as the module is *)
+					NEW(patterns, 1);
+					patterns[0].offset := 0; patterns[0].bits := 26;
+					fixup := BinaryCode.NewFixup(BinaryCode.Relative, out.pc, irInstruction.op1.symbol,
+						irInstruction.op1.symbolOffset, 0, -2, patterns);
+					out.fixupList.AddFixup(fixup);
+					Emit1(InstructionSet.opBL, Immediate(0))
+				ELSE
+					EmitLongCall(irInstruction.op1.symbol, irInstruction.op1.symbolOffset)
+				END;
 				ModifyStackPointer(-irInstruction.op2.intValue)
 			ELSE
 				target := RegisterFromIrOperand(irInstruction.op1, emptyOperand);

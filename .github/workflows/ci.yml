@@ -34,6 +34,17 @@ jobs:
         env:
           A64_REQUIRE: "1"
         run: task test
+      - name: A64 standard library and self hosting
+        # `task test` covers the A64 backend, the runtime, module loading and the collector; it
+        # stops short of the standard library, which is minutes of compiling, and therefore of the
+        # compiler on AArch64. This step builds that and then has the AArch64 system compile a
+        # module on itself and run what it built, which is what `ob run`, the REPL and the language
+        # server on that target all reduce to.
+        env:
+          A64_REQUIRE: "1"
+        run: |
+          task a64-stdlib
+          task a64-selfhost
       - name: Second stage (compile the tree with the freshly built compiler)
         # `task Linux64` compiles the tree with the committed bootstrap in compilers/, so a
         # patch to the compiler itself is never exercised by it -- the new binary is produced

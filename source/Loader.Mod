@@ -12,6 +12,7 @@ CONST
 
 	TraceLoading = FALSE;
 	TraceBlocks = FALSE;
+	TracePatches = FALSE;
 TYPE
 
 	HashEntryIntInt = RECORD
@@ -225,17 +226,49 @@ TYPE
 			RETURN adr;
 		END Allocate;
 
-		PROCEDURE Patch* (pos, value: GenericLinker.Address; offset, bits, unit: ObjectFile.Bits);
-		VAR char: CHAR;
-		BEGIN
-			ASSERT(bits MOD 8 = 0);
-			ASSERT(unit = 8);
+		(** write `bits` bits of `value` at bit `offset` of the byte at `pos`
 
-			WHILE bits > 0 DO
-				char := CHR(value);
-				SYSTEM.PUT(pos, char);
-				value := value DIV 256;
-				DEC(bits,8); INC(pos,1);
+			The whole byte case is what the backends of the Intel machines produce and it stays a
+			byte at a time. A fixup that does not fill its bytes -- the displacement of a branch on a
+			machine with fixed width instructions sits inside the instruction word -- has to keep the
+			bits around it, so that one goes bit by bit, the way `BitSets.SetBits` does it for the
+			linker. It used to be an assertion instead, which made every such fixup a trap.
+		**)
+		PROCEDURE Patch* (pos, value: GenericLinker.Address; offset, bits, unit: ObjectFile.Bits);
+		VAR char: CHAR; byte, weight: SIGNED32;
+		BEGIN
+			ASSERT(unit = 8);
+			IF TracePatches THEN
+				Trace.String("patch pos="); Trace.Hex(pos, -16);
+				Trace.String(" value="); Trace.Hex(value, -16);
+				Trace.String(" offset="); Trace.Int(offset, 1);
+				Trace.String(" bits="); Trace.Int(bits, 1); Trace.Ln
+			END;
+
+			(* whole bytes of the offset are part of the position *)
+			INC(pos, offset DIV 8); offset := offset MOD 8;
+
+			IF (offset = 0) & (bits MOD 8 = 0) THEN
+				WHILE bits > 0 DO
+					char := CHR(value);
+					SYSTEM.PUT(pos, char);
+					value := value DIV 256;
+					DEC(bits,8); INC(pos,1);
+				END;
+			ELSE
+				WHILE bits > 0 DO
+					SYSTEM.GET(pos, char); byte := ORD(char);
+					weight := ASH(1, offset);
+					IF ODD(value) THEN
+						IF ~ODD(byte DIV weight) THEN INC(byte, weight) END
+					ELSE
+						IF ODD(byte DIV weight) THEN DEC(byte, weight) END
+					END;
+					SYSTEM.PUT(pos, CHR(byte));
+					value := value DIV 2;
+					DEC(bits); INC(offset);
+					IF offset = 8 THEN offset := 0; INC(pos, 1) END
+				END;
 			END;
 
 		END Patch;

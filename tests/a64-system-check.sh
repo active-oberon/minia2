@@ -60,7 +60,7 @@ output=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath $work ~
 	Linker.Link -p=LinuxA64 --path='$objects/' --fileName=oberonA64 $modules ~
-") 2>&1 | tr -d '\r' )
+") 2>&1 | tr -d '\r' ) || true
 
 if ! printf '%s\n' "$output" | grep -q 'Link successful'; then
 	echo "the AArch64 runtime did not link:" >&2

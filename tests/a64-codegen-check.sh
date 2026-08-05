@@ -62,7 +62,7 @@ output=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.AddSearchPath $work ~
 	Compiler.Compile -p=UnixA64 --destPath='$work/' --trace=* A64Codegen.Mod ~
-") 2>&1 | tr -d '\r' )
+") 2>&1 | tr -d '\r' ) || true
 
 if ! printf '%s\n' "$output" | grep -q 'A64Codegen done\.'; then
 	echo "the A64 code generator did not get through A64Codegen.Mod:" >&2
