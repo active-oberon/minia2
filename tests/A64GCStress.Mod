@@ -5,9 +5,10 @@ MODULE A64GCStress; (** AUTHOR "Andrii Puhachenko; co-author Claude (Opus 5)"; P
 	collects less. This one allocates until the collector has to run, and checks afterwards that
 	what was alive is still there and still holds what it held.
 
-	It is linked into the AArch64 image rather than loaded into it, because loading a module there
-	does not work yet: a dynamically loaded section lands on the heap, far from the code of the
-	kernel, and the 26 bit displacement of BL does not reach that far.
+	It is linked into the AArch64 image rather than loaded into it. That was once the only way --
+	a loaded section lands on the heap, far from the kernel, and the 26 bit displacement of BL did
+	not reach that far -- and since loading works it is a choice: linked in is how the image itself
+	is built, and tests/A64Loader.Mod covers the loaded case.
 
 	The four things being checked, in the order the flags turn them on:
 

@@ -493,6 +493,7 @@ tasks:
       - task: a64-run
       - task: a64-runtime
       - task: a64-system
+      - task: a64-loader
       - task: a64-gc
 
   a64-codegen:
@@ -598,6 +599,42 @@ tasks:
             # as it passing.
             [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the A64 collector check needs qemu-user and an AArch64 C library, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the A64 collector check needs qemu-user and an AArch64 C library"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-loader:
+    desc: Load a module into the A64 system at runtime, under qemu
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-loader-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the A64 loader check needs qemu-user and an AArch64 C library, and A64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the A64 loader check needs qemu-user and an AArch64 C library"
+          else
+            exit "$status"
+          fi
+        }
+
+  a64-selfhost:
+    desc: Compile a module on the A64 system itself under qemu (needs `task a64-stdlib`; minutes)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-selfhost-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] compiling on the A64 system needs qemu-user, an AArch64 C library and the A64 standard library, and A64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] compiling on the A64 system needs qemu-user, an AArch64 C library and the A64 standard library"
           else
             exit "$status"
           fi
