@@ -203,8 +203,16 @@ TYPE
 
 (*	A round trip through the C library, run while the other threads allocate. What it is after is
 	the state a thread leaves behind when it goes into C: the collector has to see that the thread
-	is out and not wait for it or walk the stack it is no longer on. *)
-PROCEDURE Roundtrip(CONST name: ARRAY OF CHAR; rounds: SIGNED32): SIGNED32;
+	is out and not wait for it or walk the stack it is no longer on.
+
+	A trap for whoever runs this: Files.New and Files.Register write into the working directory,
+	but Files.Old resolves a bare name against the search path -- and only against the search
+	path, once it has any entry at all. With an empty one a bare name falls back to the working
+	directory, which is why this passes when the module sits in the directory it is started in
+	and fails the moment the caller adds a search path without naming that directory too. The
+	failure then has nothing to do with the collector and everything to do with the setup, so it
+	says so rather than counting silently. (Same on x86-64; not an AArch64 matter.) *)
+PROCEDURE Roundtrip(CONST name: ARRAY OF CHAR; rounds: SIGNED32; out: Streams.Writer): SIGNED32;
 VAR file: Files.File; writer: Files.Writer; reader: Files.Reader; bad, i, value: SIGNED32;
 BEGIN
 	bad := 0;
@@ -216,7 +224,12 @@ BEGIN
 		Files.Register(file);
 
 		file := Files.Old(name);
-		IF file = NIL THEN INC(bad)
+		IF file = NIL THEN
+			INC(bad);
+			IF i = 1 THEN
+				out.String("  cannot read back what it just wrote -- is the working directory");
+				out.Ln; out.String("  on the search path? (Files.AddSearchPath)"); out.Ln; out.Update
+			END
 		ELSE
 			Files.OpenReader(reader, file, 0);
 			reader.RawLInt(value); IF value # i THEN INC(bad) END;
@@ -278,7 +291,7 @@ BEGIN
 
 	(* what leaving for C has to survive: threads allocating while this one is in the file system *)
 	Phase(out, "file round trips");
-	bad := Roundtrip("A64GCStress.Work", FileRounds);
+	bad := Roundtrip("A64GCStress.Work", FileRounds, out);
 	IF bad # 0 THEN out.String("  file round trips wrong: "); out.Int(bad, 0); out.Ln; INC(failures, bad) END;
 	Phase(out, "waiting for workers");
 	FOR i := 0 TO Threads - 1 DO
