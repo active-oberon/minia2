@@ -157,13 +157,24 @@ CONST
 	(* the system registers the encoder knows by name. The value of each is the sixteen bits the
 		instruction carries -- op0, op1, CRn, CRm and op2, in that order -- so that the encoder has
 		nothing to assemble and the name is only a name. *)
-	NumberSystemRegisters = 6;
+	NumberSystemRegisters = 9;
 	sysFPCR* = 0DA20H;			(* the floating point control register *)
 	sysFPSR* = 0DA21H;			(* ... and its status register *)
 	sysNZCV* = 0DA10H;
 	sysTPIDREL0* = 0DE82H;		(* the thread pointer, which is where a thread local variable is *)
 	sysCNTVCTEL0* = 0DF02H;		(* the virtual counter, readable from user space *)
 	sysCNTFRQEL0* = 0DF00H;		(* ... and the frequency it counts at *)
+	(*	Cache maintenance, which is what a loader needs before it may execute code it has just
+		written: the data cache is cleaned to the point of unification and the instruction cache
+		invalidated for the same address, and without that a processor with separate caches may
+		fetch what stood there before. These are system INSTRUCTIONS rather than registers -- op0
+		is 1, which makes the encoding SYS instead of MSR -- but the field they occupy is the same
+		sixteen bits, so naming them here is all it takes and the encoder is untouched. The names
+		are the generic ones (`sN_op1_cN_cM_op2`) because those are what the assembler that this
+		printer is checked against accepts for op0 = 1; `dc cvau` is the same word. *)
+	sysDCCVAU* = 05BD9H;		(* DC CVAU: clean a data cache line to the point of unification *)
+	sysICIVAU* = 05BA9H;		(* IC IVAU: invalidate an instruction cache line to the same point *)
+	sysCTREL0* = 0D801H;		(* CTR_EL0: cache type, and with it the line sizes to step by *)
 
 TYPE
 	Name = ARRAY 10 OF CHAR;
@@ -2143,6 +2154,9 @@ VAR
 		Check2(opMRS, X(0), Im(sysFPCR));
 		Check2(opMSR, Im(sysFPCR), X(1));
 		Check2(opMRS, X(2), Im(sysCNTVCTEL0));
+		Check2(opMRS, X(3), Im(sysCTREL0));
+		Check2(opMSR, Im(sysDCCVAU), X(4));
+		Check2(opMSR, Im(sysICIVAU), X(5));
 
 		(* loads and stores: every addressing form, every width, both signednesses *)
 		Check2(opLDR, X(3), Im(8));								(* the literal form *)
@@ -2278,6 +2292,9 @@ VAR
 		systemRegisterNames[3] := "tpidr_el0";   systemRegisterValues[3] := sysTPIDREL0;
 		systemRegisterNames[4] := "cntvct_el0";  systemRegisterValues[4] := sysCNTVCTEL0;
 		systemRegisterNames[5] := "cntfrq_el0";  systemRegisterValues[5] := sysCNTFRQEL0;
+		systemRegisterNames[6] := "s1_3_c7_c11_1"; systemRegisterValues[6] := sysDCCVAU;
+		systemRegisterNames[7] := "s1_3_c7_c5_1";  systemRegisterValues[7] := sysICIVAU;
+		systemRegisterNames[8] := "ctr_el0";     systemRegisterValues[8] := sysCTREL0;
 
 		SetMnemonic(opADD, "add");    SetMnemonic(opADDS, "adds");
 		SetMnemonic(opSUB, "sub");    SetMnemonic(opSUBS, "subs");
