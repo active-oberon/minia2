@@ -18,6 +18,12 @@ CONST
 	libX11name* = "libX11.so.6";
 	libpthreadname = "libpthread.so.0";
 	librtname = "librt.so.1";   (* before glibc 2.17 the POSIX clock functions live here, not in libc *)
+	(*	Bionic, the C library of Android, names its libraries without the version and has only the
+		one: the POSIX threads and the POSIX clocks are part of libc there rather than libraries of
+		their own. Both sets of names are tried, so that one binary runs on a glibc system and on a
+		phone -- which is worth more than a second build of everything, and the cost is two failed
+		Dlopen calls at startup on Android. *)
+	libcnameBionic = "libc.so";
 
 	LittleEndian* = TRUE;   (** byte order of basic types *)
 	LsbIs0* = TRUE;   (** bit order of SET type *)
@@ -573,6 +579,25 @@ TYPE
 		filler: ADDRESS;
 	END;
 
+	(*	The same structure as Bionic orders it, which is not as glibc orders it: the flags come first
+		and the mask is one word rather than a hundred and twenty eight bytes (offsets confirmed
+		against the Android headers: handler at 8, mask at 16, restorer at 24, 32 bytes in all).
+
+		This one is worth spelling out, because getting it wrong is silent. `sigaction` answers zero
+		either way -- the kernel sees a well formed call -- but with the fields in the other order the
+		low half of the handler's address arrives as the flags and the first word of an empty mask
+		arrives as the handler, which is SIG_DFL. So nothing is installed and nothing complains: on
+		Android the trap handler was not there to report a fault (a bus error came from the shell
+		instead of a trap from A2), and, worse, neither was the handler the collector suspends threads
+		with -- so the first collection killed the process. *)
+	BionicSigaction = RECORD
+		sa_flags: SIGNED32;
+		filler0: SIGNED32;
+		sa_handler: ADDRESS;
+		sa_mask: SIGNED64;
+		sa_restorer: ADDRESS;
+	END;
+
 	Sched_param = RECORD
 		sched_priority: SIGNED32;
 		safety: ARRAY 8 OF ADDRESS;
@@ -584,8 +609,9 @@ VAR
 	mainthread: Thread_t;
 	suspend_done: SIGNED32;
 	resume_done: SIGNED32;
-	sasuspend, saresume: Sigaction;
 	thread_exit: Key_t;
+	bionic-: BOOLEAN;					(* the C library is Android's, and orders struct sigaction its own way *)
+	systemPropertyGet: PROCEDURE {C} ( name, value: ADDRESS ): SIGNED32;	(* only ever asked for to find out *)
 
 	argc-: SIGNED32;  argv-: ADDRESS;  environ-: ADDRESS;
 
@@ -917,8 +943,10 @@ VAR
 		sigdelset( ADDRESS OF new, T_SIGSUSPEND );
 
 		res := pthread_sigmask( SIG_SETMASK, ADDRESS OF new, ADDRESS OF old );
-		res := pthread_setcancelstate( PTHREAD_CANCEL_ENABLE, NIL );
-		res := pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, NIL );
+		IF pthread_setcancelstate # NIL THEN		(* absent in Bionic; see where they are looked up *)
+			res := pthread_setcancelstate( PTHREAD_CANCEL_ENABLE, NIL );
+			res := pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, NIL )
+		END;
 		param.sched_priority := 0;
 		res := pthread_setschedparam( me, SCHED_OTHER, ADDRESS OF param );
 
@@ -981,7 +1009,7 @@ VAR
 	    		pthread_detach( thr );
     			IF (thr = pthread_self()) THEN
 				ThrExit;
-			ELSE
+			ELSIF pthread_cancel # NIL THEN
 				pthread_cancel( thr );
 			END
 		END;
@@ -1031,6 +1059,25 @@ VAR
 
 
 
+	(*	Install a signal handler, in whichever shape the C library underneath wants the request. The
+		one place in the module that knows there are two, so that a third would be one edit. *)
+	PROCEDURE Sigact(sig: SIGNED32; handler: ADDRESS; flags: SIGNED32; fill: BOOLEAN): INTEGER;
+	VAR act: Sigaction; bact: BionicSigaction; res: INTEGER;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF bionic THEN
+			bact.sa_flags := flags; bact.filler0 := 0;
+			bact.sa_handler := handler; bact.sa_restorer := 0;
+			IF fill THEN res := sigfillset( ADDRESS OF bact.sa_mask )
+			ELSE sigemptyset( ADDRESS OF bact.sa_mask ) END;
+			RETURN sigaction( sig, ADDRESS OF bact, NIL )
+		ELSE
+			act.sa_handler := handler; act.sa_flags := flags; act.filler := 0;
+			IF fill THEN res := sigfillset( ADDRESS OF act.sa_mask )
+			ELSE sigemptyset( ADDRESS OF act.sa_mask ) END;
+			RETURN sigaction( sig, ADDRESS OF act, NIL )
+		END
+	END Sigact;
+
 	PROCEDURE ThrInitialize*( VAR low, high: SIGNED32 ): BOOLEAN;
 	VAR
 		param: Sched_param; res: INTEGER;
@@ -1045,15 +1092,8 @@ VAR
 			Perror("ThrInitialize: setparam");
 		END;
 
-		res := sigfillset( ADDRESS OF sasuspend.sa_mask );
-		sasuspend.sa_flags := SA_SIGINFO;
-		sasuspend.sa_handler := suspend_handler;
-		ASSERT(sigaction( T_SIGSUSPEND, ADDRESS OF sasuspend, NIL ) = 0);
-
-		sigemptyset( ADDRESS OF saresume.sa_mask );
-		saresume.sa_flags := 0;
-		saresume.sa_handler := resume_handler;
-		ASSERT(sigaction( T_SIGRESUME, ADDRESS OF saresume, NIL ) = 0);
+		ASSERT(Sigact( T_SIGSUSPEND, suspend_handler, SA_SIGINFO, TRUE ) = 0);
+		ASSERT(Sigact( T_SIGRESUME, resume_handler, 0, FALSE ) = 0);
 
 		ASSERT (pthread_key_create (ADDRESS OF thread_exit, NIL) = 0);
 
@@ -1194,15 +1234,9 @@ VAR
 
 
 	PROCEDURE InstallHandler(sig: SIGNED32);
-	VAR
-		act: Sigaction;
-		mask: Sigset_t;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
-		sigemptyset(ADDRESS OF mask);
-		act.sa_mask := mask;
-		act.sa_flags :=  SA_SIGINFO +  SA_ONSTACK (* run on separate sig stack *) +  SA_NODEFER;
-		act.sa_handler := ADDRESS OF SigHandler;
-		IF sigaction( sig, ADDRESS OF act, 0 ) # 0 THEN
+		IF Sigact( sig, ADDRESS OF SigHandler,
+				SA_SIGINFO + SA_ONSTACK (* run on separate sig stack *) + SA_NODEFER, FALSE ) # 0 THEN
 			Perror("sigaction");
 		END
 	END InstallHandler;
@@ -1321,7 +1355,15 @@ VAR
 #END
 
 		libc := Dlopen( libcname, 2 );
+		IF libc = 0 THEN libc := Dlopen( libcnameBionic, 2 ) END;
 		libp := Dlopen( libpthreadname, 2 );
+		IF libp = 0 THEN libp := libc END;		(* Bionic: the threads are in libc *)
+
+		(*	Which C library this is, asked once and for all: what follows differs by more than the
+			names of things -- struct sigaction is ordered differently -- and every later decision
+			reads this rather than guessing again. The property reader is Android's and nothing
+			else has it. *)
+		bionic := DlsymOptional( libc, "__system_property_get", ADDRESSOF( systemPropertyGet ) );
 
 		Dlsym( libc, "exit",		ADDRESSOF(exit) );
 
@@ -1343,7 +1385,16 @@ VAR
 
 		Dlsym( libp, "pthread_create", ADDRESSOF(pthread_create) );
 		Dlsym( libp, "pthread_detach", ADDRESSOF(pthread_detach) );
-		Dlsym( libp, "pthread_cancel", ADDRESSOF(pthread_cancel) );
+		(*	Bionic has no thread cancellation at all -- not the call, not the two that set its state,
+			by a deliberate decision of its authors -- so these three are asked for and may stay NIL.
+			What depends on them is killing a thread from outside, which the callers below now leave
+			undone rather than trap on. There is a route through pthread_kill for that, and it wants
+			designing rather than improvising: a signal, a handler, and an answer for a thread caught
+			inside the collector. *)
+		IF ~DlsymOptional( libp, "pthread_cancel", ADDRESSOF(pthread_cancel) ) THEN
+			Trace.String( "Unix: no pthread_cancel here -- a thread cannot be stopped from outside" );
+			Trace.Ln
+		END;
 		Dlsym( libp, "pthread_kill", ADDRESSOF(pthread_kill) );
 		Dlsym( libp, "pthread_join", ADDRESSOF(pthread_join) );
 
@@ -1352,8 +1403,8 @@ VAR
 		Dlsym( libp, "pthread_setspecific", ADDRESSOF( pthread_setspecific ) );
 
 		Dlsym( libp, "pthread_sigmask", ADDRESSOF(pthread_sigmask) );
-		Dlsym( libp, "pthread_setcancelstate", ADDRESSOF(pthread_setcancelstate) );
-		Dlsym( libp, "pthread_setcanceltype", ADDRESSOF(pthread_setcanceltype) );
+		IF ~DlsymOptional( libp, "pthread_setcancelstate", ADDRESSOF(pthread_setcancelstate) ) THEN END;
+		IF ~DlsymOptional( libp, "pthread_setcanceltype", ADDRESSOF(pthread_setcanceltype) ) THEN END;
 		Dlsym( libp, "pthread_attr_init", ADDRESSOF(pthread_attr_init) );
 		Dlsym( libp, "pthread_attr_destroy", ADDRESSOF(pthread_attr_destroy) );
 		Dlsym( libp, "pthread_attr_setscope", ADDRESSOF(pthread_attr_setscope) );
@@ -1465,7 +1516,11 @@ VAR
 		Dlsym( libc, "closedir",	ADDRESSOF( closedir ) );
 
 
-		Dlsym( libc, "__sigsetjmp",	ADDRESSOF( sigsetjmp ) );
+		(* glibc exports the saving half of a non local jump under its internal name; Bionic under
+			the one the standard gives it. The signature is the same. *)
+		IF ~DlsymOptional( libc, "__sigsetjmp", ADDRESSOF( sigsetjmp ) ) THEN
+			Dlsym( libc, "sigsetjmp",	ADDRESSOF( sigsetjmp ) )
+		END;
 		Dlsym( libc, "siglongjmp",	ADDRESSOF( siglongjmp ) );
 
 
@@ -1481,7 +1536,10 @@ VAR
 
 		Dlsym( libc, "kill",		ADDRESSOF( kill ) );
 		Dlsym( libc, "perror",	ADDRESSOF( perror ) );
-		Dlsym( libc, "__errno_location",	ADDRESSOF(errno_location ) );
+		(* the same variable under two names: glibc calls the accessor __errno_location, Bionic __errno *)
+		IF ~DlsymOptional( libc, "__errno_location",	ADDRESSOF(errno_location ) ) THEN
+			Dlsym( libc, "__errno",	ADDRESSOF(errno_location ) )
+		END;
 
 		getSysinfo;
 	END Init;

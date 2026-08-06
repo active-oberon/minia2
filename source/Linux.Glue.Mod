@@ -285,12 +285,27 @@ VAR
 		DD 0
 		DW elfheadersize
 		DW 38H
-		DW 3 ; #program header table entries
+		DW 4 ; #program header table entries
 		DW 0
 		DW 0
 		DW 0
 
 		elfheadersize:
+
+		(*	PT_PHDR, the table describing itself. glibc's loader does without it -- it is handed the
+			same thing in the auxiliary vector as AT_PHDR -- but Bionic looks for the header and
+			refuses the file outright without it ("Could not find a PHDR: broken executable?"), which
+			is the first thing an image for Android runs into. Every real linker emits it, so it is
+			written for both. It has to precede the loadable segments, and it lies inside the one
+			below, whose offset is zero and which therefore maps the headers along with the rest. *)
+		DD 6
+		DD 4H
+		DQ elfheadersize
+		DQ base + elfheadersize
+		DQ base + elfheadersize
+		DQ 4 * 38H; segment size (file)
+		DQ 4 * 38H; segment size (memory)
+		DQ 8H; alignment
 
 		; program header
 		DD 1
@@ -350,7 +365,17 @@ VAR
 		DB 0H ; sentinel
 
 		libname:
-		DB 'libdl.so.2', 0
+		(*	The one library this image asks the dynamic linker for, and `dlsym` out of it is the one
+			symbol: everything else the system resolves for itself through that. Bionic, the C
+			library of Android, drops the version from these names and puts its dynamic linker
+			somewhere else entirely. Unlike the library names in Unix, neither string can be tried
+			and retried -- the loader reads them before any of our code runs -- which is why Android
+			needs an image compiled with --define=ANDROID rather than the same one. *)
+		#IF ANDROID THEN
+			DB 'libdl.so', 0
+		#ELSE
+			DB 'libdl.so.2', 0
+		#END
 
 		dlsymname:
 		DB 'dlsym', 0
@@ -376,7 +401,11 @@ VAR
 		DQ	0
 
 		interpretername:
-		DB '/lib/ld-linux-aarch64.so.1', 0
+		#IF ANDROID THEN
+			DB '/system/bin/linker64', 0
+		#ELSE
+			DB '/lib/ld-linux-aarch64.so.1', 0
+		#END
 		interpretername_end:
 
 		ALIGN 8
