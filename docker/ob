@@ -30,7 +30,10 @@
 #                                      AArch64 image linked for the occasion; without
 #                                      qemu or an AArch64 C library the suites that
 #                                      execute are skipped and the ones that only
-#                                      compile still run. The baseline defaults to
+#                                      compile still run. On an AArch64 SDK it is not
+#                                      a cross target: the cases run in this process,
+#                                      no emulator involved, and it is the default.
+#                                      The baseline defaults to
 #                                      a2test-expected-a64.txt for that target.
 #                                      Cases listed in a2test-expected.txt count as
 #                                      known failures (--expect FILE to point
@@ -58,8 +61,8 @@ LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runti
 LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
 LIBA64="$SDK/lib-a64"          # AArch64 stdlib (.GofU8/.SymU8), if present
 LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
-PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux)
-HOST_PLATFORM="$PLATFORM"                    # what this process can execute; PLATFORM may be
+PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux); HOST_PLATFORM below is
+                                             # what this process can execute, and PLATFORM may be
                                              # retargeted by a verb (`ob test -t a64`)
 LINK_PLATFORM="${A2_LINK_PLATFORM:-Linux64}" # linker target (ELF)
 BOOT_LIST="${A2_BOOT_LIST:-$SDK/boot-modules.txt}"
@@ -79,6 +82,39 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 [ -x "$OBERON" ] || die "runtime not found at $OBERON (set A2SDK to the SDK root)"
 [ -d "$LIB" ]    || die "standard library not found at $LIB"
+
+# Which architecture this SDK is, read off the ELF header of its own runtime (e_machine, the
+# two bytes at offset 18: 3e00 x86-64, b700 AArch64) rather than off `uname -m`. What matters
+# is what the compiler in this SDK can execute, and that is a property of the binary, not of
+# the machine it happens to sit on -- an x86-64 SDK under an emulator is still an x86-64 SDK.
+#
+# On an AArch64 SDK -- the layout that goes to a phone or a board -- a64 is not a cross target
+# at all: the cases compile and run in this very process, and lib/ holds the A64 objects, so
+# no emulator is looked for and none is needed. x86-64 and Win64 are unavailable there for
+# the plain reason that no objects for them are shipped in such a tarball.
+HOST_ARCH=x64
+case "$(od -An -tx1 -j18 -N2 -- "$OBERON" 2>/dev/null | tr -d ' \n')" in
+  b700) HOST_ARCH=a64 ;;
+esac
+if [ "$HOST_ARCH" = a64 ]; then
+  PLATFORM="${A2_PLATFORM:-UnixA64}"
+  LINK_PLATFORM="${A2_LINK_PLATFORM:-LinuxA64}"
+  OBJ_EXT="GofU8"; SYM_EXT=".SymU8"
+  [ -d "$LIBA64" ] || LIBA64="$LIB"          # the native objects are the AArch64 objects
+fi
+HOST_PLATFORM="$PLATFORM"
+
+# The target that means "this machine". Verbs default to it, and naming another one on an
+# AArch64 SDK is refused rather than quietly ignored.
+HOST_TARGET=linux64
+[ "$HOST_ARCH" = a64 ] && HOST_TARGET=a64
+_check_target() {
+  [ "$HOST_ARCH" = a64 ] || return 0
+  case "$1" in
+    a64) ;;
+    *)   die "target $1 is not available: this SDK's runtime is AArch64 and ships no $1 objects" ;;
+  esac
+}
 
 # Parse the module name from a `MODULE <Name>;` header, falling back to the
 # file's basename. A2 requires the object-file name to match the module name.
@@ -232,7 +268,7 @@ cmd_compile() {
 }
 
 cmd_build() {
-  local src="" outname="" proc="Do" target="linux64"
+  local src="" outname="" proc="Do" target="$HOST_TARGET"
   while [ $# -gt 0 ]; do
     case "$1" in
       -o|--output)  outname="$2"; shift 2 ;;
@@ -246,6 +282,7 @@ cmd_build() {
   src="$(realpath "$src")"
 
   # per-target toolchain settings
+  _check_target "$target"
   local c_ext s_ext bootfile linkopts suffix
   case "$target" in
     linux64)
@@ -563,7 +600,7 @@ cmd_doc() {
 # also means a trapping case cannot poison the next one, and no System.Free bookkeeping
 # is needed. The A2 runtime always exits 0, so the verdict comes from the output.
 cmd_test() {
-  local verbose=0 files=() a expect="" write="" target=linux64
+  local verbose=0 files=() a expect="" write="" target="$HOST_TARGET"
   _T_FILTER=""; _T_REPORT=""
   # Actions annotations are on by default inside a workflow, where they are the only way
   # a failure shows up next to the run instead of buried in the log.
@@ -590,6 +627,7 @@ cmd_test() {
   # The target the cases are compiled for. It is the compiler's platform and the file
   # extensions that follow from it; what runs them is settled further down, because a
   # case compiled for another architecture cannot run in this process.
+  _check_target "$target"
   case "$target" in
     linux64) ;;
     a64)  PLATFORM="UnixA64"; OBJ_EXT="GofU8"; SYM_EXT=".SymU8" ;;
@@ -709,6 +747,14 @@ _case_selected() {
 # the suites that merely compile can run. A2_QEMU and A2_A64_SYSROOT override the search.
 _a64_runner() {
   local w="$1" candidate qemu sysroot boot
+  # On an AArch64 SDK there is nothing to emulate and no image to link: the process reading
+  # this is already the machine the cases are compiled for, so they load into it like any
+  # other case. This is also the only way the suites see a processor that reorders memory
+  # accesses -- qemu-user does not -- which is the whole reason for running them here.
+  if [ "$PLATFORM" = "$HOST_PLATFORM" ]; then
+    echo "ob test: AArch64 cases run natively, in this process"
+    return 0
+  fi
   qemu="${A2_QEMU:-}"
   [ -n "$qemu" ] || qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
   sysroot="${A2_A64_SYSROOT:-}"
