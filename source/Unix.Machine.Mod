@@ -113,6 +113,59 @@ VAR
 	END Syscall;
 	#END
 
+	#IF ARM64 THEN
+	(*	Cache maintenance on AArch64, which user space performs itself: there is no cacheflush
+		system call as there is on ARM32, and the architecture instead permits DC CVAU and IC IVAU
+		at EL0 (Linux sets SCTLR_EL1.UCI, and so does Android).
+
+		Why any of it is needed: the loader writes a module's code with ordinary stores, which land
+		in the data cache, and then calls it. A processor with separate caches may hold an older
+		line for that address in the instruction cache and fetch that instead -- and what stood
+		there before is usually nothing, which decodes as UDF, so the failure arrives as an illegal
+		instruction somewhere in freshly loaded code. An emulator that does not model the two
+		caches separately -- qemu-user does not -- cannot show this at all, which is why it took a
+		phone to find: ten cases out of six thousand nine hundred, scattered over unrelated suites.
+
+		The line sizes come from CTR_EL0 rather than from a constant, and are the *minimum* over
+		the cores, which is what that register reports: stepping by a larger line on a machine
+		whose smallest is 32 bytes would step over lines and clean only some of them. *)
+	(*	The two fields are taken apart here rather than in Oberon: CTR_EL0 has bit 31 set, so the
+		whole word read as a signed number is negative and dividing it to get at a field would not
+		give the field. *)
+	PROCEDURE CacheLineLogs(VAR dataLog, instructionLog: SIGNED32);
+	CODE
+		mrs x2, ctr_el0
+		ldr x1, [fp, #dataLog]
+		ubfx w0, w2, #16, #4			; DminLine: log2 of the words in a data cache line
+		str w0, [x1]
+		ldr x1, [fp, #instructionLog]
+		ubfx w0, w2, #0, #4				; IminLine: the same for an instruction cache line
+		str w0, [x1]
+	END CacheLineLogs;
+
+	PROCEDURE CleanDataLine(adr: ADDRESS);
+	CODE
+		ldr x0, [fp, #adr]
+		msr s1_3_c7_c11_1, x0		; dc cvau, x0
+	END CleanDataLine;
+
+	PROCEDURE InvalidateInstructionLine(adr: ADDRESS);
+	CODE
+		ldr x0, [fp, #adr]
+		msr s1_3_c7_c5_1, x0		; ic ivau, x0
+	END InvalidateInstructionLine;
+
+	PROCEDURE DataSyncBarrier;
+	CODE
+		dsb #15
+	END DataSyncBarrier;
+
+	PROCEDURE InstructionBarrier;
+	CODE
+		isb #15
+	END InstructionBarrier;
+	#END
+
 	(**
 	 * Flush Data Cache for the specified virtual address range. If len is negative, flushes the whole cache.
 	 * This is used on some architecture to interact with DMA hardware (e.g. Ethernet and USB. It can be
@@ -122,6 +175,23 @@ VAR
 	#IF ARM THEN
 	BEGIN
 		Syscall(0xF0002, adr, adr+len, 0 (*7*) ); (* 983042 = ARM cacheflush syscall *)
+	#ELSIF ARM64 THEN
+	VAR dataLog, instructionLog: SIGNED32; dline, iline, p, limit: ADDRESS;
+	BEGIN
+		IF len <= 0 THEN RETURN END;
+		CacheLineLogs(dataLog, instructionLog);
+		(*	Both are the log2 of the number of 4-byte words in a line, so a line is 4 shifted by it:
+			16 bytes at the smallest anything reports, 64 on the cores this was found on. *)
+		dline := LSH(4, dataLog);
+		iline := LSH(4, instructionLog);
+		limit := adr + len;
+		p := adr - (adr MOD dline);
+		WHILE p < limit DO CleanDataLine(p); INC(p, dline) END;
+		DataSyncBarrier;					(* the cleans are complete before anything invalidates *)
+		p := adr - (adr MOD iline);
+		WHILE p < limit DO InvalidateInstructionLine(p); INC(p, iline) END;
+		DataSyncBarrier;					(* ... and the invalidations before anything fetches *)
+		InstructionBarrier
 	#END
 	END FlushDCacheRange;
 
