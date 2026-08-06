@@ -17,7 +17,14 @@
 # The objects come from tests/a64-stdlib-check.sh and the image from any of the A64 checks that
 # link one; both have to have run first (`task a64-stdlib`).
 #
-# Usage: tests/a64-bundle.sh [-o output-dir] [--no-tar] [build directory] [object directory]
+# With --android the image is built for Bionic instead of glibc. Two strings differ and neither can
+# be tried at run time, because the loader reads them before any of our code runs: the interpreter
+# (/system/bin/linker64 rather than /lib/ld-linux-aarch64.so.1) and the one library this image asks
+# for (libdl.so rather than libdl.so.2). Both are in Glue, so only that module is compiled again,
+# with --define=ANDROID, and the image is linked over the result. The library names that Unix
+# resolves for itself need no build of their own: it tries the glibc name and then the Bionic one.
+#
+# Usage: tests/a64-bundle.sh [-o output-dir] [--no-tar] [--android] [build directory] [object directory]
 
 set -eo pipefail
 
@@ -31,11 +38,13 @@ absolute() {
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out=""
 tar=1
+android=0
 args=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 		-o|--output) out="$2"; shift 2 ;;
 		--no-tar) tar=0; shift ;;
+		--android) android=1; shift ;;
 		-*) echo "unknown option: $1" >&2; exit 2 ;;
 		*) args+=("$1"); shift ;;
 	esac
@@ -68,11 +77,32 @@ fi
 rm -rf "$out"
 mkdir -p "$out/lib" "$out/tests"
 
+# For Bionic, Glue is compiled again with --define=ANDROID and the image linked over a directory
+# where that object replaces the ordinary one. The objects are linked rather than copied into it,
+# except Glue's, which are removed first: the compiler writes through a symbolic link, and writing
+# through this one would replace the glibc object in the tree.
+link="$objects"
+if [ "$android" = 1 ]; then
+	link="$(mktemp -d)"
+	trap 'rm -rf "$link"' EXIT
+	ln -s "$objects"/*.SymU8 "$objects"/*.GofU8 "$link"/
+	rm -f "$link/Glue.SymU8" "$link/Glue.GofU8"
+	glue=$( (cd "$build" && PWD="$build" "$oberon" do "
+		System.DoFile oberon.cfg ~
+		Compiler.Compile -p=UnixA64 --define=UNIX,ARM64,ANDROID --destPath='$link/' '$root/source/Linux.Glue.Mod' ~
+	") 2>&1 | tr -d '\r' ) || true
+	if [ ! -f "$link/Glue.GofU8" ]; then
+		echo "Glue did not compile for Android:" >&2
+		printf '%s\n' "$glue" | grep -E 'error' | head -10 >&2
+		exit 1
+	fi
+fi
+
 modules=$(sed 's/#.*//' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')
 linked=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath $out ~
-	Linker.Link -p=LinuxA64 --path='$objects/' --fileName=oberon $modules ~
+	Linker.Link -p=LinuxA64 --path='$link/' --fileName=oberon $modules ~
 ") 2>&1 | tr -d '\r' ) || true
 printf '%s\n' "$linked" | grep -q 'Link successful' || {
 	echo "the AArch64 image did not link:" >&2
@@ -84,7 +114,7 @@ image="$out/oberon"
 # Copied, not linked: this leaves the tree on a cable or over adb, where a symlink points at
 # nothing. It is some 200 MB of objects before compression and a good deal less after.
 chmod 755 "$image"
-cp "$objects"/*.SymU8 "$objects"/*.GofU8 "$out/lib/"
+cp -L "$link"/*.SymU8 "$link"/*.GofU8 "$out/lib/"
 cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 install -m 755 "$root/docker/ob" "$out/ob"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
