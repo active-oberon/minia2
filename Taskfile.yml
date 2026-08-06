@@ -658,6 +658,21 @@ tasks:
           fi
         }
 
+  a64-bundle:
+    desc: Assemble a self-contained AArch64 SDK + its tests, to run on a real ARM machine
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/a64-bundle.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] bundling the A64 SDK needs the A64 standard library and a built host compiler, and A64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] bundling the A64 SDK needs the A64 standard library (task a64-stdlib) and a built host compiler"
+          else
+            exit "$status"
+          fi
+        }
+
   a64-stdlib:
     desc: Compile the headless standard library for UnixA64 (minutes; not part of `task test`)
     cmds:
