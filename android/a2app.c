@@ -33,6 +33,9 @@
 #include <android/asset_manager.h>
 #include <android/log.h>
 #include <android/native_activity.h>
+#include <android/input.h>
+#include <android/keycodes.h>
+#include <android/looper.h>
 #include <android/native_window.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -260,6 +263,53 @@ static void OnWindowRedraw(ANativeActivity *activity, ANativeWindow *window) {
 	Fill(window);
 }
 
+/*	Input, which is here for one reason before it is here for any other: without it there is no way
+ *	out of the application.
+ *
+ *	A NativeActivity is handed its events through a queue, and a queue nobody attaches to a looper
+ *	delivers nothing -- including the back key, so the first version of this file could be started
+ *	and then only killed, which is how it was found. Attached to the looper of the thread the
+ *	framework calls us on, so the callback below runs there and may touch the activity.
+ *
+ *	Every event is finished, whether or not it was understood: an event left unfinished stops the
+ *	queue. Back ends the activity, which is what a person expects of it; the system in this process
+ *	goes on running, having no notion of an activity at all. */
+static ANativeActivity *theActivity;
+
+static int OnInput(int fd, int events, void *data) {
+	AInputQueue *queue = (AInputQueue *)data;
+	AInputEvent *event = NULL;
+	(void)fd; (void)events;
+	while (AInputQueue_getEvent(queue, &event) >= 0) {
+		int handled = 0;
+		if (AInputQueue_preDispatchEvent(queue, event)) continue;
+		if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_KEY) {
+			int32_t code = AKeyEvent_getKeyCode(event);
+			if (code == AKEYCODE_BACK) {
+				if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_UP) {
+					Log("back: finishing the activity");
+					ANativeActivity_finish(theActivity);
+				}
+				handled = 1;
+			}
+		}
+		AInputQueue_finishEvent(queue, event, handled);
+	}
+	return 1;											/* keep the callback registered */
+}
+
+static void OnInputQueueCreated(ANativeActivity *activity, AInputQueue *queue) {
+	(void)activity;
+	Log("input queue attached");
+	AInputQueue_attachLooper(queue, ALooper_forThread(), 1, OnInput, queue);
+}
+
+static void OnInputQueueDestroyed(ANativeActivity *activity, AInputQueue *queue) {
+	(void)activity;
+	Log("input queue detached");
+	AInputQueue_detachLooper(queue);
+}
+
 static void OnStart(ANativeActivity *activity) { (void)activity; Log("start"); }
 static void OnResume(ANativeActivity *activity) { (void)activity; Log("resume"); }
 static void OnPause(ANativeActivity *activity) { (void)activity; Log("pause"); }
@@ -285,6 +335,9 @@ void ANativeActivity_onCreate(ANativeActivity *activity, void *savedState, size_
 	activity->callbacks->onNativeWindowCreated = OnWindowCreated;
 	activity->callbacks->onNativeWindowDestroyed = OnWindowDestroyed;
 	activity->callbacks->onNativeWindowRedrawNeeded = OnWindowRedraw;
+	activity->callbacks->onInputQueueCreated = OnInputQueueCreated;
+	activity->callbacks->onInputQueueDestroyed = OnInputQueueDestroyed;
+	theActivity = activity;
 
 	StartTheSystem(activity);
 	Log("onCreate returning, which is the whole point of the thread");
