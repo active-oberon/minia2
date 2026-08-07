@@ -495,6 +495,25 @@ tasks:
       - task: a64-system
       - task: a64-loader
       - task: a64-gc
+      - task: sigchain
+
+  sigchain:
+    desc: Faults on a thread that is not A2's go back to the handler that was there before A2
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/sigchain-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the signal chaining check needs a C compiler on x86-64 or AArch64, and A64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the signal chaining check needs a C compiler on x86-64 or AArch64"
+          else
+            exit "$status"
+          fi
+        }
 
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)

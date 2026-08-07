@@ -55,6 +55,9 @@ END Args;
 
 	PROCEDURE {C} ReaderThread (): ADDRESS;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		(*	Started around Unix.ThrStart, so nothing has marked it: say so here, or a fault on this
+			thread would be taken for another runtime's and handed to that runtime's handler. *)
+		Unix.MarkOwnThread;
 		Activities.CallVirtual (ReadActivity, NIL, processor);
 		RETURN NIL;
 	END ReaderThread;
