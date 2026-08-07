@@ -31,16 +31,26 @@ TYPE
 	VAR
 		stop: BOOLEAN;
 		x, y, dx, dy, size: SIGNED32;
+		onWidth, onHeight: SIGNED32;		(* the shape of the display this was set up for *)
 		under: POINTER TO ARRAY OF CHAR;	(* what the box covers, to put back when it moves on *)
 
 		PROCEDURE &Init*(d: Displays.Display);
 		BEGIN
 			stop := FALSE;
+			Fit(d)
+		END Init;
+
+		(*	Set up for the shape the display has now. Called again when it changes: a display can be
+			turned sideways under a client -- a rotated window -- and A2 has no notification for it, so
+			this is what noticing amounts to. *)
+		PROCEDURE Fit(d: Displays.Display);
+		BEGIN
+			onWidth := d.width;  onHeight := d.height;
 			size := d.width DIV 8;
 			x := d.width DIV 3;  y := d.height DIV 3;
 			dx := size DIV 6 + 1;  dy := dx + 1;
-			NEW(under, size * size * 4)
-		END Init;
+			IF (under = NIL) OR (LEN(under^) < size * size * 4) THEN NEW(under, size * size * 4) END
+		END Fit;
 
 		PROCEDURE Stop*;
 		BEGIN {EXCLUSIVE}
@@ -65,6 +75,18 @@ TYPE
 		display.Transfer(under^, 0, size * 4, x, y, size, size, Displays.get);
 		display.Fill(0FFCC00H, x, y, size, size);
 		WHILE ~Stopped() DO
+			(*	The display turned sideways: the picture underneath is gone with the old shape, the box
+				is somewhere that no longer exists, and what was saved beneath it belongs to neither. So
+				everything is drawn again, and this is where a client finds out -- by asking. *)
+			IF (display.width # onWidth) OR (display.height # onHeight) THEN
+				Fit(display);
+				DrawMandelbrot;
+				display.Transfer(under^, 0, size * 4, x, y, size, size, Displays.get);
+				display.Fill(0FFCC00H, x, y, size, size);
+				display.Update;
+				Trace.String("DisplayDemo: drawn again for ");
+				Trace.Int(onWidth, 0);  Trace.String(" x ");  Trace.Int(onHeight, 0);  Trace.Ln
+			END;
 			display.Transfer(under^, 0, size * 4, x, y, size, size, Displays.set);	(* what was there *)
 			INC(x, dx);  INC(y, dy);
 			IF (x <= 0) OR (x + size >= display.width) THEN dx := -dx;  INC(x, 2 * dx) END;
@@ -224,6 +246,9 @@ END Ascii;
 PROCEDURE DrawMandelbrot;
 VAR py, originX, originY, scaleX, scaleY: SIGNED32;
 BEGIN
+	(*	Here as well as in Take: a display can be wider than it was when this module first looked at
+		it, and a row buffer one line short of the display is a write past the end of it. *)
+	IF (row = NIL) OR (LEN(row^) < display.width * 4) THEN NEW(row, display.width * 4) END;
 	(*	Per pixel steps, so that nothing overflows on the way: the width times three times One is
 		already more than a 32 bit number can hold at the right hand edge. *)
 	scaleX := 3 * One DIV display.width;
