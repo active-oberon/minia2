@@ -15,7 +15,7 @@ MODULE DisplayDemo;	(** AUTHOR ""; PURPOSE "What a Displays driver looks like wh
 	place to find out that the compiler's floating point is at fault.
 *)
 
-IMPORT SYSTEM, Displays, Plugins, Objects, Kernel, Trace;
+IMPORT SYSTEM, Displays, Plugins, Inputs, Objects, Kernel, Trace;
 
 CONST
 	Fraction = 20;					(* fixed point: 12 integer bits, 20 fractional *)
@@ -23,9 +23,27 @@ CONST
 	MaxIter = 48;  Escape = 4 * One;
 
 	FrameMilliseconds = 16;		(* what the animation aims at; what it gets is reported *)
+	Left = 0;						(* the mouse button, as Inputs numbers them *)
 
 TYPE
 	Row = POINTER TO ARRAY OF CHAR;
+
+	(*	The mouse, which on a phone is a finger: the box goes where it is held and bounces again when it
+		is let go. Registered with Inputs.mouse, so it is fed by whatever driver is installed -- the
+		touches of an Android application through AndroidInput, an X11 pointer, a real mouse. *)
+	Pointer = OBJECT (Inputs.Sink)
+
+		PROCEDURE Handle*(VAR message: Inputs.Message);
+		BEGIN
+			IF message IS Inputs.AbsMouseMsg THEN
+				WITH message: Inputs.AbsMouseMsg DO
+					held := Left IN message.keys;
+					atX := message.x;  atY := message.y
+				END
+			END
+		END Handle;
+
+	END Pointer;
 
 	Animation = OBJECT
 	VAR
@@ -88,9 +106,20 @@ TYPE
 				Trace.Int(onWidth, 0);  Trace.String(" x ");  Trace.Int(onHeight, 0);  Trace.Ln
 			END;
 			display.Transfer(under^, 0, size * 4, x, y, size, size, Displays.set);	(* what was there *)
-			INC(x, dx);  INC(y, dy);
-			IF (x <= 0) OR (x + size >= display.width) THEN dx := -dx;  INC(x, 2 * dx) END;
-			IF (y <= 0) OR (y + size >= display.height) THEN dy := -dy;  INC(y, 2 * dy) END;
+			IF held THEN
+				(*	Under the finger, or the pointer: the box is dragged rather than flying, and lets go
+					where it was left. Which is the whole visible answer to "does input arrive" -- a
+					number in a log would not say that it arrives in the right place. *)
+				x := atX - size DIV 2;  y := atY - size DIV 2;
+				IF x < 0 THEN x := 0 END;
+				IF y < 0 THEN y := 0 END;
+				IF x + size > display.width THEN x := display.width - size END;
+				IF y + size > display.height THEN y := display.height - size END
+			ELSE
+				INC(x, dx);  INC(y, dy);
+				IF (x <= 0) OR (x + size >= display.width) THEN dx := -dx;  INC(x, 2 * dx) END;
+				IF (y <= 0) OR (y + size >= display.height) THEN dy := -dy;  INC(y, 2 * dy) END
+			END;
 			display.Transfer(under^, 0, size * 4, x, y, size, size, Displays.get);	(* what will be *)
 			display.Fill(0FFCC00H, x, y, size, size);
 			display.Update;
@@ -110,6 +139,9 @@ VAR
 	display: Displays.Display;
 	row: Row;
 	animation: Animation;
+	pointer: Pointer;
+	held: BOOLEAN;					(* a button, or a finger, is down *)
+	atX, atY: SIGNED32;			(* and there *)
 
 (*	Fixed point multiply. The intermediate wants more than 32 bits, so it is done in 64 and shifted
 	back; DIV by a power of two floors, which is an arithmetic shift, and is right for negatives. *)
@@ -352,18 +384,23 @@ BEGIN
 	Trace.Int(Kernel.GetTicks() - started, 0);  Trace.StringLn(" ms")
 END Frames;
 
-(** Start the bouncing box, on a thread of its own. *)
+(** Start the bouncing box, on a thread of its own. It follows the mouse, or the finger, while held. *)
 PROCEDURE Animate*;
 BEGIN
 	IF animation # NIL THEN Trace.StringLn("DisplayDemo: already running");  RETURN END;
 	IF ~Take() THEN RETURN END;
+	IF pointer = NIL THEN
+		NEW(pointer);
+		Inputs.mouse.Register(pointer)		(* whatever driver is installed feeds this *)
+	END;
 	NEW(animation, display);
-	Trace.StringLn("DisplayDemo: the box is bouncing")
+	Trace.StringLn("DisplayDemo: the box is bouncing, and follows a finger while it is down")
 END Animate;
 
 (** Stop it. *)
 PROCEDURE Stop*;
 BEGIN
+	IF pointer # NIL THEN Inputs.mouse.Unregister(pointer);  pointer := NIL END;
 	IF animation = NIL THEN RETURN END;
 	animation.Stop;  animation := NIL
 END Stop;

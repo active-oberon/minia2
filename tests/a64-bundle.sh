@@ -82,6 +82,34 @@ mkdir -p "$out/lib" "$out/tests"
 # except Glue's, which are removed first: the compiler writes through a symbolic link, and writing
 # through this one would replace the glibc object in the tree.
 link="$objects"
+
+# CompileForA64 <what it is, for the message> <module> ... -- each from source/<module>.Mod, and every
+# one of them has to have produced an object: a set of modules where the first compiles and the second
+# does not would otherwise pass for compiled.
+CompileForA64() {
+	local what="$1"; shift
+	local sources="" module said
+	for module in "$@"; do sources="$sources '$root/source/$module.Mod'"; done
+	said=$( (cd "$build" && PWD="$build" "$oberon" do "
+		System.DoFile oberon.cfg ~
+		Compiler.Compile -p=UnixA64 --destPath='$link/'$sources ~
+	") 2>&1 | tr -d '\r' ) || true
+	for module in "$@"; do
+		if [ ! -f "$link/$module.GofU8" ]; then
+			echo "$what did not compile for AArch64:" >&2
+			printf '%s\n' "$said" | grep -E 'error' | head -10 >&2
+			exit 1
+		fi
+	done
+}
+
+# Inputs is what A2 calls input: two broadcasters and the messages that go through them. It is not in
+# the headless standard library -- a headless SDK has nothing to feed it -- and both bundles want it,
+# because DisplayDemo reacts to a mouse whether or not the machine it lands on has one. Into the tree's
+# objects, before the Android branch points $link at a directory of links to them, so there is one copy
+# and it is there either way.
+CompileForA64 Inputs Inputs
+
 if [ "$android" = 1 ]; then
 	link="$(mktemp -d)"
 	trap 'rm -rf "$link"' EXIT
@@ -97,32 +125,16 @@ if [ "$android" = 1 ]; then
 		exit 1
 	fi
 
-	# The display over the window of an application. Only here, and not in the standard library: it is
-	# of no use anywhere else, and it is loaded at run time rather than linked -- the application
-	# unpacks it beside the image.
-	driver=$( (cd "$build" && PWD="$build" "$oberon" do "
-		System.DoFile oberon.cfg ~
-		Compiler.Compile -p=UnixA64 --destPath='$link/' '$root/source/AndroidDisplay.Mod' ~
-	") 2>&1 | tr -d '\r' ) || true
-	if [ ! -f "$link/AndroidDisplay.GofU8" ]; then
-		echo "the display driver for the application did not compile for AArch64:" >&2
-		printf '%s\n' "$driver" | grep -E 'error' | head -10 >&2
-		exit 1
-	fi
+	# The display over the window of an application, and the touches of one. Only here, and not in the
+	# standard library: neither is of any use anywhere else, and both are loaded at run time rather than
+	# linked -- the application unpacks them beside the image.
+	CompileForA64 "the display and input drivers for the application" AndroidDisplay AndroidInput
 fi
 
-# What draws through a display, whichever one it is: in both bundles, because it is the check run.sh
-# makes of the picture -- which needs no screen and no window, and is therefore the part of a graphics
-# backend that a machine with no display can still answer for.
-demo=$( (cd "$build" && PWD="$build" "$oberon" do "
-	System.DoFile oberon.cfg ~
-	Compiler.Compile -p=UnixA64 --destPath='$link/' '$root/source/DisplayDemo.Mod' ~
-") 2>&1 | tr -d '\r' ) || true
-if [ ! -f "$link/DisplayDemo.GofU8" ]; then
-	echo "DisplayDemo did not compile for AArch64:" >&2
-	printf '%s\n' "$demo" | grep -E 'error' | head -10 >&2
-	exit 1
-fi
+# What draws through a display, whichever one it is, and reacts to whatever mouse there is: in both
+# bundles, because it is the check run.sh makes of the picture -- which needs no screen and no window,
+# and is therefore the part of a graphics backend that a machine with no display can still answer for.
+CompileForA64 DisplayDemo DisplayDemo
 
 modules=$(sed 's/#.*//' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')
 linked=$( (cd "$build" && PWD="$build" "$oberon" do "
