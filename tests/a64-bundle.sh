@@ -143,6 +143,17 @@ if [ "$android" = 1 ]; then
 	}
 	chmod 755 "$out/oberon"
 	image="$out/oberon.img"
+
+	# The one check that is about Bionic rather than about AArch64: a process A2 shares with another
+	# runtime, and a fault on a thread that is not A2's. It matters here and not at home because on
+	# Android the other runtime is always there -- ART catches SIGSEGV for its own nil checks -- and
+	# because Bionic is where a wrong struct sigaction goes unreported (see Sigact in Linux.Unix.Mod).
+	"$clang" -O2 -Wall -DA2BOOT_NO_MAIN -o "$out/sigchain" \
+			"$root/tests/sigchain.c" "$root/android/a2boot.c" || {
+		echo "the signal chaining harness did not compile" >&2
+		exit 1
+	}
+	chmod 755 "$out/sigchain"
 fi
 
 # Copied, not linked: this leaves the tree on a cable or over adb, where a symlink points at
@@ -181,7 +192,7 @@ emulator, no root. Two ways to have one:
         adb shell "cd <here> && PATH=<here>:\$PATH TMPDIR=<here>/tmp ./bash ./run.sh"
 
     ./run.sh            everything: boot, collector, module loading, compiling on the device,
-                        and the language suites (the long one -- thousands of cases)
+                        signal chaining, and the language suites (the long one -- thousands of cases)
     ./run.sh --quick    all of it except the suites
     ./ob repl           the interactive shell
     ./ob run Hello.Mod  compile and run, in this process

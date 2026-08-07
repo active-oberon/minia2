@@ -146,7 +146,31 @@ if [ ! -f "$work/A64OnDevice.GofU8" ] && [ "$s" -ne 124 ]; then
 	echo "        (and it wrote no object file)"
 fi
 
-# 5. The language suites -- the point of the exercise. Some 6965 cases, of which the two
+# 5. A fault on a thread that is not ours goes back to whoever handled it before us. Only in the
+#    Android bundle, because only there is the harness built (tests/a64-bundle.sh) -- and only there
+#    does it matter in earnest: an application belongs to ART before it belongs to us, and ART
+#    catches SIGSEGV to check for nil itself, so every fault in the process would otherwise arrive
+#    at our trap handler on threads we have no process for.
+#
+#    `sigchain` installs a handler of its own, starts this image on a thread of its own, and faults
+#    on the thread that stayed behind. Its own handler has to be the one that runs -- and the shell's
+#    banner in the same transcript is what says A2 was up and had taken the signal over by then.
+if [ -x "$root/sigchain" ]; then
+	s=0; started=$SECONDS
+	( cd "$work" && PWD="$work" sleep 30 \
+		| A2_IMAGE="$root/oberon.img" timeout 120 "$root/sigchain" > "$results/sigchain.log" 2>&1 ) || s=$?
+	_ELAPSED=$((SECONDS - started))
+	if ! grep -q 'Shell v' "$results/sigchain.log"; then
+		printf '  FAIL  %-28s the image did not come up, so nothing was proved\n' "foreign thread's fault"
+		FAILED+=("foreign thread's fault"); fail=$((fail+1))
+		tail -12 "$results/sigchain.log" | tr -d '\r' | sed 's/^/          /'
+	else
+		report "foreign thread's fault" "$s" "$results/sigchain.log" \
+			'handler installed before A2 was given the signal'
+	fi
+fi
+
+# 6. The language suites -- the point of the exercise. Some 6965 cases, of which the two
 #    language suites are 5450 that compile and 695 that run; they have only ever run under an
 #    emulator. `ob` sees an AArch64 runtime in this bundle and treats a64 as the native target,
 #    so nothing here is cross-compiled and nothing is emulated.

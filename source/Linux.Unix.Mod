@@ -185,6 +185,9 @@ CONST
 	SIG_UNBLOCK=1;
 	SIG_SETMASK=2;
 
+	SIG_DFL = 0;  SIG_IGN = 1;
+	MaxSignal = 32;			(* the ordinary signals; the real time ones above them are nobody's fault handler *)
+
 	SA_NOCLDSTOP	= 0x00000001;
 	SA_SIGINFO			= 0x00000004;
 	SA_ONSTACK		= 0x08000000;
@@ -603,6 +606,21 @@ TYPE
 		safety: ARRAY 8 OF ADDRESS;
 	END;
 
+	(*	What was installed for a signal before we took it over. Installing a handler is a process wide
+		act, and a process is not always ours alone: an Android application is ART's first, and ART
+		catches SIGSEGV to check for nil itself. Its faults arrive at our handler once we are up, on
+		threads that are none of ours, and they belong to whoever handled them before us -- so we
+		remember it and hand them back. Nothing here is about Android: the same is true of any process
+		we are lifted into next to another runtime. *)
+	PrevAction = RECORD
+		known: BOOLEAN;
+		handler: ADDRESS;
+		flags: SIGNED32;
+	END;
+
+	SigInfoHandler = PROCEDURE {C} ( sig: SIGNED32; info, ucontext: ADDRESS );
+	PlainSigHandler = PROCEDURE {C} ( sig: SIGNED32 );
+
 
 VAR
 	suspend_mutex: MutexType;
@@ -611,6 +629,9 @@ VAR
 	resume_done: SIGNED32;
 	thread_exit: Key_t;
 	bionic-: BOOLEAN;					(* the C library is Android's, and orders struct sigaction its own way *)
+	previous: ARRAY MaxSignal OF PrevAction;	(* the handlers we displaced, one per signal, see PrevAction *)
+	ownThreads: Key_t;					(* set on every thread of ours, so a fault on another can be given back *)
+	ownThreadsKnown: BOOLEAN;		(* a key of zero is a legal key, so ask this and not the key *)
 	systemPropertyGet: PROCEDURE {C} ( name, value: ADDRESS ): SIGNED32;	(* only ever asked for to find out *)
 
 	argc-: SIGNED32;  argv-: ADDRESS;  environ-: ADDRESS;
@@ -906,6 +927,90 @@ VAR
 	    RETURN  param.sched_priority;
 	END ThrGetPriority;
 
+	(*	Remember, once and only the first time, what was installed for a signal before us. Only the
+		first time: a second install of our own handler would otherwise record us as our predecessor
+		and every foreign fault would come back here forever. *)
+	PROCEDURE Displaced(sig: SIGNED32; handler: ADDRESS; flags: SIGNED32);
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF (sig > 0) & (sig < MaxSignal) & ~previous[sig].known THEN
+			previous[sig].handler := handler;  previous[sig].flags := flags;
+			previous[sig].known := TRUE
+		END
+	END Displaced;
+
+	(*	Install a signal handler, in whichever shape the C library underneath wants the request. The
+		one place in the module that knows there are two, so that a third would be one edit. It also
+		remembers what it displaced, see PrevAction. *)
+	PROCEDURE Sigact(sig: SIGNED32; handler: ADDRESS; flags: SIGNED32; fill: BOOLEAN): INTEGER;
+	VAR act, old: Sigaction; bact, bold: BionicSigaction; res: INTEGER;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF bionic THEN
+			bact.sa_flags := flags; bact.filler0 := 0;
+			bact.sa_handler := handler; bact.sa_restorer := 0;
+			IF fill THEN res := sigfillset( ADDRESS OF bact.sa_mask )
+			ELSE sigemptyset( ADDRESS OF bact.sa_mask ) END;
+			bold.sa_handler := SIG_DFL; bold.sa_flags := 0;
+			res := sigaction( sig, ADDRESS OF bact, ADDRESS OF bold );
+			IF res = 0 THEN Displaced( sig, bold.sa_handler, bold.sa_flags ) END;
+			RETURN res
+		ELSE
+			act.sa_handler := handler; act.sa_flags := flags; act.filler := 0;
+			IF fill THEN res := sigfillset( ADDRESS OF act.sa_mask )
+			ELSE sigemptyset( ADDRESS OF act.sa_mask ) END;
+			old.sa_handler := SIG_DFL; old.sa_flags := 0;
+			res := sigaction( sig, ADDRESS OF act, ADDRESS OF old );
+			IF res = 0 THEN Displaced( sig, old.sa_handler, SIGNED32( old.sa_flags ) ) END;
+			RETURN res
+		END
+	END Sigact;
+
+	(**	Say that the running thread is one of ours. Every thread the module starts is marked in Starter
+		below and the thread the image was entered on in ThrInitialize, so this is only for a thread
+		started around them -- Unix.StdIO runs its reader on one -- which is A2's all the same and whose
+		faults A2 must report rather than hand away.
+
+		Marked here rather than read off Objects' process pointer, which would be the obvious test and
+		is the wrong one: that pointer is set for active objects, and a thread like StdIO's reader has
+		none while being every bit ours. *)
+	PROCEDURE MarkOwnThread*;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF ownThreadsKnown THEN WriteKey( ownThreads, 1 ) END
+	END MarkOwnThread;
+
+	(*	The running thread is somebody else's: nothing marked it as ours. Answers FALSE before there is
+		a key to mark with, and FALSE for every thread of a process that is ours alone, so the chaining
+		below costs nothing there. *)
+	PROCEDURE ForeignThread( ): BOOLEAN;
+	BEGIN {UNCOOPERATIVE, UNCHECKED, UNTRACKED}
+		RETURN ownThreadsKnown & (pthread_getspecific( ownThreads ) = 0)
+	END ForeignThread;
+
+	(*	Give the signal back to the handler that was there before us, and say whether we did. A fault
+		on a thread that is not ours is not ours to report: our trap handler would walk a stack it
+		knows nothing about and print a trap with no process in it.
+
+		With no predecessor to give it to there is still something better than reporting it: put the
+		default action back and return. The instruction that faulted runs again, faults again, and the
+		process dies the way it would have died without us -- with a dump the other runtime's tooling
+		understands. *)
+	PROCEDURE Chain(sig: SIGNED32; info, ucontext: ADDRESS): BOOLEAN;
+	VAR withInfo: SigInfoHandler; plain: PlainSigHandler; res: INTEGER;
+	BEGIN {UNCOOPERATIVE, UNCHECKED, UNTRACKED}
+		IF (sig <= 0) OR (sig >= MaxSignal) OR ~previous[sig].known THEN RETURN FALSE END;
+		IF (previous[sig].handler = SIG_DFL) OR (previous[sig].handler = SIG_IGN) THEN
+			res := Sigact( sig, SIG_DFL, 0, FALSE );
+			RETURN TRUE
+		END;
+		IF 2 IN S.VAL( SET32, previous[sig].flags ) THEN	(* SA_SIGINFO: the three argument shape *)
+			withInfo := S.VAL( SigInfoHandler, previous[sig].handler );
+			withInfo( sig, info, ucontext )
+		ELSE
+			plain := S.VAL( PlainSigHandler, previous[sig].handler );
+			plain( sig )
+		END;
+		RETURN TRUE
+	END Chain;
+
 	PROCEDURE {C} Starter(proc: PROCEDURE): ADDRESS;
 	VAR
 		me: Thread_t;
@@ -918,6 +1023,7 @@ VAR
 		state: ARRAY 2048 OF CHAR;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
 		me := pthread_self();
+		MarkOwnThread;	(* before anything else here can fault, see MarkOwnThread *)
 
 		pthread_getattr_np(me, ADDRESS OF attr);
 		pthread_attr_getstacksize (ADDRESS OF attr, ADDRESS OF size);
@@ -1036,6 +1142,10 @@ VAR
 	PROCEDURE {C} suspend_handler(sig: SIGNED32; scp: ADDRESS; ucp: ADDRESS);
 	VAR block: Sigset_t; res: INTEGER;
 	BEGIN {UNCOOPERATIVE, UNCHECKED, UNTRACKED}
+		(*	We only ever send this to threads of our own, so a foreign thread getting it means somebody
+			outside sent it, and it is theirs. Suspending it here would stop it until a resume that is
+			never coming, and the counters below belong to a collection that is not happening. *)
+		IF ForeignThread( ) & Chain( sig, scp, ucp ) THEN RETURN END;
 		IF suspendHandler # NIL THEN suspendHandler( S.VAL( Ucontext, ucp) ) END;
 		res := sigfillset( ADDRESS OF block );
 		sigdelset(  ADDRESS OF block, T_SIGRESUME );
@@ -1059,25 +1169,6 @@ VAR
 
 
 
-	(*	Install a signal handler, in whichever shape the C library underneath wants the request. The
-		one place in the module that knows there are two, so that a third would be one edit. *)
-	PROCEDURE Sigact(sig: SIGNED32; handler: ADDRESS; flags: SIGNED32; fill: BOOLEAN): INTEGER;
-	VAR act: Sigaction; bact: BionicSigaction; res: INTEGER;
-	BEGIN {UNCOOPERATIVE, UNCHECKED}
-		IF bionic THEN
-			bact.sa_flags := flags; bact.filler0 := 0;
-			bact.sa_handler := handler; bact.sa_restorer := 0;
-			IF fill THEN res := sigfillset( ADDRESS OF bact.sa_mask )
-			ELSE sigemptyset( ADDRESS OF bact.sa_mask ) END;
-			RETURN sigaction( sig, ADDRESS OF bact, NIL )
-		ELSE
-			act.sa_handler := handler; act.sa_flags := flags; act.filler := 0;
-			IF fill THEN res := sigfillset( ADDRESS OF act.sa_mask )
-			ELSE sigemptyset( ADDRESS OF act.sa_mask ) END;
-			RETURN sigaction( sig, ADDRESS OF act, NIL )
-		END
-	END Sigact;
-
 	PROCEDURE ThrInitialize*( VAR low, high: SIGNED32 ): BOOLEAN;
 	VAR
 		param: Sched_param; res: INTEGER;
@@ -1096,6 +1187,13 @@ VAR
 		ASSERT(Sigact( T_SIGRESUME, resume_handler, 0, FALSE ) = 0);
 
 		ASSERT (pthread_key_create (ADDRESS OF thread_exit, NIL) = 0);
+
+		(*	From here on a fault on a thread nothing marked is somebody else's, and goes back to whoever
+			handled it before us. This thread -- the one the image was entered on -- is marked first,
+			before anything can fault on it. *)
+		ASSERT (pthread_key_create (ADDRESS OF ownThreads, NIL) = 0);
+		ownThreadsKnown := TRUE;
+		MarkOwnThread;
 
 		RETURN TRUE;
 	END ThrInitialize;
@@ -1219,6 +1317,7 @@ VAR
 
 	PROCEDURE {C} SigHandler  ( sig: SIGNED32; scp: ADDRESS; ucp: Ucontext ); (* reversed arguments !! *)
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		IF ForeignThread( ) & Chain( sig, scp, S.VAL( ADDRESS, ucp ) ) THEN RETURN END;
 		IF trap # NIL THEN
 			trap( sig, S.VAL( Mcontext, ADDRESSOF( ucp.mc ) ) )
 		ELSE
