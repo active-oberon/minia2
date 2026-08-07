@@ -43,7 +43,18 @@ done
 [ -f "$lib/Compiler.GofU8" ] || { echo "no AArch64 objects in $lib" >&2; exit 2; }
 
 mkdir -p "$results"
-work="$(mktemp -d)"
+# Checked, because the interesting way for this to fail is silently. mktemp writes into $TMPDIR or
+# /tmp, and on Android there is no /tmp: with neither, mktemp fails, `work` is the empty string, and
+# every path built on it -- the working directory of each check, the module each one compiles -- turns
+# into a path starting at the root, which is read only. What that looks like is not a missing
+# temporary directory but three failing collector runs and a compile that cannot open its own input.
+# So: say it here instead.
+work="$(mktemp -d)" || work=""
+[ -n "$work" ] && [ -d "$work" ] || {
+	echo "mktemp could not make a working directory${TMPDIR:+ in $TMPDIR}" >&2
+	echo "set TMPDIR to a writable directory (Android has no /tmp)" >&2
+	exit 2
+}
 trap 'rm -rf "$work"' EXIT
 
 echo "machine:  $(uname -m), $(uname -r)"
