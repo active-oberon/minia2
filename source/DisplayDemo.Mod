@@ -246,30 +246,72 @@ BEGIN
 	Trace.String(" in ");  Trace.Int(Kernel.GetTicks() - started, 0);  Trace.StringLn(" ms")
 END Mandelbrot;
 
-(**	A pattern whose geometry can be read off a photograph: a one pixel border, the two diagonals, and
+(*	A pattern whose geometry can be read off a photograph: a one pixel border, the two diagonals, and
 	a box in each corner -- red top left, green top right, blue bottom left, white bottom right. A
 	stride that is wrong shears the diagonals; a size that is wrong moves the boxes off the edges; a
-	colour that is wrong names itself. *)
-PROCEDURE Pattern*;
+	colour that is wrong names itself.
+
+	`inPieces` puts it up in seven frames instead of one, which is the check for a driver that sends
+	only what changed: the screen has to end up the same either way, and it does not if a frame that
+	updates part of the window loses the rest. *)
+PROCEDURE DrawPattern(inPieces: BOOLEAN);
 VAR i, w, h, size: SIGNED32;
+
+	PROCEDURE Piece;
+	BEGIN
+		IF inPieces THEN display.Update END
+	END Piece;
+
 BEGIN
-	IF ~Take() THEN RETURN END;
 	w := display.width;  h := display.height;  size := w DIV 6;
-	display.Fill(0, 0, 0, w, h);
+	display.Fill(0, 0, 0, w, h);  Piece;
 	display.Fill(0808080H, 0, 0, w, 1);  display.Fill(0808080H, 0, h - 1, w, 1);
-	display.Fill(0808080H, 0, 0, 1, h);  display.Fill(0808080H, w - 1, 0, 1, h);
+	display.Fill(0808080H, 0, 0, 1, h);  display.Fill(0808080H, w - 1, 0, 1, h);  Piece;
 	FOR i := 0 TO w - 1 DO
 		display.Dot(0FFFFFFH, i, SIGNED32(SIZE(i) * h DIV w));
 		display.Dot(0FF00FFH, i, h - 1 - SIGNED32(SIZE(i) * h DIV w))
 	END;
-	display.Fill(0FF0000H, 2, 2, size, size);							(* red, top left *)
-	display.Fill(000FF00H, w - size - 2, 2, size, size);				(* green, top right *)
-	display.Fill(00000FFH, 2, h - size - 2, size, size);				(* blue, bottom left *)
-	display.Fill(0FFFFFFH, w - size - 2, h - size - 2, size, size);	(* white, bottom right *)
-	display.Update;
-	Trace.String("DisplayDemo: pattern on ");
-	Trace.Int(w, 0);  Trace.String(" x ");  Trace.Int(h, 0);  Trace.StringLn("")
+	Piece;
+	display.Fill(0FF0000H, 2, 2, size, size);  Piece;							(* red, top left *)
+	display.Fill(000FF00H, w - size - 2, 2, size, size);  Piece;				(* green, top right *)
+	display.Fill(00000FFH, 2, h - size - 2, size, size);  Piece;				(* blue, bottom left *)
+	display.Fill(0FFFFFFH, w - size - 2, h - size - 2, size, size);			(* white, bottom right *)
+	display.Update
+END DrawPattern;
+
+(** The pattern, in one frame. *)
+PROCEDURE Pattern*;
+BEGIN
+	IF ~Take() THEN RETURN END;
+	DrawPattern(FALSE);
+	Trace.String("DisplayDemo: pattern in one frame, on ");
+	Trace.Int(display.width, 0);  Trace.String(" x ");  Trace.Int(display.height, 0);  Trace.Ln
 END Pattern;
+
+(** The same pattern, in seven frames -- the same screen, if partial frames lose nothing. *)
+PROCEDURE PatternInPieces*;
+BEGIN
+	IF ~Take() THEN RETURN END;
+	DrawPattern(TRUE);
+	Trace.String("DisplayDemo: pattern in seven frames, on ");
+	Trace.Int(display.width, 0);  Trace.String(" x ");  Trace.Int(display.height, 0);  Trace.Ln
+END PatternInPieces;
+
+(**	Time the smallest possible frame: one dot changed, put up a hundred times. What is left after the
+	copying is gone -- the lock, whatever the surface carries over for itself, and the wait for a
+	buffer to come free, which on a screen refreshing at 120 Hz is a refresh. *)
+PROCEDURE Tiny*;
+VAR i, started: SIGNED32;
+BEGIN
+	IF ~Take() THEN RETURN END;
+	started := Kernel.GetTicks();
+	FOR i := 1 TO 100 DO
+		display.Dot(0FFFFFFH, i MOD display.width, display.height DIV 2);
+		display.Update
+	END;
+	Trace.String("DisplayDemo: a hundred one-dot frames in ");
+	Trace.Int(Kernel.GetTicks() - started, 0);  Trace.StringLn(" ms")
+END Tiny;
 
 (** Time a plain frame: fill the display in one colour and put it up, ten times over. *)
 PROCEDURE Frames*;

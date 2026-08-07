@@ -26,7 +26,7 @@
  *	this window, and source/DisplayDemo.Mod draws through it. Neither is in the image -- they travel as
  *	object files and are loaded when the window arrives, which is also the first thing in this port to
  *	need dynamic loading for something other than testing it. The window itself stays here, behind the
- *	three procedures below, for the reason written above them.
+ *	four procedures below, for the reason written above them.
  *
  *	Build: see android/build-apk.sh.
  */
@@ -262,6 +262,20 @@ static ANativeWindow *theWindow;
 static pthread_mutex_t windowMutex = PTHREAD_MUTEX_INITIALIZER;
 static int windowLocked;
 
+/*	Which window this is, counted up whenever a new one arrives.
+ *
+ *	A driver that sends only what changed needs to know when nothing it has sent is there any more,
+ *	and the buffers alone do not say so: the surface of a window this process has drawn into before
+ *	carries that content over into the buffer it hands out, so a new window comes back with a small
+ *	region to write and the last thing painted still in it -- which is how the gradient below reappeared
+ *	under A2's picture, with only the path of a moving box patched over it. So A2 reads this, and repaints
+ *	the lot when it changes. */
+static int windowGeneration;
+
+int A2WindowGeneration(void) {
+	return windowGeneration;
+}
+
 int A2WindowSize(int32_t *width, int32_t *height) {
 	int answered = 0;
 	pthread_mutex_lock(&windowMutex);
@@ -274,17 +288,37 @@ int A2WindowSize(int32_t *width, int32_t *height) {
 	return answered;
 }
 
-/*	Holds the mutex when it answers 1, until A2WindowUnlockAndPost releases it. */
-int A2WindowLock(void **bits, int32_t *width, int32_t *height, int32_t *stride) {
+/*	Holds the mutex when it answers 1, until A2WindowUnlockAndPost releases it.
+ *
+ *	The rectangle goes in and comes back out, because that is how the surface works: given a region a
+ *	caller means to write, it copies the rest from what was posted before -- and if it cannot, it says
+ *	so by widening the region it hands back. So the answer is the region that MUST be written, and A2
+ *	writes exactly that. Passing the whole buffer every time is the same call with the region set to
+ *	the whole buffer, which is what the first frame does.
+ *
+ *	Named ...Region rather than keeping the old name for a shorter diff: an application built before
+ *	this change has the four-argument version, and a dlsym for a name that is not there answers NIL
+ *	and reports no window -- where the same name with a different shape would read four words of the
+ *	stack as a rectangle and paint an arbitrary part of the screen. */
+int A2WindowLockRegion(void **bits, int32_t *width, int32_t *height, int32_t *stride, int32_t *format,
+		int32_t *left, int32_t *top, int32_t *right, int32_t *bottom) {
 	ANativeWindow_Buffer buffer;
+	ARect region;
+	region.left = *left; region.top = *top; region.right = *right; region.bottom = *bottom;
 	pthread_mutex_lock(&windowMutex);
-	if (theWindow == NULL || ANativeWindow_lock(theWindow, &buffer, NULL) != 0) {
+	if (theWindow == NULL || ANativeWindow_lock(theWindow, &buffer, &region) != 0) {
 		pthread_mutex_unlock(&windowMutex);
 		return 0;
 	}
 	windowLocked = 1;
 	*bits = buffer.bits;
 	*width = buffer.width; *height = buffer.height; *stride = buffer.stride;
+	/*	The format is answered rather than assumed, because a window does not have to give what it was
+		asked for: the second window of this application came back as RGB_565 -- half the bytes per
+		pixel -- and writing four bytes each ran off the end of it at exactly half the height. It is
+		asked for RGBX_8888 in Configure below; this is so that A2 can refuse instead of trusting. */
+	*format = buffer.format;
+	*left = region.left; *top = region.top; *right = region.right; *bottom = region.bottom;
 	return 1;
 }
 
@@ -298,12 +332,20 @@ void A2WindowUnlockAndPost(void) {
 /*	Filled from here once, in a gradient, before A2 is told about the window: a picture on the screen
  *	then means the process holds a surface, which is what it meant when this file was a spike, and it
  *	is also what tells the two apart -- what A2 draws is the Mandelbrot set. */
+/*	What every window is asked for, whether or not anything here draws in it: four bytes a pixel, and
+ *	the size the window already has. Asking belongs to the window arriving and not to the first paint --
+ *	which is where it was, inside Fill, until Fill stopped being called for every window and the next
+ *	window quietly came back as RGB_565 with A2 writing 32 bit pixels into it. */
+static void Configure(ANativeWindow *window) {
+	if (window == NULL) return;
+	if (ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBX_8888) != 0)
+		Complain("the window would not take the format asked for");
+}
+
 static void Fill(ANativeWindow *window) {
 	ANativeWindow_Buffer buffer;
 	int y, x;
 	if (window == NULL) return;
-	if (ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBX_8888) != 0)
-		Complain("the window would not take the format asked for");
 	if (ANativeWindow_lock(window, &buffer, NULL) != 0) {
 		Complain("cannot lock the window");
 		return;
@@ -339,9 +381,13 @@ static void TellAboutTheWindow(void) {
 static void OnWindowCreated(ANativeActivity *activity, ANativeWindow *window) {
 	(void)activity;
 	Log("window created");
-	Fill(window);										/* before A2 can see it, so the two never race */
+	Configure(window);
+	/*	The gradient only until A2 has a picture of its own. Painting it into every window would put it
+		back underneath A2's next frame, which is what happened the first time this was tried. */
+	if (!displayTold) Fill(window);					/* before A2 can see it, so the two never race */
 	pthread_mutex_lock(&windowMutex);
 	theWindow = window;
+	windowGeneration++;
 	pthread_mutex_unlock(&windowMutex);
 	TellAboutTheWindow();
 }
