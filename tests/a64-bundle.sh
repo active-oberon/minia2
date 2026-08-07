@@ -96,6 +96,32 @@ if [ "$android" = 1 ]; then
 		printf '%s\n' "$glue" | grep -E 'error' | head -10 >&2
 		exit 1
 	fi
+
+	# The display over the window of an application. Only here, and not in the standard library: it is
+	# of no use anywhere else, and it is loaded at run time rather than linked -- the application
+	# unpacks it beside the image.
+	driver=$( (cd "$build" && PWD="$build" "$oberon" do "
+		System.DoFile oberon.cfg ~
+		Compiler.Compile -p=UnixA64 --destPath='$link/' '$root/source/AndroidDisplay.Mod' ~
+	") 2>&1 | tr -d '\r' ) || true
+	if [ ! -f "$link/AndroidDisplay.GofU8" ]; then
+		echo "the display driver for the application did not compile for AArch64:" >&2
+		printf '%s\n' "$driver" | grep -E 'error' | head -10 >&2
+		exit 1
+	fi
+fi
+
+# What draws through a display, whichever one it is: in both bundles, because it is the check run.sh
+# makes of the picture -- which needs no screen and no window, and is therefore the part of a graphics
+# backend that a machine with no display can still answer for.
+demo=$( (cd "$build" && PWD="$build" "$oberon" do "
+	System.DoFile oberon.cfg ~
+	Compiler.Compile -p=UnixA64 --destPath='$link/' '$root/source/DisplayDemo.Mod' ~
+") 2>&1 | tr -d '\r' ) || true
+if [ ! -f "$link/DisplayDemo.GofU8" ]; then
+	echo "DisplayDemo did not compile for AArch64:" >&2
+	printf '%s\n' "$demo" | grep -E 'error' | head -10 >&2
+	exit 1
 fi
 
 modules=$(sed 's/#.*//' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')
@@ -163,7 +189,7 @@ cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 install -m 755 "$root/docker/ob" "$out/ob"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
 cp "$root"/tests/*.Test "$out/tests/"
-cp "$root/tests/a2test-expected-a64.txt" "$out/tests/"
+cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$out/tests/"
 cp "$root"/tests/A64*.Mod "$out/tests/"
 
 # The suites read their baseline as a2test-expected-a64.txt and their cases as *.Test; both are
@@ -192,7 +218,8 @@ emulator, no root. Two ways to have one:
         adb shell "cd <here> && PATH=<here>:\$PATH TMPDIR=<here>/tmp ./bash ./run.sh"
 
     ./run.sh            everything: boot, collector, module loading, compiling on the device,
-                        signal chaining, and the language suites (the long one -- thousands of cases)
+                        signal chaining, the picture a display driver is handed, and the language
+                        suites (the long one -- thousands of cases)
     ./run.sh --quick    all of it except the suites
     ./ob repl           the interactive shell
     ./ob run Hello.Mod  compile and run, in this process
@@ -224,7 +251,8 @@ emulator. On Android this is the proot-distro debian route; for Bionic itself, b
 with --android, which brings its own way into the image.
 
     ./run.sh            everything: boot, collector, module loading, compiling on the device,
-                        and the language suites (the long one -- thousands of cases)
+                        the picture a display driver is handed, and the language suites (the long
+                        one -- thousands of cases)
     ./run.sh --quick    all of it except the suites
     ./ob build Hello.Mod && ./Hello       build a standalone AArch64 binary, on the machine
     ./ob repl                             the interactive shell
