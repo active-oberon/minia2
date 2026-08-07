@@ -162,9 +162,23 @@ if [ "$android" = 1 ]; then
 	cat > "$out/README" <<'EOF'
 A2 for AArch64 on Android -- a self-contained SDK and its tests, against Bionic itself.
 
-Needs: an arm64 Android device and a shell with bash and coreutils, which in practice means
-Termux -- natively, NOT proot-distro. No glibc, no Docker, no emulator, no root. `adb shell`
-is not enough: it has no bash, so single checks can be driven from it but run.sh cannot.
+Needs: an arm64 Android device and a shell with bash and coreutils. No glibc, no Docker, no
+emulator, no root. Two ways to have one:
+
+  - Termux, natively (NOT proot-distro): bash and coreutils are already there.
+  - `adb shell` plus a bash of your own. Android ships mksh as /system/bin/sh and no bash, but
+    everything else run.sh wants -- timeout, awk, sed, grep, od, realpath -- is in toybox. A bash
+    cross-built with the NDK does the rest:
+
+        ./configure --host=aarch64-linux-android --without-bash-malloc --enable-static-link \
+            CC=$NDK/.../aarch64-linux-android28-clang ac_cv_func_faccessat=no
+
+    That last one is not optional and the reason is worth knowing: Bionic's faccessat rejects
+    AT_EACCESS with EINVAL, and bash 5.2 tests -r, -w and -x through it -- so a bash built without
+    it answers "no" to every one of them, for every file, and run.sh reports no runtime beside it.
+    Then: adb push bash, and run with PATH and TMPDIR set (Android has no /tmp):
+
+        adb shell "cd <here> && PATH=<here>:\$PATH TMPDIR=<here>/tmp ./bash ./run.sh"
 
     ./run.sh            everything: boot, collector, module loading, compiling on the device,
                         and the language suites (the long one -- thousands of cases)
