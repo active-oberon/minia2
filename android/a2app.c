@@ -465,6 +465,20 @@ static void OnDestroy(ANativeActivity *activity) { (void)activity; Log("destroy 
 static void OnLowMemory(ANativeActivity *activity) { (void)activity; Log("low memory"); }
 static void OnConfigurationChanged(ANativeActivity *activity) { (void)activity; Log("configuration changed"); }
 
+/*	The window is now a different shape -- a rotation, and the manifest says this activity survives one
+ *	rather than being destroyed and built again. Nothing is done to the window here beyond asking for
+ *	the format once more; the size is A2's business, and it learns it from the next lock. Counted as a
+ *	new window, because that is exactly what it is as far as the picture in it is concerned: nothing A2
+ *	has drawn belongs anywhere it was. */
+static void OnWindowResized(ANativeActivity *activity, ANativeWindow *window) {
+	(void)activity;
+	Log("window resized to %d x %d", ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
+	Configure(window);
+	pthread_mutex_lock(&windowMutex);
+	windowGeneration++;
+	pthread_mutex_unlock(&windowMutex);
+}
+
 void ANativeActivity_onCreate(ANativeActivity *activity, void *savedState, size_t savedStateSize) {
 	(void)savedState; (void)savedStateSize;
 	LogTheTranscript();
@@ -482,6 +496,7 @@ void ANativeActivity_onCreate(ANativeActivity *activity, void *savedState, size_
 	activity->callbacks->onNativeWindowCreated = OnWindowCreated;
 	activity->callbacks->onNativeWindowDestroyed = OnWindowDestroyed;
 	activity->callbacks->onNativeWindowRedrawNeeded = OnWindowRedraw;
+	activity->callbacks->onNativeWindowResized = OnWindowResized;
 	activity->callbacks->onInputQueueCreated = OnInputQueueCreated;
 	activity->callbacks->onInputQueueDestroyed = OnInputQueueDestroyed;
 	theActivity = activity;

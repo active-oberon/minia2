@@ -36,6 +36,20 @@ MODULE AndroidDisplay;	(** AUTHOR ""; PURPOSE "Display driver over the window of
 	whole picture goes again.
 
 	Nothing is dirty, nothing is locked: an idle system posts no frames at all.
+
+	A rotation makes the window a different shape while the display stays the same object, and this is
+	where A2 has nothing to offer: a Displays.Display has a width and a height and no notion of either
+	changing, so there is no notification for a client to wait for. What is done here is the least that
+	is honest -- the size is taken from the buffer the window hands over, and when it differs the
+	display's own width, height and stride are set to it and everything is marked dirty. A client that
+	cares (DisplayDemo does) reads the size again on its next frame; a window manager would want a
+	proper event, and the registry has the machinery for one when there is something to tell.
+
+	The pixels are allocated once and never freed or moved: a rotation swaps the sides of the window and
+	so needs not one byte more, and drawing is deliberately not locked against Update -- a client
+	mid-Transfer while the fields changed would otherwise be writing into memory that had just gone back
+	to the allocator. A window that genuinely grows is therefore refused, with a line in the log, rather
+	than served by a reallocation nobody can make safe.
 *)
 
 IMPORT SYSTEM, Unix, Displays, Plugins, Trace;
@@ -96,24 +110,40 @@ TYPE
 
 	Display* = OBJECT (Displays.Display)
 		VAR
-			pixels: ADDRESS;			(* our frame buffer: width * height pixels, 4 bytes each *)
+			pixels: ADDRESS;			(* our frame buffer: room for the window either way round *)
 			bytes: SIZE;
 			dirty: Region;
 			generationSeen: SIGNED32;	(* which window we last drew in, see Update *)
 
 		PROCEDURE &Init*(w, h: SIGNED32);
 		BEGIN
-			width := w;  height := h;  offscreen := 0;
+			offscreen := 0;
 			format := Displays.color8888;  unit := PixelUnit;
+			(*	One allocation, for the window as it stands, and it is enough for the window turned round
+				as well: a rotation swaps the sides and the product is what a frame buffer costs. The
+				measurement that says so, from the phone this was written on: 1080 x 2340 upright and
+				2244 x 1080 sideways, which is fewer pixels, not more -- landscape loses the strip beside
+				the camera. Something that genuinely grows is refused in Update rather than reallocated,
+				because drawing is not locked against Update and the memory would go out from under a
+				client mid-Transfer. *)
 			bytes := SIZE(w) * SIZE(h) * 4;
 			pixels := Unix.malloc(bytes);
 			ASSERT(pixels # 0);
-			Erase(pixels, bytes);
-			InitFrameBuffer(pixels, SIGNED32(bytes), w * 4);
 			NEW(dirty);
-			dirty.Whole(w, h);			(* the window has nothing of ours in it yet *)
-			generationSeen := -1
+			generationSeen := -1;
+			Reshape(w, h)
 		END Init;
+
+		(*	Follow the window's shape. From Init, and from Update whenever the buffer that arrives is
+			not the shape we last drew. The frame buffer keeps its address; what changes is how much of
+			it is one line, and everything in it is black rather than the last shape rearranged. *)
+		PROCEDURE Reshape(w, h: SIGNED32);
+		BEGIN
+			width := w;  height := h;
+			InitFrameBuffer(pixels, SIGNED32(bytes), w * 4);
+			Erase(pixels, SIZE(w) * SIZE(h) * 4);
+			dirty.Whole(w, h)
+		END Reshape;
 
 		(*	The drawing operations, each noting where it draws and then drawing. Dot and Mask are not
 			among them and need not be: both reach the frame buffer through Fill, on SELF, so the
@@ -170,6 +200,30 @@ TYPE
 				Trace.String(", stride ");  Trace.Int(stride, 0);  Trace.String(" pixels, bits at ");
 				Trace.Hex(bits, 0);  Trace.Ln
 			END;
+			(*	The window is a different shape -- a rotation. The size is not asked for anywhere: it
+				arrives with the buffer, which is the one place it cannot be out of date.
+
+				Bigger than the buffer was made for, though, is refused: the room is the square of the
+				longer side of the window we started with, which covers turning it round and nothing
+				else. A window that grows -- an unfolding screen, a desktop -- would need the frame
+				buffer allocated again, and that cannot be done under a client that may be drawing. So
+				it says so and goes on drawing the part it can. *)
+			IF (w # width) OR (h # height) THEN
+				IF SIZE(w) * SIZE(h) * 4 > bytes THEN
+					IF ~complained THEN
+						complained := TRUE;
+						Trace.String("AndroidDisplay: the window grew to ");
+						Trace.Int(w, 0);  Trace.String(" x ");  Trace.Int(h, 0);
+						Trace.StringLn(", which is more than the frame buffer holds -- drawing what fits")
+					END
+				ELSE
+					Trace.String("AndroidDisplay: the window is now ");
+					Trace.Int(w, 0);  Trace.String(" x ");  Trace.Int(h, 0);  Trace.Ln;
+					Reshape(w, h);
+					l := 0;  t := 0;  r := w;  b := h
+				END
+			END;
+
 			(*	A window need not give what it was asked for, and one that gives two bytes a pixel is
 				half the buffer we would write: this is the check that turns that into a line in the log
 				rather than a fault past the end of somebody else's memory, which is how it was found. *)
