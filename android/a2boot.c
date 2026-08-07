@@ -20,9 +20,19 @@
  *	is installed AS `oberon` with the image beside it as `oberon.img`, so `ob`, the test harness and
  *	everything else go on starting `oberon` and know nothing about any of this.
  *
+ *	Two architectures and two C libraries. The four places where either of them shows through are
+ *	marked below; everything else is the same file. AArch64 on Bionic is what this exists for; x86-64
+ *	is here because the only Android machine other than a phone is the emulator, which is x86-64, and
+ *	because it can be built against glibc, where booting an AMD64 image this way is a way of checking
+ *	the loading itself with none of Android in the picture. That last one is what has been run; the
+ *	emulator has not been needed yet.
+ *
  *	Build (NDK):
  *	  $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang \
  *	      -O2 -o a2boot android/a2boot.c
+ *	  $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android28-clang \
+ *	      -O2 -o a2boot android/a2boot.c        (the emulator)
+ *	  cc -O2 -o a2boot android/a2boot.c         (glibc, to check the loading)
  *	Run:
  *	  ./a2boot ./oberon [arguments for A2 ...]      or, installed as above, just ./oberon [...]
  */
@@ -39,6 +49,23 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/*	Declared here rather than relied on from a header: Bionic puts it in unistd.h unconditionally and
+	glibc hides it behind _GNU_SOURCE. The declaration is the same either way. */
+extern char **environ;
+
+/*	The machine, in the two forms the ELF file names it and one for the message when they disagree. */
+#if defined(__aarch64__)
+#	define A2_MACHINE EM_AARCH64
+#	define A2_MACHINE_NAME "AArch64"
+#	define A2_ABS64 R_AARCH64_ABS64
+#elif defined(__x86_64__)
+#	define A2_MACHINE EM_X86_64
+#	define A2_MACHINE_NAME "x86-64"
+#	define A2_ABS64 R_X86_64_64
+#else
+#	error a2boot has no idea what an image for this machine looks like
+#endif
 
 static void Fail(const char *what) {
 	fprintf(stderr, "a2boot: %s: %s\n", what, strerror(errno));
@@ -127,14 +154,19 @@ int main(int argc, char **argv) {
 	 *	Turned off for this process rather than worked around in the collector: masking the top byte
 	 *	everywhere an address is compared would be a change spread over the heap, the barriers and the
 	 *	loader, all to give up a check that costs us nothing to keep switched off. Tagging is a
-	 *	debugging aid for C, and this process has no C to debug. */
+	 *	debugging aid for C, and this process has no C to debug.
+	 *
+	 *	Only Bionic has the call, and only on AArch64 is there anything for it to switch off; the
+	 *	glibc and x86-64 builds simply have no tagging to begin with. */
+#if defined(__BIONIC__) && defined(M_BIONIC_SET_HEAP_TAGGING_LEVEL)
 	if (mallopt(M_BIONIC_SET_HEAP_TAGGING_LEVEL, M_HEAP_TAGGING_LEVEL_NONE) == 0)
 		fprintf(stderr, "a2boot: could not turn off heap pointer tagging; the collector may lose objects\n");
+#endif
 
 	file = ReadFile(image, &size);
 	if (size < sizeof(Elf64_Ehdr) || memcmp(file, ELFMAG, SELFMAG) != 0) Refuse("the image is not an ELF file");
 	header = (Elf64_Ehdr *)file;
-	if (header->e_machine != EM_AARCH64) Refuse("not an AArch64 image");
+	if (header->e_machine != A2_MACHINE) Refuse("not an " A2_MACHINE_NAME " image");
 	segments = (Elf64_Phdr *)(file + header->e_phoff);
 	for (i = 0; i < header->e_phnum; i++) {
 		if (segments[i].p_type == PT_LOAD && load == NULL) load = &segments[i];
@@ -171,7 +203,7 @@ int main(int argc, char **argv) {
 			const Elf64_Rela *relocation = (const Elf64_Rela *)((const char *)relocations + at);
 			const char *name = strings + symbols[ELF64_R_SYM(relocation->r_info)].st_name;
 			void *value;
-			if (ELF64_R_TYPE(relocation->r_info) != R_AARCH64_ABS64) {
+			if (ELF64_R_TYPE(relocation->r_info) != A2_ABS64) {
 				fprintf(stderr, "a2boot: relocation type %lu for %s is not one this understands\n",
 					(unsigned long)ELF64_R_TYPE(relocation->r_info), name);
 				exit(1);
@@ -214,9 +246,17 @@ int main(int argc, char **argv) {
 		*slot++ = 0;
 	}
 
+	/*	Into the image: the stack pointer at the block just built and a branch that does not return. */
+#if defined(__aarch64__)
 	__asm__ volatile(
 		"mov sp, %0\n\t"
 		"br %1\n\t"
 		:: "r"(block), "r"(header->e_entry) : "memory");
+#else
+	__asm__ volatile(
+		"movq %0, %%rsp\n\t"
+		"jmpq *%1\n\t"
+		:: "r"(block), "r"((unsigned long long)header->e_entry) : "memory");
+#endif
 	return 0;										/* not reached */
 }

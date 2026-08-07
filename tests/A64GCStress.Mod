@@ -247,11 +247,61 @@ BEGIN
 	out.String("  "); out.String(name); out.Ln; out.Update
 END Phase;
 
+(*	A collection stops every other thread with a signal, and a thread waiting on a condition variable
+	must not be any the worse for it. This counts the threads that are waiting on one, and how many of
+	those are still waiting afterwards.
+
+	It is worth its own check because of what the alternative costs. A wait on a condition variable is
+	allowed to end without a signal, and a signal delivered to the waiting thread is one way it does;
+	glibc resumes the wait itself, Bionic does not. Objects.Await took the first reading and treated
+	any return as its condition having come true and the monitor having been handed over -- so on
+	Android every collection released every awaiting thread at once, each of them believing it owned
+	the monitor and none of them having evaluated its AWAIT. The reference the awaiting frame was
+	keeping alive went with it, and the collection after that freed a live active object, whose
+	finalizer destroyed the mutex a running thread was still locking. The trap arrived in
+	Objects.FindCondition, nowhere near either cause.
+
+	Nothing about that is particular to AArch64 or to Android; it is only that Bionic is where a
+	permitted rarity became a certainty. The check runs the same on either C library.
+
+	Two numbers, because one of them has a licensed exception. The count of processes must not fall:
+	a collection has no business removing a thread from the system, and the two that went missing on
+	Android were live active objects wrongly finalized. The count of waiting threads is allowed to
+	fall by one, and does on every C library, because a collection activates the finalizer caller on
+	purpose -- so only a second one leaving counts against it. *)
+PROCEDURE Census(VAR processes, waiting: SIGNED32);
+VAR p: Objects.Process;
+BEGIN
+	p := Objects.root; processes := 0; waiting := 0;
+	WHILE p # NIL DO
+		INC(processes);
+		IF p.mode = Objects.AwaitingCond THEN INC(waiting) END;
+		p := p.nextProcess
+	END
+END Census;
+
 PROCEDURE Run*(context: Commands.Context);
 VAR worker: ARRAY Threads OF Worker; i, bad, failures: SIGNED32; out: Streams.Writer;
+	processes, waiting, processesAfter, waitingAfter: SIGNED32;
 BEGIN
 	out := context.out;
 	failures := 0;
+
+	(* the threads a collection must not disturb *)
+	Phase(out, "waiting threads");
+	Census(processes, waiting);
+	Kernel.GC;
+	Census(processesAfter, waitingAfter);
+	IF processesAfter < processes THEN
+		out.String("  the collection removed "); out.Int(processes - processesAfter, 0);
+		out.String(" of "); out.Int(processes, 0); out.String(" processes"); out.Ln;
+		INC(failures, processes - processesAfter)
+	END;
+	IF waiting - waitingAfter > 1 THEN
+		out.String("  the collection woke "); out.Int(waiting - waitingAfter, 0);
+		out.String(" of "); out.Int(waiting, 0); out.String(" threads awaiting a condition"); out.Ln;
+		INC(failures, waiting - waitingAfter - 1)
+	END;
 
 	(* the tree that is alive from here to the end *)
 	Phase(out, "building");
