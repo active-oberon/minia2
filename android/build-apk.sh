@@ -64,6 +64,24 @@ mkdir -p "$out/lib/arm64-v8a" "$out/assets" "$out/res"
 	-landroid -llog
 cp "$image" "$out/assets/oberon.img"
 
+# The display and its demo travel as object files rather than inside the image: the image is the same
+# 32-module runtime the command line bundle uses, and A2 loads what it needs at run time. Taken from
+# the lib/ directory of the bundle the image came from, which is where tests/a64-bundle.sh puts them.
+objects="$(dirname "$image")/lib"
+missing=""
+for module in Plugins Displays AndroidDisplay DisplayDemo; do
+	if [ -f "$objects/$module.GofU8" ]; then
+		cp "$objects/$module.GofU8" "$out/assets/"
+	else
+		missing="$missing $module"
+	fi
+done
+if [ -n "$missing" ]; then
+	echo "no object files for:$missing in $objects" >&2
+	echo "build the bundle first: tests/a64-bundle.sh --android -o $(dirname "$image")" >&2
+	exit 2
+fi
+
 # hasCode="false" is what says there is no Java here; without it the runtime looks for classes.dex
 # and refuses to start. android.app.lib_name names the library above, without the lib prefix.
 cat > "$out/AndroidManifest.xml" <<'XML'

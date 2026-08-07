@@ -22,10 +22,11 @@
  *	    lives, belongs to the shell user and an application cannot read it; so the image travels in
  *	    the package as an asset and is unpacked once into the application's own directory.
  *
- *	What it draws is deliberately not A2's doing yet. Filling the window from C answers "does this
- *	process hold a surface at the same time as it holds A2", which is the question this spike is for;
- *	drawing A2's own display into it is a Displays backend, and that is the work this measures rather
- *	than the work it does.
+ *	What is on the screen is A2's own doing now: source/AndroidDisplay.Mod registers a display over
+ *	this window, and source/DisplayDemo.Mod draws through it. Neither is in the image -- they travel as
+ *	object files and are loaded when the window arrives, which is also the first thing in this port to
+ *	need dynamic loading for something other than testing it. The window itself stays here, behind the
+ *	three procedures below, for the reason written above them.
  *
  *	Build: see android/build-apk.sh.
  */
@@ -117,6 +118,28 @@ static int Unpack(AAssetManager *assets, const char *name, const char *directory
 	return 1;
 }
 
+/*	Everything else in the package, beside the image: the object files of the display driver and of
+ *	what draws through it. They are not in the image -- the image is the same one the command line
+ *	bundle uses, 32 modules and nothing graphical -- so they are loaded at run time, which is a thing
+ *	this port only gained a few days ago and is worth exercising in the application too. */
+static int UnpackTheRest(AAssetManager *assets, const char *directory) {
+	AAssetDir *listing = AAssetManager_openDir(assets, "");
+	const char *name;
+	char path[4096];
+	int unpacked = 0;
+	if (listing == NULL) { Complain("the package has no assets to list"); return 0; }
+	while ((name = AAssetDir_getNextFileName(listing)) != NULL) {
+		/*	Object files and nothing else: an application's asset manager lists more than the package
+			put in it, and the first run of this unpacked a megabyte of somebody's machine learning
+			model for no reason at all. */
+		const char *dot = strrchr(name, '.');
+		if (dot == NULL || strcmp(dot, ".GofU8") != 0) continue;
+		if (Unpack(assets, name, directory, path, sizeof(path))) unpacked++;
+	}
+	AAssetDir_close(listing);
+	return unpacked;
+}
+
 /*	Who owns which signal, before and after A2 comes up.
  *
  *	An application is not a bare process. The Android runtime is in it whether or not the application
@@ -163,6 +186,7 @@ static void *LookAgain(void *unused) {
  *	activity is destroyed and recreated for something as ordinary as a rotation. What the window
  *	backend will have to survive is exactly that, which is why the window is kept separately below. */
 static char imagePath[4096];
+static char searchPath[4096];					/* the command that puts the unpacked objects on A2's path */
 static pthread_t systemThread;
 static int systemStarted = 0;
 
@@ -212,6 +236,8 @@ static void StartTheSystem(ANativeActivity *activity) {
 	snprintf(directory, sizeof(directory), "%s", activity->internalDataPath);
 	mkdir(directory, 0700);
 	if (!Unpack(activity->assetManager, "oberon.img", directory, imagePath, sizeof(imagePath))) return;
+	Log("unpacked %d more file(s) beside it", UnpackTheRest(activity->assetManager, directory));
+	snprintf(searchPath, sizeof(searchPath), "Files.AddSearchPath %s", directory);
 	if (pthread_create(&systemThread, NULL, RunTheSystem, NULL) != 0) {
 		Complain("cannot start the thread to run A2 on: %s", strerror(errno));
 		return;
@@ -220,8 +246,58 @@ static void StartTheSystem(ANativeActivity *activity) {
 	systemStarted = 1;
 }
 
-/*	The window. Filled from here, in one colour, so that a picture on the screen means the process
- *	holds a surface while A2 runs in it -- and nothing more than that is claimed. */
+/*	The window, and the three procedures A2 sees it through.
+ *
+ *	The window belongs to this file and its lifetime stays here. A2's display driver
+ *	(source/AndroidDisplay.Mod) finds these by name with dlsym and knows nothing about
+ *	ANativeWindow -- deliberately, and not to save it the trouble: the framework destroys a window on
+ *	a thread of its own, so any arrangement where A2 held the pointer itself would be a race between
+ *	its next frame and onNativeWindowDestroyed. Here the mutex that a lock takes is the one the
+ *	destroy waits on, and a frame is over in milliseconds.
+ *
+ *	Everything is out-parameters and plain integers, so that nothing on the A2 side has to agree with
+ *	a struct layout of the NDK's -- the shape of struct sigaction has already cost this port a day.
+ *	The stride is in pixels, as the surface reports it. */
+static ANativeWindow *theWindow;
+static pthread_mutex_t windowMutex = PTHREAD_MUTEX_INITIALIZER;
+static int windowLocked;
+
+int A2WindowSize(int32_t *width, int32_t *height) {
+	int answered = 0;
+	pthread_mutex_lock(&windowMutex);
+	if (theWindow != NULL) {
+		if (width != NULL) *width = ANativeWindow_getWidth(theWindow);
+		if (height != NULL) *height = ANativeWindow_getHeight(theWindow);
+		answered = 1;
+	}
+	pthread_mutex_unlock(&windowMutex);
+	return answered;
+}
+
+/*	Holds the mutex when it answers 1, until A2WindowUnlockAndPost releases it. */
+int A2WindowLock(void **bits, int32_t *width, int32_t *height, int32_t *stride) {
+	ANativeWindow_Buffer buffer;
+	pthread_mutex_lock(&windowMutex);
+	if (theWindow == NULL || ANativeWindow_lock(theWindow, &buffer, NULL) != 0) {
+		pthread_mutex_unlock(&windowMutex);
+		return 0;
+	}
+	windowLocked = 1;
+	*bits = buffer.bits;
+	*width = buffer.width; *height = buffer.height; *stride = buffer.stride;
+	return 1;
+}
+
+void A2WindowUnlockAndPost(void) {
+	if (!windowLocked) return;							/* only ever called by the thread that locked */
+	ANativeWindow_unlockAndPost(theWindow);
+	windowLocked = 0;
+	pthread_mutex_unlock(&windowMutex);
+}
+
+/*	Filled from here once, in a gradient, before A2 is told about the window: a picture on the screen
+ *	then means the process holds a surface, which is what it meant when this file was a spike, and it
+ *	is also what tells the two apart -- what A2 draws is the Mandelbrot set. */
 static void Fill(ANativeWindow *window) {
 	ANativeWindow_Buffer buffer;
 	int y, x;
@@ -247,19 +323,44 @@ static void Fill(ANativeWindow *window) {
 		buffer.width, buffer.height, buffer.stride, buffer.format);
 }
 
+/*	The system is told about the window once, and from then on it owns the picture. The commands go
+ *	down the same pipe everything else does: the objects were unpacked beside the image, so naming a
+ *	module is enough to have it loaded -- there is nothing of the display in the image itself. */
+static int displayTold;
+
+static void TellAboutTheWindow(void) {
+	if (displayTold) return;
+	displayTold = 1;
+	Tell(searchPath);
+	Tell("AndroidDisplay.Install");
+	Tell("DisplayDemo.Run");
+}
+
 static void OnWindowCreated(ANativeActivity *activity, ANativeWindow *window) {
 	(void)activity;
 	Log("window created");
-	Fill(window);
+	Fill(window);										/* before A2 can see it, so the two never race */
+	pthread_mutex_lock(&windowMutex);
+	theWindow = window;
+	pthread_mutex_unlock(&windowMutex);
+	TellAboutTheWindow();
 }
 
 static void OnWindowDestroyed(ANativeActivity *activity, ANativeWindow *window) {
 	(void)activity; (void)window;
+	/*	Taken away under the mutex, which is what makes this safe: a frame in flight on A2's thread
+		holds it, so this waits for that frame instead of pulling the buffer out from under it. */
+	pthread_mutex_lock(&windowMutex);
+	theWindow = NULL;
+	pthread_mutex_unlock(&windowMutex);
 	Log("window destroyed");
 }
 
 static void OnWindowRedraw(ANativeActivity *activity, ANativeWindow *window) {
 	(void)activity;
+	/*	Once A2 has the window, redrawing is its business: its next frame is the answer, and filling
+		from here would fight it for the surface. */
+	if (displayTold) return;
 	Fill(window);
 }
 

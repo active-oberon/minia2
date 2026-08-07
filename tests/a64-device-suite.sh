@@ -170,7 +170,29 @@ if [ -x "$root/sigchain" ]; then
 	fi
 fi
 
-# 6. The language suites -- the point of the exercise. Some 6965 cases, of which the two
+# 6. The picture a display driver is handed, without a screen to look at. The driver over the
+#    window of the application can only be seen there, but what it is fed -- the arithmetic, the row
+#    buffer, the strides through Displays.Transfer, the colour word -- is the same code here, and
+#    this machine is the one whose backend is new. The shape is compared on the host as well
+#    (tests/display-check.sh); here it is enough that the two pictures come out and agree with it.
+if [ -f "$lib/DisplayDemo.GofU8" ] && [ -f "$root/tests/display-expected.txt" ]; then
+	s=0; shell "$results/display.log" 600 \
+		"Files.AddSearchPath $lib" "DisplayDemo.Ascii" "DisplayDemo.Check" || s=$?
+	#	Carriage returns off first, and the shell's prompt off the front: the transcript of an
+	#	interactive shell puts a `>` in front of the first line each command prints, and the first line
+	#	of each of these two pictures is a blank one -- which is exactly the line that would go missing.
+	got=$(tr -d '\r' < "$results/display.log" | sed 's/^>*//' | grep -aE '^[ .+#]{78}$' || true)
+	if [ "$got" = "$(cat "$root/tests/display-expected.txt")" ]; then
+		printf '  ok    %-28s %6s  %s\n' "the picture drawn" "${_ELAPSED}s" "${results#$root/}/display.log"
+		pass=$((pass+1))
+	else
+		printf '  FAIL  %-28s the pictures differ from tests/display-expected.txt\n' "the picture drawn"
+		FAILED+=("the picture drawn"); fail=$((fail+1))
+		diff "$root/tests/display-expected.txt" <(printf '%s\n' "$got") | head -12 | sed 's/^/          /'
+	fi
+fi
+
+# 7. The language suites -- the point of the exercise. Some 6965 cases, of which the two
 #    language suites are 5450 that compile and 695 that run; they have only ever run under an
 #    emulator. `ob` sees an AArch64 runtime in this bundle and treats a64 as the native target,
 #    so nothing here is cross-compiled and nothing is emulated.
