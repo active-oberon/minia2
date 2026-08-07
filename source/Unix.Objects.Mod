@@ -374,7 +374,12 @@ TYPE
 				Unix.MtxLock( startProcess );
 				Unix.MtxLock( startEventLock ); (* the cond wait below opens this lock again! *)
 				threadId := Unix.ThrStart( BodyStarter, stacksize );
-				Unix.CondWait( childrunning, startEventLock );
+				(*	Until the child has taken it, not until the wait ends -- for the reason spelled out
+					in Await. BodyStarter clears newProcess under this same lock and signals afterwards,
+					so the field is the predicate. *)
+				WHILE newProcess # NIL DO
+					Unix.CondWait( childrunning, startEventLock )
+				END;
 				Unix.MtxUnlock( startEventLock );
 				Unix.MtxUnlock( startProcess );
 				RegisterFinalizer( SELF, FinalizeProcess );
@@ -511,7 +516,28 @@ TYPE	GCStatusExt = OBJECT (Heaps.GCStatus)
 		IF c # NIL THEN  Unix.CondSignal( c.continue )  ELSE  Unix.CondSignal( lock.enter )  END;
 
 		p.mode := AwaitingCond;
-		Unix.CondWait( p.continue, lock.mtx );
+		(*	Waited on until the monitor has actually been handed over, and not merely until the wait
+			ends. A wait on a condition variable is allowed to end without anybody having signalled it,
+			and one way it does is a signal delivered to the waiting thread: some C libraries resume the
+			wait themselves afterwards, and glibc is one of them, but Bionic is not -- there the wait
+			returns, and returns zero, so nothing complains.
+
+			On Android that turns a permitted rarity into a certainty, because the collector stops every
+			other thread with a signal on every collection. Without this loop the woken thread ran on
+			as though its condition had come true and as though it held the monitor: two owners at once,
+			the AWAIT expression never evaluated, and -- worst of the three -- the reference that the
+			awaiting frame was holding on somebody else's behalf dropped, so the next collection freed a
+			live active object and its finalizer pulled the mutex out from under the thread still using
+			it. What that looks like from outside is a segmentation fault in Objects.FindCondition a
+			collection or two later, nowhere near here.
+
+			The handover is what makes the predicate: whoever wakes a waiter writes itself as the owner
+			-- hdr.lockedBy := c, under lock.mtx, before signalling c.continue -- and lock.mtx is held
+			again by the time the wait returns. So this test cannot miss a wakeup, and Lock above has
+			been looping on the same field all along. *)
+		REPEAT
+			Unix.CondWait( p.continue, lock.mtx )
+		UNTIL hdr.lockedBy = p;
 		p.mode := Running;  hdr.lockedBy := p;  p.waitingOn := NIL
 	END Await;
 

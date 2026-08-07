@@ -110,10 +110,43 @@ printf '%s\n' "$linked" | grep -q 'Link successful' || {
 	exit 1
 }
 image="$out/oberon"
+chmod 755 "$image"
+
+# On Android the image cannot be started by name. Bionic refuses an ET_EXEC outright, and an A2
+# image cannot be position independent, so android/a2boot.c maps and enters it instead -- see the
+# long comment at the head of that file. It goes in as `oberon` with the image beside it as
+# `oberon.img`, which is the arrangement a2boot looks for, and which is what lets `ob`, run.sh and
+# everything else go on starting `oberon` and know nothing about any of it.
+#
+# Built here rather than by hand on the side, because a bundle that needs a step nobody wrote down
+# is a bundle that works once.
+if [ "$android" = 1 ]; then
+	ndk="${ANDROID_NDK:-${NDK:-}}"
+	if [ -z "$ndk" ]; then
+		# Newest first: the directories sort by version and the last one is the highest.
+		for candidate in "$HOME/Android/Sdk/ndk" /data/Android/Sdk/ndk /opt/android-sdk/ndk; do
+			[ -d "$candidate" ] || continue
+			ndk="$(ls -d "$candidate"/* 2>/dev/null | sort -V | tail -1)"
+			[ -n "$ndk" ] && break
+		done
+	fi
+	clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+	if [ ! -x "$clang" ]; then
+		echo "no NDK compiler for the Android loader: looked for $clang" >&2
+		echo "set ANDROID_NDK to an NDK directory (an Android bundle cannot be started without it)" >&2
+		exit 2
+	fi
+	mv "$image" "$out/oberon.img"
+	"$clang" -O2 -o "$out/oberon" "$root/android/a2boot.c" || {
+		echo "the Android loader did not compile" >&2
+		exit 1
+	}
+	chmod 755 "$out/oberon"
+	image="$out/oberon.img"
+fi
 
 # Copied, not linked: this leaves the tree on a cable or over adb, where a symlink points at
 # nothing. It is some 200 MB of objects before compression and a good deal less after.
-chmod 755 "$image"
 cp -L "$link"/*.SymU8 "$link"/*.GofU8 "$out/lib/"
 cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 install -m 755 "$root/docker/ob" "$out/ob"
@@ -125,11 +158,45 @@ cp "$root"/tests/A64*.Mod "$out/tests/"
 # The suites read their baseline as a2test-expected-a64.txt and their cases as *.Test; both are
 # in tests/. The .Mod files are there for the checks that compile something on the device.
 
-cat > "$out/README" <<'EOF'
+if [ "$android" = 1 ]; then
+	cat > "$out/README" <<'EOF'
+A2 for AArch64 on Android -- a self-contained SDK and its tests, against Bionic itself.
+
+Needs: an arm64 Android device and a shell with bash and coreutils, which in practice means
+Termux -- natively, NOT proot-distro. No glibc, no Docker, no emulator, no root. `adb shell`
+is not enough: it has no bash, so single checks can be driven from it but run.sh cannot.
+
+    ./run.sh            everything: boot, collector, module loading, compiling on the device,
+                        and the language suites (the long one -- thousands of cases)
+    ./run.sh --quick    all of it except the suites
+    ./ob repl           the interactive shell
+    ./ob run Hello.Mod  compile and run, in this process
+
+Getting it onto the phone, from a machine with adb:
+
+    adb push <the tarball> /sdcard/Download/
+
+and then, in Termux (the copy matters -- /sdcard is mounted without execute permission):
+
+    cp /sdcard/Download/<the tarball> ~ && cd ~ && tar xzf <the tarball>
+    cd a2-a64 && ./run.sh
+
+`oberon` here is not the image: it is the small loader from android/a2boot.c, and `oberon.img`
+beside it is the image it maps and enters. Bionic refuses to start an ET_EXEC and an A2 image
+cannot be position independent, so this is the way in; everything above it is unaware of it.
+For the same reason `ob build`, which writes a standalone ELF, produces a file that this system
+runs but that Android will not start by name -- use `ob run` on the device.
+
+Logs land in results/. `ob` sees that this SDK's runtime is AArch64 and compiles for it
+natively; there is no cross target here and no qemu anywhere in the picture.
+EOF
+else
+	cat > "$out/README" <<'EOF'
 A2 for AArch64 -- a self-contained SDK and its tests.
 
-Needs: a 64-bit ARM machine with a C library (glibc; on Android that means Termux with
-proot-distro debian, not Bionic yet) and coreutils. Nothing else -- no Docker, no emulator.
+Needs: a 64-bit ARM machine with a glibc C library and coreutils. Nothing else -- no Docker, no
+emulator. On Android this is the proot-distro debian route; for Bionic itself, build the bundle
+with --android, which brings its own way into the image.
 
     ./run.sh            everything: boot, collector, module loading, compiling on the device,
                         and the language suites (the long one -- thousands of cases)
@@ -140,6 +207,7 @@ proot-distro debian, not Bionic yet) and coreutils. Nothing else -- no Docker, n
 Logs land in results/. `ob` sees that this SDK's runtime is AArch64 and compiles for it
 natively; there is no cross target here and no qemu anywhere in the picture.
 EOF
+fi
 
 echo "bundle: $out ($(du -sh "$out" | cut -f1))"
 
@@ -150,5 +218,13 @@ if [ "$tar" = 1 ]; then
 		"$(basename "$out")"
 	echo "tarball: $tarball ($(du -sh "$tarball" | cut -f1))"
 	echo
-	echo "on the device:  tar xzf $(basename "$tarball") && cd a2-a64 && ./run.sh"
+	if [ "$android" = 1 ]; then
+		# Through /sdcard because Termux cannot read /data/local/tmp, and out of it again because
+		# /sdcard is mounted without execute permission.
+		echo "to the phone:   adb push $tarball /sdcard/Download/"
+		echo "in Termux:      cp /sdcard/Download/$(basename "$tarball") ~ && cd ~ &&" \
+			"tar xzf $(basename "$tarball") && cd a2-a64 && ./run.sh"
+	else
+		echo "on the device:  tar xzf $(basename "$tarball") && cd a2-a64 && ./run.sh"
+	fi
 fi
