@@ -69,7 +69,7 @@ cp "$image" "$out/assets/oberon.img"
 # the lib/ directory of the bundle the image came from, which is where tests/a64-bundle.sh puts them.
 objects="$(dirname "$image")/lib"
 missing=""
-for module in Plugins Displays AndroidDisplay DisplayDemo; do
+for module in Plugins Displays Inputs AndroidDisplay AndroidInput DisplayDemo; do
 	if [ -f "$objects/$module.GofU8" ]; then
 		cp "$objects/$module.GofU8" "$out/assets/"
 	else

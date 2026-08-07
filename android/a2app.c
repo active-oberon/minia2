@@ -22,11 +22,13 @@
  *	    lives, belongs to the shell user and an application cannot read it; so the image travels in
  *	    the package as an asset and is unpacked once into the application's own directory.
  *
- *	What is on the screen is A2's own doing now: source/AndroidDisplay.Mod registers a display over
- *	this window, and source/DisplayDemo.Mod draws through it. Neither is in the image -- they travel as
- *	object files and are loaded when the window arrives, which is also the first thing in this port to
- *	need dynamic loading for something other than testing it. The window itself stays here, behind the
- *	four procedures below, for the reason written above them.
+ *	What is on the screen is A2's own doing now, and so is what it does when touched:
+ *	source/AndroidDisplay.Mod registers a display over this window, source/AndroidInput.Mod turns the
+ *	touches below into A2's mouse, and source/DisplayDemo.Mod draws through the one and reacts to the
+ *	other. None of the three is in the image -- they travel as object files and are loaded when the
+ *	window arrives, which is also the first thing in this port to need dynamic loading for something
+ *	other than testing it. The window stays here, behind the four procedures further down, and so do the
+ *	touches, in a ring: both for the same reason, which is that the framework's threads are not A2's.
  *
  *	Build: see android/build-apk.sh.
  */
@@ -375,6 +377,7 @@ static void TellAboutTheWindow(void) {
 	displayTold = 1;
 	Tell(searchPath);
 	Tell("AndroidDisplay.Install");
+	Tell("AndroidInput.Install");
 	Tell("DisplayDemo.Run");
 }
 
@@ -423,6 +426,68 @@ static void OnWindowRedraw(ANativeActivity *activity, ANativeWindow *window) {
  *	goes on running, having no notion of an activity at all. */
 static ANativeActivity *theActivity;
 
+/*	Touches, on their way to A2.
+ *
+ *	They arrive on the looper's thread, which is the framework's and not one of A2's, and that settles
+ *	the shape of this: nothing here calls into A2. A2 has a collector that walks its own threads' stacks
+ *	and monitors that only its own processes may hold, so an event delivered by calling an A2 procedure
+ *	from this thread would be the same class of mistake as letting A2 report ART's faults. So the events
+ *	are put in a ring here and A2 takes them out on a thread of its own (source/AndroidInput.Mod).
+ *
+ *	Three kinds and one finger. A mouse has one position, and A2's Inputs has no notion of a second
+ *	pointer, so the first finger down is the one that counts and the rest are ignored -- honest for a
+ *	system whose input model is a mouse, and a place to grow when there is something that wants gestures.
+ *
+ *	A ring rather than a queue that grows: input that cannot be kept up with has to be dropped
+ *	somewhere, and dropping the oldest position of a finger that has since moved is the least harmful
+ *	thing to drop. It is counted and reported once, because a silent drop would show up as a system that
+ *	feels stiff and gives no reason. */
+#define TouchRoom 64
+#define TouchDown 0
+#define TouchMove 1
+#define TouchUp 2
+
+static struct { int32_t what, x, y; } touches[TouchRoom];
+static int touchIn, touchOut, touchDropped;
+static pthread_mutex_t touchMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void Remember(int32_t what, int32_t x, int32_t y) {
+	pthread_mutex_lock(&touchMutex);
+	if ((touchIn + 1) % TouchRoom == touchOut) {
+		touchOut = (touchOut + 1) % TouchRoom;			/* the oldest goes */
+		if (touchDropped++ == 0) Log("input: the ring was full, dropping the oldest touch");
+	}
+	touches[touchIn].what = what; touches[touchIn].x = x; touches[touchIn].y = y;
+	touchIn = (touchIn + 1) % TouchRoom;
+	pthread_mutex_unlock(&touchMutex);
+}
+
+/*	The next touch, or 0 when there is none. Called by A2, from a thread of its own. */
+int A2InputNext(int32_t *what, int32_t *x, int32_t *y) {
+	int answered = 0;
+	pthread_mutex_lock(&touchMutex);
+	if (touchIn != touchOut) {
+		*what = touches[touchOut].what; *x = touches[touchOut].x; *y = touches[touchOut].y;
+		touchOut = (touchOut + 1) % TouchRoom;
+		answered = 1;
+	}
+	pthread_mutex_unlock(&touchMutex);
+	return answered;
+}
+
+static void TakeMotion(AInputEvent *event) {
+	int32_t action = AMotionEvent_getAction(event);
+	int32_t x = (int32_t)AMotionEvent_getX(event, 0);
+	int32_t y = (int32_t)AMotionEvent_getY(event, 0);
+	switch (action & AMOTION_EVENT_ACTION_MASK) {
+		case AMOTION_EVENT_ACTION_DOWN: Remember(TouchDown, x, y); break;
+		case AMOTION_EVENT_ACTION_MOVE: Remember(TouchMove, x, y); break;
+		case AMOTION_EVENT_ACTION_UP:
+		case AMOTION_EVENT_ACTION_CANCEL: Remember(TouchUp, x, y); break;
+		default: break;									/* the other fingers, and what they do */
+	}
+}
+
 static int OnInput(int fd, int events, void *data) {
 	AInputQueue *queue = (AInputQueue *)data;
 	AInputEvent *event = NULL;
@@ -439,6 +504,9 @@ static int OnInput(int fd, int events, void *data) {
 				}
 				handled = 1;
 			}
+		} else if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+			TakeMotion(event);
+			handled = 1;
 		}
 		AInputQueue_finishEvent(queue, event, handled);
 	}
