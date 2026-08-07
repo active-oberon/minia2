@@ -38,6 +38,7 @@
  */
 
 #include <alloca.h>
+#include <pthread.h>
 #include <elf.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -103,10 +104,21 @@ static void *BootDlopen(const char *path, int mode) { return dlopen(path, mode);
 static void BootDlclose(void *handle) { dlclose(handle); }
 
 static void *BootDlsym(void *handle, const char *name) {
+	void *value;
 	if (strcmp(name, "dlopen") == 0) return (void *)BootDlopen;
 	if (strcmp(name, "dlclose") == 0) return (void *)BootDlclose;
 	if (strcmp(name, "dlsym") == 0) return (void *)BootDlsym;
-	return dlsym(handle, name);
+	value = dlsym(handle, name);
+	/*	One name, and not every failure, on purpose. Most of what the system asks for through here it
+		asks for optionally -- glibc-isms it does without, thread cancellation Bionic has not, the
+		property reader it uses to find out which C library this is -- and it reports those itself
+		when it wants to; complaining for all of them buries the transcript in expected lines.
+		`exit` is the exception: it is one of three the image resolves here and then checks against
+		NIL, and a failed check is a BRK with a trap number and no name, which is a bad afternoon.
+		The other two are answered above and cannot fail. */
+	if (value == NULL && strcmp(name, "exit") == 0)
+		fprintf(stderr, "a2boot: dlsym(exit) found nothing: %s\n", dlerror());
+	return value;
 }
 
 /*	One entry of the dynamic section, by tag. */
@@ -116,34 +128,92 @@ static Elf64_Xword Dynamic(const Elf64_Dyn *dynamic, Elf64_Sxword tag) {
 	return 0;
 }
 
-int main(int argc, char **argv) {
+/*	Into the image, on whatever stack this is called on, never to return.
+ *
+ *	The stack the entry point reads: argc, the arguments, a null, the environment, a null -- the
+ *	layout the kernel leaves behind, which is what Linux.Glue.Mod's {OPENING} procedure walks (it
+ *	takes argc from sp and the environment from sp + 16 + argc * 8). The image's own name is argument
+ *	zero, so what A2 sees is what it would see if the loader had started it.
+ *
+ *	Built with alloca, on the stack this is running on, rather than in a region of our own. That is
+ *	the one thing here that has to be right: the system takes the bottom of its main stack from the
+ *	address of a local of its own entry procedure (Linux.Glue.Mod, `stackBottom := ADDRESSOF(i)...`),
+ *	and the collector then walks from a stack pointer up to that bottom. So whatever this is entered
+ *	on has to be a real stack, all of it addressable, with the block at its top -- which is exactly
+ *	what a stack is and exactly what a mapping of our own turned out not to be. Nothing here returns,
+ *	so the frame this sits in is free to be overwritten. */
+void Enter(int passed, char **arguments, Elf64_Addr entry) {
+	unsigned long long *block, *slot;
+	int environmentCount = 0, i;
+	while (environ[environmentCount] != NULL) environmentCount++;
+	block = (unsigned long long *)alloca((size_t)(passed + environmentCount + 3) * 8 + 16);
+	block = (unsigned long long *)((unsigned long long)block & ~15ull);
+	slot = block;
+	*slot++ = (unsigned long long)passed;
+	for (i = 0; i < passed; i++) *slot++ = (unsigned long long)arguments[i];
+	*slot++ = 0;
+	for (i = 0; i < environmentCount; i++) *slot++ = (unsigned long long)environ[i];
+	*slot++ = 0;
+
+#if defined(__aarch64__)
+	__asm__ volatile(
+		"mov sp, %0\n\t"
+		"br %1\n\t"
+		:: "r"(block), "r"((unsigned long long)entry) : "memory");
+#else
+	__asm__ volatile(
+		"movq %0, %%rsp\n\t"
+		"jmpq *%1\n\t"
+		:: "r"(block), "r"((unsigned long long)entry) : "memory");
+#endif
+}
+
+/*	Entering on a thread of our own instead of on the one that called us.
+ *
+ *	An Android application cannot be entered the way a command is. `ANativeActivity_onCreate` is
+ *	called on a thread that belongs to the framework and has to be given back -- it runs the looper
+ *	that delivers the window and the input -- while A2 takes the stack it is entered on and never
+ *	returns. So in an application the system has to go on a thread of its own, and this is that
+ *	arrangement, reachable from the command line through A2_ON_THREAD so it can be tested here,
+ *	where a failure is a line on a terminal rather than a process gone from the launcher.
+ *
+ *	Eight megabytes because that is what the main thread gets on the machines this has run on so
+ *	far; Bionic gives a thread one by default, and the compiler is recursive. */
+static struct { int passed; char **arguments; Elf64_Addr entry; } handover;
+
+static void *Started(void *unused) {
+	(void)unused;
+	Enter(handover.passed, handover.arguments, handover.entry);
+	return NULL;										/* not reached */
+}
+
+void EnterOnOwnThread(int passed, char **arguments, Elf64_Addr entry) {
+	pthread_attr_t attributes;
+	pthread_t thread;
+	int error;
+	handover.passed = passed; handover.arguments = arguments; handover.entry = entry;
+	pthread_attr_init(&attributes);
+	pthread_attr_setstacksize(&attributes, 8u * 1024u * 1024u);
+	error = pthread_create(&thread, &attributes, Started, NULL);
+	pthread_attr_destroy(&attributes);
+	if (error != 0) { errno = error; Fail("starting the thread to run the image on"); }
+	pthread_join(thread, NULL);							/* it does not return; this is the app's wait */
+}
+
+/*	Map an image and answer its entry point, doing nothing else: no arguments, no stack, no branch.
+ *
+ *	Split out from main because there are two ways into A2 on Android and they share everything up to
+ *	here. A command is entered from main on the thread it was started on; an application is entered
+ *	from ANativeActivity_onCreate, on a thread of its own, and has a window to attend to besides (see
+ *	android/a2app.c). What differs is only what happens after this returns. */
+Elf64_Addr A2Load(const char *image) {
 	size_t size, span;
 	unsigned char *file;
 	Elf64_Ehdr *header;
 	Elf64_Phdr *segments, *load = NULL, *dynamicSegment = NULL;
 	void *mapped;
-	unsigned long long *block;
-	char **arguments;
-	char beside[4096];
-	const char *image;
-	int i, passed;
+	int i;
 
-	/*	Installed as `oberon` with `oberon.img` beside it, everything that starts A2 goes on working
-	 *	untouched, which is the point: the harness and `ob` need not know that Android takes a
-	 *	different road into the same image. */
-	image = getenv("A2_IMAGE");
-	arguments = argv; passed = argc;
-	if (image == NULL) {
-		ssize_t length = readlink("/proc/self/exe", beside, sizeof(beside) - 5);
-		if (length > 0) {
-			memcpy(beside + length, ".img", 5);
-			if (access(beside, R_OK) == 0) image = beside;
-		}
-	}
-	if (image == NULL) {
-		if (argc < 2) Refuse("usage: a2boot <image> [arguments ...] (or install as <name> with <name>.img beside it)");
-		image = argv[1]; arguments = argv + 1; passed = argc - 1;
-	}
 	/*	Android hands out heap memory with a tag in the top byte of the pointer, and the A2 collector
 	 *	is not written for that: it takes the address of a block as a number, derives the bounds of
 	 *	the heap from it and decides what is a pointer into the heap by comparison, so a tag that
@@ -217,46 +287,42 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	/*	The stack the entry point reads: argc, the arguments, a null, the environment, a null --
-	 *	the layout the kernel leaves behind, which is what Linux.Glue.Mod's {OPENING} procedure walks
-	 *	(it takes argc from sp and the environment from sp + 16 + argc * 8). It sits at the top of a
-	 *	region of its own, because the system goes on using the stack below it for its main thread.
-	 *	The image's own name is argument zero, so what A2 sees is what it would see if Bionic had
-	 *	started it. */
+	/*	The entry is read before the file goes: `header` points into it. */
 	{
-		unsigned long long *slot;
-		int environmentCount = 0;
-		while (environ[environmentCount] != NULL) environmentCount++;
-		/*	argc, the arguments, a null, the environment, a null -- built on the stack this process
-		 *	already has rather than on one of our own.
-		 *
-		 *	A stack of our own was the first thing tried and it is wrong, quietly: the system asks the
-		 *	C library where the main thread's stack lies -- the collector has to know, it walks it --
-		 *	and the answer describes the real one, whatever we happen to be running on. Anything below
-		 *	that answer is then scanned as if it held stack, and the first collection walks into
-		 *	nothing. On the real stack the two agree by construction. Nothing here returns, so the
-		 *	frame this sits in is free to be overwritten. */
-		block = (unsigned long long *)alloca((size_t)(passed + environmentCount + 3) * 8 + 16);
-		block = (unsigned long long *)((unsigned long long)block & ~15ull);
-		slot = block;
-		*slot++ = (unsigned long long)passed;
-		for (i = 0; i < passed; i++) *slot++ = (unsigned long long)arguments[i];
-		*slot++ = 0;
-		for (i = 0; i < environmentCount; i++) *slot++ = (unsigned long long)environ[i];
-		*slot++ = 0;
+		Elf64_Addr entry = header->e_entry;
+		free(file);
+		return entry;
+	}
+}
+
+#ifndef A2BOOT_NO_MAIN
+int main(int argc, char **argv) {
+	char **arguments;
+	char beside[4096];
+	const char *image;
+	int passed;
+	Elf64_Addr entry;
+
+	/*	Installed as `oberon` with `oberon.img` beside it, everything that starts A2 goes on working
+	 *	untouched, which is the point: the harness and `ob` need not know that Android takes a
+	 *	different road into the same image. */
+	image = getenv("A2_IMAGE");
+	arguments = argv; passed = argc;
+	if (image == NULL) {
+		ssize_t length = readlink("/proc/self/exe", beside, sizeof(beside) - 5);
+		if (length > 0) {
+			memcpy(beside + length, ".img", 5);
+			if (access(beside, R_OK) == 0) image = beside;
+		}
+	}
+	if (image == NULL) {
+		if (argc < 2) Refuse("usage: a2boot <image> [arguments ...] (or install as <name> with <name>.img beside it)");
+		image = argv[1]; arguments = argv + 1; passed = argc - 1;
 	}
 
-	/*	Into the image: the stack pointer at the block just built and a branch that does not return. */
-#if defined(__aarch64__)
-	__asm__ volatile(
-		"mov sp, %0\n\t"
-		"br %1\n\t"
-		:: "r"(block), "r"(header->e_entry) : "memory");
-#else
-	__asm__ volatile(
-		"movq %0, %%rsp\n\t"
-		"jmpq *%1\n\t"
-		:: "r"(block), "r"((unsigned long long)header->e_entry) : "memory");
-#endif
-	return 0;										/* not reached */
+	entry = A2Load(image);
+	if (getenv("A2_ON_THREAD") != NULL) EnterOnOwnThread(passed, arguments, entry);
+	else Enter(passed, arguments, entry);
+	return 0;										/* not reached, except when the thread returns */
 }
+#endif
