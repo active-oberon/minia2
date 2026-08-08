@@ -369,16 +369,35 @@ static void Fill(ANativeWindow *window) {
 
 /*	The system is told about the window once, and from then on it owns the picture. The commands go
  *	down the same pipe everything else does: the objects were unpacked beside the image, so naming a
- *	module is enough to have it loaded -- there is nothing of the display in the image itself. */
+ *	module is enough to have it loaded -- there is nothing of the display in the image itself.
+ *
+ *	What comes up is A2's own window manager and not the demo that came before it. The difference is
+ *	the whole point of this step: DisplayDemo owns the frame buffer and draws on it, which proves a
+ *	display driver and nothing else, while WindowManager brings a background, a window with
+ *	decoration, an event loop and a hit-testing chain -- so a finger dragging the window by its title
+ *	bar is A2 doing it, through the same Inputs messages a mouse would send. Both are in the package;
+ *	the demo is a command away for anyone with the pipe, and this is what the screen shows.
+ *
+ *	Order matters and is not arbitrary: the manager waits for a display (Displays.registry.Await) and
+ *	reads its size once, so the driver has to be registered first. Which also says what rotation does
+ *	to it -- the driver follows the window round, the manager does not know the display can change
+ *	shape, and there is no event in Displays for it to hear. That is the next thing here. */
 static int displayTold;
 
 static void TellAboutTheWindow(void) {
-	if (displayTold) return;
-	displayTold = 1;
-	Tell(searchPath);
-	Tell("AndroidDisplay.Install");
-	Tell("AndroidInput.Install");
-	Tell("DisplayDemo.Run");
+	if (!displayTold) {
+		displayTold = 1;
+		Tell(searchPath);
+		Tell("AndroidDisplay.Install");
+		Tell("AndroidInput.Install");
+		Tell("WindowManager.Install");
+	}
+	/*	Every window, not only the first. The display and the manager are installed once and go on
+		living across windows, but the demo window can be closed -- it has a close button, and a finger
+		finds it -- and then there is a desktop with nothing on it and no way back short of stopping the
+		process. Open answers "already open" and does nothing when it is still there, so this costs a
+		line in the log and nothing else. */
+	Tell("WMDemo.Open");
 }
 
 static void OnWindowCreated(ANativeActivity *activity, ANativeWindow *window) {

@@ -1,0 +1,54 @@
+# What the Android application loads at run time, beyond the 32 modules linked into the image.
+#
+# The image is configs/moduleListLinux.txt and nothing else: the same runtime the command line bundle
+# uses, with no graphics in it at all. Everything below travels in the package as an object file and is
+# loaded when the window arrives -- which is why this list exists and why it is in import order.
+#
+# It is the transitive closure of the four modules the application actually names -- AndroidDisplay,
+# AndroidInput, DisplayDemo, WMDemo -- minus what is already in the image. Add an import to any of
+# them and this list needs the new module too, or the application comes up with a window and no
+# window manager in it, saying `could not get module while importing` and nothing more.
+#
+# The objects come from the lib/ directory of the bundle android/build-apk.sh is pointed at, so
+# tests/a64-bundle.sh has to have compiled them first.
+
+Plugins
+Displays
+AndroidDisplay
+Inputs
+AndroidInput
+DisplayDemo
+
+# The window manager and everything under it. Codecs pulls in the XML and archive modules because a
+# skin is a zip of PNGs; there is no PNG decoder here, so the pointer sprites do not load and say so
+# in the log. On a screen with no mouse that costs nothing.
+RealConversions
+WMRectangles
+CLUTs
+Raster
+UTF8Strings
+WMRasterScale
+SoundDevices
+XMLObjects
+DynamicStrings
+XML
+XMLScanner
+XMLParser
+Configuration
+WMEvents
+Locks
+FP1616
+Texts
+Archives
+Codecs
+WMGraphics
+WMDefaultFont
+Debugging
+WMMessages
+WMWindowManager
+WMGraphicUtilities
+WMDefaultWindows
+WMFontManager
+Options
+WindowManager
+WMDemo

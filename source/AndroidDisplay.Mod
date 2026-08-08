@@ -52,13 +52,18 @@ MODULE AndroidDisplay;	(** AUTHOR ""; PURPOSE "Display driver over the window of
 	than served by a reallocation nobody can make safe.
 *)
 
-IMPORT SYSTEM, Unix, Displays, Plugins, Trace;
+IMPORT SYSTEM, Unix, Objects, Displays, Plugins, Trace;
 
 CONST
 	(*	What the window may hand us, as Android numbers its formats. Both of these are four bytes a
 		pixel and are written the same way -- the fourth byte is alpha in one and ignored in the other,
 		and it is set opaque either way. Anything else is refused rather than guessed at. *)
 	FormatRGBA8888 = 1;  FormatRGBX8888 = 2;
+
+	(*	How often the frame is offered to the window, in milliseconds. See Poster: this is a ceiling on
+		how long a change waits, not a frame rate -- a frame with nothing dirty in it costs a monitor
+		entry and no lock at all. *)
+	FrameMilliseconds = 16;
 
 	(*	The pixel size the display reports, as unit/36000 mm. The phone this was written on puts 2340
 		rows in some 158 mm, which is a pixel of 0.0675 mm. Nothing asks a window for its physical
@@ -248,6 +253,51 @@ TYPE
 
 	END Display;
 
+	(*	What puts the frame on the screen, on a clock of its own.
+
+		A2's displays are memory that is already the screen: something draws into the frame buffer and
+		the pixels are on the glass, so no client in the tree calls Update after drawing and the window
+		manager is one of them -- it composes into the display and stops there. A window is not memory
+		that is already the screen. The frame has to be handed over, and nobody above is going to do it.
+
+		Rather than teach the window manager about a display that must be posted -- vanilla code, and it
+		would still leave every other client -- the driver does it: one thread, offering the frame at
+		FrameMilliseconds, and Update posting only what is dirty and nothing at all when nothing is.
+		That is also what makes a client that does call Update, like DisplayDemo, cost nothing extra:
+		its call empties the region, and the next tick finds it empty and returns.
+
+		The rate is a ceiling on latency rather than a frame rate. What it costs when the screen is
+		still is one entry into a monitor and one call into the application per tick -- no lock on the
+		surface, no copy. *)
+	Poster = OBJECT
+	VAR alive, done: BOOLEAN;
+
+		PROCEDURE &Init*;
+		BEGIN alive := TRUE;  done := FALSE END Init;
+
+		(*	Stops it and waits for it to be out of Update. Waiting is the point: what follows a Stop is
+			the display being finalized and its frame buffer freed, and a thread that woke one tick
+			later would be reading it. At most one tick. *)
+		PROCEDURE Stop*;
+		BEGIN {EXCLUSIVE}
+			alive := FALSE;
+			AWAIT(done)
+		END Stop;
+
+		PROCEDURE Alive( ): BOOLEAN;
+		BEGIN {EXCLUSIVE} RETURN alive END Alive;
+
+		PROCEDURE Finished;
+		BEGIN {EXCLUSIVE} done := TRUE END Finished;
+
+	BEGIN {ACTIVE}
+		WHILE Alive() DO
+			IF display # NIL THEN display.Update END;
+			Objects.Sleep(FrameMilliseconds)
+		END;
+		Finished
+	END Poster;
+
 VAR
 	(*	The application's three procedures. Nothing else here is Android's. *)
 	windowSize: PROCEDURE {C} ( width, height: ADDRESS ): SIGNED32;
@@ -256,6 +306,7 @@ VAR
 	unlockWindow: PROCEDURE {C};
 
 	display: Display;
+	poster: Poster;
 	told, complained: BOOLEAN;						(* the first frame says what the window handed over *)
 
 PROCEDURE Erase(adr: ADDRESS; size: SIZE);
@@ -333,6 +384,7 @@ BEGIN
 	display.desc := "Display over the window of an Android application";
 	Displays.registry.Add(display, res);
 	ASSERT(res = Plugins.Ok);
+	NEW(poster);
 	Trace.String("AndroidDisplay: installed, ");
 	Trace.Int(w, 0);  Trace.String(" x ");  Trace.Int(h, 0);
 	Trace.String(", ");  Trace.Int(SIGNED32(display.fbsize DIV 1024), 0);  Trace.StringLn("K of frame buffer")
@@ -342,6 +394,9 @@ END Install;
 PROCEDURE Remove*;
 BEGIN
 	IF display = NIL THEN RETURN END;
+	(*	The thread first, and Stop waits: it reaches the display through the module variable below, and
+		one that woke between the Remove and the Finalize would be posting out of freed memory. *)
+	IF poster # NIL THEN poster.Stop;  poster := NIL END;
 	Displays.registry.Remove(display);
 	display.Finalize;
 	display := NIL;
