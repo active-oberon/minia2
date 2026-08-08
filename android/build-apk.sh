@@ -64,18 +64,24 @@ mkdir -p "$out/lib/arm64-v8a" "$out/assets" "$out/res"
 	-landroid -llog
 cp "$image" "$out/assets/oberon.img"
 
-# The display and its demo travel as object files rather than inside the image: the image is the same
-# 32-module runtime the command line bundle uses, and A2 loads what it needs at run time. Taken from
-# the lib/ directory of the bundle the image came from, which is where tests/a64-bundle.sh puts them.
+# The display, the window manager above it and the demos travel as object files rather than inside the
+# image: the image is the same 32-module runtime the command line bundle uses, and A2 loads what it
+# needs at run time. Taken from the lib/ directory of the bundle the image came from, which is where
+# tests/a64-bundle.sh puts them.
+#
+# The window manager is thirteen modules and some 900 KB of objects, and it is what makes the picture
+# on the screen A2's system rather than one module that owns the frame buffer: a background, a window
+# with decoration, an event loop, and a finger that drags the window by its title bar.
 objects="$(dirname "$image")/lib"
 missing=""
-for module in Plugins Displays Inputs AndroidDisplay AndroidInput DisplayDemo; do
+while read -r module; do
+	case "$module" in ''|'#'*) continue ;; esac
 	if [ -f "$objects/$module.GofU8" ]; then
 		cp "$objects/$module.GofU8" "$out/assets/"
 	else
 		missing="$missing $module"
 	fi
-done
+done < "$root/configs/moduleListAndroidApp.txt"
 if [ -n "$missing" ]; then
 	echo "no object files for:$missing in $objects" >&2
 	echo "build the bundle first: tests/a64-bundle.sh --android -o $(dirname "$image")" >&2
