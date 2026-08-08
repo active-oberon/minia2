@@ -22,12 +22,17 @@ MODULE AndroidInput;	(** AUTHOR ""; PURPOSE "Touches of an Android application, 
 	event with all of them is.
 *)
 
-IMPORT Unix, Inputs, Objects, Trace;
+IMPORT SYSTEM, Unix, Inputs, Objects, Trace;
 
 CONST
 	(*	What a2app.c calls them. Ours, not the NDK's: nothing in A2 should have to agree with a constant
-		of Android's, and these three are the whole vocabulary. *)
-	Down = 0;  Move = 1;  Up = 2;
+		of Android's, and these four are the whole vocabulary. *)
+	Down = 0;  Move = 1;  Up = 2;  Key = 3;
+
+	(*	And the modifiers, four of them plus the bit that says the key came up. Android has twenty; A2
+		knows these. The translation from key code to character happens on the C side, because what a
+		key means is Android's question -- what arrives here is what X11 would have sent. *)
+	ModShift = 0;  ModCtrl = 1;  ModAlt = 2;  ModMeta = 3;  ModRelease = 4;
 
 	Left = 0;					(* the mouse button a finger is, as Inputs numbers them *)
 	PollMilliseconds = 5;
@@ -56,7 +61,8 @@ TYPE
 	END Reader;
 
 VAR
-	next: PROCEDURE {C} ( what, x, y: ADDRESS ): SIGNED32;
+	next: PROCEDURE {C} ( what, a, b, c: ADDRESS ): SIGNED32;
+	softKeyboard: PROCEDURE {C} ( show: SIGNED32 ): SIGNED32;
 	reader: Reader;
 	touching: BOOLEAN;			(* a finger is down, so the button is held *)
 
@@ -79,12 +85,35 @@ BEGIN
 	Inputs.mouse.Handle(message)
 END Send;
 
+(*	One key, as A2's keyboard sees it. The character and the keysym arrive ready-made; what is done
+	here is the modifiers, four bits into the set Inputs uses -- and the left-hand one of each pair,
+	because everything in A2 tests `flags * Inputs.Shift # {}` and not which shift it was. *)
+PROCEDURE SendKey(ch, keysym, modifiers: SIGNED32);
+VAR message: Inputs.KeyboardMsg;  bits: SET;
+BEGIN
+	bits := SYSTEM.VAL(SET, modifiers);
+	message.ch := CHR(ch MOD 256);
+	message.keysym := keysym;
+	message.flags := {};
+	IF ModShift IN bits THEN INCL(message.flags, Inputs.LeftShift) END;
+	IF ModCtrl IN bits THEN INCL(message.flags, Inputs.LeftCtrl) END;
+	IF ModAlt IN bits THEN INCL(message.flags, Inputs.LeftAlt) END;
+	IF ModMeta IN bits THEN INCL(message.flags, Inputs.LeftMeta) END;
+	IF ModRelease IN bits THEN INCL(message.flags, Inputs.Release) END;
+	Inputs.keyboard.Handle(message)
+END SendKey;
+
 (*	One event, translated and broadcast. Answers whether there was one. *)
 PROCEDURE Take( ): BOOLEAN;
-VAR what, x, y: SIGNED32;
+VAR what, x, y, extra: SIGNED32;
 BEGIN
-	what := 0;  x := 0;  y := 0;
-	IF next(ADDRESSOF(what), ADDRESSOF(x), ADDRESSOF(y)) = 0 THEN RETURN FALSE END;
+	what := 0;  x := 0;  y := 0;  extra := 0;
+	IF next(ADDRESSOF(what), ADDRESSOF(x), ADDRESSOF(y), ADDRESSOF(extra)) = 0 THEN RETURN FALSE END;
+	IF what = Key THEN
+		(*	Keys and touches share a ring, so they keep their order: a key that overtook the tap that
+			put the caret where it goes would be typed in the wrong place. *)
+		SendKey(x, y, extra);  RETURN TRUE
+	END;
 	CASE what OF
 	| Down:
 		(*	A finger down is two mouse messages and not one: the pointer arriving, and then the button.
@@ -113,13 +142,30 @@ END Take;
 PROCEDURE Install*;
 BEGIN
 	IF reader # NIL THEN Trace.StringLn("AndroidInput: already installed");  RETURN END;
+	IF Unix.DlsymOptional(0, "A2Keyboard", ADDRESSOF(softKeyboard)) THEN END;
 	IF ~Unix.DlsymOptional(0, "A2InputNext", ADDRESSOF(next)) THEN
 		Trace.StringLn("AndroidInput: no window here -- this system was not started by the application");
 		RETURN
 	END;
 	NEW(reader);
-	Trace.StringLn("AndroidInput: installed, touches go to Inputs.mouse")
+	Trace.StringLn("AndroidInput: installed, touches go to Inputs.mouse and keys to Inputs.keyboard")
 END Install;
+
+(**	Ask for the soft keyboard. There is no other way to have one on a phone, and no window on this
+	system knows to ask -- A2 has never had a keyboard that needed summoning. So it is a command, and
+	the application raises it once when the window arrives. *)
+PROCEDURE ShowKeyboard*;
+BEGIN
+	IF softKeyboard = NIL THEN Trace.StringLn("AndroidInput: no application here to ask");  RETURN END;
+	IF softKeyboard(1) = 0 THEN Trace.StringLn("AndroidInput: no activity to ask for a keyboard") END
+END ShowKeyboard;
+
+(** Send it away again. *)
+PROCEDURE HideKeyboard*;
+BEGIN
+	IF softKeyboard = NIL THEN RETURN END;
+	IF softKeyboard(0) = 0 THEN END
+END HideKeyboard;
 
 (** Stop delivering them. *)
 PROCEDURE Remove*;
