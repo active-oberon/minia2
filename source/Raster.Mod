@@ -905,18 +905,17 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		END
 	END Clear1;
 
-	(*
-	PROCEDURE ClearBytes (VAR mode: Mode0; sadr: ADDRESS; sbit: SIZE; dadr: ADDRESS; dbit, len: SIZE);
-	BEGIN
-		len := len * mode.dst.bpp DIV 8;
-		WHILE len >= 4 DO
-			SYSTEM.PUT(dadr, LONG(LONG(0))); INC(dadr, 4); DEC(len)
-		END;
-		WHILE len > 0 DO
-			SYSTEM.PUT(dadr, 0X); INC(dadr); DEC(len)
-		END
-	END ClearBytes;
-	*)
+(*
+	Clearing and filling, in assembler where there is assembler for it, and in the language where
+	there is not. The six procedures below were written three times over -- x86, AMD64, ARM -- and
+	on anything else the fourth branch was the word `unimplemented`, which is not a mnemonic on any
+	machine: a module that will not compile, on purpose, so that nobody ships a Raster that silently
+	clears nothing. That is the right answer for a missing branch and the wrong one for a port, and
+	a port is what asked. So the fourth branch is now Oberon, and it is the same six loops the
+	assembler spells out.
+*)
+
+#IF I386 OR AMD64 OR ARM THEN
 
 	PROCEDURE ClearBytes (VAR mode: Mode0; sadr: ADDRESS; sbit: SIZE; dadr: ADDRESS; dbit, len: SIZE);
 	CODE
@@ -947,8 +946,6 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(len);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END ClearBytes;
 
@@ -982,8 +979,6 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(len);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END Clear32;
 
@@ -1017,8 +1012,6 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(size);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END Fill8;
 
@@ -1052,8 +1045,6 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(size);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END Fill16;
 
@@ -1091,8 +1082,6 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(size);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END Fill24;
 
@@ -1126,10 +1115,52 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		SUB R1, R1, #1 ; DEC(size);
 		B loop
 	end:
-	#ELSE
-		unimplemented
 	#END
 	END Fill32;
+
+#ELSE
+
+	PROCEDURE ClearBytes (VAR mode: Mode0; sadr: ADDRESS; sbit: SIZE; dadr: ADDRESS; dbit, len: SIZE);
+	BEGIN
+		WHILE len > 0 DO SYSTEM.PUT8(dadr, 0); INC(dadr); DEC(len) END
+	END ClearBytes;
+
+	(* len is nr of DWords*)
+	PROCEDURE Clear32 (VAR mode: Mode0; sadr: ADDRESS; sbit: SIZE; dadr: ADDRESS; dbit, len: SIZE);
+	BEGIN
+		WHILE len > 0 DO SYSTEM.PUT32(dadr, 0); INC(dadr, 4); DEC(len) END
+	END Clear32;
+
+	(*---- fill --------------*)
+	PROCEDURE Fill8(destAdr: ADDRESS; size: SIZE; filler: SIGNED32);
+	BEGIN
+		WHILE size > 0 DO SYSTEM.PUT8(destAdr, filler); INC(destAdr); DEC(size) END
+	END Fill8;
+
+	(* size in 16bit words*)
+	PROCEDURE Fill16(destAdr: ADDRESS; size: SIZE; filler: SIGNED32);
+	BEGIN
+		WHILE size > 0 DO SYSTEM.PUT16(destAdr, filler); INC(destAdr, 2); DEC(size) END
+	END Fill16;
+
+	(* size in 24bit entities*)
+	PROCEDURE Fill24(destAdr: ADDRESS; size: SIZE; filler: SIGNED32);
+	BEGIN
+		WHILE size > 0 DO
+			SYSTEM.PUT8(destAdr, filler);
+			SYSTEM.PUT8(destAdr + 1, ASH(filler, -8));
+			SYSTEM.PUT8(destAdr + 2, ASH(filler, -16));
+			INC(destAdr, 3); DEC(size)
+		END
+	END Fill24;
+
+	(* size in DWords*)
+	PROCEDURE Fill32(destAdr: ADDRESS; size: SIZE; filler: SIGNED32);
+	BEGIN
+		WHILE size > 0 DO SYSTEM.PUT32(destAdr, filler); INC(destAdr, 4); DEC(size) END
+	END Fill32;
+
+#END
 
 	(*--- srcCopy Transfer ---*)
 
