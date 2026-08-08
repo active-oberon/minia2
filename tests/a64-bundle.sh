@@ -86,15 +86,27 @@ link="$objects"
 # CompileForA64 <what it is, for the message> <module> ... -- each from source/<module>.Mod, and every
 # one of them has to have produced an object: a set of modules where the first compiles and the second
 # does not would otherwise pass for compiled.
+#
+# A module whose source file is not named after it is written <file>:<module> -- there is one, and it
+# is AMD64.WMRasterScale, which carries that prefix for the x86 assembler inside it that no longer
+# compiles anywhere (it is commented out in the vanilla tree) and is portable Oberon otherwise.
+#
+# The modules are compiled in one command and therefore in the order given, which has to be the order
+# they import each other in: the compiler reads a symbol file it has just written, not a source file
+# it has not reached yet.
 CompileForA64() {
 	local what="$1"; shift
-	local sources="" module said
-	for module in "$@"; do sources="$sources '$root/source/$module.Mod'"; done
+	local sources="" module file entry said
+	for entry in "$@"; do
+		file="${entry%%:*}"
+		sources="$sources '$root/source/$file.Mod'"
+	done
 	said=$( (cd "$build" && PWD="$build" "$oberon" do "
 		System.DoFile oberon.cfg ~
 		Compiler.Compile -p=UnixA64 --destPath='$link/'$sources ~
 	") 2>&1 | tr -d '\r' ) || true
-	for module in "$@"; do
+	for entry in "$@"; do
+		module="${entry##*:}"
 		if [ ! -f "$link/$module.GofU8" ]; then
 			echo "$what did not compile for AArch64:" >&2
 			printf '%s\n' "$said" | grep -E 'error' | head -10 >&2
@@ -109,6 +121,22 @@ CompileForA64() {
 # objects, before the Android branch points $link at a directory of links to them, so there is one copy
 # and it is there either way.
 CompileForA64 Inputs Inputs
+
+# The graphics stack, for the same reason and one more.
+#
+# The same reason: none of it is in the headless standard library -- docker/headless-core.txt keeps
+# Displays out on purpose, and a headless SDK has no screen to give it -- and both bundles want it,
+# because both run the picture checks. Displays first of all: the drivers below and the demos above it
+# all import it, and until now the only copy of its object anywhere was one left in target/A64/bin by a
+# hand-run compile months ago, which is not a thing a bundle should be built out of.
+#
+# The one more: this is what makes the window on the phone A2's window manager rather than a demo that
+# owns the frame buffer. Twelve modules, in the order they import each other.
+CompileForA64 "the display registry" Displays
+CompileForA64 "the window manager and what it draws with" \
+	WMRectangles Raster AMD64.WMRasterScale:WMRasterScale Codecs WMGraphics WMMessages \
+	WMWindowManager WMGraphicUtilities WMDefaultWindows WMDefaultFont WMFontManager WindowManager
+CompileForA64 "the window in it" WMDemo
 
 if [ "$android" = 1 ]; then
 	link="$(mktemp -d)"
@@ -201,7 +229,7 @@ cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 install -m 755 "$root/docker/ob" "$out/ob"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
 cp "$root"/tests/*.Test "$out/tests/"
-cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$out/tests/"
+cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$root/tests/wm-expected.txt" "$out/tests/"
 cp "$root"/tests/A64*.Mod "$out/tests/"
 
 # The suites read their baseline as a2test-expected-a64.txt and their cases as *.Test; both are

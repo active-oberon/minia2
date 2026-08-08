@@ -497,6 +497,7 @@ tasks:
       - task: a64-gc
       - task: sigchain
       - task: display
+      - task: wm
 
   display:
     desc: What a display driver is handed -- the picture, checked without a screen
@@ -504,6 +505,13 @@ tasks:
       - |
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/display-check.sh {{.BUILD_DIR}}/{{.HOST}}
+
+  wm:
+    desc: A2's own window manager, brought up and painted, without a screen
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
 
   sigchain:
     desc: Faults on a thread that is not A2's go back to the handler that was there before A2

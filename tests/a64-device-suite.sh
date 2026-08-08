@@ -192,7 +192,41 @@ if [ -f "$lib/DisplayDemo.GofU8" ] && [ -f "$root/tests/display-expected.txt" ];
 	fi
 fi
 
-# 7. The language suites -- the point of the exercise. Some 6965 cases, of which the two
+# 7. A2's own window manager, over a display that is nothing but memory. One layer above the check
+#    before it: Raster, WMGraphics, the font compiled into WMDefaultFont, the decoration, and the
+#    compositing in WindowManager -- all of it loaded into this runtime, none of it in the image.
+#    That is the whole of what the window on a phone shows except the last copy into ANativeWindow,
+#    and it is the first time any of it has run on AArch64. Two answers: the window's own picture,
+#    which is the same picture everywhere because the font is the embedded one, and where the window
+#    landed, which is counted rather than recorded because the title bar is drawn in whatever font
+#    the machine happens to have.
+if [ -f "$lib/WMDemo.GofU8" ] && [ -f "$root/tests/wm-expected.txt" ]; then
+	s=0; shell "$results/wm.log" 900 "Files.AddSearchPath $lib" "WMDemo.Check" || s=$?
+	clean=$(tr -d '\r' < "$results/wm.log" | sed 's/^>*//')
+	placement=$(printf '%s\n' "$clean" | grep -aoE 'window [0-9]+ of [0-9]+, background [0-9]+ of [0-9]+' | tail -1)
+	#	The window's picture is the second of the two printed; the screen's, printed first, is for the
+	#	eye in the log and not for comparing -- see the comment above.
+	got=$(printf '%s\n' "$clean" | grep -aE '^[ .+#]{78}$' | tail -30)
+	whole=0
+	case "$placement" in
+		*" of "*) set -- $(printf '%s\n' "$placement" | tr -d ','); \
+			[ "$2" = "$4" ] && [ "$6" = "$8" ] && [ "$2" != 0 ] && [ "$6" != 0 ] && whole=1 ;;
+	esac
+	if [ "$whole" = 1 ] && [ "$got" = "$(cat "$root/tests/wm-expected.txt")" ]; then
+		printf '  ok    %-28s %6s  %s\n' "the window manager" "${_ELAPSED}s" "${results#$root/}/wm.log"
+		pass=$((pass+1))
+	elif [ "$whole" != 1 ]; then
+		printf '  FAIL  %-28s %s\n' "the window manager" "the window is not where it was put: ${placement:-nothing said}"
+		FAILED+=("the window manager"); fail=$((fail+1))
+		tail -12 "$results/wm.log" | sed 's/^/          /'
+	else
+		printf '  FAIL  %-28s the window differs from tests/wm-expected.txt\n' "the window manager"
+		FAILED+=("the window manager"); fail=$((fail+1))
+		diff "$root/tests/wm-expected.txt" <(printf '%s\n' "$got") | head -12 | sed 's/^/          /'
+	fi
+fi
+
+# 8. The language suites -- the point of the exercise. Some 6965 cases, of which the two
 #    language suites are 5450 that compile and 695 that run; they have only ever run under an
 #    emulator. `ob` sees an AArch64 runtime in this bundle and treats a64 as the native target,
 #    so nothing here is cross-compiled and nothing is emulated.
