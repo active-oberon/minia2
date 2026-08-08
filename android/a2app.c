@@ -40,6 +40,7 @@
 #include <android/keycodes.h>
 #include <android/looper.h>
 #include <android/native_window.h>
+#include <jni.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -398,6 +399,10 @@ static void TellAboutTheWindow(void) {
 		process. Open answers "already open" and does nothing when it is still there, so this costs a
 		line in the log and nothing else. */
 	Tell("WMDemo.Open");
+	/*	And the keyboard, because nothing in A2 knows to ask for one: on every machine A2 has ever run
+		on, the keyboard was simply there. Raised from A2's side rather than from here, so that it is a
+		command the system owns and can send away again. */
+	Tell("AndroidInput.ShowKeyboard");
 }
 
 static void OnWindowCreated(ANativeActivity *activity, ANativeWindow *window) {
@@ -465,28 +470,35 @@ static ANativeActivity *theActivity;
 #define TouchDown 0
 #define TouchMove 1
 #define TouchUp 2
+#define KeyStroke 3
 
-static struct { int32_t what, x, y; } touches[TouchRoom];
+/*	Three numbers beside the kind, because a key needs three and a touch needs two: for a touch they
+	are x and y, for a key the character, the keysym and the modifiers. One ring for both, in order,
+	which is not tidiness -- a key that overtook the tap that put the caret where it goes would be
+	typed in the wrong place. */
+static struct { int32_t what, a, b, c; } touches[TouchRoom];
 static int touchIn, touchOut, touchDropped;
 static pthread_mutex_t touchMutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void Remember(int32_t what, int32_t x, int32_t y) {
+static void Remember(int32_t what, int32_t a, int32_t b, int32_t c) {
 	pthread_mutex_lock(&touchMutex);
 	if ((touchIn + 1) % TouchRoom == touchOut) {
 		touchOut = (touchOut + 1) % TouchRoom;			/* the oldest goes */
-		if (touchDropped++ == 0) Log("input: the ring was full, dropping the oldest touch");
+		if (touchDropped++ == 0) Log("input: the ring was full, dropping the oldest event");
 	}
-	touches[touchIn].what = what; touches[touchIn].x = x; touches[touchIn].y = y;
+	touches[touchIn].what = what;
+	touches[touchIn].a = a; touches[touchIn].b = b; touches[touchIn].c = c;
 	touchIn = (touchIn + 1) % TouchRoom;
 	pthread_mutex_unlock(&touchMutex);
 }
 
-/*	The next touch, or 0 when there is none. Called by A2, from a thread of its own. */
-int A2InputNext(int32_t *what, int32_t *x, int32_t *y) {
+/*	The next event, or 0 when there is none. Called by A2, from a thread of its own. */
+int A2InputNext(int32_t *what, int32_t *a, int32_t *b, int32_t *c) {
 	int answered = 0;
 	pthread_mutex_lock(&touchMutex);
 	if (touchIn != touchOut) {
-		*what = touches[touchOut].what; *x = touches[touchOut].x; *y = touches[touchOut].y;
+		*what = touches[touchOut].what;
+		*a = touches[touchOut].a; *b = touches[touchOut].b; *c = touches[touchOut].c;
 		touchOut = (touchOut + 1) % TouchRoom;
 		answered = 1;
 	}
@@ -499,12 +511,253 @@ static void TakeMotion(AInputEvent *event) {
 	int32_t x = (int32_t)AMotionEvent_getX(event, 0);
 	int32_t y = (int32_t)AMotionEvent_getY(event, 0);
 	switch (action & AMOTION_EVENT_ACTION_MASK) {
-		case AMOTION_EVENT_ACTION_DOWN: Remember(TouchDown, x, y); break;
-		case AMOTION_EVENT_ACTION_MOVE: Remember(TouchMove, x, y); break;
+		case AMOTION_EVENT_ACTION_DOWN: Remember(TouchDown, x, y, 0); break;
+		case AMOTION_EVENT_ACTION_MOVE: Remember(TouchMove, x, y, 0); break;
 		case AMOTION_EVENT_ACTION_UP:
-		case AMOTION_EVENT_ACTION_CANCEL: Remember(TouchUp, x, y); break;
+		case AMOTION_EVENT_ACTION_CANCEL: Remember(TouchUp, x, y, 0); break;
 		default: break;									/* the other fingers, and what they do */
 	}
+}
+
+/*	Keys, and the one place where Android's vocabulary has to be translated rather than passed on.
+ *
+ *	A key event from the NDK carries a key CODE and a meta state -- not a character. The character is
+ *	the business of a KeyCharacterMap, which lives in Java, and this application has no Java in it. So
+ *	the table below is that map, for the keys a program is written with: letters, digits, punctuation,
+ *	and the dozen keys that move a caret. It is deliberately here and not in A2 -- what a key means is
+ *	Android's question, and the answer A2 gets is the one it already understands from X11: a character,
+ *	an X11 keysym, and modifiers.
+ *
+ *	Which is why the keysym of a printable key is the character itself: X11 numbers Latin-1 that way,
+ *	and Unix.KbdMouse.Mod hands A2 exactly the same thing.
+ *
+ *	What this does not do is international text. A soft keyboard that composes -- accents, any script
+ *	that is not Latin, a prediction bar that commits a whole word -- talks to an InputConnection, which
+ *	is Java, and none of it arrives here. For writing Active Oberon, whose source is ASCII, this is the
+ *	whole of what is needed; for writing prose in Ukrainian it is not, and that is the day somebody
+ *	writes the Java half. */
+#define KsBackSpace 0xFF08
+#define KsTab       0xFF09
+#define KsReturn    0xFF0D
+#define KsEscape    0xFF1B
+#define KsDelete    0xFFFF
+#define KsHome      0xFF50
+#define KsLeft      0xFF51
+#define KsUp        0xFF52
+#define KsRight     0xFF53
+#define KsDown      0xFF54
+#define KsPageUp    0xFF55
+#define KsPageDown  0xFF56
+#define KsEnd       0xFF57
+#define KsInsert    0xFF63
+#define KsShiftL    0xFFE1
+#define KsControlL  0xFFE3
+#define KsAltL      0xFFE9
+
+/*	Our own four bits for the modifiers, in place of Android's twenty: A2 knows shift, control, alt and
+	meta, and the fifth bit says the key came up rather than went down. */
+#define ModShift   0x01
+#define ModCtrl    0x02
+#define ModAlt     0x04
+#define ModMeta    0x08
+#define ModRelease 0x10
+
+static const struct { int32_t code; int32_t plain, shifted; } printable[] = {
+	{AKEYCODE_A,'a','A'}, {AKEYCODE_B,'b','B'}, {AKEYCODE_C,'c','C'}, {AKEYCODE_D,'d','D'},
+	{AKEYCODE_E,'e','E'}, {AKEYCODE_F,'f','F'}, {AKEYCODE_G,'g','G'}, {AKEYCODE_H,'h','H'},
+	{AKEYCODE_I,'i','I'}, {AKEYCODE_J,'j','J'}, {AKEYCODE_K,'k','K'}, {AKEYCODE_L,'l','L'},
+	{AKEYCODE_M,'m','M'}, {AKEYCODE_N,'n','N'}, {AKEYCODE_O,'o','O'}, {AKEYCODE_P,'p','P'},
+	{AKEYCODE_Q,'q','Q'}, {AKEYCODE_R,'r','R'}, {AKEYCODE_S,'s','S'}, {AKEYCODE_T,'t','T'},
+	{AKEYCODE_U,'u','U'}, {AKEYCODE_V,'v','V'}, {AKEYCODE_W,'w','W'}, {AKEYCODE_X,'x','X'},
+	{AKEYCODE_Y,'y','Y'}, {AKEYCODE_Z,'z','Z'},
+	{AKEYCODE_0,'0',')'}, {AKEYCODE_1,'1','!'}, {AKEYCODE_2,'2','@'}, {AKEYCODE_3,'3','#'},
+	{AKEYCODE_4,'4','$'}, {AKEYCODE_5,'5','%'}, {AKEYCODE_6,'6','^'}, {AKEYCODE_7,'7','&'},
+	{AKEYCODE_8,'8','*'}, {AKEYCODE_9,'9','('},
+	{AKEYCODE_SPACE,' ',' '}, {AKEYCODE_COMMA,',','<'}, {AKEYCODE_PERIOD,'.','>'},
+	{AKEYCODE_MINUS,'-','_'}, {AKEYCODE_EQUALS,'=','+'}, {AKEYCODE_GRAVE,'`','~'},
+	{AKEYCODE_LEFT_BRACKET,'[','{'}, {AKEYCODE_RIGHT_BRACKET,']','}'},
+	{AKEYCODE_BACKSLASH,'\\','|'}, {AKEYCODE_SEMICOLON,';',':'},
+	{AKEYCODE_APOSTROPHE,'\'','"'}, {AKEYCODE_SLASH,'/','?'},
+	{AKEYCODE_AT,'@','@'}, {AKEYCODE_PLUS,'+','+'}, {AKEYCODE_STAR,'*','*'},
+	{AKEYCODE_POUND,'#','#'},
+	{AKEYCODE_NUMPAD_0,'0','0'}, {AKEYCODE_NUMPAD_1,'1','1'}, {AKEYCODE_NUMPAD_2,'2','2'},
+	{AKEYCODE_NUMPAD_3,'3','3'}, {AKEYCODE_NUMPAD_4,'4','4'}, {AKEYCODE_NUMPAD_5,'5','5'},
+	{AKEYCODE_NUMPAD_6,'6','6'}, {AKEYCODE_NUMPAD_7,'7','7'}, {AKEYCODE_NUMPAD_8,'8','8'},
+	{AKEYCODE_NUMPAD_9,'9','9'},
+};
+
+static const struct { int32_t code; int32_t ch, keysym; } special[] = {
+	{AKEYCODE_ENTER,          '\r', KsReturn},   {AKEYCODE_NUMPAD_ENTER, '\r', KsReturn},
+	{AKEYCODE_TAB,            '\t', KsTab},
+	{AKEYCODE_DEL,            '\b', KsBackSpace},
+	{AKEYCODE_FORWARD_DEL,    0x7F, KsDelete},
+	{AKEYCODE_ESCAPE,         0x1B, KsEscape},
+	{AKEYCODE_DPAD_LEFT,      0, KsLeft},        {AKEYCODE_DPAD_RIGHT, 0, KsRight},
+	{AKEYCODE_DPAD_UP,        0, KsUp},          {AKEYCODE_DPAD_DOWN,  0, KsDown},
+	{AKEYCODE_MOVE_HOME,      0, KsHome},        {AKEYCODE_MOVE_END,   0, KsEnd},
+	{AKEYCODE_PAGE_UP,        0, KsPageUp},      {AKEYCODE_PAGE_DOWN,  0, KsPageDown},
+	{AKEYCODE_INSERT,         0, KsInsert},
+	{AKEYCODE_SHIFT_LEFT,     0, KsShiftL},      {AKEYCODE_SHIFT_RIGHT, 0, KsShiftL},
+	{AKEYCODE_CTRL_LEFT,      0, KsControlL},    {AKEYCODE_CTRL_RIGHT,  0, KsControlL},
+	{AKEYCODE_ALT_LEFT,       0, KsAltL},        {AKEYCODE_ALT_RIGHT,   0, KsAltL},
+};
+
+static int32_t Modifiers(int32_t meta) {
+	int32_t flags = 0;
+	if (meta & (AMETA_SHIFT_ON | AMETA_CAPS_LOCK_ON)) flags |= ModShift;
+	if (meta & AMETA_CTRL_ON) flags |= ModCtrl;
+	if (meta & AMETA_ALT_ON) flags |= ModAlt;
+	if (meta & AMETA_META_ON) flags |= ModMeta;
+	return flags;
+}
+
+/*	Answers whether the key was one this knows; an unknown key is left to the framework, which is how
+	volume and the rest go on working. */
+static int TakeKey(AInputEvent *event) {
+	int32_t code = AKeyEvent_getKeyCode(event);
+	int32_t action = AKeyEvent_getAction(event);
+	int32_t flags = Modifiers(AKeyEvent_getMetaState(event));
+	int32_t ch = 0, keysym = 0;
+	size_t i;
+	if (action != AKEY_EVENT_ACTION_DOWN && action != AKEY_EVENT_ACTION_UP) return 0;
+	for (i = 0; i < sizeof(printable) / sizeof(printable[0]); i++) {
+		if (printable[i].code == code) {
+			ch = (flags & ModShift) ? printable[i].shifted : printable[i].plain;
+			keysym = ch;								/* X11 numbers Latin-1 as itself */
+			break;
+		}
+	}
+	if (keysym == 0) {
+		for (i = 0; i < sizeof(special) / sizeof(special[0]); i++) {
+			if (special[i].code == code) { ch = special[i].ch; keysym = special[i].keysym; break; }
+		}
+	}
+	if (keysym == 0) return 0;
+	/*	Control turns a letter into its control character, as every terminal has since teletypes: this
+		is what makes Ctrl-C reach a program rather than typing a c. */
+	if ((flags & ModCtrl) && ch >= 'a' && ch <= 'z') ch = ch - 'a' + 1;
+	else if ((flags & ModCtrl) && ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 1;
+	if (action == AKEY_EVENT_ACTION_UP) flags |= ModRelease;
+	Remember(KeyStroke, ch, keysym, flags);
+	return 1;
+}
+
+/*	The soft keyboard, and the one place where "no Java" had to be read carefully.
+ *
+ *	`ANativeActivity_showSoftInput` is the NDK's answer and it does not work here. Asked implicitly,
+ *	forced, from the window-created callback, from the focus callback, and with
+ *	`stateAlwaysVisible` in the manifest -- `dumpsys input_method` said `mInputShown=false` every time,
+ *	and nothing anywhere complained. The reason is not a bug: an input method opens for a view that can
+ *	receive text, which means a view with an InputConnection, and a NativeActivity's view is a surface
+ *	with no notion of text at all. The NDK call goes through the same path and is dropped by the same
+ *	rule.
+ *
+ *	What works is asking InputMethodManager directly, which is a Java object -- reached from here
+ *	through JNI, without a line of Java in the package. The distinction is worth keeping straight: this
+ *	application has no classes of its own and no classes.dex, and calling the framework's own classes
+ *	from C does not change that. `activity->vm` and `activity->clazz` are handed to us for exactly this.
+ *
+ *	The decor view is made focusable and asked for focus first, because showSoftInput opens for the
+ *	view it is given and a view that cannot hold focus is not one of those. */
+static int Keyboard(int show) {
+	JavaVM *vm;
+	JNIEnv *env = NULL;
+	int attached = 0, answered = 0;
+	jclass activityClass, windowClass, viewClass, immClass;
+	jobject imm = NULL, window = NULL, decor = NULL;
+	jmethodID method;
+	jstring service;
+
+	if (theActivity == NULL) return 0;
+	vm = theActivity->vm;
+	if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*vm)->AttachCurrentThread(vm, &env, NULL) != 0) {
+			Complain("keyboard: cannot reach the virtual machine from this thread");
+			return 0;
+		}
+		attached = 1;
+	}
+
+	activityClass = (*env)->GetObjectClass(env, theActivity->clazz);
+
+	/*	getSystemService("input_method") */
+	method = (*env)->GetMethodID(env, activityClass, "getSystemService",
+			"(Ljava/lang/String;)Ljava/lang/Object;");
+	service = (*env)->NewStringUTF(env, "input_method");
+	imm = (*env)->CallObjectMethod(env, theActivity->clazz, method, service);
+	(*env)->DeleteLocalRef(env, service);
+
+	/*	getWindow().getDecorView() */
+	method = (*env)->GetMethodID(env, activityClass, "getWindow", "()Landroid/view/Window;");
+	window = (*env)->CallObjectMethod(env, theActivity->clazz, method);
+	windowClass = (*env)->GetObjectClass(env, window);
+	method = (*env)->GetMethodID(env, windowClass, "getDecorView", "()Landroid/view/View;");
+	decor = (*env)->CallObjectMethod(env, window, method);
+	viewClass = (*env)->GetObjectClass(env, decor);
+
+	if (imm != NULL && decor != NULL) {
+		immClass = (*env)->GetObjectClass(env, imm);
+		if (show) {
+			method = (*env)->GetMethodID(env, viewClass, "setFocusable", "(Z)V");
+			(*env)->CallVoidMethod(env, decor, method, JNI_TRUE);
+			method = (*env)->GetMethodID(env, viewClass, "setFocusableInTouchMode", "(Z)V");
+			(*env)->CallVoidMethod(env, decor, method, JNI_TRUE);
+			method = (*env)->GetMethodID(env, viewClass, "requestFocus", "()Z");
+			(*env)->CallBooleanMethod(env, decor, method);
+			method = (*env)->GetMethodID(env, immClass, "showSoftInput", "(Landroid/view/View;I)Z");
+			answered = (*env)->CallBooleanMethod(env, imm, method, decor, 2 /* SHOW_FORCED */);
+		} else {
+			jobject token;
+			method = (*env)->GetMethodID(env, viewClass, "getWindowToken", "()Landroid/os/IBinder;");
+			token = (*env)->CallObjectMethod(env, decor, method);
+			method = (*env)->GetMethodID(env, immClass, "hideSoftInputFromWindow",
+					"(Landroid/os/IBinder;I)Z");
+			answered = (*env)->CallBooleanMethod(env, imm, method, token, 0);
+		}
+	}
+	if ((*env)->ExceptionCheck(env)) {
+		(*env)->ExceptionDescribe(env);
+		(*env)->ExceptionClear(env);
+		answered = 0;
+	}
+	if (attached) (*vm)->DetachCurrentThread(vm);
+	return answered ? 1 : 0;
+}
+
+/*	And the reason A2 cannot simply call the above: a view belongs to the thread that made it.
+ *
+ *	`setFocusable` on the decor view from A2's thread aborts the process outright -- ART checks, and
+ *	says so: `Only the original thread that created a view hierarchy can touch its views. Expected:
+ *	main Calling: Thread-2`. Not a crash in our code and not something a return value would have told
+ *	us; the whole process was gone a second after it started.
+ *
+ *	So the request crosses to the main thread the way everything else in this file crosses a thread
+ *	boundary -- through a pipe the looper watches. It is the same shape as the touches, and for the
+ *	same reason turned round: there, the framework's thread must not call into A2; here, A2's thread
+ *	must not call into the framework. */
+static int keyboardWanted[2] = { -1, -1 };
+
+static int OnKeyboardWanted(int fd, int events, void *data) {
+	char want = 0, byte;
+	(void)events; (void)data;
+	while (read(fd, &byte, 1) == 1) want = byte;			/* the last word wins */
+	if (want != 0) Log("keyboard: %s", Keyboard(want == 1) ? "up" : "the input method said no");
+	return 1;											/* keep the callback registered */
+}
+
+int A2Keyboard(int show) {
+	char want = show ? 1 : 2;
+	if (keyboardWanted[1] < 0) return 0;
+	return write(keyboardWanted[1], &want, 1) == 1;
+}
+
+/*	And when the window has focus, because that is the earliest the request can succeed: a window that
+ *	does not have focus is not a window an input method will open for, and the window is created some
+ *	way before it is focused. Once per focus gained; asking twice is harmless but says nothing. */
+static void OnWindowFocusChanged(ANativeActivity *activity, int hasFocus) {
+	(void)activity;
+	Log("window focus %s", hasFocus ? "gained" : "lost");
+	if (hasFocus && displayTold) Tell("AndroidInput.ShowKeyboard");
 }
 
 static int OnInput(int fd, int events, void *data) {
@@ -522,6 +775,10 @@ static int OnInput(int fd, int events, void *data) {
 					ANativeActivity_finish(theActivity);
 				}
 				handled = 1;
+			} else {
+				/*	Everything else is offered to A2, and what it does not know stays unhandled so that
+					the framework goes on doing what it did with it -- volume, the home key, the rest. */
+				handled = TakeKey(event);
 			}
 		} else if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
 			TakeMotion(event);
@@ -584,6 +841,16 @@ void ANativeActivity_onCreate(ANativeActivity *activity, void *savedState, size_
 	activity->callbacks->onNativeWindowDestroyed = OnWindowDestroyed;
 	activity->callbacks->onNativeWindowRedrawNeeded = OnWindowRedraw;
 	activity->callbacks->onNativeWindowResized = OnWindowResized;
+	/*	The channel A2 asks for the keyboard through, watched here on the thread that owns the view.
+		Made before anything can ask, and never closed: the activity outlives every asker. */
+	if (pipe(keyboardWanted) == 0) {
+		fcntl(keyboardWanted[0], F_SETFL, O_NONBLOCK);
+		ALooper_addFd(ALooper_forThread(), keyboardWanted[0], 2, ALOOPER_EVENT_INPUT,
+				OnKeyboardWanted, NULL);
+	} else {
+		Complain("no pipe for the keyboard: %s", strerror(errno));
+	}
+	activity->callbacks->onWindowFocusChanged = OnWindowFocusChanged;
 	activity->callbacks->onInputQueueCreated = OnInputQueueCreated;
 	activity->callbacks->onInputQueueDestroyed = OnInputQueueDestroyed;
 	theActivity = activity;

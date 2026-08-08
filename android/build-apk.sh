@@ -90,6 +90,11 @@ fi
 
 # hasCode="false" is what says there is no Java here; without it the runtime looks for classes.dex
 # and refuses to start. android.app.lib_name names the library above, without the lib prefix.
+#
+# windowSoftInputMode="adjustNothing" is not a preference. The default is to resize the window when the
+# soft keyboard comes up, and a window that changes size under A2 is exactly the case the window manager
+# cannot follow yet -- the same one a rotation runs into. The keyboard covering the lower part of the
+# picture is the lesser of the two, and it is what a phone does anyway.
 cat > "$out/AndroidManifest.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -101,6 +106,7 @@ cat > "$out/AndroidManifest.xml" <<'XML'
 		<activity android:name="android.app.NativeActivity"
 			android:label="A2"
 			android:configChanges="orientation|keyboardHidden|screenSize"
+			android:windowSoftInputMode="stateAlwaysVisible|adjustNothing"
 			android:exported="true">
 			<meta-data android:name="android.app.lib_name" android:value="a2app" />
 			<intent-filter>

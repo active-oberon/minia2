@@ -22,7 +22,7 @@ MODULE WMDemo;	(** AUTHOR ""; PURPOSE "A window of A2's own window manager, and 
 *)
 
 IMPORT
-	SYSTEM, Trace, Objects, Plugins, Displays, Strings,
+	SYSTEM, Trace, Objects, Plugins, Displays, Strings, Inputs,
 	Rect := WMRectangles, WMGraphics, WMDefaultFont, WM := WMWindowManager, WindowManager;
 
 CONST
@@ -46,14 +46,42 @@ CONST
 
 TYPE
 	Window = OBJECT (WM.BufferWindow)
+	VAR
+		typed: ARRAY 96 OF CHAR;		(* what has been typed into it, and nothing more *)
+		filled: SIZE;
 
 		PROCEDURE &New*;
 		BEGIN
+			typed := "";  filled := 0;
 			Init(Width, Height, FALSE);
 			Paint;
 			SetTitle(Strings.NewString("A2"));
 			WM.AddWindow(SELF, Left, Top)
 		END New;
+
+		(*	The keyboard, arriving the way every other key in A2 arrives: the window manager hands the
+			focused window a character, an X11 keysym and the modifiers, and where they came from -- a
+			soft keyboard on a phone, an X server, a PS/2 controller on a bare board -- is not a question
+			this procedure can ask. That is the point of doing it in `Inputs` rather than in the
+			application: nothing above the driver is Android-specific, and this same window would take
+			typing from any of the three.
+
+			Releases are ignored: a character arrives on the way down, and a window that acted on both
+			would type everything twice. *)
+		PROCEDURE KeyEvent*(ucs: SIZE; flags: SET; keysym: SIZE);
+		BEGIN
+			IF Inputs.Release IN flags THEN RETURN END;
+			IF keysym = Inputs.KsBackSpace THEN
+				IF filled > 0 THEN DEC(filled);  typed[filled] := 0X END
+			ELSIF (keysym = Inputs.KsReturn) OR (keysym = Inputs.KsEscape) THEN
+				filled := 0;  typed[0] := 0X
+			ELSIF (ucs >= 20H) & (ucs < 7FH) & (filled < LEN(typed) - 1) THEN
+				typed[filled] := CHR(ucs);  INC(filled);  typed[filled] := 0X
+			ELSE
+				RETURN									(* nothing changed, so nothing is redrawn *)
+			END;
+			Paint
+		END KeyEvent;
 
 		(*	Everything the window shows, at once.
 
@@ -64,7 +92,7 @@ TYPE
 			lines differently on every machine. It is exercised rather than avoided: if that fallback
 			stopped working the window would come up blank, and blank is what the record catches. *)
 		PROCEDURE Paint;
-		VAR font: WMGraphics.Font;  y, dx, dy: SIZE;
+		VAR font: WMGraphics.Font;  y, dx, dy, line, prompt, caret: SIZE;
 		BEGIN
 			canvas.Fill(Rect.MakeRect(0, 0, Width, Height), Panel, WMGraphics.ModeCopy);
 			canvas.Fill(Rect.MakeRect(0, 0, Width, 4), Accent, WMGraphics.ModeCopy);
@@ -72,11 +100,20 @@ TYPE
 			font := WMDefaultFont.LoadDefaultFont();
 			IF font # NIL THEN canvas.SetFont(font) ELSE font := canvas.GetFont() END;
 			canvas.SetColor(Ink);
-			font.GetStringSize("Ag", dx, dy);
+			font.GetStringSize("Ag", dx, line);
 			y := 40;
-			canvas.DrawString(24, y, "Active Oberon / A2");  INC(y, dy + 6);
-			canvas.DrawString(24, y, "window manager, on this machine");  INC(y, dy + 6);
-			canvas.DrawString(24, y, "drag me by the title bar");
+			canvas.DrawString(24, y, "Active Oberon / A2");  INC(y, line + 6);
+			canvas.DrawString(24, y, "window manager, on this machine");  INC(y, line + 6);
+			canvas.DrawString(24, y, "drag me by the title bar, then type");  INC(y, line + 12);
+
+			(*	The typed line, with a caret drawn rather than blinked: a blinking caret wants a timer,
+				and the only thing this one has to say is that a key arrived. *)
+			font.GetStringSize("> ", prompt, dy);
+			font.GetStringSize(typed, caret, dy);
+			canvas.DrawString(24, y, "> ");
+			canvas.DrawString(24 + prompt, y, typed);
+			canvas.Fill(Rect.MakeRect(24 + prompt + caret, y - line + 3, 24 + prompt + caret + 2, y + 3),
+				Accent, WMGraphics.ModeCopy);
 
 			(*	A frame and both diagonals: the same geometry tests/display-check.sh reads off a
 				photograph, here inside a window, where a wrong stride or a wrong offset bends it. *)
