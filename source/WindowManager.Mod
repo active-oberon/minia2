@@ -11,6 +11,18 @@ CONST
 	XYResizeHandleSize = 15;
 	ZF = 0.90; ZD = 0.1;
 
+	(*	What a pixel of the window manager's is worth, as Displays counts it: unit/36000 mm, so this is
+		0.28 mm, a screen of some 91 dots to the inch. It is not a preference -- it is the density every
+		number in this module and in the decoration was chosen at, the fifteen pixels of resize handle
+		above included, and it is what DisplayNull and the memory displays in DisplayDemo and WMDemo
+		report. See ZoomForUnit. *)
+	NominalUnit = 10000;
+
+	(*	How far a dense screen will be zoomed. Eight is past any screen that exists: a pixel an eighth
+		of NominalUnit is 0.035 mm, which is 730 dots to the inch. The bound is here so that a display
+		reporting nonsense cannot leave the window manager looking at four pixels of itself. *)
+	MaxZoom = 8;
+
 TYPE
 	WindowState = WM.WindowState;
 	Window = WM.Window;
@@ -38,18 +50,58 @@ TYPE
 			KernelLog.Int(disp.width, 0); KernelLog.Char("x"); KernelLog.Int(disp.height, 0);
 			KernelLog.Char("x"); KernelLog.Int(disp.format * 8, 0); KernelLog.Ln;
 			Raster.Create(backbuffer, disp.width, disp.height, Raster.DisplayFormat(disp.format));
-			range.r := range.l + disp.width; range.b := range.t + disp.height;
 			deviceRect.r := disp.width; deviceRect.b := disp.height;
-			width0 := disp.width; height0 := disp.height;
+			(*	The zoom the screen asks for by the size of its pixel, and the range that follows from it.
+				Scale is what fills in range.r and range.b, and it is the same procedure SetRange uses --
+				there is nothing special about the zoom a view starts at except that there is no manager
+				to tell about it yet. *)
+			Scale(ZoomForUnit(disp.unit));
+			(*	How much of the window manager's coordinate space this view shows, which is the screen
+				divided by the zoom rather than the screen. Read by anything that puts a window somewhere
+				on the view without being told where -- MainMenu at the bottom edge, WMBackdrop over the
+				whole of it -- and at zoom 1 it is the width and the height, as it has always been. *)
+			width0 := ENTIER(disp.width * inffx); height0 := ENTIER(disp.height * inffy);
+			(*	Said every time and not only when it is not 1: a window manager that has come up the size
+				of a postage stamp and a window manager that has come up correct differ by this line, and
+				on a telephone it is the only place either of them is written down. *)
+			KernelLog.String("WindowManager: a pixel of "); KernelLog.Int(disp.unit, 0);
+			KernelLog.String("/36000 mm, so the view is zoomed "); KernelLog.Int(ENTIER(factor), 0);
+			KernelLog.String("x and shows ");
+			KernelLog.Int(width0, 0); KernelLog.Char("x"); KernelLog.Int(height0, 0); KernelLog.Ln;
 			desc := "Graphics adapter view";
 			NEW(canvas, backbuffer);
 			canvas.SetFont(Graphics.GetDefaultFont());
 			canvas.SaveState(state);
-			factor := 1; intfactor := 1;
-			fx := factor; fy := factor; inffx := 1 ; inffy := inffx;
 			internnavig := FALSE;
 			modifierKeys := {};
 		END New;
+
+		(*	The zoom and everything derived from it. Nothing here touches the manager, so that the
+			constructor -- which has not got one yet -- can use it too. *)
+		PROCEDURE Scale(f : FLOAT32);
+		BEGIN
+			factor := f; intfactor := f;
+			fx := factor; fy := factor; inffx := 1 / factor; inffy := inffx;
+			range.r := range.l + display.width * inffx;
+			range.b := range.t + display.height * inffy
+		END Scale;
+
+		(*	How a window's picture is put on the screen at the zoom in force.
+
+			At a whole-number factor a pixel of the picture is a square block of pixels of the screen, and
+			ScaleBox writes exactly that: an edge lands where it was drawn and a glyph of the bitmap font
+			stays a glyph. Anything else has no such block -- the picture's pixels fall between the
+			screen's -- and interpolating is the only honest answer, which is what the bilinear filter is
+			for. A factor of 1 goes through neither: the sizes agree and the window's Draw copies.
+
+			During a navigation it is ScaleBox regardless, as it has always been: sixteen frames of
+			transition are not worth filtering. *)
+		PROCEDURE Interpolation() : INTEGER;
+		BEGIN
+			IF navig OR (factor = ENTIER(factor)) THEN RETURN Graphics.ScaleBox
+			ELSE RETURN Graphics.ScaleBilinear
+			END
+		END Interpolation;
 
 		(**  Return the modifier keys that are pressed in the view *)
 		PROCEDURE GetKeyState*(VAR state : SET);
@@ -212,17 +264,14 @@ TYPE
 		CONST Steps = 16;
 
 			PROCEDURE Set(x, y, w, h : FLOAT32);
-			VAR tf : FLOAT32;
+			VAR f, tf : FLOAT32;
 			BEGIN
 				range.l := x;
 				range.t := y;
-				factor := (display.width) / w;
+				f := (display.width) / w;
 				tf := (display.height) / h;
-				IF factor > tf THEN factor := tf END;
-				fx := factor; fy := factor; inffx := 1 / factor; inffy := inffx;
-				range.r := x + display.width * inffx;
-				range.b := y + display.height * inffy;
-				intfactor := factor;
+				IF f > tf THEN f := tf END;
+				Scale(f);
 				manager.RefreshView(SELF);
 			END Set;
 
@@ -312,11 +361,7 @@ TYPE
 								END;
 
 
-								IF navig THEN
-									cur.Draw(canvas, width, height, Graphics.ScaleBox);
-								ELSE
-									cur.Draw(canvas, width, height, Graphics.ScaleBilinear);
-								END;
+								cur.Draw(canvas, width, height, Interpolation());
 								canvas.RestoreState(state);
 							END;
 						END;
@@ -1674,6 +1719,42 @@ VAR
 	defaultMouse : MouseObj;
 	CharToUnicode: ARRAY 256 OF SIGNED32; (** mapping from Oberon character codes to Unicodes **)
 
+
+(*	The zoom a display asks for by the size of its pixel.
+
+	A Displays.Display has said how big its pixel is since the beginning -- `unit`, in unit/36000 mm --
+	and nothing in A2 has ever read it. That is affordable while every screen is a monitor and a pixel is
+	a quarter of a millimetre; it stops being affordable on a telephone, where a pixel is a fifteenth of
+	one. What comes up there is not a system with a font that is too small. It is a system whose
+	coordinate is too small -- a title bar a millimetre tall, a close box no finger can hit, a resize
+	handle of fifteen pixels that is one millimetre of glass -- and no font would fix any of it.
+
+	So the view starts zoomed by the ratio: a pixel of the window manager's is held at NominalUnit
+	whatever the screen's is, and everything laid out in it comes out the size it was drawn to be. The
+	pointer arrives back through the same factor (see PointerEvent), so what is scaled is not only the
+	picture but where a touch lands in it -- which is the half that matters on a screen whose only input
+	is a finger.
+
+	Whole numbers only, and that is the one judgement here. The ratio on the telephone this was written
+	for is 4.6, and the remainder costs a blurred glyph: at an integer factor a pixel of the picture is a
+	square block of pixels of the screen, which Draw hands to ScaleBox and gets back exactly, and at
+	4.6 nothing lines up with anything and every letter goes through the bilinear filter. A tenth of the
+	size being right is not worth a screen of smeared text.
+
+	A display that says nothing -- unit = 0, which is most of them; the X11 driver has never filled it
+	in -- gets 1, which is what A2 has always done. So does one whose pixel is NominalUnit or bigger:
+	a screen coarser than the layout was drawn for is a screen with room to spare, not a case for
+	drawing at a quarter size.
+*)
+PROCEDURE ZoomForUnit*(unit : SIGNED32) : FLOAT32;
+VAR zoom : SIGNED32;
+BEGIN
+	IF (unit <= 0) OR (unit >= NominalUnit) THEN RETURN 1 END;
+	zoom := (NominalUnit + unit DIV 2) DIV unit;			(* the nearest whole number, not the one below *)
+	IF zoom < 1 THEN zoom := 1 END;
+	IF zoom > MaxZoom THEN zoom := MaxZoom END;
+	RETURN zoom
+END ZoomForUnit;
 
 PROCEDURE Bound(VAR x:SIZE; min, max:SIZE);
 BEGIN
