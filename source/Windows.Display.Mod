@@ -1086,7 +1086,7 @@ VAR
 		res: INTEGER;  create: CreateStruct;  win: Window;  hMenu: User32.HMenu;  x, y: SIGNED32;
 	VAR border: SIGNED32;  rect: User32.Rect;   (*ALEX 2005.11.30*)
 
-		hDC: User32.HDC;
+		hDC: User32.HDC;  dpi: SIGNED32;
 
 	CONST SMCYMaximized = 62;  SMCXMaximized = 61;
 	BEGIN
@@ -1164,8 +1164,14 @@ VAR
 		END;
 
 		hDC := User32.GetDC(0);
-		disp.unit := GDI32.GetDeviceCaps(hDC,GDI32.LogPixelsX);
-		disp.unit := ENTIER((36000.0*disp.unit)/25.4);
+		(*	Displays.unit is the size of a pixel, as unit/36000 mm, and LogPixelsX is how many pixels go
+			in an inch -- so the one is 36000 * 25.4 divided by the other. It stood here the other way up,
+			36000 * dpi / 25.4, which for the ordinary 96 dots to the inch says 136063: a pixel of 3.8 mm.
+			Nothing read the field, so nothing ever noticed. Something does now -- WindowManager zooms the
+			view by it -- and a pixel reported four times the size of the screen's would be a window
+			manager drawn at a quarter scale. *)
+		dpi := GDI32.GetDeviceCaps(hDC,GDI32.LogPixelsX);
+		IF dpi > 0 THEN disp.unit := ENTIER(36000.0 * 25.4 / dpi) ELSE disp.unit := 0 END;
 		IGNORE User32.ReleaseDC(0,hDC);
 	END DoInstall;
 

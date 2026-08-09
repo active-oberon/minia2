@@ -37,6 +37,13 @@ MODULE AndroidDisplay;	(** AUTHOR ""; PURPOSE "Display driver over the window of
 
 	Nothing is dirty, nothing is locked: an idle system posts no frames at all.
 
+	How big a pixel is has stopped being a note in a log. A Displays.Display reports it, this driver has
+	always reported a constant, and nothing read the field -- and a window manager that lays a title bar
+	out in pixels on a screen whose pixel is a fifteenth of a millimetre lays out a title bar a
+	millimetre tall, which is what A2 on a phone looked like. WindowManager now zooms its view by that
+	number, so the number is asked of the application (A2WindowDensityDpi, PixelSize below) rather than
+	assumed, and the constant is what a phone that will not answer gets.
+
 	A rotation makes the window a different shape while the display stays the same object, and this is
 	where A2 has nothing to offer: a Displays.Display has a width and a height and no notion of either
 	changing, so there is no notification for a client to wait for. What is done here is the least that
@@ -65,10 +72,16 @@ CONST
 		entry and no lock at all. *)
 	FrameMilliseconds = 16;
 
-	(*	The pixel size the display reports, as unit/36000 mm. The phone this was written on puts 2340
-		rows in some 158 mm, which is a pixel of 0.0675 mm. Nothing asks a window for its physical
-		size, so this is a constant standing for "a dense screen" rather than a measurement. *)
+	(*	What a pixel is taken to be when the application will not say how dense the screen is, as
+		unit/36000 mm. The phone this was written on puts 2340 rows in some 158 mm, which is a pixel of
+		0.0675 mm; this is that measurement, and it stands for "a dense screen" for any phone that does
+		not answer. Something reads this now -- WindowManager zooms the view by it -- so being wrong here
+		is a system laid out at the wrong size rather than a wrong number in a log. *)
 	PixelUnit = 2430;
+
+	(*	36000 * 25.4: a density in dots to the inch turns into the size of a pixel by dividing this by
+		it, because Displays counts a pixel in unit/36000 mm and there are 25.4 mm to the inch. *)
+	UnitsPerInch = 914400;
 
 TYPE
 	(*	What has been drawn and not yet put on the screen, as one rectangle. A monitor of its own, and
@@ -123,7 +136,7 @@ TYPE
 		PROCEDURE &Init*(w, h: SIGNED32);
 		BEGIN
 			offscreen := 0;
-			format := Displays.color8888;  unit := PixelUnit;
+			format := Displays.color8888;  unit := PixelSize();
 			(*	One allocation, for the window as it stands, and it is enough for the window turned round
 				as well: a rotation swaps the sides and the product is what a frame buffer costs. The
 				measurement that says so, from the phone this was written on: 1080 x 2340 upright and
@@ -302,12 +315,40 @@ VAR
 	(*	The application's three procedures. Nothing else here is Android's. *)
 	windowSize: PROCEDURE {C} ( width, height: ADDRESS ): SIGNED32;
 	windowGeneration: PROCEDURE {C} ( ): SIGNED32;
+	(*	How dense the screen is, in dots to the inch. Optional in a way the other four are not: an
+		application built before it existed simply has no such symbol, and a driver that refused to
+		install for that would be a display lost over a number it has a stand-in for. *)
+	windowDensity: PROCEDURE {C} ( ): SIGNED32;
 	lockWindow: PROCEDURE {C} ( bits, width, height, stride, format, left, top, right, bottom: ADDRESS ): SIGNED32;
 	unlockWindow: PROCEDURE {C};
 
 	display: Display;
 	poster: Poster;
 	told, complained: BOOLEAN;						(* the first frame says what the window handed over *)
+
+(*	The size of a pixel of this screen, as Displays counts it, out of the density the application
+	reports.
+
+	The number matters to exactly one thing and it is not this module: the window manager reads it and
+	zooms its whole view by it, which is what makes a title bar on a telephone a title bar rather than a
+	line. So it is asked for rather than assumed -- and where the answer is 0, either because there is no
+	window or because an application built before this procedure existed has no such export, the
+	measurement of one phone stands in. dlsym for a name that is not there is how that is found out, and
+	the fallback is what the driver did for every phone until now. *)
+PROCEDURE PixelSize( ): SIGNED32;
+VAR dpi: SIGNED32;
+BEGIN
+	IF windowDensity = NIL THEN RETURN PixelUnit END;
+	dpi := windowDensity();
+	IF dpi <= 0 THEN
+		Trace.StringLn("AndroidDisplay: the application will not say how dense the screen is");
+		RETURN PixelUnit
+	END;
+	Trace.String("AndroidDisplay: ");  Trace.Int(dpi, 0);
+	Trace.String(" dots to the inch, so a pixel of ");  Trace.Int(UnitsPerInch DIV dpi, 0);
+	Trace.StringLn("/36000 mm");
+	RETURN UnitsPerInch DIV dpi
+END PixelSize;
 
 PROCEDURE Erase(adr: ADDRESS; size: SIZE);
 VAR i: SIZE;
@@ -357,8 +398,11 @@ BEGIN
 		windowSize := NIL;  lockWindow := NIL;  RETURN
 	END;
 	IF ~Unix.DlsymOptional(0, "A2WindowGeneration", ADDRESSOF(windowGeneration)) THEN
-		windowSize := NIL;  lockWindow := NIL;  unlockWindow := NIL
-	END
+		windowSize := NIL;  lockWindow := NIL;  unlockWindow := NIL;  RETURN
+	END;
+	(*	Not fatal, unlike the four above: without it PixelSize falls back to a measurement, and a display
+		is better than no display. *)
+	IF ~Unix.DlsymOptional(0, "A2WindowDensityDpi", ADDRESSOF(windowDensity)) THEN windowDensity := NIL END
 END Link;
 
 (** Register a display for the window of the application we are in, if there is one. *)

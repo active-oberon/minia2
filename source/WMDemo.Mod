@@ -26,19 +26,33 @@ IMPORT
 	Rect := WMRectangles, WMGraphics, WMDefaultFont, WM := WMWindowManager, WindowManager;
 
 CONST
-	(*	The window, and where it sits. Anything that decides what lands in the frame buffer is a
-		constant here, because the recorded picture in tests/wm-expected.txt is a function of all of
-		them. *)
-	Width = 520;  Height = 300;
-	Left = 120;  Top = 260;
+	(*	Where the window sits and how much of the view it takes, as fractions of the view rather than as
+		pixels. A pixel is not a size on a screen whose own pixel can be a quarter of a millimetre or a
+		fifteenth: 520 by 300 is a comfortable window on a monitor and wider than the glass on a phone,
+		and the window manager now zooms the view so that neither number means what it used to (see
+		WindowManager.ZoomForUnit). What is fixed here is the shape -- a margin, a third of the height,
+		a little way down -- and Fit below turns that into the numbers the window is made with. The
+		recorded picture in tests/wm-expected.txt is a function of them and of the check's display. *)
+	Margin = 12;  HeightPart = 3;  TopPart = 8;
+	FallbackWidth = 520;  FallbackHeight = 300;			(* with no view to ask: the old constants *)
+	FallbackLeft = 120;  FallbackTop = 260;
 
 	Panel = SIGNED32(0F0F4F8FFH);		(* the paper the window is drawn on *)
 	Ink = SIGNED32(0102030FFH);
 	Accent = SIGNED32(0E06020FFH);
 
 	(*	The check's display and its background: a phone in portrait, and the window manager's own
-		default blue, so that what the check draws is what the phone draws. *)
+		default blue, so that what the check draws is what the phone draws.
+
+		Including the pixel, and this exact number: 2177/36000 mm is what the phone this was written on
+		reports -- 420 dots to the inch, out of AConfiguration by way of AndroidDisplay -- rather than the
+		10000 of an ordinary screen. The window manager reads it and zooms by it, so a check that reported
+		a monitor's pixel would be a check of the one path the phone never takes; reporting the phone's
+		makes the window recorded below the window that is on the phone. (The glass measures nearer 2430 --
+		2340 rows in some 158 mm -- and Android rounds its density into buckets. What matters here is being
+		the same number the phone is given, not the truer one.) *)
 	CheckWidth = 1080;  CheckHeight = 2340;
+	CheckUnit = 2177;
 	CheckBackground = SIGNED32(8080FFFFH);
 
 	Columns = 78;  Lines = 30;			(* the coarse picture, the shape display-check.sh also prints *)
@@ -49,14 +63,17 @@ TYPE
 	VAR
 		typed: ARRAY 96 OF CHAR;		(* what has been typed into it, and nothing more *)
 		filled: SIZE;
+		w, h: SIZE;						(* what Fit made of the view: the window's own coordinates *)
 
 		PROCEDURE &New*;
+		VAR left, top: SIZE;
 		BEGIN
 			typed := "";  filled := 0;
-			Init(Width, Height, FALSE);
+			Fit(left, top, w, h);
+			Init(w, h, FALSE);
 			Paint;
 			SetTitle(Strings.NewString("A2"));
-			WM.AddWindow(SELF, Left, Top)
+			WM.AddWindow(SELF, left, top)
 		END New;
 
 		(*	The keyboard, arriving the way every other key in A2 arrives: the window manager hands the
@@ -93,38 +110,39 @@ TYPE
 			stopped working the window would come up blank, and blank is what the record catches. *)
 		PROCEDURE Paint;
 		VAR font: WMGraphics.Font;  y, dx, dy, line, prompt, caret: SIZE;
+		CONST Inset = 12;
 		BEGIN
-			canvas.Fill(Rect.MakeRect(0, 0, Width, Height), Panel, WMGraphics.ModeCopy);
-			canvas.Fill(Rect.MakeRect(0, 0, Width, 4), Accent, WMGraphics.ModeCopy);
+			canvas.Fill(Rect.MakeRect(0, 0, w, h), Panel, WMGraphics.ModeCopy);
+			canvas.Fill(Rect.MakeRect(0, 0, w, 4), Accent, WMGraphics.ModeCopy);
 
 			font := WMDefaultFont.LoadDefaultFont();
 			IF font # NIL THEN canvas.SetFont(font) ELSE font := canvas.GetFont() END;
 			canvas.SetColor(Ink);
 			font.GetStringSize("Ag", dx, line);
-			y := 40;
-			canvas.DrawString(24, y, "Active Oberon / A2");  INC(y, line + 6);
-			canvas.DrawString(24, y, "window manager, on this machine");  INC(y, line + 6);
-			canvas.DrawString(24, y, "drag me by the title bar, then type");  INC(y, line + 12);
+			y := line + 16;
+			canvas.DrawString(Inset, y, "Active Oberon / A2");  INC(y, line + 6);
+			canvas.DrawString(Inset, y, "window manager, on this");  INC(y, line + 6);
+			canvas.DrawString(Inset, y, "machine. drag me, then type");  INC(y, line + 12);
 
 			(*	The typed line, with a caret drawn rather than blinked: a blinking caret wants a timer,
 				and the only thing this one has to say is that a key arrived. *)
 			font.GetStringSize("> ", prompt, dy);
 			font.GetStringSize(typed, caret, dy);
-			canvas.DrawString(24, y, "> ");
-			canvas.DrawString(24 + prompt, y, typed);
-			canvas.Fill(Rect.MakeRect(24 + prompt + caret, y - line + 3, 24 + prompt + caret + 2, y + 3),
+			canvas.DrawString(Inset, y, "> ");
+			canvas.DrawString(Inset + prompt, y, typed);
+			canvas.Fill(Rect.MakeRect(Inset + prompt + caret, y - line + 3, Inset + prompt + caret + 2, y + 3),
 				Accent, WMGraphics.ModeCopy);
 
 			(*	A frame and both diagonals: the same geometry tests/display-check.sh reads off a
 				photograph, here inside a window, where a wrong stride or a wrong offset bends it. *)
-			canvas.Line(0, 0, Width - 1, 0, Ink, WMGraphics.ModeCopy);
-			canvas.Line(0, Height - 1, Width - 1, Height - 1, Ink, WMGraphics.ModeCopy);
-			canvas.Line(0, 0, 0, Height - 1, Ink, WMGraphics.ModeCopy);
-			canvas.Line(Width - 1, 0, Width - 1, Height - 1, Ink, WMGraphics.ModeCopy);
-			canvas.Line(0, 0, Width - 1, Height - 1, Accent, WMGraphics.ModeCopy);
-			canvas.Line(0, Height - 1, Width - 1, 0, Accent, WMGraphics.ModeCopy);
+			canvas.Line(0, 0, w - 1, 0, Ink, WMGraphics.ModeCopy);
+			canvas.Line(0, h - 1, w - 1, h - 1, Ink, WMGraphics.ModeCopy);
+			canvas.Line(0, 0, 0, h - 1, Ink, WMGraphics.ModeCopy);
+			canvas.Line(w - 1, 0, w - 1, h - 1, Ink, WMGraphics.ModeCopy);
+			canvas.Line(0, 0, w - 1, h - 1, Accent, WMGraphics.ModeCopy);
+			canvas.Line(0, h - 1, w - 1, 0, Accent, WMGraphics.ModeCopy);
 
-			Invalidate(Rect.MakeRect(0, 0, Width, Height))
+			Invalidate(Rect.MakeRect(0, 0, w, h))
 		END Paint;
 
 		(*	Closed from the decoration -- the red square -- and not through Close below, so this is where
@@ -147,7 +165,7 @@ TYPE
 		PROCEDURE &Init*(w, h: SIGNED32);
 		BEGIN
 			width := w;  height := h;  offscreen := 0;
-			format := Displays.color8888;  unit := 10000;
+			format := Displays.color8888;  unit := CheckUnit;
 			NEW(pixels, w * h * 4);
 			InitFrameBuffer(ADDRESSOF(pixels[0]), w * h * 4, w * 4)
 		END Init;
@@ -156,6 +174,35 @@ TYPE
 
 VAR
 	window: Window;
+
+(*	How big the window is and where it goes, out of the view that is going to show it.
+
+	The view is asked rather than assumed because it is no longer the screen: WindowManager zooms it by
+	the size of the screen's pixel, so on a phone the coordinate space the window is opened in is a few
+	hundred wide where the screen is 1080. A window made 520 wide would be two thirds off the glass --
+	which is what happened, and it is the whole reason this procedure exists rather than four constants.
+
+	Asking waits for a window manager to be installed, which is what AddWindow below does anyway -- this
+	adds no way to hang that opening the window did not already have. The fallback is for a registry that
+	hands back nothing: four constants are cheaper than a trap. *)
+PROCEDURE Fit(VAR left, top, w, h: SIZE);
+VAR view: WM.ViewPort;  availableW, availableH: SIZE;
+BEGIN
+	view := WM.GetDefaultView();
+	IF view = NIL THEN
+		left := FallbackLeft;  top := FallbackTop;  w := FallbackWidth;  h := FallbackHeight;  RETURN
+	END;
+	availableW := ENTIER(view.range.r - view.range.l);
+	availableH := ENTIER(view.range.b - view.range.t);
+	w := availableW - 2 * Margin;
+	h := availableH DIV HeightPart;
+	left := ENTIER(view.range.l) + Margin;
+	top := ENTIER(view.range.t) + availableH DIV TopPart;
+	Trace.String("WMDemo: the view shows ");  Trace.Int(availableW, 0);  Trace.String(" x ");
+	Trace.Int(availableH, 0);  Trace.String(", so the window is ");  Trace.Int(w, 0);
+	Trace.String(" x ");  Trace.Int(h, 0);  Trace.String(" at ");  Trace.Int(left, 0);
+	Trace.String(", ");  Trace.Int(top, 0);  Trace.Ln
+END Fit;
 
 (** Open the window. Wants a window manager already up -- WindowManager.Install puts one there. *)
 PROCEDURE Open*;
@@ -235,12 +282,19 @@ END Print;
 	judgement: compositing in the wrong place moves the first, a window drawn over the whole screen
 	moves the second.
 
-	Clear of the decoration means Clearance pixels, and that is not a guess about how wide a border
-	is: the title bar sits above the window and the frame around it, so points nearer than that
-	belong to neither answer and are counted in neither. *)
+	Clear of the decoration means Clearance, and that is not a guess about how wide a border is: the
+	title bar sits above the window and the frame around it, so points nearer than that belong to
+	neither answer and are counted in neither.
+
+	Where the window is on the screen is worked out and not written down. The window has bounds, but they
+	are the window manager's coordinates, and the frame buffer this reads is the screen's -- and between
+	the two there is now a zoom, which the view reports as its range. So both the rectangle and the
+	clearance are put through it: at zoom 1 that is the arithmetic doing nothing and the numbers this
+	procedure used to have as constants, and at the phone's zoom it is the only way it could be right. *)
 PROCEDURE Placement(memory: Memory; VAR inside, insideOf, outside, outsideOf: SIGNED32);
 CONST Step = 8;  Clearance = 64;
 VAR x, y: SIGNED32;  background: SIGNED32;
+	view: WM.ViewPort;  scale: FLOAT32;  left, top, right, bottom, clear: SIGNED32;
 
 	PROCEDURE At(x, y: SIGNED32): SIGNED32;
 	VAR colour: SIGNED32;
@@ -250,23 +304,37 @@ VAR x, y: SIGNED32;  background: SIGNED32;
 	END At;
 
 BEGIN
+	(*	The window's rectangle on the screen: its bounds, less the view's origin, times the zoom -- and
+		the zoom is the screen divided by what the view shows, which is all the range says and all that is
+		needed here. *)
+	view := WM.GetDefaultView();
+	scale := memory.width / (view.range.r - view.range.l);
+	left := ENTIER((window.bounds.l - view.range.l) * scale);
+	top := ENTIER((window.bounds.t - view.range.t) * scale);
+	right := ENTIER((window.bounds.r - view.range.l) * scale);
+	bottom := ENTIER((window.bounds.b - view.range.t) * scale);
+	clear := ENTIER(Clearance * scale);
+	Trace.String("WMDemo: on the screen the window is ");  Trace.Int(left, 0);  Trace.String(", ");
+	Trace.Int(top, 0);  Trace.String(" to ");  Trace.Int(right, 0);  Trace.String(", ");
+	Trace.Int(bottom, 0);  Trace.Ln;
+
 	(*	The background is read off the screen rather than taken from the constant the manager was
 		given: what is painted is that colour composited, and the word in the frame buffer is
-		therefore not the word that was asked for. A corner far from the window is the background by
-		construction -- the window is 520 by 300 at 120, 260 on a screen of 1080 by 2340. *)
+		therefore not the word that was asked for. The corner furthest from the window is the background
+		by construction -- the window sits a margin in from the left and an eighth of the way down. *)
 	background := At(CheckWidth - 8, CheckHeight - 8);
 	inside := 0;  insideOf := 0;  outside := 0;  outsideOf := 0;
 	y := 0;
 	WHILE y < CheckHeight DO
 		x := 0;
 		WHILE x < CheckWidth DO
-			IF (x >= Left + Step) & (x < Left + Width - Step) & (y >= Top + Step) & (y < Top + Height - Step) THEN
+			IF (x >= left + Step) & (x < right - Step) & (y >= top + Step) & (y < bottom - Step) THEN
 				(*	The diagonals cross the panel, so a point counts as the window if it is anything but
 					the background -- what is asked is which window owns the pixel, not what it drew. *)
 				INC(insideOf);
 				IF At(x, y) # background THEN INC(inside) END
-			ELSIF (x < Left - Clearance) OR (x >= Left + Width + Clearance)
-					OR (y < Top - Clearance) OR (y >= Top + Height + Clearance) THEN
+			ELSIF (x < left - clear) OR (x >= right + clear)
+					OR (y < top - clear) OR (y >= bottom + clear) THEN
 				INC(outsideOf);
 				IF At(x, y) = background THEN INC(outside) END
 			END;

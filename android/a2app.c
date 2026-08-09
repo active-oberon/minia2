@@ -34,6 +34,7 @@
  */
 
 #include <android/asset_manager.h>
+#include <android/configuration.h>
 #include <android/log.h>
 #include <android/native_activity.h>
 #include <android/input.h>
@@ -332,6 +333,41 @@ void A2WindowUnlockAndPost(void) {
 	pthread_mutex_unlock(&windowMutex);
 }
 
+static ANativeActivity *theActivity;		/* set in onCreate; the density needs it, and so does input */
+
+/*	How dense the screen is, in dots to the inch, or 0 if the platform will not say.
+ *
+ *	A2's display driver has always had a field for the size of a pixel and the phone has always had to
+ *	make one up -- a constant standing for "a dense screen". That was affordable while nothing read it.
+ *	It is not affordable now: WindowManager zooms the whole view by that number (see ZoomForUnit), so
+ *	what used to be a comment is the difference between a system laid out for this screen and one laid
+ *	out for a screen nobody has.
+ *
+ *	This is the density Android itself lays out by -- the one behind dp, which is why a title bar in an
+ *	ordinary application is the size it is -- and taking it from here rather than measuring the glass is
+ *	deliberate: it is a bucket, near enough the truth and rounded the way every other application on the
+ *	phone rounds it, and the NDK has no way to ask for the physical size at all (DisplayMetrics.xdpi is
+ *	Java's, and reaching it means JNI on a thread that would have to be attached).
+ *
+ *	The configuration is read fresh each time rather than kept: it is asked once, when the display is
+ *	installed, and a copy held across a configuration change would be the stale one. */
+int A2WindowDensityDpi(void) {
+	AConfiguration *configuration;
+	int32_t density;
+	if (theActivity == NULL) return 0;
+	configuration = AConfiguration_new();
+	if (configuration == NULL) return 0;
+	AConfiguration_fromAssetManager(configuration, theActivity->assetManager);
+	density = AConfiguration_getDensity(configuration);
+	AConfiguration_delete(configuration);
+	/*	The two values that are not a density and the one that means "not stated". Anything outside what a
+		screen can be is refused here rather than turned into a zoom on the other side of dlsym. */
+	if (density == ACONFIGURATION_DENSITY_DEFAULT || density == ACONFIGURATION_DENSITY_ANY
+			|| density == ACONFIGURATION_DENSITY_NONE || density < 60 || density > 1200)
+		return 0;
+	return (int)density;
+}
+
 /*	Filled from here once, in a gradient, before A2 is told about the window: a picture on the screen
  *	then means the process holds a surface, which is what it meant when this file was a spike, and it
  *	is also what tells the two apart -- what A2 draws is the Mandelbrot set. */
@@ -448,7 +484,6 @@ static void OnWindowRedraw(ANativeActivity *activity, ANativeWindow *window) {
  *	Every event is finished, whether or not it was understood: an event left unfinished stops the
  *	queue. Back ends the activity, which is what a person expects of it; the system in this process
  *	goes on running, having no notion of an activity at all. */
-static ANativeActivity *theActivity;
 
 /*	Touches, on their way to A2.
  *
