@@ -667,7 +667,15 @@ static int TakeKey(AInputEvent *event) {
 			if (special[i].code == code) { ch = special[i].ch; keysym = special[i].keysym; break; }
 		}
 	}
-	if (keysym == 0) return 0;
+	if (keysym == 0) {
+		/*	A key nobody here claimed, said once as it goes past. It is not an error -- volume, power and
+			the rest are the framework's and go on working precisely because this returns 0 -- but a key
+			that is missing from the tables above looks exactly the same from the outside as a keyboard
+			that is not delivering, and this is the difference between the two. */
+		if (action == AKEY_EVENT_ACTION_DOWN)
+			Log("a key this does not know: code %d, meta 0x%x", code, AKeyEvent_getMetaState(event));
+		return 0;
+	}
 	/*	Control turns a letter into its control character, as every terminal has since teletypes: this
 		is what makes Ctrl-C reach a program rather than typing a c. */
 	if ((flags & ModCtrl) && ch >= 'a' && ch <= 'z') ch = ch - 'a' + 1;
@@ -693,7 +701,25 @@ static int TakeKey(AInputEvent *event) {
  *	from C does not change that. `activity->vm` and `activity->clazz` are handed to us for exactly this.
  *
  *	The decor view is made focusable and asked for focus first, because showSoftInput opens for the
- *	view it is given and a view that cannot hold focus is not one of those. */
+ *	view it is given and a view that cannot hold focus is not one of those.
+ *
+ *	AND THE SPACE BAR SENDS NOTHING. Measured, one key at a time, with a log of every event that
+ *	reaches TakeKey above: letters arrive (code 29 for a), digits arrive, every shifted symbol arrives
+ *	with its shift (code 59 then code 75 with meta 0x41 for a quotation mark), Enter and Backspace
+ *	arrive -- and a tap on the space bar produces no event at all, not even one this file fails to
+ *	recognise. `input keyevent 62` types a space perfectly, so nothing below the framework is at fault.
+ *	The same with Samsung's keyboard and with SwiftKey, which is what makes it a rule rather than a
+ *	quirk: a keyboard puts a character in through InputConnection.commitText and only falls back to a
+ *	key event when it cannot; for letters it evidently cannot, and for the space bar -- which is where
+ *	word completion and auto-correction live -- it goes through the connection, and the connection is
+ *	the thing a NativeActivity has not got.
+ *
+ *	There is no fix on this side of the boundary: a commit is not an event, and an InputConnection
+ *	means a View of one's own, which means a class of one's own, which means Java in the package. The
+ *	two honest ways out are a keyboard of A2's own drawn in the window manager -- which a bare board
+ *	with a touchscreen will want anyway, and which no input method can then take anything away from --
+ *	or one Java class and a dex. Until then: a space arrives from a hardware keyboard, and from
+ *	`input keyevent 62`. */
 static int Keyboard(int show) {
 	JavaVM *vm;
 	JNIEnv *env = NULL;
