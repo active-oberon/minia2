@@ -770,8 +770,7 @@ tasks:
       # (`docker run --rm -v "$PWD:/work" minia2-sdk`), which resolves to :latest. Pass
       # TAG=… to build a throwaway tag and leave :latest alone.
       - echo "Building SDK image {{.IMAGE}}:{{.TAG}} — the tree is compiled inside the image"
-      # SDK_VERSION is what `ob version` prints in the image. It has to be passed in: .git is
-      # not in the build context, so the payload cannot describe the tree it came from.
+      # SDK_VERSION has to be passed in: .git is not in the build context.
       - |
         docker build -f docker/Dockerfile -t {{.IMAGE}}:{{.TAG}} \
           --build-arg "SDK_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" .
@@ -815,11 +814,9 @@ tasks:
         MOD
         docker run --rm -v "$d:/work" {{.IMAGE}}:{{.TAG}} run SdkCheck.Mod
         echo "{{.IMAGE}}:{{.TAG}}: the compiler inside the image generates correct code"
-      # And then the payload's own acceptance test -- the same run.sh the tarball ships, over
-      # every verb: run, build and the binary it wrote, compile, lint, doc, the language server
-      # (spoken to over stdio), the interactive shell, both cross targets, and one suite. It is
-      # in the image because tests/bundle.sh puts it there, so the image and the tarball are
-      # answering the same questions. Results go to the mount: /opt/a2sdk is not writable here.
+      # Then the payload's own acceptance test -- the same run.sh the tarball ships, over every
+      # verb -- so the image and the tarball answer the same questions. Results go to the mount:
+      # /opt/a2sdk is not writable here.
       - |
         set -eo pipefail
         d="$(mktemp -d)"
@@ -849,8 +846,8 @@ tasks:
         {{.CURRENT_DIR}}/tests/bundle-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
           status=$?
           if [ "$status" -eq 2 ]; then
-            # Same rule as the A64 checks: on a machine that is meant to have a build -- CI -- a
-            # silent skip is the check not running at all, which reads the same as it passing.
+            # Same rule as the A64 checks: where a build is meant to exist -- CI -- a silent skip
+            # is the check not running at all, which reads the same as it passing.
             [ -z "$BUNDLE_REQUIRE" ] || { echo "[FAIL] checking the tarball SDK needs a built host compiler, and BUNDLE_REQUIRE is set"; exit 1; }
             echo "[SKIP] checking the tarball SDK needs a built host compiler (task {{.HOST}})"
           else

@@ -134,12 +134,11 @@ CompileForA64 Inputs Inputs
 # owns the frame buffer. Twelve modules, in the order they import each other.
 CompileForA64 "the display registry" Displays
 
-# Two modules from under the graphics stack rather than in it: Codecs imports Texts, Texts imports
-# WMEvents, and neither is in the headless standard library -- the SDK image has no text system in it
-# either. They compiled here for months without being named, because the objects directory this script
-# reads had copies left in it by hand; on a machine where that directory holds only what
-# tests/a64-stdlib-check.sh put there -- CI, and anyone else's clone -- Codecs stopped at "could not
-# import Texts". Which is the hazard the comment above warns about, arriving one module to the left.
+# Under the graphics stack rather than in it: Codecs imports Texts, Texts imports WMEvents, and
+# neither is in the headless standard library. They compiled for months without being named, because
+# the objects directory had copies left in it by hand -- on one holding only what
+# tests/a64-stdlib-check.sh put there (CI, anyone else's clone) Codecs stopped at "could not import
+# Texts". The hazard the comment above warns about, one module to the left.
 CompileForA64 "the text system Codecs reads through" WMEvents Texts
 
 CompileForA64 "the window manager and what it draws with" \

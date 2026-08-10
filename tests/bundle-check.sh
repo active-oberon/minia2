@@ -1,24 +1,17 @@
 #!/usr/bin/env bash
 #
-# Check the tarball SDK the way the person who downloads it will: unpack it somewhere else and
-# use it, with nothing from this tree in the environment.
+# Check the tarball SDK the way the person who downloads it will, which means being hostile to
+# the tree this runs in:
 #
-# The claim being checked is "Docker is not required, and neither is anything else", so the
-# checking has to be hostile to the tree it runs in. Three things make it so:
+#   -  unpacked from the TARBALL, not read out of target/bundle, so a file that failed to be
+#      packed fails here and not in a stranger's download;
+#   -  `env -i`: no A2SDK, no TMPDIR of ours, a PATH of system directories only;
+#   -  the checks are the bundle's own run.sh, so what CI runs is what a user runs.
 #
-#   -  the bundle is unpacked from the TARBALL, not read out of target/bundle -- a file that
-#      failed to be packed is then a failure here rather than a surprise for a stranger.
-#   -  the environment is scrubbed with `env -i`: no A2SDK, no A2_PLATFORM, no TMPDIR of ours,
-#      and a PATH holding only the system directories. Everything the SDK needs it must find
-#      beside itself.
-#   -  the checks are the ones that ship inside the bundle (run.sh), not a second set written
-#      here. What a user runs to see whether their download works is what CI runs.
+# Suites skipped by default (`task test` runs them on the same objects); BUNDLE_FULL=1 adds them,
+# which a release wants -- same compiler, different arrangement of it.
 #
-# By default the suites are skipped (--quick): the tree runs them already, on the same objects,
-# in `task test`. BUNDLE_FULL=1 runs them out of the bundle as well, which is what a release
-# wants -- it is the same compiler but it is not the same arrangement of it.
-#
-# Exit 2 means the check could not run (no build to bundle); 1 means the bundle is broken.
+# Exit 2: could not run (no build to bundle). Exit 1: the bundle is broken.
 #
 # Usage: tests/bundle-check.sh [build directory]
 
@@ -48,8 +41,8 @@ tar xzf "$tarball" -C "$stage/elsewhere"
 sdk="$(ls -d "$stage"/elsewhere/minia2-sdk-*-linux-amd64)"
 echo "   $sdk"
 
-# Nothing in the bundle may name this tree. Only the text files are looked at: the runtime is a
-# linked binary and may carry whatever paths its linker recorded, which no one reads at run time.
+# Nothing in the bundle may name this tree. Text files only: the runtime may carry linker paths,
+# which nothing reads at run time.
 echo
 echo "== looking for paths out of the bundle"
 leaked=0
@@ -68,8 +61,7 @@ echo "== using it, with an empty environment"
 mkdir -p "$stage/tmp"
 mode=--quick
 [ -n "${BUNDLE_FULL:-}" ] && mode=""
-# HOME and TMPDIR are given because a user has them, not because the SDK is entitled to ours;
-# TERM keeps anything that asks from misbehaving on a terminal it cannot know.
+# HOME and TMPDIR because a user has them, not because the SDK may have ours.
 env -i \
 	PATH=/usr/local/bin:/usr/bin:/bin \
 	HOME="$stage/home" \

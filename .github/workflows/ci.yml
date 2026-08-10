@@ -46,12 +46,10 @@ jobs:
           task a64-stdlib
           task a64-selfhost
       - name: AArch64 tarball SDK (assembled here, not first at release time)
-        # The bundle for an ARM machine compiles a dozen modules the headless standard library does
-        # not carry -- the graphics stack, the text system under it -- and a missing one of those is
-        # invisible until something tries. Nothing did until a release did: `task a64-bundle` ran
-        # only from release.yml, and passed for months on a developer's machine because the objects
-        # directory there had leftovers in it. Here the directory holds exactly what a64-stdlib put
-        # there, which is the arrangement a stranger's clone has.
+        # This bundle compiles a dozen modules the headless standard library does not carry, and a
+        # missing one is invisible until something tries. Nothing did until a release did: the task
+        # ran only from release.yml, and passed on a developer's machine whose objects directory
+        # had leftovers. Here that directory holds exactly what a64-stdlib put there.
         env:
           A64_REQUIRE: "1"
         run: task a64-bundle
@@ -109,11 +107,10 @@ jobs:
           cd tests && A2SDK="$RUNNER_TEMP/a2sdk" bash ../docker/ob test \
             --report "$RUNNER_TEMP/ob-test-report.json"
       - name: Tarball SDK (assemble it, unpack it elsewhere, use it with an empty environment)
-        # The artefact for someone who does not want Docker: `ob` plus the runtime plus the
-        # objects, in a directory. The check unpacks the tarball into a temporary directory and
-        # runs the bundle's own run.sh under `env -i`, so anything the SDK cannot find beside
-        # itself is a failure here rather than in a stranger's download. BUNDLE_REQUIRE makes a
-        # missing build a failure: this job has one, so a skip would mean the step did nothing.
+        # Unpacks the tarball into a temporary directory and runs the bundle's own run.sh under
+        # `env -i`, so anything the SDK cannot find beside itself fails here rather than in a
+        # stranger's download. BUNDLE_REQUIRE: this job has a build, so a skip would mean the
+        # step did nothing.
         env:
           BUNDLE_REQUIRE: "1"
         run: task bundle-check

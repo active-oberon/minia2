@@ -54,18 +54,12 @@
 # library (SDK/lib/*.SymUu + *.GofUu). This keeps the shared SDK read-only and
 # lets many builds run concurrently without clobbering each other.
 #
-# The project is the directory `ob` is run in: every *.Mod at its top goes into that scratch dir
-# too, and is compiled to a fixpoint before the module named on the command line, so a module can
-# import its siblings without anything being listed anywhere. Vendored dependencies (.a2pkg, from
-# `ob get`) are populated the same way, lower tier first. Subdirectories are not read.
+# The project is the directory `ob` runs in: every *.Mod at its top (not in subdirectories) goes
+# into that scratch dir too, so a module can import its siblings with nothing listed anywhere.
 set -euo pipefail
 
-# Where the SDK is. $A2SDK wins; failing that, this script looks beside itself. That second
-# answer is what makes a tarball SDK work with nothing installed and nothing exported: `ob` is
-# unpacked next to `oberon`, so `./ob` finds its own runtime, and so does a symlink to it from
-# ~/.local/bin -- the link is followed to the end because the target is what sits in the SDK.
-# The Docker image keeps `ob` in /usr/local/bin, away from the payload, and sets A2SDK, so
-# nothing there changes.
+# $A2SDK wins; failing that, beside itself -- which is what makes a tarball SDK need no
+# environment at all. Symlinks are followed to the end: the target is what sits in the SDK.
 _self="${BASH_SOURCE[0]}"
 while [ -L "$_self" ]; do
   _link="$(readlink "$_self")"
@@ -77,10 +71,8 @@ elif [ -x "$_selfdir/oberon" ]; then SDK="$_selfdir"
 else SDK=/opt/a2sdk
 fi
 
-# The project: where the user's sources, a2pkg.json and .a2pkg/ live. In the image that is the
-# bind mount at /work -- which is also the working directory there, so $PWD is the same answer
-# inside Docker and the only one that means anything outside it, where there is no /work.
-# Captured here because verbs run the compiler in a scratch dir and $PWD changes under them.
+# Where the user's sources, a2pkg.json and .a2pkg/ live. $PWD is also the /work mount under
+# Docker; captured here because verbs run the compiler in a scratch dir, changing $PWD.
 PROJECT="${A2_PROJECT:-$PWD}"
 
 OBERON="$SDK/oberon"
@@ -108,8 +100,7 @@ PROJ_LOCK="a2pkg.lock"                   # pinned versions (in $PROJECT)
 die() { echo "ob: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Verbs that write into the project -- get, lint, doc -- need one to exist. Under Docker the
-# usual way for it not to exist is a forgotten `-v "$PWD:/work"`, so the message still says so.
+# get, lint and doc write into the project; under Docker its usual absence is a forgotten -v.
 _need_project() {
   [ -d "$PROJECT" ] || die "no project directory at $PROJECT" \
     "(under Docker: mount it with -v \"\$PWD:/work\"; otherwise set A2_PROJECT)"
@@ -216,18 +207,10 @@ populate_packages() {
   done < <(_pkg_manifests_by_tier "$pkgroot")
 }
 
-# The project's own modules, symlinked into the scratch dir beside the packages, so that a
-# module can import its siblings. Without this the compiler -- which resolves imports from its
-# working directory and nowhere else -- sees exactly one file, and a project of more than one
-# module cannot be built at all. `ob doc`, `ob test` and the language server had each grown
-# their own copy of this line; compile, run and build had not, which is why the editor
-# understood a multi-module project and the compiler did not.
-#
-# Only *.Mod at the top of the project: A2's namespace is flat and this is not a tree walk.
-# Nothing here is a name the standard library owns -- the scratch dir holds .SymUu/.GofUu for
-# those, never sources -- so the one collision worth reporting is with an installed package,
-# and the project's own copy wins it. Said out loud rather than resolved quietly: in a flat
-# namespace, shadowing a dependency by accident looks like the dependency misbehaving.
+# The project's own modules, so a module can import its siblings -- without this the compiler,
+# which resolves imports from its working directory alone, sees exactly one file. The scratch
+# dir holds no stdlib *sources*, so the only collision possible is with an installed package:
+# the project wins it, out loud, because silent shadowing reads as the dependency misbehaving.
 populate_project() {
   local w="$1" f base
   for f in "$PROJECT"/*.Mod; do
@@ -239,14 +222,10 @@ populate_project() {
   done
 }
 
-# Compile the sources in the scratch dir -- installed packages and, since populate_project,
-# the project's own modules -- so their .SymUu/.GofUu exist before the module the user named.
-# The plain compiler needs an import's symbol file; only the LSP resolves source
-# on demand — so this runs for compile/run/build, NOT for lsp.
-#
-# With a target platform and its extensions as arguments this compiles for that target: a
-# cross build needs its siblings as .GofWw or .GofU8, and compiling them for the host would
-# leave the link short of exactly the objects the project itself is made of.
+# Compile what populate_packages and populate_project put there, so the imports of the module
+# the user named resolve. The plain compiler needs an import's symbol file; only the LSP
+# resolves source on demand — so this runs for compile/run/build, NOT for lsp. The platform
+# arguments are for a cross build, whose siblings have to be .GofWw or .GofU8 like the rest.
 build_packages() {
   local w="$1" plat="${2:-$PLATFORM}" obj="${3:-$OBJ_EXT}" sym_ext="${4:-$SYM_EXT}"
   # Compile the populated package sources SINGLE-FILE to a fixpoint. A single
@@ -317,11 +296,10 @@ cmd_compile() {
   trap 'rm -rf "$w"' RETURN
   populate_project "$w"
   build_packages "$w"
-  # Removed first, because populate_project has just symlinked this very file: copying onto the
-  # link would write through it, into the user's source. (It does not, in fact -- cp refuses two
-  # names for one file -- which is how `ob compile` on a vendored package's own source failed
-  # with "are the same file".) The copy itself is not optional: a module whose source is in a
-  # platform-prefixed file, Unix.Foo.Mod for module Foo, has to reach the compiler as Foo.Mod.
+  # populate_project has just symlinked this very file, and copying onto the link would write
+  # through it into the user's source -- or, as cp actually does, refuse "the same file", which
+  # is how `ob compile` on a vendored source failed. The copy is not optional: a module whose
+  # source is platform-prefixed (Unix.Foo.Mod for Foo) has to reach the compiler as Foo.Mod.
   rm -f "$w/$mod.Mod"
   cp "$src" "$w/$mod.Mod"
 
@@ -454,24 +432,16 @@ cmd_run() {
     exec "$OBERON" "$mod.$proc" )
 }
 
-# The interactive shell, in the user's own directory.
+# The interactive shell, in the user's own directory. Two things this got wrong before, and both
+# of them silently -- `oberon do "System.DoFile $SDK/oberon.cfg ~"` never opened a shell at all:
 #
-# Two things had to be got right here, and the version before this got both wrong -- it ran
-# `oberon do "System.DoFile $SDK/oberon.cfg ~"`, which never opened a shell at all:
+#   -  `do` runs commands and exits; what continues into the shell is `run` (StdIOShell.Execute:
+#      DoFile, then Shell.Start), and only if the file succeeded.
+#   -  the tree's oberon.cfg wants a build tree -- relative bin/, data/, and Configuration.Init,
+#      whose XML no headless SDK ships -- so it failed, taking the shell with it.
 #
-#   -  `do` executes commands and exits. What continues into the shell afterwards is `run`
-#      (StdIOShell.Execute: System.DoFile on the argument, then Shell.Start) -- and it only
-#      continues if the file succeeded, so a configuration that fails takes the shell with it.
-#   -  the tree's oberon.cfg is written for a build tree: relative paths bin/, source/, data/,
-#      work/, and Configuration.Init, which wants XML out of data/ that no headless SDK ships.
-#      In the user's directory none of that exists, so Configuration.GofUu was not found, the
-#      file failed, and `ob repl` printed three errors and left. In the image too -- nothing
-#      covered this verb until the bundle's self-check did.
-#
-# So the configuration is written here instead, naming absolute directories: the standard
-# library, because the compiler and everything else is loaded from it, and the project, both as
-# a search path and as the work path -- a bare file name in the shell then means a file of the
-# user's, and what the compiler writes lands beside it rather than in the SDK.
+# Hence a configuration written per invocation, naming lib and the project absolutely: a bare
+# name in the shell then means a file of the user's, and writes land beside it, not in the SDK.
 cmd_repl() {
   local cfg
   cfg="$(mktemp "${TMPDIR:-/tmp}/ob-repl.XXXXXX.cfg")"
@@ -481,9 +451,7 @@ Files.AddSearchPath $LIB~
 Files.AddSearchPath $PROJECT~
 Files.SetWorkPath $PROJECT~
 EOF
-  # The shell replaces this process, so nothing here can clean the file up afterwards; it is a
-  # few bytes in the temporary directory, and removing it before the exec would remove it before
-  # the shell reads it.
+  # Not cleaned up: the exec replaces this process, and removing it first removes it too early.
   exec "$OBERON" run "$cfg"
 }
 
