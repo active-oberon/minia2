@@ -121,13 +121,48 @@ s=0; run "$results/compile.log" 300 "$ob" compile JsonDemo.Mod -o obj || s=$?
 report "ob compile" "$s" "$results/compile.log" 'wrote .*JsonDemo\.GofUu'
 [ -f "$work/obj/JsonDemo.GofUu" ] || { echo "        (and the object file is not there)"; }
 
-# 5. The tier rule over the project's own sources, read from the std manifests in packages/.
+# 5. A project of more than one module, which is what anything real is: three of them, with a
+#    two-deep import chain, in a directory of their own. The compiler resolves imports from its
+#    working directory and nowhere else, so a sibling is importable only because `ob` puts the
+#    project there -- and until this was written it did that for the language server, `ob doc`
+#    and `ob test`, but not for compile, run or build. So an editor understood a multi-module
+#    project and the compiler could not build one, which is the shape of thing a check of every
+#    verb over one file each will never notice.
+multi="$work/multi"
+mkdir -p "$multi"
+cat > "$multi/Util.Mod" <<'MOD'
+MODULE Util;
+	PROCEDURE Twice*(x: SIGNED32): SIGNED32;
+	BEGIN RETURN 2 * x END Twice;
+END Util.
+MOD
+cat > "$multi/Deep.Mod" <<'MOD'
+MODULE Deep;
+IMPORT Util;
+	PROCEDURE Quad*(x: SIGNED32): SIGNED32;
+	BEGIN RETURN Util.Twice(Util.Twice(x)) END Quad;
+END Deep.
+MOD
+cat > "$multi/App.Mod" <<'MOD'
+MODULE App;
+IMPORT KernelLog, Deep;
+	PROCEDURE Do*;
+	BEGIN KernelLog.String("quad 11 = "); KernelLog.Int(Deep.Quad(11), 0); KernelLog.Ln
+	END Do;
+END App.
+MOD
+s=0; started=$SECONDS
+( cd "$multi" && timeout 600 "$ob" run App.Mod > "$results/multi.log" 2>&1 ) || s=$?
+_ELAPSED=$((SECONDS - started))
+report "a project of three modules" "$s" "$results/multi.log" 'quad 11 = 44'
+
+# 6. The tier rule over the project's own sources, read from the std manifests in packages/.
 #    Without those manifests in the bundle this verb cannot say anything, so it is also the
 #    check that they shipped.
 s=0; run "$results/lint.log" 120 "$ob" lint || s=$?
 report "ob lint" "$s" "$results/lint.log" 'no upward dependencies'
 
-# 6. HTML from the doc comments, through the compiler's own Documentation backend.
+# 7. HTML from the doc comments, through the compiler's own Documentation backend.
 s=0; run "$results/doc.log" 300 "$ob" doc -o apidoc || s=$?
 if [ -f "$work/apidoc/Hello.html" ]; then
 	report "ob doc" "$s" "$results/doc.log" ''
@@ -137,7 +172,7 @@ else
 	tail -12 "$results/doc.log" | tr -d '\r' | sed 's/^/          /'
 fi
 
-# 7. The language server, which is the reason a good many people would want this tarball at all
+# 8. The language server, which is the reason a good many people would want this tarball at all
 #    and the one verb no editor-less check had ever covered. Spoken to the way an editor speaks
 #    to it -- LSP over stdio, Content-Length framing -- and asked the one question whose answer
 #    proves the server came up: initialize. Then shutdown/exit, so it leaves of its own accord
@@ -179,7 +214,7 @@ else
 	printf '  ok    %-30s %6s  %s\n' "ob lsp" "${_ELAPSED}s" "${results#"$root"/}/lsp.log"; pass=$((pass+1))
 fi
 
-# 8. The interactive shell, which is the one verb that runs the runtime in the user's own
+# 9. The interactive shell, which is the one verb that runs the runtime in the user's own
 #    directory rather than in a scratch dir -- so it is also the check that oberon.cfg's
 #    relative search paths do no harm where none of them exists. `exit` is what leaves the
 #    shell: on end of input it spins rather than stopping.
@@ -192,7 +227,7 @@ report "ob repl" "$s" "$results/repl.log" '[0-9]{2}\.[0-9]{2}\.[0-9]{4}'
 # package needs a network and a remote that is up, neither of which a release check may assume.
 skipped "ob get" "needs a network -- not something a self-check may assume"
 
-# 9. The cross targets, each only if this bundle carries its objects. What is checked is the file
+# 10. The cross targets, each only if this bundle carries its objects. What is checked is the file
 #    that came out, by its magic number rather than by the linker's own say-so: a PE64 console
 #    image begins MZ and carries PE\0\0 at the offset its DOS stub points at, and an AArch64 ELF
 #    says b7 in e_machine. Neither can be run here, which is the whole reason to look at the bytes.
@@ -251,7 +286,7 @@ else
 	skipped "ob build -t a64" "this bundle carries no AArch64 objects"
 fi
 
-# 10. The language suites, run out of the bundle's own tests/ against the bundle's own baseline.
+# 11. The language suites, run out of the bundle's own tests/ against the bundle's own baseline.
 #    Thousands of cases, each compiled and executed in a process of its own -- the long check,
 #    and the one that says this tarball's compiler is the compiler the tree tests. --quick runs
 #    one suite instead, which is enough to prove the harness works and nothing about the release.

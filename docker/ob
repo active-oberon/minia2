@@ -53,6 +53,11 @@
 # scratch dir that is pre-populated with symlinks to the precompiled standard
 # library (SDK/lib/*.SymUu + *.GofUu). This keeps the shared SDK read-only and
 # lets many builds run concurrently without clobbering each other.
+#
+# The project is the directory `ob` is run in: every *.Mod at its top goes into that scratch dir
+# too, and is compiled to a fixpoint before the module named on the command line, so a module can
+# import its siblings without anything being listed anywhere. Vendored dependencies (.a2pkg, from
+# `ob get`) are populated the same way, lower tier first. Subdirectories are not read.
 set -euo pipefail
 
 # Where the SDK is. $A2SDK wins; failing that, this script looks beside itself. That second
@@ -211,12 +216,39 @@ populate_packages() {
   done < <(_pkg_manifests_by_tier "$pkgroot")
 }
 
-# Compile the installed packages' sources (symlinked by the populator) into the
-# scratch dir so their .SymUu/.GofUu exist before the user's module is compiled.
+# The project's own modules, symlinked into the scratch dir beside the packages, so that a
+# module can import its siblings. Without this the compiler -- which resolves imports from its
+# working directory and nowhere else -- sees exactly one file, and a project of more than one
+# module cannot be built at all. `ob doc`, `ob test` and the language server had each grown
+# their own copy of this line; compile, run and build had not, which is why the editor
+# understood a multi-module project and the compiler did not.
+#
+# Only *.Mod at the top of the project: A2's namespace is flat and this is not a tree walk.
+# Nothing here is a name the standard library owns -- the scratch dir holds .SymUu/.GofUu for
+# those, never sources -- so the one collision worth reporting is with an installed package,
+# and the project's own copy wins it. Said out loud rather than resolved quietly: in a flat
+# namespace, shadowing a dependency by accident looks like the dependency misbehaving.
+populate_project() {
+  local w="$1" f base
+  for f in "$PROJECT"/*.Mod; do
+    [ -f "$f" ] || continue
+    base="$(basename "$f")"
+    [ -e "$w/$base" ] && \
+      echo "ob: $base here shadows the $base an installed package provides" >&2
+    ln -sf "$f" "$w/$base"
+  done
+}
+
+# Compile the sources in the scratch dir -- installed packages and, since populate_project,
+# the project's own modules -- so their .SymUu/.GofUu exist before the module the user named.
 # The plain compiler needs an import's symbol file; only the LSP resolves source
 # on demand — so this runs for compile/run/build, NOT for lsp.
+#
+# With a target platform and its extensions as arguments this compiles for that target: a
+# cross build needs its siblings as .GofWw or .GofU8, and compiling them for the host would
+# leave the link short of exactly the objects the project itself is made of.
 build_packages() {
-  local w="$1"
+  local w="$1" plat="${2:-$PLATFORM}" obj="${3:-$OBJ_EXT}" sym_ext="${4:-$SYM_EXT}"
   # Compile the populated package sources SINGLE-FILE to a fixpoint. A single
   # multi-file `Compiler.Compile A B C` does NOT topologically reorder — a module
   # listed before its in-batch dependency fails — so we iterate: each round compile
@@ -234,10 +266,10 @@ build_packages() {
       for m in "${mods[@]}"; do
         # the .SymUu is named after the MODULE, not the file — a platform-prefixed
         # source like Unix.V4L2.Mod compiles to V4L2.SymUu, so derive from the header
-        sym="$(module_name "$m")$SYM_EXT"
+        sym="$(module_name "$m")$sym_ext"
         [ -f "$sym" ] && continue
-        if "$OBERON" Compiler.Compile "-p=$PLATFORM" \
-             --objectFileExtension="$OBJ_EXT" --symbolFileExtension="$SYM_EXT" \
+        if "$OBERON" Compiler.Compile "-p=$plat" \
+             --objectFileExtension="$obj" --symbolFileExtension="$sym_ext" \
              "./$m" >/dev/null 2>&1 && [ -f "$sym" ]; then
           changed=1
         fi
@@ -283,7 +315,14 @@ cmd_compile() {
   local mod w; mod="$(module_name "$src")"
   w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
+  populate_project "$w"
   build_packages "$w"
+  # Removed first, because populate_project has just symlinked this very file: copying onto the
+  # link would write through it, into the user's source. (It does not, in fact -- cp refuses two
+  # names for one file -- which is how `ob compile` on a vendored package's own source failed
+  # with "are the same file".) The copy itself is not optional: a module whose source is in a
+  # platform-prefixed file, Unix.Foo.Mod for module Foo, has to reach the compiler as Foo.Mod.
+  rm -f "$w/$mod.Mod"
   cp "$src" "$w/$mod.Mod"
 
   ( cd "$w" && export PWD="$w"
@@ -345,7 +384,9 @@ cmd_build() {
   local fn; fn="$(basename "$dest")"
   w="$(make_workdir "$target")"
   trap 'rm -rf "$w"' RETURN
-  build_packages "$w"
+  populate_project "$w"
+  build_packages "$w" "$c_plat" "$c_ext" "$s_ext"   # siblings, for the target being linked
+  rm -f "$w/$mod.Mod"                               # see the note in cmd_compile
   cp "$src" "$w/$mod.Mod"
 
   # A generated boot driver replaces the interactive shell: its module body runs
@@ -401,7 +442,9 @@ cmd_run() {
   local mod w; mod="$(module_name "$src")"
   w="$(make_workdir)"
   trap 'rm -rf "$w"' RETURN
+  populate_project "$w"
   build_packages "$w"
+  rm -f "$w/$mod.Mod"                               # see the note in cmd_compile
   cp "$src" "$w/$mod.Mod"
 
   ( cd "$w" && export PWD="$w"
@@ -462,7 +505,7 @@ cmd_lsp() {
   # installed external packages (ob get) are already symlinked by make_workdir's
   # populator; the LSP resolves their source on demand (no precompile needed).
   # the project's own sources become resolvable via on-demand compilation
-  ln -sf "$PROJECT"/*.Mod "$w"/ 2>/dev/null || true
+  populate_project "$w"
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
 }
 
@@ -619,9 +662,8 @@ cmd_doc() {
   _need_project
   mkdir -p "$outdir"; outdir="$(realpath "$outdir")"
   local w; w="$(make_workdir)"; trap 'rm -rf "$w"' RETURN
-  build_packages "$w"                                   # resolve installed-package imports
-  ln -sf "$PROJECT"/*.Mod "$w"/ 2>/dev/null || true     # project siblings resolvable
-  build_packages "$w"                                   # compile siblings too (fixpoint)
+  populate_project "$w"                                 # project siblings resolvable
+  build_packages "$w"                                   # packages and siblings, to a fixpoint
   local list m
   if [ -n "$src" ]; then list="$(basename "$src")"; else
     list="$(cd "$PROJECT" && for f in *.Mod; do [ -e "$f" ] && basename "$f"; done)"
@@ -720,9 +762,8 @@ cmd_test() {
 
   local w; w="$(make_workdir "$target")"
   trap 'rm -rf "$w"' RETURN
-  build_packages "$w"                                    # installed packages resolvable
-  ln -sf "$(pwd)"/*.Mod "$w"/ 2>/dev/null || true        # project modules importable
-  build_packages "$w"                                    # ...and compiled (fixpoint)
+  populate_project "$w"                                  # project modules importable
+  build_packages "$w"                                    # packages and siblings, to a fixpoint
 
   # What executes a case, once it is compiled. On the host that is this process; for
   # another architecture it is an emulator with an image of that architecture, and
