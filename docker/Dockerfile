@@ -42,17 +42,10 @@ RUN task Linux64 && task Win64
 RUN tests/a64-runtime-check.sh target/Linux64 target/A64/bin \
     && tests/a64-stdlib-check.sh target/Linux64 target/A64/bin
 
-# Assemble the SDK payload -- by the same script that assembles the tarball release
-# (tests/bundle.sh), so the image and the tarball are the same SDK and cannot drift
-# apart: the runtime, the headless-core stdlib for all three targets (see
-# docker/headless-core.txt -- everything whose import closure never reaches the window
-# manager / display / raster), every .SymUu for the language server, the std package
-# manifests, the examples, the suites and `ob` itself.
-#
-# --no-tar because the layer is the artefact here; there is nothing to carry anywhere.
-# The version cannot be read from git -- .git is not in the build context (see
-# Dockerfile.dockerignore) -- so it comes in as a build argument and defaults to the
-# tag the image is published under.
+# The SDK payload, by the same script that assembles the tarball release, so the image
+# and the tarball are one SDK and cannot drift apart. --no-tar: the layer is the
+# artefact. SDK_VERSION comes in as a build argument because .git is not in the build
+# context (Dockerfile.dockerignore), so the payload cannot describe the tree itself.
 ARG SDK_VERSION=docker
 RUN A2_SDK_VERSION="$SDK_VERSION" tests/bundle.sh --no-tar -o /opt/a2sdk target/Linux64
 
@@ -78,14 +71,13 @@ ENV A2SDK=/opt/a2sdk \
     A2_PLATFORM=Unix64 \
     TMPDIR=/tmp
 
-# The whole SDK payload -- runtime, oberon.cfg, the three lib/ trees, lib-sym/ for the
-# language server, the std package manifests, the examples, the suites, LICENSE.txt (A2
-# is BSD-3-Clause, ETH Zurich: binary redistribution has to reproduce the notice) and a
-# copy of `ob` -- was assembled at /opt/a2sdk in the builder stage by tests/bundle.sh.
+# Runtime, the three lib/ trees, lib-sym/ for the language server, packages/, examples,
+# suites, LICENSE.txt (BSD-3-Clause, ETH Zurich -- binary redistribution must carry the
+# notice) and `ob`: all of it assembled at /opt/a2sdk by tests/bundle.sh in the builder.
 COPY --from=builder /opt/a2sdk ${A2SDK}
 
-# `ob` also goes on the PATH, which is what the ENTRYPOINT runs. It is the same file as
-# ${A2SDK}/ob; the image sets A2SDK, so which of the two is invoked makes no difference.
+# The same `ob` on the PATH, which is what the ENTRYPOINT runs; A2SDK is set, so it makes
+# no difference which of the two copies is invoked.
 COPY docker/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob
 

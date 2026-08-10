@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 #
-# Does this SDK work? Asked of the tarball, from inside it, with nothing else on the machine.
+# Does this SDK work? Asked of the tarball, from inside it: every verb of `ob`, then the suites.
 #
-# This script ships as run.sh in the bundle tests/bundle.sh assembles, and it is the whole
-# acceptance test of a Docker-free release: every verb of `ob`, then the language suites. It
-# knows nothing about the source tree -- no task, no Taskfile, no target/ -- and it must stay
-# that way, because that is precisely the claim being checked. tests/bundle-check.sh runs it
-# from the tree by unpacking a tarball and calling it here with a scrubbed environment.
-#
-# The verbs run from a temporary directory outside the SDK and call `ob` by absolute path,
-# which is how a user actually works: the project is wherever they are, the SDK is elsewhere,
-# and neither knows the other's layout.
+# Ships as run.sh in the bundle, and knows nothing of the source tree -- no task, no target/ --
+# because that is the claim being checked. tests/bundle-check.sh unpacks a tarball and runs this
+# under a scrubbed environment. The verbs run from a temporary directory outside the SDK and call
+# `ob` by absolute path, which is how a user works: project here, SDK elsewhere.
 #
 # Usage: ./run.sh [-q|--quick]     (-q skips the language suites, which take a while)
 # Results land in results/: one log per check.
@@ -19,8 +14,7 @@ set -uo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 ob="$root/ob"
-# Logs go beside the SDK, unless told otherwise. The override is for the Docker image, which
-# ships this script inside a read-only /opt/a2sdk: there the results belong in the mount.
+# The override is for the Docker image, where /opt/a2sdk belongs to root.
 results="${A2_RESULTS:-$root/results}"
 quick=0
 case "${1:-}" in
@@ -35,9 +29,7 @@ done
 [ -x "$ob" ] || { echo "no ob in $root" >&2; exit 2; }
 [ -x "$root/oberon" ] || { echo "no runtime at $root/oberon" >&2; exit 2; }
 
-# Said plainly, because the way this fails otherwise is eleven checks failing at once with a
-# missing log file each: inside the Docker image /opt/a2sdk belongs to root and the SDK is not
-# the place to write to -- set A2_RESULTS to somewhere that is.
+# Said plainly: otherwise this is a dozen checks failing at once, each on a missing log file.
 mkdir -p "$results" 2>/dev/null || {
 	echo "cannot write results to $results -- set A2_RESULTS to a writable directory" >&2
 	exit 2
@@ -59,8 +51,8 @@ echo
 pass=0; fail=0; skip=0
 declare -a FAILED=()
 
-# One check: a name, a log, and a pattern the log has to contain. `ob` exits non-zero on a real
-# failure, so unlike the bare runtime both halves are read -- the status and the transcript.
+# A name, a log, and a pattern the log must contain. `ob` exits non-zero on a real failure, so
+# both halves are read -- status and transcript.
 report() {
 	local name="$1" status="$2" log="$3" want="$4" took="${_ELAPSED:-0}s"
 	if [ "$status" -eq 124 ]; then
@@ -92,20 +84,17 @@ run() {
 	return $status
 }
 
-# 1. It knows what it is. The point of the check is the first line of the answer: `ob` was found
-#    by absolute path from a directory that is not the SDK, and it located its own runtime -- the
-#    thing that used to come from $A2SDK being set for it by a container.
+# 1. It knows what it is -- found by absolute path from elsewhere, it located its own runtime,
+#    which used to be $A2SDK's job.
 s=0; run "$results/version.log" 60 "$ob" version || s=$?
 report "ob version" "$s" "$results/version.log" "sdk *: $root"
 
-# 2. Compile and run in one step, which is the verb everything else rests on: it is a compile
-#    against the shipped standard library, a link of nothing, and an execution in this process.
+# 2. The verb everything rests on: a compile against the shipped library, run in this process.
 s=0; run "$results/run.log" 300 "$ob" run Hello.Mod || s=$?
 report "ob run" "$s" "$results/run.log" 'Hello from A2'
 
-# 3. A standalone executable, and then the executable. Two claims: the linker found the boot
-#    modules in lib/, and what came out runs on a machine with no A2 on it -- which this
-#    machine, as far as the binary is concerned, is.
+# 3. A standalone executable, and then the executable: the linker found the boot modules in lib/,
+#    and what came out runs where no A2 is installed -- which, to the binary, is here.
 s=0; run "$results/build.log" 600 "$ob" build Hello.Mod -o hello || s=$?
 report "ob build" "$s" "$results/build.log" 'wrote .*hello'
 if [ -x "$work/hello" ]; then
@@ -115,19 +104,16 @@ else
 	skipped "the binary it built" "nothing to run -- the link produced no file"
 fi
 
-# 4. One module to an object file, the verb a build system would call. The transcript is checked
-#    and so is the file: `ob compile` reporting a path it did not write would pass on the log alone.
+# 4. One module to an object file. Both the transcript and the file: a reported path that was
+#    never written would pass on the log alone.
 s=0; run "$results/compile.log" 300 "$ob" compile JsonDemo.Mod -o obj || s=$?
 report "ob compile" "$s" "$results/compile.log" 'wrote .*JsonDemo\.GofUu'
 [ -f "$work/obj/JsonDemo.GofUu" ] || { echo "        (and the object file is not there)"; }
 
-# 5. A project of more than one module, which is what anything real is: three of them, with a
-#    two-deep import chain, in a directory of their own. The compiler resolves imports from its
-#    working directory and nowhere else, so a sibling is importable only because `ob` puts the
-#    project there -- and until this was written it did that for the language server, `ob doc`
-#    and `ob test`, but not for compile, run or build. So an editor understood a multi-module
-#    project and the compiler could not build one, which is the shape of thing a check of every
-#    verb over one file each will never notice.
+# 5. A project of more than one module, which is what anything real is: three, with a two-deep
+#    import chain. Siblings are importable only because `ob` puts the project in the scratch dir
+#    the compiler resolves from -- which it did for the language server and not for run or build,
+#    the kind of gap a check of every verb over one file each cannot see.
 multi="$work/multi"
 mkdir -p "$multi"
 cat > "$multi/Util.Mod" <<'MOD'
@@ -156,13 +142,11 @@ s=0; started=$SECONDS
 _ELAPSED=$((SECONDS - started))
 report "a project of three modules" "$s" "$results/multi.log" 'quad 11 = 44'
 
-# 6. The tier rule over the project's own sources, read from the std manifests in packages/.
-#    Without those manifests in the bundle this verb cannot say anything, so it is also the
-#    check that they shipped.
+# 6. The tier rule, read from the std manifests -- so also the check that packages/ shipped.
 s=0; run "$results/lint.log" 120 "$ob" lint || s=$?
 report "ob lint" "$s" "$results/lint.log" 'no upward dependencies'
 
-# 7. HTML from the doc comments, through the compiler's own Documentation backend.
+# 7. HTML from the doc comments, through the compiler's Documentation backend.
 s=0; run "$results/doc.log" 300 "$ob" doc -o apidoc || s=$?
 if [ -f "$work/apidoc/Hello.html" ]; then
 	report "ob doc" "$s" "$results/doc.log" ''
@@ -172,31 +156,25 @@ else
 	tail -12 "$results/doc.log" | tr -d '\r' | sed 's/^/          /'
 fi
 
-# 8. The language server, which is the reason a good many people would want this tarball at all
-#    and the one verb no editor-less check had ever covered. Spoken to the way an editor speaks
-#    to it -- LSP over stdio, Content-Length framing -- and asked the one question whose answer
-#    proves the server came up: initialize. Then shutdown/exit, so it leaves of its own accord
-#    rather than on a timeout.
-#
-#    rootUri is the work directory: the server seeds its scratch dir from the project, and a
-#    server that resolved nothing would still answer initialize, so the request after it opens a
-#    module with a deliberate error and waits for the diagnostic to come back.
+# 8. The language server -- the reason many would want this tarball, and the verb no editor-less
+#    check had covered. Spoken to as an editor does (LSP over stdio, Content-Length framing),
+#    then shutdown/exit so it leaves of its own accord rather than on a timeout. A server that
+#    resolved nothing would still answer initialize, so a module with a deliberate error is
+#    opened and the diagnostic is what counts.
 lsp_msg() { local body="$1"; printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body"; }
 lsp_talk() {
 	lsp_msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":"file://'"$work"'","capabilities":{}}}'
 	lsp_msg '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 	lsp_msg '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file://'"$work"'/Broken.Mod","languageId":"oberon","version":1,"text":"MODULE Broken;\nBEGIN\n\tundefined := 1\nEND Broken.\n"}}}'
-	# Written into the pipe as the conversation goes, not into a file beforehand: diagnostics
-	# come when the checker has run, and a shutdown that arrives in the same read as the didOpen
-	# would be a race over whether anything was checked at all.
+	# Paced into the pipe, not written to a file first: a shutdown arriving in the same read as
+	# the didOpen is a race over whether anything was checked at all.
 	sleep 15
 	lsp_msg '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
 	lsp_msg '{"jsonrpc":"2.0","method":"exit","params":null}'
 	sleep 2
 }
 s=0; started=$SECONDS
-# A SIGPIPE in the producer (the server leaving first) is not a failure of the server, so only
-# the timeout and the transcript are read.
+# A SIGPIPE (the server leaving first) is not its failure: only timeout and transcript are read.
 ( cd "$work" && lsp_talk | timeout 120 "$ob" lsp > "$results/lsp.log" 2>&1 ) || s=$?
 _ELAPSED=$((SECONDS - started))
 if [ "$s" -eq 124 ]; then
@@ -214,23 +192,19 @@ else
 	printf '  ok    %-30s %6s  %s\n' "ob lsp" "${_ELAPSED}s" "${results#"$root"/}/lsp.log"; pass=$((pass+1))
 fi
 
-# 9. The interactive shell, which is the one verb that runs the runtime in the user's own
-#    directory rather than in a scratch dir -- so it is also the check that oberon.cfg's
-#    relative search paths do no harm where none of them exists. `exit` is what leaves the
-#    shell: on end of input it spins rather than stopping.
+# 9. The interactive shell -- the one verb that runs the runtime in the user's own directory.
+#    `exit` is what leaves it: on end of input it spins rather than stopping.
 s=0; started=$SECONDS
 ( cd "$work" && printf 'System.Time\nexit\n' | timeout 120 "$ob" repl > "$results/repl.log" 2>&1 ) || s=$?
 _ELAPSED=$((SECONDS - started))
 report "ob repl" "$s" "$results/repl.log" '[0-9]{2}\.[0-9]{2}\.[0-9]{4}'
 
-# `ob get` is not checked here and the count says so rather than passing over it: fetching a
-# package needs a network and a remote that is up, neither of which a release check may assume.
+# `ob get` needs a network and a live remote; counted as a skip rather than passed over.
 skipped "ob get" "needs a network -- not something a self-check may assume"
 
-# 10. The cross targets, each only if this bundle carries its objects. What is checked is the file
-#    that came out, by its magic number rather than by the linker's own say-so: a PE64 console
-#    image begins MZ and carries PE\0\0 at the offset its DOS stub points at, and an AArch64 ELF
-#    says b7 in e_machine. Neither can be run here, which is the whole reason to look at the bytes.
+# 10. The cross targets, each only if this bundle carries its objects -- judged by the magic
+#    number of what came out (MZ, and b7 in e_machine) rather than by the linker's say-so,
+#    because neither binary can be run here.
 if [ -d "$root/lib-win64" ]; then
 	s=0; run "$results/build-win64.log" 600 "$ob" build Hello.Mod -t win64 -o hello.exe || s=$?
 	if [ "$s" -eq 0 ] && [ "$(od -An -c -N2 -- "$work/hello.exe" 2>/dev/null | tr -d ' \n')" = "MZ" ]; then
@@ -251,14 +225,10 @@ if [ -d "$root/lib-a64" ]; then
 	if [ "$s" -eq 0 ] && [ "$arch" = "b700" ]; then
 		printf '  ok    %-30s %6s  %s\n' "ob build -t a64" "${_ELAPSED}s" "${results#"$root"/}/build-a64.log"
 		pass=$((pass+1))
-		# If there is an emulator and an AArch64 C library, the binary is also run. Neither is
-		# expected on the machine unpacking a tarball, so its absence is a skip and not a gap.
-		#
-		# Both names, because the Debian package that CI installs is qemu-user-static and what
-		# it puts on the PATH is qemu-aarch64-static -- looking only for qemu-aarch64 skipped
-		# this on the one machine that could have run it. And -L, because the binary is
-		# dynamically linked: without a directory holding ld-linux-aarch64.so.1 the emulator
-		# has nothing to start it with. libc6-arm64-cross puts one at /usr/aarch64-linux-gnu.
+		# Run too, if there is an emulator and an AArch64 C library -- neither expected on a
+		# machine unpacking a tarball, so absence is a skip. Both names, because CI installs
+		# qemu-user-static, which is qemu-aarch64-static on the PATH; and -L, because the binary
+		# is dynamically linked (libc6-arm64-cross leaves a sysroot at /usr/aarch64-linux-gnu).
 		qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
 		sysroot="${A64_SYSROOT:-}"
 		[ -n "$sysroot" ] || for c in /usr/aarch64-linux-gnu /usr/aarch64-linux-gnu/libc; do
@@ -286,10 +256,9 @@ else
 	skipped "ob build -t a64" "this bundle carries no AArch64 objects"
 fi
 
-# 11. The language suites, run out of the bundle's own tests/ against the bundle's own baseline.
-#    Thousands of cases, each compiled and executed in a process of its own -- the long check,
-#    and the one that says this tarball's compiler is the compiler the tree tests. --quick runs
-#    one suite instead, which is enough to prove the harness works and nothing about the release.
+# 11. The language suites, out of the bundle's own tests/ against its own baseline: thousands of
+#    cases, each in a process of its own, and the check that says this tarball's compiler is the
+#    one the tree tests. --quick runs one suite -- enough for the harness, nothing for a release.
 if [ "$quick" = 1 ]; then
 	s=0; started=$SECONDS
 	( cd "$root/tests" && timeout 900 "$ob" test JSON.Test > "$results/suites.log" 2>&1 ) || s=$?
