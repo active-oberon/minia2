@@ -218,8 +218,20 @@ if [ -d "$root/lib-a64" ]; then
 		pass=$((pass+1))
 		# If there is an emulator and an AArch64 C library, the binary is also run. Neither is
 		# expected on the machine unpacking a tarball, so its absence is a skip and not a gap.
-		if command -v qemu-aarch64 >/dev/null 2>&1; then
-			s=0; run "$results/run-a64.log" 300 qemu-aarch64 ./hello-arm64 || s=$?
+		#
+		# Both names, because the Debian package that CI installs is qemu-user-static and what
+		# it puts on the PATH is qemu-aarch64-static -- looking only for qemu-aarch64 skipped
+		# this on the one machine that could have run it. And -L, because the binary is
+		# dynamically linked: without a directory holding ld-linux-aarch64.so.1 the emulator
+		# has nothing to start it with. libc6-arm64-cross puts one at /usr/aarch64-linux-gnu.
+		qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
+		sysroot="${A64_SYSROOT:-}"
+		[ -n "$sysroot" ] || for c in /usr/aarch64-linux-gnu /usr/aarch64-linux-gnu/libc; do
+			[ -f "$c/lib/ld-linux-aarch64.so.1" ] && { sysroot="$c"; break; }
+		done
+		if [ -n "$qemu" ]; then
+			qargs=("$qemu"); [ -n "$sysroot" ] && qargs+=(-L "$sysroot"); qargs+=(./hello-arm64)
+			s=0; run "$results/run-a64.log" 300 "${qargs[@]}" || s=$?
 			if [ "$s" -eq 0 ] && grep -q 'Hello from A2' "$results/run-a64.log"; then
 				printf '  ok    %-30s %6s  %s\n' "the AArch64 binary, emulated" "${_ELAPSED}s" \
 					"${results#"$root"/}/run-a64.log"
@@ -228,7 +240,7 @@ if [ -d "$root/lib-a64" ]; then
 				skipped "the AArch64 binary, emulated" "qemu is here but could not run it (C library?)"
 			fi
 		else
-			skipped "the AArch64 binary, emulated" "no qemu-aarch64 on this machine"
+			skipped "the AArch64 binary, emulated" "no qemu-aarch64 or qemu-aarch64-static here"
 		fi
 	else
 		printf '  FAIL  %-30s no AArch64 ELF came out (e_machine %s)\n' "ob build -t a64" "${arch:-none}"
