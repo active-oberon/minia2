@@ -42,36 +42,19 @@ RUN task Linux64 && task Win64
 RUN tests/a64-runtime-check.sh target/Linux64 target/A64/bin \
     && tests/a64-stdlib-check.sh target/Linux64 target/A64/bin
 
-# Assemble the SDK payload: the Linux runtime + headless-core stdlib for both
-# targets (see docker/headless-core.txt — everything whose import closure never
-# reaches the window manager / display / raster). The Win64 lib enables
-# `ob build -t win64` (cross-compiled .exe); the win-specific boot modules
-# (Kernel32, WinFS) come from configs/moduleListWin.txt.
-RUN set -eu; \
-    mkdir -p /opt/a2sdk/lib /opt/a2sdk/lib-win64 /opt/a2sdk/lib-a64 /opt/a2sdk/lib-sym; \
-    cp target/Linux64/oberon      /opt/a2sdk/oberon; \
-    cp target/Linux64/oberon.cfg  /opt/a2sdk/oberon.cfg; \
-    cp configs/moduleListLinux.txt /opt/a2sdk/boot-modules.txt; \
-    cp configs/moduleListWin.txt   /opt/a2sdk/boot-modules-win64.txt; \
-    while read -r m; do \
-        for e in SymUu GofUu; do \
-            [ -f "target/Linux64/bin/$m.$e" ] && \
-                cp "target/Linux64/bin/$m.$e" /opt/a2sdk/lib/ || true; \
-        done; \
-    done < docker/headless-core.txt; \
-    cp target/Linux64/bin/*.SymUu /opt/a2sdk/lib-sym/; \
-    { cat docker/headless-core.txt configs/moduleListWin.txt; } | sort -u | \
-    while read -r m; do \
-        for e in SymWw GofWw; do \
-            [ -f "target/Win64/bin/$m.$e" ] && \
-                cp "target/Win64/bin/$m.$e" /opt/a2sdk/lib-win64/ || true; \
-        done; \
-    done; \
-    cp target/A64/bin/*.SymU8 target/A64/bin/*.GofU8 /opt/a2sdk/lib-a64/; \
-    echo "SDK lib (linux64): $(ls /opt/a2sdk/lib/*.SymUu | wc -l) modules, $(du -sh /opt/a2sdk/lib | cut -f1)"; \
-    echo "SDK lib (a64):     $(ls /opt/a2sdk/lib-a64/*.SymU8 | wc -l) modules, $(du -sh /opt/a2sdk/lib-a64 | cut -f1)"; \
-    echo "SDK lib (win64):   $(ls /opt/a2sdk/lib-win64/*.SymWw | wc -l) modules, $(du -sh /opt/a2sdk/lib-win64 | cut -f1)"; \
-    echo "SDK lib-sym (LSP): $(ls /opt/a2sdk/lib-sym/*.SymUu | wc -l) symbols, $(du -sh /opt/a2sdk/lib-sym | cut -f1)"
+# Assemble the SDK payload -- by the same script that assembles the tarball release
+# (tests/bundle.sh), so the image and the tarball are the same SDK and cannot drift
+# apart: the runtime, the headless-core stdlib for all three targets (see
+# docker/headless-core.txt -- everything whose import closure never reaches the window
+# manager / display / raster), every .SymUu for the language server, the std package
+# manifests, the examples, the suites and `ob` itself.
+#
+# --no-tar because the layer is the artefact here; there is nothing to carry anywhere.
+# The version cannot be read from git -- .git is not in the build context (see
+# Dockerfile.dockerignore) -- so it comes in as a build argument and defaults to the
+# tag the image is published under.
+ARG SDK_VERSION=docker
+RUN A2_SDK_VERSION="$SDK_VERSION" tests/bundle.sh --no-tar -o /opt/a2sdk target/Linux64
 
 # ---------------------------------------------------------------------------
 # Stage 2 — the SDK image: runtime + stdlib + `ob` wrapper on a slim base.
@@ -95,18 +78,14 @@ ENV A2SDK=/opt/a2sdk \
     A2_PLATFORM=Unix64 \
     TMPDIR=/tmp
 
-# The whole SDK payload (runtime + oberon.cfg + headless-core lib/) was
-# assembled at /opt/a2sdk in the builder stage.
+# The whole SDK payload -- runtime, oberon.cfg, the three lib/ trees, lib-sym/ for the
+# language server, the std package manifests, the examples, the suites, LICENSE.txt (A2
+# is BSD-3-Clause, ETH Zurich: binary redistribution has to reproduce the notice) and a
+# copy of `ob` -- was assembled at /opt/a2sdk in the builder stage by tests/bundle.sh.
 COPY --from=builder /opt/a2sdk ${A2SDK}
 
-# A2 is BSD-3-Clause (ETH Zurich); binary redistribution requires reproducing the
-# copyright notice + disclaimer with the distribution. Bundle it in the image.
-COPY license.txt /opt/a2sdk/LICENSE.txt
-
-# Std package manifests (the layered decomposition) so `ob lint` has the
-# module->tier map and `ob get` can satisfy std/* requirements from the image.
-COPY packages ${A2SDK}/packages
-
+# `ob` also goes on the PATH, which is what the ENTRYPOINT runs. It is the same file as
+# ${A2SDK}/ob; the image sets A2SDK, so which of the two is invoked makes no difference.
 COPY docker/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob
 

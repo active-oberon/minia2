@@ -98,6 +98,15 @@ jobs:
                 "$RUNNER_TEMP/a2sdk/lib/"
           cd tests && A2SDK="$RUNNER_TEMP/a2sdk" bash ../docker/ob test \
             --report "$RUNNER_TEMP/ob-test-report.json"
+      - name: Tarball SDK (assemble it, unpack it elsewhere, use it with an empty environment)
+        # The artefact for someone who does not want Docker: `ob` plus the runtime plus the
+        # objects, in a directory. The check unpacks the tarball into a temporary directory and
+        # runs the bundle's own run.sh under `env -i`, so anything the SDK cannot find beside
+        # itself is a failure here rather than in a stranger's download. BUNDLE_REQUIRE makes a
+        # missing build a failure: this job has one, so a skip would mean the step did nothing.
+        env:
+          BUNDLE_REQUIRE: "1"
+        run: task bundle-check
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4

@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: 0          # the SDK version comes from `git describe`
       - name: Install task + yq
         run: |
           curl -sL https://taskfile.dev/install.sh | sh -s -- -d -b "$HOME/.local/bin"
@@ -24,8 +25,37 @@ jobs:
       - name: Package zips
         run: |
           for P in Linux64 Win64; do (cd target && zip -r "../minia2-$P-${GITHUB_REF_NAME}.zip" "$P"); done
+      # The SDK as a tarball -- the toolchain without Docker, which for most people is the
+      # download that matters: unpack, run ./ob. The AArch64 objects are built first because the
+      # host bundle carries them as a cross target (`ob build -t a64`).
+      - name: AArch64 objects (for the cross target and the AArch64 SDK)
+        env:
+          A64_REQUIRE: "1"
+        run: |
+          tests/a64-runtime-check.sh target/Linux64 target/A64/bin
+          task a64-stdlib
+      - name: Tarball SDK (x86-64 Linux) + check it
+        env:
+          BUNDLE_REQUIRE: "1"
+        run: |
+          task bundle-check          # assembles a bundle of its own and uses it under `env -i`
+          task bundle                # the one that is published
+          cp target/*.tar.gz .
+      # The SDK for a 64-bit ARM machine -- a Pi 4/5, an ARM server, a phone under Termux. There
+      # a64 is not a cross target: the compiler runs on the device.
+      - name: Tarball SDK (AArch64)
+        env:
+          A64_REQUIRE: "1"
+        run: |
+          task a64-bundle
+          # a64-bundle.sh names its output after what it is rather than after a release; the
+          # tarball is renamed here so the two SDKs sit side by side on the release page. What is
+          # inside it still unpacks into a2-a64/, which is what its own README tells you to cd into.
+          cp target/A64/bundle.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "minia2 ${{ github.ref_name }}"
-          files: minia2-*-*.zip
+          files: |
+            minia2-*-*.zip
+            minia2-sdk-*.tar.gz

@@ -1,26 +1,64 @@
-# minia2 as a Docker SDK (PoC)
+# minia2 as an SDK — a Docker image, or a tarball
 
-A Go-style toolchain for **A2 / Active Oberon**, packaged as one Docker image.
-No per-OS host port needed — it runs anywhere Docker does (Linux, macOS, Windows
-via Docker Desktop / WSL2). The compiled output is a Linux glibc ELF.
-
-It wraps the repo's self-hosting toolchain (the `oberon` runtime + the precompiled
-standard library that `task` produces) behind an `ob` CLI that feels like Go:
-`ob run` (compile+run), `ob build` (standalone native executable with the runtime
-baked in — Linux ELF or, via `-t win64` / `-t a64`, a Windows PE `.exe` or an
-AArch64 ELF), `ob compile`, and
+A Go-style toolchain for **A2 / Active Oberon**. It wraps the repo's self-hosting
+toolchain (the `oberon` runtime + the precompiled standard library that `task`
+produces) behind an `ob` CLI that feels like Go: `ob run` (compile+run), `ob build`
+(standalone native executable with the runtime baked in — Linux ELF or, via
+`-t win64` / `-t a64`, a Windows PE `.exe` or an AArch64 ELF), `ob compile`, and
 `ob lsp` (a language server with diagnostics for your editor). See *Limitations*
 for the current scope.
 
+**Docker is one way to have it, not the only one.** The same payload ships as a
+tarball, and `ob` is the same script in both — it finds its SDK beside itself and
+takes the project to be the current directory. Which one to pick:
+
+| | Docker image | Tarball |
+|---|---|---|
+| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit x86 Linux, glibc, bash, coreutils |
+| get it | `docker pull puhachenko/minia2-sdk` | `task bundle`, or a release tarball |
+| use it | `docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod` | `./ob run Hello.Mod` |
+| editor (LSP) | a container per session, sources bind-mounted | `cmd = { "/path/to/ob", "lsp" }` |
+
+The tarball is the better fit for an editor and for a machine where a container in the
+loop is a nuisance; the image is the better fit for CI and for macOS/Windows.
+
 ## Build
 
-From the repository root (the build compiles the runtime + stdlib from source):
+From the repository root (both compile the runtime + stdlib from source):
+
+```sh
+task sdk                    # the image (docker build, and then a smoke test of it)
+task bundle                 # the tarball: target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz
+task bundle-check           # unpack the tarball elsewhere and use it with an empty environment
+```
+
+Or by hand:
 
 ```sh
 docker build -f docker/Dockerfile -t minia2-sdk .
 ```
 
-## Use
+## Use it without Docker
+
+```sh
+tar xzf minia2-sdk-<version>-linux-amd64.tar.gz
+cd minia2-sdk-<version>-linux-amd64
+./run.sh --quick                       # does this SDK work? every verb, no suites
+./ob run examples/Hello.Mod
+./ob build examples/Hello.Mod && ./Hello
+mkdir -p ~/.local/bin && ln -sf "$PWD/ob" ~/.local/bin/ob    # `ob` on the PATH
+```
+
+Nothing is installed and nothing is written outside the directory. `ob` follows the
+symlink back to the SDK, so the link above needs no environment variable; `A2SDK` still
+overrides the location if you want it elsewhere. The project is the current directory
+(`A2_PROJECT` overrides that), which under Docker is the `/work` mount.
+
+For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone under Termux —
+`task a64-bundle` builds the SDK where a64 is the native target and the compiler runs on
+the device.
+
+## Use it with Docker
 
 Mount your working directory at `/work` and call `ob`:
 
@@ -171,6 +209,12 @@ docker run --rm -i -v "$PWD:/work" \
 
 (The prebuilt symbols must match the server's target — `.SymUu` = Linux64/Unix64.)
 
+Without Docker there is nothing to mount: point `A2_SYMS` at the directory instead.
+
+```sh
+A2_SYMS=$HOME/Projects/A2/a2oberon/target/Linux64/bin ./ob lsp --live
+```
+
 **stdlib jumps.** Go-to-definition into a standard-library module needs that module's
 source available to the editor. Two ways:
 - edit inside a full A2 tree (e.g. `a2oberon/source`) — every module is already a
@@ -182,6 +226,10 @@ Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--li
 (the `-v` mount is what makes your project modules resolvable; `-i`, no `-t`). Add
 `-v <a2-source>:/libsrc:ro` and `initializationOptions.stdlibSrc=<a2-source>` for
 stdlib go-to-definition.
+
+From the tarball the command is the path to `ob` and nothing else:
+`{ "/path/to/minia2-sdk-.../ob", "lsp", "--live" }` — the project is the directory the
+editor is in, so there is no mount to get right and no container per session.
 
 **Neovim** — the config-manager-agnostic way (works with NVChad/LazyVim/etc.
 without touching their files): two standard Neovim runtime files.
@@ -195,13 +243,19 @@ vim.filetype.add({ extension = { Mod = "oberon" } })
 ```lua
 vim.diagnostic.config({ virtual_lines = { current_line = true } })  -- full error text inline
 local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0)) or vim.fn.getcwd()
-local cmd = { "docker", "run", "--rm", "-i", "-v", dir .. ":/work:ro" }  -- mount project
 local init = {}
 local stdlib = vim.env.A2_STDLIB_SRC   -- optional: a full A2 source tree, for stdlib jumps
-if stdlib and stdlib ~= "" then
-  vim.list_extend(cmd, { "-v", stdlib .. ":/libsrc:ro" }); init.stdlibSrc = stdlib
+local cmd
+if vim.env.A2_OB and vim.env.A2_OB ~= "" then       -- the tarball SDK: $A2_OB is its `ob`
+  cmd = { vim.env.A2_OB, "lsp", "--live" }
+  if stdlib and stdlib ~= "" then init.stdlibSrc = stdlib end
+else                                                -- the image: mount the project at /work
+  cmd = { "docker", "run", "--rm", "-i", "-v", dir .. ":/work:ro" }
+  if stdlib and stdlib ~= "" then
+    vim.list_extend(cmd, { "-v", stdlib .. ":/libsrc:ro" }); init.stdlibSrc = stdlib
+  end
+  vim.list_extend(cmd, { "minia2-sdk", "lsp", "--live" })
 end
-vim.list_extend(cmd, { "minia2-sdk", "lsp", "--live" })
 vim.lsp.start({
   name = "ob", cmd = cmd, root_dir = dir, init_options = init,
   flags = { debounce_text_changes = 500 },   -- live, but only after you pause typing
@@ -213,7 +267,8 @@ vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = true })
 Drop `--live` and the `flags` line for on-open/save-only. `vim.diagnostic.config`
 is global — remove that line if you don't want inline text for other filetypes. Set
 `export A2_STDLIB_SRC=$HOME/Projects/A2/a2oberon/source` (a full A2 tree) so
-go-to-definition can reach standard-library modules from any project.
+go-to-definition can reach standard-library modules from any project, and
+`export A2_OB=/path/to/minia2-sdk-.../ob` to use the tarball SDK instead of the image.
 
 **VS Code**: use a generic LSP bridge extension (e.g. *"Generic LSP Client"*) or a
 tiny extension whose `serverOptions` runs the same `docker … minia2-sdk lsp` command
@@ -338,3 +393,8 @@ fails the build.
   work — for the SDK image and for running Linux `build` output.
 - Dead-code elimination is module-granular, so binaries are larger than Go's
   (hello-world ≈ 1.3 MB — it contains the full kernel + GC + scheduler).
+- **There is no native Windows SDK yet.** Win64 is a *cross* target: the tarball and the
+  image both run on Linux and write a `.exe`. `ob` is a bash script and would plausibly
+  work under Git Bash / MSYS2 against a `target/Win64` payload, but that has not been
+  tried, so nothing claims it. On Windows today: Docker Desktop, or WSL2 with the
+  tarball.

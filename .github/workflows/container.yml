@@ -32,8 +32,10 @@ jobs:
           HUB=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/minia2-sdk
           if [ -n "${GITHUB_REF_NAME}" ] && echo "$GITHUB_REF_TYPE" | grep -q tag; then
             echo "tags=$HUB:${GITHUB_REF_NAME},$HUB:latest" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
             echo "tags=$HUB:latest" >> "$GITHUB_OUTPUT"
+            echo "version=main-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           fi
       # Plain buildx instead of docker/build-push-action so the whole build+push
       # can be retried in-shell. --provenance=false keeps each tag a single plain
@@ -41,12 +43,16 @@ jobs:
       - name: Build + push
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
+          # What `ob version` prints inside the image: git is not in the build context, so the
+          # payload cannot work it out for itself.
+          SDK_VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -u
           TAG_ARGS=""
           IFS=','; for t in $TAGS; do TAG_ARGS="$TAG_ARGS -t $t"; done; unset IFS
           for i in 1 2 3; do
             if docker buildx build --push --provenance=false \
+                 --build-arg "SDK_VERSION=$SDK_VERSION" \
                  -f docker/Dockerfile $TAG_ARGS .; then exit 0; fi
             echo "::warning::build+push attempt $i failed; retrying in $((i * 30))s"
             sleep $((i * 30))

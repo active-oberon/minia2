@@ -1,9 +1,10 @@
 # A2 / Active Oberon IDE (minia2 SDK + LSP)
 
 A full editor experience for **A2 / Active Oberon**, with no per-OS toolchain to
-install: the compiler, standard library and a language server ship as one Docker
-image (`minia2-sdk`), and your editor talks to it over LSP. Works anywhere Docker
-runs (Linux, macOS, Windows via Docker Desktop / WSL2).
+build: the compiler, standard library and a language server ship as one SDK — either
+a **tarball** you unpack (64-bit x86 Linux; nothing installed, no container in the
+loop) or a **Docker image** (`minia2-sdk`, anywhere Docker runs: Linux, macOS, Windows
+via Docker Desktop / WSL2). Your editor talks to it over LSP either way.
 
 This document covers **installation, editor setup, every feature, and the
 keybindings**. For how the toolchain itself works (`ob run/build/compile`, standalone
@@ -13,9 +14,24 @@ binaries, image internals) see [`docker/README.md`](../docker/README.md).
 
 ## 1. Install
 
-### 1a. Get the SDK image
+### 1a. Get the SDK
 
-Pull the published image and tag it as `minia2-sdk` (what the editor config expects):
+**The tarball** — one directory, no daemon, and the shortest path to a working editor:
+
+```sh
+tar xzf minia2-sdk-<version>-linux-amd64.tar.gz
+cd minia2-sdk-<version>-linux-amd64
+./run.sh --quick                 # does it work? every verb, in about a minute
+export A2_OB="$PWD/ob"           # what the editor configs below look for
+mkdir -p ~/.local/bin && ln -sf "$PWD/ob" ~/.local/bin/ob     # and `ob` on the PATH
+```
+
+It comes from a release, or from `task bundle` in this repository. `ob` finds the SDK
+beside itself (following the symlink), so neither the export nor the link needs any
+further setup; `A2SDK` overrides the location if you want it elsewhere.
+
+**Or the image.** Pull the published one and tag it as `minia2-sdk` (what the editor
+config expects):
 
 ```sh
 docker pull docker.io/puhachenko/minia2-sdk:latest
@@ -29,11 +45,12 @@ git clone https://github.com/active-oberon/minia2.git && cd minia2
 docker build -f docker/Dockerfile -t minia2-sdk .
 ```
 
-Verify: `docker run --rm minia2-sdk version`.
+Verify: `docker run --rm minia2-sdk version` (or `ob version` from the tarball).
 
 ### 1b. The `ob` command (CLI)
 
-Add an alias so the SDK feels like a local tool:
+From the tarball `ob` *is* the command — the link above is all it takes. With the image,
+an alias makes it feel like one:
 
 ```sh
 alias ob='docker run --rm -v "$PWD:/work" minia2-sdk'
@@ -45,7 +62,7 @@ alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # for the interact
 | `ob run <File.Mod> [Proc]` | compile + execute (`go run` model) |
 | `ob build <File.Mod> [-o name] [-t linux64\|win64] [Proc]` | standalone native executable |
 | `ob compile <File.Mod> [-o dir]` | just the `.GofUu` object file |
-| `obit repl` / `ob version` | interactive A2 shell / SDK banner |
+| `obit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
 | `ob lsp [--live]` | the language server (editors spawn this) |
 
 ### 1c. Neovim
@@ -130,7 +147,8 @@ Set these before launching the editor (the ftplugin reads them):
 | Variable | Purpose |
 |----------|---------|
 | `A2_STDLIB_SRC` | Path to a full A2 source tree (e.g. `$HOME/Projects/A2/a2oberon/source`). Enables **go-to-definition into standard-library modules** from any project. |
-| `A2_SYMS` | Path to your project's **prebuilt symbol directory** (e.g. `$HOME/Projects/A2/a2oberon/target/Linux64/bin`). Imports then resolve from real build artifacts instead of on-demand compilation — recommended for large trees, and it fixes modules whose source lives in a platform-prefixed file. Must match the server target (`.SymUu` = Linux64). |
+| `A2_SYMS` | Path to your project's **prebuilt symbol directory** (e.g. `$HOME/Projects/A2/a2oberon/target/Linux64/bin`). Imports then resolve from real build artifacts instead of on-demand compilation — recommended for large trees, and it fixes modules whose source lives in a platform-prefixed file. Must match the server target (`.SymUu` = Linux64). Read directly by `ob lsp` from the tarball SDK; with the image the editor config turns it into a `/psym` mount. |
+| `A2_OB` | Path to the tarball SDK's `ob`. Set it and the editor config starts the language server directly instead of `docker run`. |
 
 ```sh
 export A2_STDLIB_SRC="$HOME/Projects/A2/a2oberon/source"
