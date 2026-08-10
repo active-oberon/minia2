@@ -45,6 +45,16 @@ jobs:
         run: |
           task a64-stdlib
           task a64-selfhost
+      - name: AArch64 tarball SDK (assembled here, not first at release time)
+        # The bundle for an ARM machine compiles a dozen modules the headless standard library does
+        # not carry -- the graphics stack, the text system under it -- and a missing one of those is
+        # invisible until something tries. Nothing did until a release did: `task a64-bundle` ran
+        # only from release.yml, and passed for months on a developer's machine because the objects
+        # directory there had leftovers in it. Here the directory holds exactly what a64-stdlib put
+        # there, which is the arrangement a stranger's clone has.
+        env:
+          A64_REQUIRE: "1"
+        run: task a64-bundle
       - name: A64 test suites (push to main only — it is the better part of an hour)
         # Every tests/*.Test case compiled for AArch64, and executed under qemu where the suite
         # executes: the two language suites are 5450 compilation and 695 execution cases, the same
