@@ -132,7 +132,9 @@ Completion, diagnostics and semantic-token colouring apply automatically — not
 
 ## 4. Project-aware resolution
 
-Editing a single file works against the standard library. For real multi-module code,
+Editing a single file works against the standard library, and a directory of modules works as
+a project -- for both the server and `ob build`, which compile every `*.Mod` beside the one you
+name. For real multi-module code,
 the server resolves your **own** modules too: the file's directory is mounted at
 `/work`, and missing dependencies are compiled on demand from their `.Mod` source
 (imports resolve transitively). Diagnostics, hover, completion, references, rename all

@@ -58,6 +58,30 @@ For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone under 
 `task a64-bundle` builds the SDK where a64 is the native target and the compiler runs on
 the device.
 
+## Projects of more than one module
+
+The project is the directory you are in: every `*.Mod` at its top is compiled and importable,
+so a module can import its siblings and `ob build` links the whole import closure. Nothing has
+to be listed anywhere, and the order does not matter — the compiler is driven to a fixpoint
+(A2's compiler does not topologically reorder a batch, so `ob` iterates instead). Modules the
+one you named does not import cost a compile and nothing else; a broken one that nobody imports
+does not break the build.
+
+```sh
+ob run App.Mod        # App imports Deep, Deep imports Util, all three in this directory
+ob build App.Mod -o app
+ob build App.Mod -t win64 -o app.exe   # siblings are compiled for the target, not the host
+```
+
+Dependencies are the other thing: `ob get github.com/user/repo` vendors them under `.a2pkg/`,
+and those are populated the same way, lower tier first. A2's namespace is flat, so a name
+provided twice is a collision: between two packages it is a hard error, and a module of your
+own with a package's name shadows it with a warning.
+
+Two shapes this does not cover: sources in subdirectories (only the top of the project is
+read), and a project whose modules have their own build output you want reused rather than
+recompiled (the language server takes `A2_SYMS` for that; the compiler does not).
+
 ## Use it with Docker
 
 Mount your working directory at `/work` and call `ob`:
