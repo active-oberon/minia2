@@ -36,6 +36,28 @@ The build drives A2's own `Release.Build` with a package `--exclude` list
 (`MINI_EXCLUDE` in `Taskfile.yml`) then links the static kernel from
 `configs/moduleList*.txt`.
 
+## SDK (the toolchain without the desktop)
+
+The compiler, the standard library and the language server, packaged for people who
+want to *write Active Oberon* rather than run the A2 desktop. Two forms of the same
+payload, assembled by the same script (`tests/bundle.sh`), so they cannot drift apart:
+
+```sh
+task bundle          # target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz  (no Docker)
+task bundle-check    # unpack the tarball elsewhere and use it with an empty environment
+task sdk             # the Docker image (same payload at /opt/a2sdk)
+```
+
+The tarball needs nothing but 64-bit x86 Linux, glibc, bash and coreutils — unpack it
+and run `./ob`. It carries `ob build -t win64` (a Windows `.exe`) and `-t a64` (an
+AArch64 ELF) as cross targets when their objects are present. For a machine that *is*
+AArch64 — a Pi 4/5, an ARM server, a phone under Termux — `task a64-bundle` builds the
+SDK where a64 is the native target and the compiler runs on the device.
+
+`ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`.
+See [`docker/README.md`](docker/README.md) for all of them and
+[`docs/IDE.md`](docs/IDE.md) for editor setup.
+
 ## Layout
 
 | Path | What |

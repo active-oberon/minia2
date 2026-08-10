@@ -55,12 +55,35 @@
 # lets many builds run concurrently without clobbering each other.
 set -euo pipefail
 
-SDK="${A2SDK:-/opt/a2sdk}"
+# Where the SDK is. $A2SDK wins; failing that, this script looks beside itself. That second
+# answer is what makes a tarball SDK work with nothing installed and nothing exported: `ob` is
+# unpacked next to `oberon`, so `./ob` finds its own runtime, and so does a symlink to it from
+# ~/.local/bin -- the link is followed to the end because the target is what sits in the SDK.
+# The Docker image keeps `ob` in /usr/local/bin, away from the payload, and sets A2SDK, so
+# nothing there changes.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link" ;; *) _self="$(dirname "$_self")/$_link" ;; esac
+done
+_selfdir="$(cd "$(dirname "$_self")" && pwd)"
+if [ -n "${A2SDK:-}" ]; then SDK="$A2SDK"
+elif [ -x "$_selfdir/oberon" ]; then SDK="$_selfdir"
+else SDK=/opt/a2sdk
+fi
+
+# The project: where the user's sources, a2pkg.json and .a2pkg/ live. In the image that is the
+# bind mount at /work -- which is also the working directory there, so $PWD is the same answer
+# inside Docker and the only one that means anything outside it, where there is no /work.
+# Captured here because verbs run the compiler in a scratch dir and $PWD changes under them.
+PROJECT="${A2_PROJECT:-$PWD}"
+
 OBERON="$SDK/oberon"
 LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runtime
 LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
 LIBA64="$SDK/lib-a64"          # AArch64 stdlib (.GofU8/.SymU8), if present
 LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
+SYMDIR="${A2_SYMS:-/psym}"     # the project's own .SymUu, if it has a build of its own (LSP)
 PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux); HOST_PLATFORM below is
                                              # what this process can execute, and PLATFORM may be
                                              # retargeted by a verb (`ob test -t a64`)
@@ -73,12 +96,19 @@ SYM_EXT=".SymUu"
 EXPECT_FILE="a2test-expected.txt"        # baseline of known-failing test cases (ob test)
 
 PKGDIR="${A2_PACKAGES:-$SDK/packages}"   # shipped std package manifests (std/*/a2pkg.json)
-VENDOR=".a2pkg"                          # per-project package cache (under /work)
-PROJ_MANIFEST="a2pkg.json"               # project manifest (in /work)
-PROJ_LOCK="a2pkg.lock"                   # pinned versions (in /work)
+VENDOR=".a2pkg"                          # per-project package cache (under $PROJECT)
+PROJ_MANIFEST="a2pkg.json"               # project manifest (in $PROJECT)
+PROJ_LOCK="a2pkg.lock"                   # pinned versions (in $PROJECT)
 
 die() { echo "ob: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Verbs that write into the project -- get, lint, doc -- need one to exist. Under Docker the
+# usual way for it not to exist is a forgotten `-v "$PWD:/work"`, so the message still says so.
+_need_project() {
+  [ -d "$PROJECT" ] || die "no project directory at $PROJECT" \
+    "(under Docker: mount it with -v \"\$PWD:/work\"; otherwise set A2_PROJECT)"
+}
 
 [ -x "$OBERON" ] || die "runtime not found at $OBERON (set A2SDK to the SDK root)"
 [ -d "$LIB" ]    || die "standard library not found at $LIB"
@@ -135,13 +165,13 @@ make_workdir() {
   w="$(mktemp -d "${TMPDIR:-/tmp}/ob.XXXXXX")"
   case "$target" in
     win64)
-      [ -d "$LIBWIN" ] || die "win64 target unavailable: $LIBWIN not in this image"
+      [ -d "$LIBWIN" ] || die "win64 target unavailable: no $LIBWIN in this SDK"
       ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
       ln -s "$LIBWIN"/*.SymWw "$w"/ 2>/dev/null || true   # Win64 target symbols
       ln -s "$LIBWIN"/*.GofWw "$w"/ 2>/dev/null || true   # Win64 link objects
       ;;
     a64)
-      [ -d "$LIBA64" ] || die "a64 target unavailable: $LIBA64 not in this image"
+      [ -d "$LIBA64" ] || die "a64 target unavailable: no $LIBA64 in this SDK"
       ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
       ln -s "$LIBA64"/*.SymU8 "$w"/ 2>/dev/null || true   # AArch64 target symbols
       ln -s "$LIBA64"/*.GofU8 "$w"/ 2>/dev/null || true   # AArch64 link objects
@@ -161,7 +191,7 @@ make_workdir() {
 # dependency added by `ob get` becomes resolvable to the compiler (which only looks in
 # the cwd) without touching the sealed read-only SDK.
 populate_packages() {
-  local w="$1" pkgroot="/work/$VENDOR" mf tier name f base owner
+  local w="$1" pkgroot="$PROJECT/$VENDOR" mf tier name f base owner
   [ -d "$pkgroot" ] || return 0
   declare -A OWNER=()
   # sort package manifests by tier so lower tiers populate first
@@ -381,7 +411,38 @@ cmd_run() {
     exec "$OBERON" "$mod.$proc" )
 }
 
-cmd_repl() { exec "$OBERON" do "System.DoFile $SDK/oberon.cfg ~"; }
+# The interactive shell, in the user's own directory.
+#
+# Two things had to be got right here, and the version before this got both wrong -- it ran
+# `oberon do "System.DoFile $SDK/oberon.cfg ~"`, which never opened a shell at all:
+#
+#   -  `do` executes commands and exits. What continues into the shell afterwards is `run`
+#      (StdIOShell.Execute: System.DoFile on the argument, then Shell.Start) -- and it only
+#      continues if the file succeeded, so a configuration that fails takes the shell with it.
+#   -  the tree's oberon.cfg is written for a build tree: relative paths bin/, source/, data/,
+#      work/, and Configuration.Init, which wants XML out of data/ that no headless SDK ships.
+#      In the user's directory none of that exists, so Configuration.GofUu was not found, the
+#      file failed, and `ob repl` printed three errors and left. In the image too -- nothing
+#      covered this verb until the bundle's self-check did.
+#
+# So the configuration is written here instead, naming absolute directories: the standard
+# library, because the compiler and everything else is loaded from it, and the project, both as
+# a search path and as the work path -- a bare file name in the shell then means a file of the
+# user's, and what the compiler writes lands beside it rather than in the SDK.
+cmd_repl() {
+  local cfg
+  cfg="$(mktemp "${TMPDIR:-/tmp}/ob-repl.XXXXXX.cfg")"
+  cat > "$cfg" <<EOF
+Heaps.SetMetaData~
+Files.AddSearchPath $LIB~
+Files.AddSearchPath $PROJECT~
+Files.SetWorkPath $PROJECT~
+EOF
+  # The shell replaces this process, so nothing here can clean the file up afterwards; it is a
+  # few bytes in the temporary directory, and removing it before the exec would remove it before
+  # the shell reads it.
+  exec "$OBERON" run "$cfg"
+}
 
 # Language server: speaks LSP over stdin/stdout. Runs in a scratch dir seeded with
 # the stdlib symbols so the diagnostics compiler can resolve imports. Blocks until
@@ -393,24 +454,25 @@ cmd_lsp() {
   trap 'rm -rf "$w"' RETURN
   # full stdlib symbols so the checker resolves any in-tree import (GUI etc.)
   [ -d "$LIBSYM" ] && ln -sf "$LIBSYM"/*.SymUu "$w"/ 2>/dev/null || true
-  # the project's own prebuilt symbol files (its build output, mounted at /psym) win
+  # the project's own prebuilt symbol files (its build output: $A2_SYMS, or the /psym
+  # mount point the image documents) win
   # over the bundled stdlib: imports then resolve from real build artifacts instead of
   # fragile on-demand compilation (and module-in-prefixed-file cases resolve too).
-  [ -d /psym ] && ln -sf /psym/*.SymUu "$w"/ 2>/dev/null || true
+  [ -d "$SYMDIR" ] && ln -sf "$SYMDIR"/*.SymUu "$w"/ 2>/dev/null || true
   # installed external packages (ob get) are already symlinked by make_workdir's
   # populator; the LSP resolves their source on demand (no precompile needed).
-  # project sources mounted at /work become resolvable via on-demand compilation
-  [ -d /work ] && ln -sf /work/*.Mod "$w"/ 2>/dev/null || true
+  # the project's own sources become resolvable via on-demand compilation
+  ln -sf "$PROJECT"/*.Mod "$w"/ 2>/dev/null || true
   ( cd "$w" && export PWD="$w" && exec "$OBERON" "$entry" )
 }
 
-# ob get <host/user/repo>[@version] ... — fetch package(s) into /work/.a2pkg, pin them
+# ob get <host/user/repo>[@version] ... — fetch package(s) into $PROJECT/.a2pkg, pin them
 # in a2pkg.lock, add them to a2pkg.json, and transitively fetch their external deps.
 # std/* requirements are satisfied by the SDK and are never fetched.
 cmd_get() {
-  have git || die "ob get needs git in the image"
-  have jq  || die "ob get needs jq in the image"
-  [ -d /work ] || die "mount your project at /work"
+  have git || die "ob get needs git on the PATH"
+  have jq  || die "ob get needs jq on the PATH"
+  _need_project
   [ $# -ge 1 ] || die "usage: ob get <host/user/repo>[@version] ..."
   local spec; for spec in "$@"; do _get_one "$spec"; done
   echo "ob: updated $PROJ_MANIFEST + $PROJ_LOCK ; deps vendored in $VENDOR/"
@@ -431,7 +493,7 @@ _get_one() {
 
 _get_git() {
   local repo="$1" ver="$2" cache sha name dep
-  cache="/work/$VENDOR/$repo"
+  cache="$PROJECT/$VENDOR/$repo"
   # Shallow, VCS-free vendoring: clone only the requested tag/branch at depth 1,
   # capture the exact commit for the lock, then drop .git so the cache holds just
   # the package source. There is no incremental fetch — a re-get re-clones fresh.
@@ -459,7 +521,7 @@ _ensure_registry() {
   [ -n "${A2_REGISTRY:-}" ] || die "ob get by name needs A2_REGISTRY (git URL or path to the registry)"
   if [ -z "${_REGDIR:-}" ]; then
     if [ -d "$A2_REGISTRY" ]; then _REGDIR="$A2_REGISTRY"
-    else _REGDIR="/work/$VENDOR/.registry"; rm -rf "$_REGDIR"
+    else _REGDIR="$PROJECT/$VENDOR/.registry"; rm -rf "$_REGDIR"
          git clone -q --depth 1 "$A2_REGISTRY" "$_REGDIR" || die "registry clone failed: $A2_REGISTRY"; fi
     [ -f "$_REGDIR/index.json" ] || die "registry has no index.json: $A2_REGISTRY"
   fi
@@ -473,7 +535,7 @@ _get_registry() {
   status="$(jq -r --arg n "$name" '.packages[$n].status // "unknown"' "$reg/index.json")"
   [ -n "$path" ] || die "package not in registry: $name (registry: $A2_REGISTRY)"
   [ -d "$reg/$path" ] || die "registry package $name is '$status' — no installable source at $path yet"
-  dest="/work/$VENDOR/$name"
+  dest="$PROJECT/$VENDOR/$name"
   rm -rf "$dest"; mkdir -p "$(dirname "$dest")"
   cp -r "$reg/$path/." "$dest/"
   v="$(jq -r '.version // "0.0.0"' "$dest/$PROJ_MANIFEST" 2>/dev/null || echo 0.0.0)"
@@ -490,13 +552,13 @@ _get_transitive() {
   while IFS= read -r dep; do
     [ -n "$dep" ] || continue
     case "$dep" in std/*) continue ;; esac
-    [ -d "/work/$VENDOR/$dep" ] && continue
+    [ -d "$PROJECT/$VENDOR/$dep" ] && continue
     _get_one "$dep"
   done < <(jq -r '.requires // {} | keys[]' "$pkgdir/$PROJ_MANIFEST" 2>/dev/null)
 }
 
 _record_dep() {
-  local repo="$1" ver="$2" sha="$3" pm="/work/$PROJ_MANIFEST" lk="/work/$PROJ_LOCK" tmp
+  local repo="$1" ver="$2" sha="$3" pm="$PROJECT/$PROJ_MANIFEST" lk="$PROJECT/$PROJ_LOCK" tmp
   [ -f "$pm" ] || echo '{"name":"app","requires":{}}' > "$pm"
   [ -f "$lk" ] || echo '{}' > "$lk"
   tmp="$(mktemp)"; jq --arg r "$repo" --arg v "$ver" '.requires[$r]=$v' "$pm" > "$tmp" && mv "$tmp" "$pm"
@@ -509,19 +571,19 @@ _record_dep() {
 # graph of the project's .Mod files. An upward edge (e.g. std/math importing a tier-2
 # module) is the layering violation the tier model forbids.
 cmd_lint() {
-  [ -d /work ] || die "mount your project at /work"
+  _need_project
   local mf name tier m f mod mtier iimp itier violations=0
   declare -A TIER PKG
   for mf in "$PKGDIR"/std/*/"$PROJ_MANIFEST" \
-            /work/"$VENDOR"/*/"$PROJ_MANIFEST" \
-            /work/"$VENDOR"/*/*/"$PROJ_MANIFEST" \
-            /work/"$VENDOR"/*/*/*/"$PROJ_MANIFEST"; do
+            "$PROJECT/$VENDOR"/*/"$PROJ_MANIFEST" \
+            "$PROJECT/$VENDOR"/*/*/"$PROJ_MANIFEST" \
+            "$PROJECT/$VENDOR"/*/*/*/"$PROJ_MANIFEST"; do
     [ -f "$mf" ] || continue
     name="$(_json "$mf" '.name')"; tier="$(_json "$mf" '.tier')"; [ -n "$tier" ] || tier=9
     while IFS= read -r m; do [ -n "$m" ] && { TIER[$m]="$tier"; PKG[$m]="$name"; }; done < <(_provides "$mf")
   done
-  [ "${#TIER[@]}" -gt 0 ] || die "no package manifests found (looked in $PKGDIR and /work/$VENDOR)"
-  for f in /work/*.Mod; do
+  [ "${#TIER[@]}" -gt 0 ] || die "no package manifests found (looked in $PKGDIR and $PROJECT/$VENDOR)"
+  for f in "$PROJECT"/*.Mod; do
     [ -f "$f" ] || continue
     mod="$(module_name "$f")"; mtier="${TIER[$mod]:-9}"   # project/app code defaults to top
     while IFS= read -r iimp; do
@@ -546,7 +608,7 @@ _imports() {
 
 # ob doc [File.Mod] [-o outdir] — generate pkg.go.dev-style HTML API docs from
 # module doc-comments, via the Fox compiler's Documentation backend. With a file:
-# just that module. Without: every *.Mod in /work + an index.html. Installed
+# just that module. Without: every *.Mod in the project + an index.html. Installed
 # packages are compiled first (fixpoint) so imports resolve for the type-check the
 # doc backend runs.
 cmd_doc() {
@@ -554,15 +616,15 @@ cmd_doc() {
   while [ $# -gt 0 ]; do
     case "$1" in -o|--output) outdir="$2"; shift 2 ;; *) src="$1"; shift ;; esac
   done
-  [ -d /work ] || die "mount your project/package at /work"
+  _need_project
   mkdir -p "$outdir"; outdir="$(realpath "$outdir")"
   local w; w="$(make_workdir)"; trap 'rm -rf "$w"' RETURN
   build_packages "$w"                                   # resolve installed-package imports
-  ln -sf /work/*.Mod "$w"/ 2>/dev/null || true          # project siblings resolvable
+  ln -sf "$PROJECT"/*.Mod "$w"/ 2>/dev/null || true     # project siblings resolvable
   build_packages "$w"                                   # compile siblings too (fixpoint)
   local list m
   if [ -n "$src" ]; then list="$(basename "$src")"; else
-    list="$(cd /work && for f in *.Mod; do [ -e "$f" ] && basename "$f"; done)"
+    list="$(cd "$PROJECT" && for f in *.Mod; do [ -e "$f" ] && basename "$f"; done)"
   fi
   local timo="${A2_DOC_TIMEOUT:-30}"   # per-module guard: the Documentation backend
   ( cd "$w" && export PWD="$w"          # hangs on some modules — skip, don't stall the run
@@ -952,13 +1014,26 @@ _record_case() {
 }
 
 cmd_version() {
-  echo "A2 (Active Oberon) SDK — minia2"
-  echo "  runtime : $OBERON"
-  echo "  stdlib  : $(ls "$LIB"/*"$SYM_EXT" 2>/dev/null | wc -l) modules (linux64)"
-  if [ -d "$LIBWIN" ]; then
-    echo "            $(ls "$LIBWIN"/*.SymWw 2>/dev/null | wc -l) modules (win64)"
+  local native=linux64 targets=""
+  [ "$HOST_ARCH" = a64 ] && native=a64
+  echo "A2 (Active Oberon) SDK — minia2$([ -f "$SDK/VERSION" ] && echo " $(cat "$SDK/VERSION")")"
+  echo "  sdk     : $SDK"
+  echo "  runtime : $OBERON ($native)"
+  echo "  stdlib  : $(ls "$LIB"/*"$SYM_EXT" 2>/dev/null | wc -l) modules ($native)"
+  if [ "$HOST_ARCH" = a64 ]; then
+    targets="a64 (ELF, native)"
+  else
+    targets="linux64 (ELF)"
+    if [ -d "$LIBWIN" ]; then
+      echo "            $(ls "$LIBWIN"/*.SymWw 2>/dev/null | wc -l) modules (win64)"
+      targets="$targets, win64 (PE .exe)"
+    fi
+    if [ -d "$LIBA64" ] && [ "$LIBA64" != "$LIB" ]; then
+      echo "            $(ls "$LIBA64"/*.SymU8 2>/dev/null | wc -l) modules (a64)"
+      targets="$targets, a64 (AArch64 ELF)"
+    fi
   fi
-  echo "  targets : linux64 (ELF)$([ -d "$LIBWIN" ] && echo ', win64 (PE .exe)')"
+  echo "  targets : $targets"
 }
 
 case "${1:-}" in
@@ -973,6 +1048,6 @@ case "${1:-}" in
   lsp)     shift; cmd_lsp "$@" ;;
   version|--version|-v) cmd_version ;;
   ""|help|-h|--help)
-    sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,49p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: ob help)" ;;
 esac

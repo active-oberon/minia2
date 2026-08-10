@@ -770,7 +770,11 @@ tasks:
       # (`docker run --rm -v "$PWD:/work" minia2-sdk`), which resolves to :latest. Pass
       # TAG=… to build a throwaway tag and leave :latest alone.
       - echo "Building SDK image {{.IMAGE}}:{{.TAG}} — the tree is compiled inside the image"
-      - docker build -f docker/Dockerfile -t {{.IMAGE}}:{{.TAG}} .
+      # SDK_VERSION is what `ob version` prints in the image. It has to be passed in: .git is
+      # not in the build context, so the payload cannot describe the tree it came from.
+      - |
+        docker build -f docker/Dockerfile -t {{.IMAGE}}:{{.TAG}} \
+          --build-arg "SDK_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" .
       - task: sdk-check
         vars:
           IMAGE: "{{.IMAGE}}"
@@ -811,6 +815,48 @@ tasks:
         MOD
         docker run --rm -v "$d:/work" {{.IMAGE}}:{{.TAG}} run SdkCheck.Mod
         echo "{{.IMAGE}}:{{.TAG}}: the compiler inside the image generates correct code"
+      # And then the payload's own acceptance test -- the same run.sh the tarball ships, over
+      # every verb: run, build and the binary it wrote, compile, lint, doc, the language server
+      # (spoken to over stdio), the interactive shell, both cross targets, and one suite. It is
+      # in the image because tests/bundle.sh puts it there, so the image and the tarball are
+      # answering the same questions. Results go to the mount: /opt/a2sdk is not writable here.
+      - |
+        set -eo pipefail
+        d="$(mktemp -d)"
+        trap 'rm -rf "$d"' EXIT
+        docker run --rm -v "$d:/work" -e A2_RESULTS=/work/results \
+          --entrypoint bash {{.IMAGE}}:{{.TAG}} /opt/a2sdk/run.sh --quick
+
+  bundle:
+    desc: Assemble the SDK as a tarball that needs no Docker (target/bundle + .tar.gz)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/bundle.sh -o {{.BUILD_DIR}}/bundle {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] bundling the SDK needs a built host compiler (task {{.HOST}})"
+          else
+            exit "$status"
+          fi
+        }
+
+  bundle-check:
+    desc: Unpack the tarball SDK elsewhere and use it with an empty environment (BUNDLE_FULL=1 adds the suites)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/bundle-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # Same rule as the A64 checks: on a machine that is meant to have a build -- CI -- a
+            # silent skip is the check not running at all, which reads the same as it passing.
+            [ -z "$BUNDLE_REQUIRE" ] || { echo "[FAIL] checking the tarball SDK needs a built host compiler, and BUNDLE_REQUIRE is set"; exit 1; }
+            echo "[SKIP] checking the tarball SDK needs a built host compiler (task {{.HOST}})"
+          else
+            exit "$status"
+          fi
+        }
 
   clean:
     desc: Remove build artifacts for one platform (PLATFORM=… or host)
@@ -833,6 +879,8 @@ tasks:
       - 'echo "task build-platform PLATFORM=Linux64 — same, generic form"'
       - echo "task platforms             — build all platforms"
       - echo "task test                  — run compiler tests"
+      - 'echo "task bundle                — the SDK as a tarball, no Docker needed to use it"'
+      - 'echo "task bundle-check          — unpack that tarball elsewhere and use it with an empty environment"'
       - 'echo "task sdk [IMAGE=… TAG=…]    — rebuild the SDK image that ob runs (default minia2-sdk:latest)"'
       - 'echo "task sdk-check [IMAGE=… TAG=…] — check the compiler inside an existing SDK image"'
       - 'echo "task clean [PLATFORM=…]     — remove build artifacts for one platform (host by default)"'
