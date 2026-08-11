@@ -104,7 +104,7 @@ fi
 # The CLI, the BSD-3-Clause notice binary redistribution has to carry, the std manifests lint
 # and get read, something to compile in the first minute, and the suites -- because a tarball
 # nobody can check is a tarball nobody should trust.
-install -m 755 "$root/docker/ob" "$out/ob"
+install -m 755 "$root/sdk/ob" "$out/ob"
 install -m 755 "$root/tests/bundle-selfcheck.sh" "$out/run.sh"
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
 cp -r "$root/packages" "$out/packages"

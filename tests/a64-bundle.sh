@@ -234,7 +234,7 @@ fi
 # nothing. It is some 200 MB of objects before compression and a good deal less after.
 cp -L "$link"/*.SymU8 "$link"/*.GofU8 "$out/lib/"
 cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
-install -m 755 "$root/docker/ob" "$out/ob"
+install -m 755 "$root/sdk/ob" "$out/ob"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
 cp "$root"/tests/*.Test "$out/tests/"
 cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$root/tests/wm-expected.txt" "$out/tests/"
