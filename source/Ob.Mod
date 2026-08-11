@@ -17,7 +17,7 @@ MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon";
 	because a driver that silently does nothing is worse than the shell script it replaces.
 *)
 
-IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, Compiler, Linker,
+IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, Compiler, Linker, Shell, LSP,
 	SyntaxTree := FoxSyntaxTree, ObHost;
 
 CONST
@@ -651,6 +651,45 @@ BEGIN
 	DiscardScratch(scratch)
 END BuildVerb;
 
+(*
+	The language server, speaking LSP over this process's own standard input and output. It gets
+	the full stdlib symbols rather than the headless subset, because an editor is opened on code
+	that imports whatever it imports; then the project's own build if it has one, then its sources,
+	which the server compiles on demand.
+*)
+PROCEDURE LspVerb;
+VAR argument, scratch, symbols: Path; live: BOOLEAN; context: Commands.Context; ignore: BOOLEAN;
+BEGIN
+	live := FALSE;
+	WHILE NextArgument(argument) DO
+		IF argument = "--live" THEN live := TRUE
+		ELSE DieOn("unknown option: ", argument); RETURN
+		END
+	END;
+	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
+	IF AddSearchPath(lib) & AddSearchPath(libSym) & AddSearchPath(project)
+			& AddSearchPath(scratch) & SetWorkPath(scratch) THEN
+		IF ObHost.Env("A2_SYMS", symbols) & (symbols # "") THEN ignore := AddSearchPath(symbols) END;
+		NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
+		IF live THEN LSP.RunLive(context) ELSE LSP.Run(context) END
+	END;
+	DiscardScratch(scratch)
+END LspVerb;
+
+(*
+	The interactive shell, in the user's own directory. What the shell version had to do here --
+	write a configuration file naming lib and the project, and hand it to `oberon run` because
+	`oberon do` runs commands and exits -- is two search paths and a call.
+*)
+PROCEDURE ReplVerb;
+VAR context: Commands.Context;
+BEGIN
+	IF AddSearchPath(lib) & AddSearchPath(project) & SetWorkPath(project) THEN
+		NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
+		Shell.Start(context)
+	END
+END ReplVerb;
+
 PROCEDURE Help;
 BEGIN
 	Say("ob — a Go-style CLI over the A2 (Active Oberon) toolchain.");
@@ -659,10 +698,12 @@ BEGIN
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
+	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
+	Say("  ob repl                            the interactive A2 shell, in this directory");
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Verbs still served by the shell version: get, lint, test, doc, lsp, repl.")
+	Say("Verbs still served by the shell version: get, lint, test, doc.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
@@ -673,6 +714,8 @@ BEGIN
 	IF verb = "build" THEN BuildVerb
 	ELSIF verb = "compile" THEN CompileVerb
 	ELSIF verb = "run" THEN RunVerb
+	ELSIF verb = "lsp" THEN LspVerb
+	ELSIF verb = "repl" THEN ReplVerb
 	ELSIF (verb = "version") OR (verb = "--version") OR (verb = "-v") THEN Version
 	ELSIF (verb = "") OR (verb = "help") OR (verb = "-h") OR (verb = "--help") THEN Help
 	ELSE
