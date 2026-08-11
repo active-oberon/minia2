@@ -1,4 +1,4 @@
-MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon"; *)
+MODULE Ob;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "The ob command line, in Active Oberon"; *)
 
 (*
 	`ob` as a program instead of a shell script. The point is not to translate 1062 lines of bash --
@@ -525,6 +525,22 @@ END CompileVerb;
 	A directory of this process's own, for objects nobody asked to keep. Named after the process
 	id: two ob runs in the same project must not compile over each other.
 *)
+(* Every directory along a path that is not there yet. A $TMPDIR that does not exist is a real
+   situation, and so is a vendored package three segments deep. *)
+PROCEDURE MakePath(CONST path: ARRAY OF CHAR): BOOLEAN;
+VAR partial: Path; index, length: SIZE;
+BEGIN
+	length := Strings.Length(path); index := 1;
+	WHILE index <= length DO
+		IF (index = length) OR (path[index] = '/') THEN
+			Strings.Copy(path, 0, index, partial);
+			IF ~ObHost.Exists(partial) & ~ObHost.MakeDirectory(partial) THEN RETURN FALSE END
+		END;
+		INC(index)
+	END;
+	RETURN ObHost.Exists(path)
+END MakePath;
+
 PROCEDURE ScratchDirectory(VAR path: ARRAY OF CHAR): BOOLEAN;
 VAR temporary: Path; name: ARRAY 32 OF CHAR;
 BEGIN
@@ -533,7 +549,7 @@ BEGIN
 	END;
 	name := "ob-"; Strings.AppendInt(name, ObHost.ProcessId());
 	Join(temporary, name, path);
-	RETURN ObHost.MakeDirectory(path)
+	RETURN MakePath(path)
 END ScratchDirectory;
 
 (*
@@ -1097,20 +1113,6 @@ END DocVerb;
 	a protocol, not a file format. What ob does NOT do any more is read git's answer off a pipe --
 	the commit it pins comes out of .git/HEAD, which is a file.
 *)
-PROCEDURE MakePath(CONST path: ARRAY OF CHAR): BOOLEAN;
-VAR partial: Path; index, length: SIZE;
-BEGIN
-	length := Strings.Length(path); index := 1;
-	WHILE index <= length DO
-		IF (index = length) OR (path[index] = '/') THEN
-			Strings.Copy(path, 0, index, partial);
-			IF ~ObHost.Exists(partial) & ~ObHost.MakeDirectory(partial) THEN RETURN FALSE END
-		END;
-		INC(index)
-	END;
-	RETURN ObHost.Exists(path)
-END MakePath;
-
 PROCEDURE RemoveTree(CONST path: ARRAY OF CHAR);
 VAR handle: ADDRESS; entry, child: Path; ignore: BOOLEAN;
 BEGIN

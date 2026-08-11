@@ -1,4 +1,4 @@
-MODULE ObHost;	(** AUTHOR "minia2"; PURPOSE "Host services Ob needs and portable A2 does not offer: real argv, environment, resolved paths"; *)
+MODULE ObHost;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Host services Ob needs and portable A2 does not offer: real argv, environment, resolved paths"; *)
 
 (*
 	The Unix half of the platform layer under Ob. Everything here is a system call; anything that can
