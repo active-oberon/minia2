@@ -17,7 +17,7 @@ MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon";
 	because a driver that silently does nothing is worse than the shell script it replaces.
 *)
 
-IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, Compiler,
+IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, Compiler, Linker,
 	SyntaxTree := FoxSyntaxTree, ObHost;
 
 CONST
@@ -171,6 +171,20 @@ BEGIN
 	RETURN TRUE
 END Execute;
 
+(* The linker, called rather than started. Its result comes back through the context. *)
+PROCEDURE Link(CONST arguments: ARRAY OF CHAR): BOOLEAN;
+VAR reader: Streams.StringReader; context: Commands.Context; buffer: Streams.Buffer;
+	quiet: Streams.Writer;
+BEGIN
+	NEW(reader, LEN(arguments)); reader.Set(arguments);
+	(* the linker narrates every module it reads; the user asked for a binary, not for that *)
+	NEW(buffer, 4096); quiet := buffer.GetWriter();
+	NEW(context, StdIO.env.in, reader, quiet, error, NIL);
+	Linker.Link(context);
+	quiet.Update;
+	RETURN context.result = Commands.Ok
+END Link;
+
 PROCEDURE Quoted(CONST text: ARRAY OF CHAR; VAR quoted: ARRAY OF CHAR);
 BEGIN
 	quoted := '"'; Strings.Append(quoted, text); Strings.AppendChar(quoted, '"')
@@ -229,17 +243,12 @@ END ModuleName;
 	and this does not: Compiler.GetOptions turns an option string into a record, Compiler.Modules
 	does the work, and the diagnostics come back as a list instead of as text to grep.
 *)
-PROCEDURE CompileFile(CONST file, platform, objectExtension, symbolExtension: ARRAY OF CHAR;
-		report: BOOLEAN): BOOLEAN;
+PROCEDURE CompileReader(CONST name: ARRAY OF CHAR; reader: Streams.Reader;
+		CONST platform, objectExtension, symbolExtension: ARRAY OF CHAR; report: BOOLEAN): BOOLEAN;
 VAR optionReader: Streams.StringReader; options: Compiler.CompilerOptions;
-	handle: Files.File; reader: Files.Reader;
 	diagnostics: Diagnostics.DiagnosticsList; logBuffer: Streams.Buffer; log: Streams.Writer;
 	importCache: SyntaxTree.ModuleScope; text: ARRAY 256 OF CHAR; compiled: BOOLEAN;
 BEGIN
-	handle := Files.Old(file);
-	IF handle = NIL THEN IF report THEN Die("cannot open the source file") END; RETURN FALSE END;
-	Files.OpenReader(reader, handle, 0);
-
 	text := "-p="; Strings.Append(text, platform);
 	Strings.Append(text, " --objectFileExtension="); Strings.Append(text, objectExtension);
 	Strings.Append(text, " --symbolFileExtension="); Strings.Append(text, symbolExtension);
@@ -247,14 +256,27 @@ BEGIN
 
 	NEW(diagnostics); NEW(logBuffer, 1024); log := logBuffer.GetWriter();
 	IF ~Compiler.GetOptions(optionReader, error, diagnostics, options) THEN
-		IF report THEN Die("the compiler rejected its own options -- this is a bug in ob") END;
+		IF report THEN
+			diagnostics.ToStream(error, Diagnostics.All);
+			DieOn("the compiler rejected these options: ", text)
+		END;
 		RETURN FALSE
 	END;
 	importCache := NIL;
-	compiled := Compiler.Modules(file, reader, 0, diagnostics, log, options, importCache);
+	compiled := Compiler.Modules(name, reader, 0, diagnostics, log, options, importCache);
 	log.Update;
 	IF report THEN diagnostics.ToStream(error, Diagnostics.All); error.Update END;
 	RETURN compiled
+END CompileReader;
+
+PROCEDURE CompileFile(CONST file, platform, objectExtension, symbolExtension: ARRAY OF CHAR;
+		report: BOOLEAN): BOOLEAN;
+VAR handle: Files.File; reader: Files.Reader;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN IF report THEN Die("cannot open the source file") END; RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	RETURN CompileReader(file, reader, platform, objectExtension, symbolExtension, report)
 END CompileFile;
 
 (*
@@ -456,16 +478,191 @@ BEGIN
 	DiscardScratch(scratch)
 END RunVerb;
 
+(*
+	Everything that differs between the three targets, in one place. The compiler platform and the
+	linker platform are not the same name for the same thing: one says how to generate code, the
+	other where the image is loaded and in what file format.
+*)
+PROCEDURE TargetSettings(CONST target: ARRAY OF CHAR;
+		VAR compilerPlatform, objectExtension, symbolExtension, linkOptions, suffix, boot: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF (HostTarget = "a64") & (target # "a64") THEN
+		DieOn("this SDK's runtime is AArch64 and ships no objects for target ", target); RETURN FALSE
+	END;
+	IF target = "linux64" THEN
+		compilerPlatform := "Unix64"; objectExtension := "GofUu"; symbolExtension := ".SymUu";
+		linkOptions := "-p=Linux64 --extension=GofUu"; suffix := ""; COPY(bootList, boot)
+	ELSIF target = "win64" THEN
+		compilerPlatform := "Win64"; objectExtension := "GofWw"; symbolExtension := ".SymWw";
+		linkOptions := "--fileFormat=PE64CUI --extension=GofWw --displacement=401000H";
+		suffix := ".exe"; COPY(bootListWin, boot)
+	ELSIF target = "a64" THEN
+		(* the same boot list as linux64: it names modules, and every one of them has an AArch64
+		   build. Glue writes the ELF header itself, so the linker only needs the displacement,
+		   which -p=LinuxA64 carries. *)
+		compilerPlatform := "UnixA64"; objectExtension := "GofU8"; symbolExtension := ".SymU8";
+		linkOptions := "-p=LinuxA64 --extension=GofU8"; suffix := ""; COPY(bootList, boot)
+	ELSE
+		DieOn("unknown target: ", target); RETURN FALSE
+	END;
+	IF ~ObHost.Exists(boot) THEN DieOn("no boot module list at ", boot); RETURN FALSE END;
+	RETURN TRUE
+END TargetSettings;
+
+(** Where the objects for a target live. *)
+PROCEDURE TargetLibrary(CONST target: ARRAY OF CHAR; VAR directory: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF target = "win64" THEN COPY(libWin, directory)
+	ELSIF (target = "a64") & (HostTarget # "a64") THEN COPY(libA64, directory)
+	ELSE COPY(lib, directory)
+	END;
+	IF ~ObHost.Exists(directory) THEN
+		DieOn("this SDK ships no objects for target ", target); RETURN FALSE
+	END;
+	RETURN TRUE
+END TargetLibrary;
+
+(*
+	The boot set as one line for the linker, without the interactive shell: the generated entry
+	module drives startup instead. The rest of the closure the linker resolves by itself.
+*)
+PROCEDURE ReadBootList(CONST file: ARRAY OF CHAR; VAR list: ARRAY OF CHAR): BOOLEAN;
+VAR handle: Files.File; reader: Files.Reader; line: Path;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	list := "";
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line);
+		Strings.Trim(line, ' '); Strings.Trim(line, 0DX);
+		IF (line # "") & (line[0] # '#') & (line # "StdIOShell") & (line # "Shell") THEN
+			Strings.Append(list, line); Strings.AppendChar(list, ' ')
+		END
+	END;
+	RETURN list # ""
+END ReadBootList;
+
+(*
+	The module that replaces the interactive shell in a built binary: its body runs at startup,
+	calls the chosen command and turns success into an exit code (Reboot is 0, PowerDown is 1).
+	Importing the user's module is what makes the linker include it.
+
+	It is never written to disk. Compiler.Modules reads from any Streams.Reader, so the source of
+	a generated module can be a string -- which is one more file the shell version had to create,
+	name and delete.
+*)
+PROCEDURE EntrySource(CONST module, procedure: ARRAY OF CHAR; VAR source: ARRAY OF CHAR);
+BEGIN
+	(* the command name is quoted with apostrophes: Oberon has no escape inside a string, so a
+	   double quote here would have to be written as one, and generated source is hard enough to
+	   read already *)
+	source := "MODULE ObEntry; IMPORT Commands, Modules, Trace, ";
+	Strings.Append(source, module);
+	Strings.Append(source, "; VAR res: INTEGER; msg: ARRAY 256 OF CHAR;");
+	Strings.Append(source, " BEGIN Commands.Call('");
+	Strings.Append(source, module); Strings.AppendChar(source, '.');
+	Strings.Append(source, procedure);
+	Strings.Append(source, "', {Commands.Wait}, res, msg);");
+	Strings.Append(source, " IF res = 0 THEN Modules.Shutdown(Modules.Reboot)");
+	Strings.Append(source, " ELSE Trace.String(msg); Trace.Ln; Modules.Shutdown(Modules.PowerDown) END");
+	Strings.Append(source, " END ObEntry.")
+END EntrySource;
+
+PROCEDURE CompileString(CONST name, source, platform, objectExtension, symbolExtension: ARRAY OF CHAR): BOOLEAN;
+VAR reader: Streams.StringReader;
+BEGIN
+	NEW(reader, LEN(source)); reader.Set(source);
+	RETURN CompileReader(name, reader, platform, objectExtension, symbolExtension, TRUE)
+END CompileString;
+
+PROCEDURE BuildVerb;
+VAR source, output, absolute, scratch, destination, directory, fileName, name: Path;
+	target, procedure, argument: Path;
+	compilerPlatform, objectExtension, symbolExtension, suffix: Path;
+	linkOptions, boot, bootModules, library: Path;
+	arguments: ARRAY 4096 OF CHAR; entry: ARRAY 1024 OF CHAR; line: Path;
+BEGIN
+	source := ""; output := ""; procedure := "Do"; COPY(HostTarget, target);
+	WHILE NextArgument(argument) DO
+		IF (argument = "-o") OR (argument = "--output") THEN
+			IF ~NextArgument(output) THEN Die("-o needs a name"); RETURN END
+		ELSIF (argument = "-t") OR (argument = "--target") THEN
+			IF ~NextArgument(target) THEN Die("-t needs a target"); RETURN END
+		ELSIF argument[0] = '-' THEN
+			DieOn("unknown option: ", argument); RETURN
+		ELSIF source = "" THEN COPY(argument, source)
+		ELSE COPY(argument, procedure)
+		END
+	END;
+	IF source = "" THEN
+		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [Proc]"); RETURN
+	END;
+	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
+	IF ~ModuleName(absolute, name) THEN DieOn("no MODULE header in ", source); RETURN END;
+	IF ~TargetSettings(target, compilerPlatform, objectExtension, symbolExtension,
+			linkOptions, suffix, boot) THEN RETURN END;
+	IF ~TargetLibrary(target, library) THEN RETURN END;
+	IF ~ReadBootList(boot, bootModules) THEN DieOn("cannot read the boot module list ", boot); RETURN END;
+
+	IF output = "" THEN COPY(name, output); Strings.Append(output, suffix) END;
+	IF output[0] = '/' THEN COPY(output, destination) ELSE Join(project, output, destination) END;
+	Directory(destination, directory); BaseName(destination, fileName);
+	IF directory = "" THEN COPY(project, directory) END;
+	IF ~ObHost.Exists(directory) THEN DieOn("no such directory: ", directory); RETURN END;
+
+	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
+	(* lib is on the path even for a cross build: the backend and the frontend are loaded by name
+	   when the compiler runs, and what runs here is this machine's code whatever is being built *)
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(library) OR ~AddSearchPath(project)
+			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
+		DiscardScratch(scratch); RETURN
+	END;
+	BuildSiblings(scratch, compilerPlatform, objectExtension, symbolExtension);
+	IF CompileFile(absolute, compilerPlatform, objectExtension, symbolExtension, TRUE) THEN
+		EntrySource(name, procedure, entry);
+		IF CompileString("ObEntry", entry, compilerPlatform, objectExtension, symbolExtension) THEN
+			(* the file name is quoted for the linker's option parser, which otherwise reads an
+			   unquoted value up to the first character that cannot be in a name: hello-arm64
+			   becomes the file hello followed by the flags -a -r -m -6 -4 *)
+			COPY(linkOptions, arguments);
+			Strings.Append(arguments, " --fileName='"); Strings.Append(arguments, fileName);
+			Strings.Append(arguments, "' "); Strings.Append(arguments, bootModules);
+			Strings.Append(arguments, name); Strings.Append(arguments, " ObEntry");
+			IF SetWorkPath(directory) & Link(arguments) & ObHost.Exists(destination) THEN
+				IF ~ObHost.MakeExecutable(destination) THEN
+					DieOn("cannot make it executable: ", destination)
+				ELSE
+					line := "ob: wrote "; Strings.Append(line, destination);
+					Strings.Append(line, "  (target: "); Strings.Append(line, target);
+					Strings.Append(line, ", baked entry: "); Strings.Append(line, name);
+					Strings.AppendChar(line, '.'); Strings.Append(line, procedure);
+					Strings.AppendChar(line, ')'); Say(line)
+				END
+			ELSE
+				Die("link failed (no output binary produced)")
+			END
+		ELSE
+			failed := TRUE
+		END
+	ELSE
+		failed := TRUE
+	END;
+	DiscardScratch(scratch)
+END BuildVerb;
+
 PROCEDURE Help;
 BEGIN
 	Say("ob — a Go-style CLI over the A2 (Active Oberon) toolchain.");
 	Say("");
+	Say("  ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [Proc]");
+	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Verbs still served by the shell version: build, get, lint, test, doc, lsp, repl.")
+	Say("Verbs still served by the shell version: get, lint, test, doc, lsp, repl.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
@@ -473,7 +670,8 @@ END Help;
 PROCEDURE Dispatch(CONST verb: ARRAY OF CHAR);
 VAR message: ARRAY 128 OF CHAR;
 BEGIN
-	IF verb = "compile" THEN CompileVerb
+	IF verb = "build" THEN BuildVerb
+	ELSIF verb = "compile" THEN CompileVerb
 	ELSIF verb = "run" THEN RunVerb
 	ELSIF (verb = "version") OR (verb = "--version") OR (verb = "-v") THEN Version
 	ELSIF (verb = "") OR (verb = "help") OR (verb = "-h") OR (verb = "--help") THEN Help

@@ -145,6 +145,34 @@ check "a missing file fails" 1 "$ob" compile NoSuchModule.Mod
 check "an unknown verb fails"  1 "$ob" frobnicate
 check "help" 0 "$ob" help
 
+echo "=== build, against the shell version byte for byte"
+mkdir -p "$project/shell"
+# The dash in hello-arm64 is the check, not decoration: the linker's option parser reads an
+# unquoted value up to the first character that cannot be in a name, and this one used to become
+# the file `hello` followed by the flags -a -r -m -6 -4.
+for spec in "linux64 hello" "win64 hello.exe" "a64 hello-arm64"; do
+	set -- $spec
+	target="$1" name="$2"
+	if [ "$target" != linux64 ] && [ ! -d "$sdk/lib-${target}" ]; then
+		echo "skip  build $target: this SDK ships no lib-$target"; continue
+	fi
+	rm -f "$name" "shell/$name"
+	if "$ob" build Hello.Mod -t "$target" -o "$name" >/dev/null 2>&1 \
+			&& "$sdk/ob" build Hello.Mod -t "$target" -o "shell/$name" >/dev/null 2>&1; then
+		if cmp -s "$name" "shell/$name"; then echo "ok    build $target is byte for byte the shell version's"
+		else echo "FAIL  build $target differs from the shell version's binary"; fail=1; fi
+	else
+		echo "FAIL  build $target did not produce a binary"; fail=1
+	fi
+done
+
+# The one target whose output can be run here is the one this SDK is.
+check "the built binary runs" 0 "$project/hello"
+case "$LAST_OUTPUT" in
+	*"hello from a sibling!"*) echo "ok    the built binary printed what the module prints" ;;
+	*) echo "FAIL  the built binary printed: $LAST_OUTPUT"; fail=1 ;;
+esac
+
 echo
 if [ "$fail" = 0 ]; then echo "ob-check: OK"; else echo "ob-check: FAILED"; fi
 exit "$fail"
