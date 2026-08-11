@@ -48,6 +48,16 @@ task bundle-check    # unpack the tarball elsewhere and use it with an empty env
 task sdk             # the Docker image (same payload at /opt/a2sdk)
 ```
 
+To put the latest release on a machine — download, unpack into `~/.local/share/a2sdk`,
+link `ob` into `~/.local/bin`, nothing else touched and no privilege asked for:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/active-oberon/minia2/main/sdk/install.sh | sh
+```
+
+It is `sdk/install.sh`; `--dir`, `--bin`, `--version`, `--tarball` and `--uninstall`
+are the whole interface, and `task install-check` is what answers for it.
+
 The tarball needs nothing but 64-bit x86 Linux, glibc, bash and coreutils — unpack it
 and run `./ob`. It carries `ob build -t win64` (a Windows `.exe`) and `-t a64` (an
 AArch64 ELF) as cross targets when their objects are present. For a machine that *is*

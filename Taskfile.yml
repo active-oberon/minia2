@@ -869,6 +869,23 @@ tasks:
           fi
         }
 
+  install-check:
+    desc: Check sdk/install.sh (curl | sh) against the tarball this tree builds — offline
+    cmds:
+      - |
+        set -eo pipefail
+        # The tarball is what is being installed, so it is assembled first if it is not there.
+        ls {{.BUILD_DIR}}/minia2-sdk-*-linux-amd64.tar.gz >/dev/null 2>&1 || task bundle
+        {{.CURRENT_DIR}}/tests/install-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$BUNDLE_REQUIRE" ] || { echo "[FAIL] checking the installer needs a tarball, and BUNDLE_REQUIRE is set"; exit 1; }
+            echo "[SKIP] checking the installer needs a tarball (task bundle)"
+          else
+            exit "$status"
+          fi
+        }
+
   clean:
     desc: Remove build artifacts for one platform (PLATFORM=… or host)
     vars:

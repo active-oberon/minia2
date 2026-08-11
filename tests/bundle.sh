@@ -135,6 +135,10 @@ this directory and finds its runtime there:
 
     mkdir -p ~/.local/bin && ln -sf "$PWD/ob" ~/.local/bin/ob
 
+That is all install.sh does, if you would rather it did the downloading too:
+
+    curl -fsSL https://raw.githubusercontent.com/active-oberon/minia2/main/sdk/install.sh | sh
+
 Editors: `ob lsp` speaks LSP over stdio (diagnostics, hover, go-to-definition, completion,
 signature help, references, outline, semantic tokens, rename, formatting, code actions).
 Point your editor's Active Oberon client at the absolute path of `ob` with the argument `lsp`
