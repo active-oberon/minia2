@@ -17,8 +17,8 @@ MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon";
 	because a driver that silently does nothing is worse than the shell script it replaces.
 *)
 
-IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, Compiler, Linker, Shell, LSP,
-	SyntaxTree := FoxSyntaxTree, ObHost;
+IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
+	Shell, LSP, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal, ObHost;
 
 CONST
 	MaxPath = ObHost.MaxPath;
@@ -652,6 +652,152 @@ BEGIN
 END BuildVerb;
 
 (*
+	ob lint -- every import has to point at the same tier or a lower one. The tier of a module is
+	the tier of the package that provides it, read out of the shipped std manifests and whatever
+	`ob get` has installed; the project's own code sits at the top, so it may import anything and
+	nothing may import it.
+
+	The imports come from the parser rather than from a search for the word IMPORT. It is linked
+	into this binary already, it knows an aliased or a context import from a comment, and it is
+	the same parser that will reject the file later anyway.
+*)
+TYPE
+	Provider = POINTER TO RECORD
+		next: Provider;
+		module, package: Path;
+		tier: SIGNED32
+	END;
+
+VAR providers: Provider;
+
+PROCEDURE Provide(CONST module, package: ARRAY OF CHAR; tier: SIGNED32);
+VAR entry: Provider;
+BEGIN
+	NEW(entry); COPY(module, entry.module); COPY(package, entry.package); entry.tier := tier;
+	entry.next := providers; providers := entry
+END Provide;
+
+PROCEDURE TierOf(CONST module: ARRAY OF CHAR; VAR tier: SIGNED32; VAR package: ARRAY OF CHAR): BOOLEAN;
+VAR entry: Provider;
+BEGIN
+	entry := providers;
+	WHILE entry # NIL DO
+		IF entry.module = module THEN tier := entry.tier; COPY(entry.package, package); RETURN TRUE END;
+		entry := entry.next
+	END;
+	tier := 9; package := "project"; RETURN FALSE
+END TierOf;
+
+PROCEDURE ReadManifest(CONST file: ARRAY OF CHAR);
+VAR handle: Files.File; reader: Files.Reader; value, member: JSON.Value; object: JSON.Object;
+	list: JSON.Array; name: Path; tier: SIGNED32; index: SIZE;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN END;
+	Files.OpenReader(reader, handle, 0);
+	IF ~JSON.ParseStream(reader, value) OR ~(value IS JSON.Object) THEN RETURN END;
+	object := value(JSON.Object);
+
+	name := "?";
+	member := object.Get("name");
+	IF (member # NIL) & (member IS JSON.String) THEN COPY(member(JSON.String).value^, name) END;
+
+	tier := 9;
+	member := object.Get("tier");
+	IF (member # NIL) & (member IS JSON.Number) THEN tier := ENTIER(member(JSON.Number).value) END;
+
+	member := object.Get("provides");
+	IF (member # NIL) & (member IS JSON.Array) THEN
+		list := member(JSON.Array);
+		FOR index := 0 TO list.length-1 DO
+			member := list.At(index);
+			IF (member # NIL) & (member IS JSON.String) THEN
+				Provide(member(JSON.String).value^, name, tier)
+			END
+		END
+	END
+END ReadManifest;
+
+(* Every a2pkg.json at or under a root, to the given depth. A package directory may itself hold
+   package directories: the registry names them owner/name and ob get keeps that shape on disk. *)
+PROCEDURE ScanPackages(CONST root: ARRAY OF CHAR; depth: SIGNED32);
+VAR handle: ADDRESS; entry, path, manifest: Path;
+BEGIN
+	handle := ObHost.OpenDirectory(root);
+	IF handle = 0 THEN RETURN END;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF (entry # ".") & (entry # "..") THEN
+			Join(root, entry, path);
+			Join(path, "a2pkg.json", manifest);
+			IF ObHost.Exists(manifest) THEN ReadManifest(manifest) END;
+			IF depth > 0 THEN ScanPackages(path, depth-1) END
+		END
+	END;
+	ObHost.CloseDirectory(handle)
+END ScanPackages;
+
+PROCEDURE LintFile(CONST file: ARRAY OF CHAR; VAR violations: SIGNED32);
+VAR handle: Files.File; reader: Files.Reader; diagnostics: Diagnostics.DiagnosticsList;
+	scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+	import: SyntaxTree.Import; name, imported, package, importedPackage, line: Path;
+	tier, importedTier: SIGNED32;
+BEGIN
+	IF ~ModuleName(file, name) THEN RETURN END;
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN END;
+	Files.OpenReader(reader, handle, 0);
+	NEW(diagnostics);
+	scanner := FoxScanner.NewScanner(name, reader, 0, diagnostics);
+	parser := FoxParser.NewParser(scanner, diagnostics, "");
+	module := parser.Module();
+	IF (module = NIL) OR parser.error THEN RETURN END;
+
+	IF ~TierOf(name, tier, package) THEN package := "project" END;
+	import := module.moduleScope.firstImport;
+	WHILE import # NIL DO
+		IF import.moduleName # FoxGlobal.SystemName THEN
+			FoxBasic.GetString(import.moduleName, imported);
+			IF TierOf(imported, importedTier, importedPackage) & (importedTier > tier) THEN
+				line := "  UP-EDGE  "; Strings.Append(line, name);
+				Strings.Append(line, " (tier "); Strings.AppendInt(line, tier);
+				Strings.Append(line, ", "); Strings.Append(line, package);
+				Strings.Append(line, ") -> "); Strings.Append(line, imported);
+				Strings.Append(line, " (tier "); Strings.AppendInt(line, importedTier);
+				Strings.Append(line, ", "); Strings.Append(line, importedPackage);
+				Strings.AppendChar(line, ')'); Say(line);
+				INC(violations)
+			END
+		END;
+		import := import.nextImport
+	END
+END LintFile;
+
+PROCEDURE LintVerb;
+VAR standard, vendor, path, entry, message: Path; handle: ADDRESS; violations: SIGNED32;
+BEGIN
+	providers := NIL;
+	Join(packages, "std", standard); ScanPackages(standard, 0);
+	Join(project, ".a2pkg", vendor); ScanPackages(vendor, 2);
+	IF providers = NIL THEN
+		DieOn("no package manifests found; looked in ", standard); RETURN
+	END;
+
+	violations := 0;
+	handle := ObHost.OpenDirectory(project);
+	IF handle = 0 THEN DieOn("cannot read the project directory ", project); RETURN END;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF Strings.Match("*.Mod", entry) THEN Join(project, entry, path); LintFile(path, violations) END
+	END;
+	ObHost.CloseDirectory(handle);
+
+	IF violations = 0 THEN Say("ob lint: OK — no upward dependencies")
+	ELSE
+		message := ""; Strings.AppendInt(message, violations);
+		Strings.Append(message, " upward-dependency violation(s)"); Die(message)
+	END
+END LintVerb;
+
+(*
 	The language server, speaking LSP over this process's own standard input and output. It gets
 	the full stdlib symbols rather than the headless subset, because an editor is opened on code
 	that imports whatever it imports; then the project's own build if it has one, then its sources,
@@ -698,12 +844,13 @@ BEGIN
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
+	Say("  ob lint                            check every import points at its tier or lower");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
 	Say("  ob repl                            the interactive A2 shell, in this directory");
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Verbs still served by the shell version: get, lint, test, doc.")
+	Say("Verbs still served by the shell version: get, test, doc.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
@@ -714,6 +861,7 @@ BEGIN
 	IF verb = "build" THEN BuildVerb
 	ELSIF verb = "compile" THEN CompileVerb
 	ELSIF verb = "run" THEN RunVerb
+	ELSIF verb = "lint" THEN LintVerb
 	ELSIF verb = "lsp" THEN LspVerb
 	ELSIF verb = "repl" THEN ReplVerb
 	ELSIF (verb = "version") OR (verb = "--version") OR (verb = "-v") THEN Version

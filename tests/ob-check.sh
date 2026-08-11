@@ -173,6 +173,30 @@ case "$LAST_OUTPUT" in
 	*) echo "FAIL  the built binary printed: $LAST_OUTPUT"; fail=1 ;;
 esac
 
+echo "=== lint, against the shell version's own words"
+lint="$work/lint"
+mkdir -p "$lint"
+# A module whose name a tier-0 package provides, importing a tier-2 one: the upward edge the
+# tier model exists to forbid. Project code sits at the top and can import anything, so a plain
+# project module could never produce one.
+cat > "$lint/Strings.Mod" <<'EOF'
+MODULE Strings;
+IMPORT CSV;
+PROCEDURE Do*;
+BEGIN
+END Do;
+END Strings.
+EOF
+( cd "$lint"
+  rc=0; "$ob"     lint > "$work/lint-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/lint-native.txt"
+  rc=0; "$sdk/ob" lint > "$work/lint-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/lint-shell.txt" )
+if diff -u "$work/lint-shell.txt" "$work/lint-native.txt" > "$work/lint.diff"; then
+	echo "ok    lint says what the shell version says, and fails the same way"
+else
+	echo "FAIL  lint differs from the shell version"; sed 's/^/        /' "$work/lint.diff"; fail=1
+fi
+check "lint passes on a project with no upward edge" 0 "$ob" lint
+
 echo "=== the language server, over this process's own stdio"
 frame() { printf 'Content-Length: %d\r\n\r\n%s' "${#1}" "$1"; }
 lsp_input() {
