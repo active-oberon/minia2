@@ -86,8 +86,10 @@ targets="$(dirname "$build")"
 if ls "$targets/Win64/bin"/*.SymWw >/dev/null 2>&1; then
 	mkdir -p "$out/lib-win64"
 	install -m 644 "$root/configs/moduleListWin.txt" "$out/boot-modules-win64.txt"
-	# Kernel32 and WinFS are not in the headless core (that list is the Linux closure).
-	{ cat "$root/docker/headless-core.txt" "$root/configs/moduleListWin.txt"; } | sort -u |
+	# The Win64 core is its own closure (docker/headless-core-win64.txt), not the Linux list with
+	# Kernel32 and WinFS added: WinTrace is in no Linux closure and StdIO imports it on Windows,
+	# so filtering with the Linux list yields a lib-win64 that compiles everything but printing.
+	sort -u "$root/docker/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
 	while read -r m; do
 		case "$m" in ''|\#*) continue ;; esac
 		for e in SymWw GofWw; do
@@ -147,7 +149,7 @@ For a machine that is itself AArch64 -- a board, a phone under Termux -- take th
 bundle instead (tests/a64-bundle.sh in the source tree): there a64 is not a cross target but
 the native one, and the compiler runs on the device.
 
-Sources, issues and the Docker image: https://github.com/AndriiPuhachenko/minia2
+Sources, issues and the Docker image: https://github.com/active-oberon/minia2
 A2 is BSD-3-Clause, ETH Zurich -- see LICENSE.txt.
 EOF
 

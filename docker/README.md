@@ -322,9 +322,9 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 384 modules (symbol + object files) |
-| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 380 modules, for `build -t win64` |
-| `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 380 modules plus the 59 of the runtime, for `build -t a64` |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 387 modules (symbol + object files) |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 396 modules, for `build -t win64` |
+| `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 408 modules including the runtime's, for `build -t a64` |
 | `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
@@ -335,12 +335,14 @@ naive ~255MB Linux-only image in three steps:
 - **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
   `ld-linux`) already ship in `debian:bookworm-slim`.
 - **Headless-core stdlib only** (~16MB saved): of the 712 built stdlib modules,
-  only the 384 whose import closure never reaches the window manager / display /
+  only the 387 whose import closure never reaches the window manager / display /
   raster are shipped (this keeps the full networking stack — TCP/UDP/DNS/HTTP —
   which registers through the generic `Plugins` driver registry, not the GUI).
   See `docker/headless-core.txt`; regenerate it with
   `docker/gen-headless-core.sh` (it taint-propagates the GUI roots through A2's
-  own `DependencyWalker`). The kept set is closed under imports, so every retained
+  own `DependencyWalker`). Windows has its own list, `headless-core-win64.txt`,
+  computed the same way from the Win64 closure — not a translation of the Linux
+  one: `WinTrace` appears in no Linux closure and `StdIO` imports it on Windows. The kept set is closed under imports, so every retained
   module both compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is
   a compile error by design — use the full desktop build for GUI work.
 

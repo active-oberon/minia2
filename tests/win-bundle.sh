@@ -44,19 +44,18 @@ oberon="$build/oberon"
 [ -x "$oberon" ] || { echo "no built runtime in $build; run 'task Linux64' first" >&2; exit 2; }
 [ -d "$winbin" ] || { echo "no Win64 build in $winbin; run 'task Win64' first" >&2; exit 2; }
 
-# JSON, LSP and the A64 backend are not in the Win64 release definition; without them ob.exe does
-# not link and a Windows SDK could not run the language server.
+# A Win64 build that is older than the sources ships whatever was fixed since as it was; this
+# says so, and compiles the modules the SDK ships that the build has no object for.
 "$root/tests/win-stdlib.sh" "$build" >/dev/null
 
 rm -rf "$out"
 mkdir -p "$out/lib" "$out/examples" "$out/tests"
 
-# lib/ is this SDK's own platform: the headless core, plus the Windows-only runtime modules, which
-# are in the Win boot list rather than in headless-core.txt (that list is the Linux closure).
-# WinTrace is in neither and is imported by StdIO, which is why it is named here: without it a
-# Windows SDK cannot compile anything that reaches standard output.
+# lib/ is this SDK's own platform: the Win64 headless core (docker/headless-core-win64.txt --
+# its own closure, not a translation of the Linux one, which is how WinTrace gets in: StdIO
+# imports it on Windows and no Linux closure has ever heard of it).
 copied=0
-{ cat "$root/docker/headless-core.txt" "$root/configs/moduleListWin.txt"; echo WinTrace; } | sort -u |
+sort -u "$root/docker/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
 while read -r m; do
 	case "$m" in ''|\#*) continue ;; esac
 	for e in SymWw GofWw; do
@@ -132,7 +131,7 @@ Cross target, if this bundle carries its objects (`ob.exe version` says so):
 Linux is not a target from here: this SDK ships Windows objects, and ob.exe refuses a target
 whose objects it does not have rather than linking the wrong ones. Take the Linux bundle for that.
 
-Sources, issues and the Docker image: https://github.com/AndriiPuhachenko/minia2
+Sources, issues and the Docker image: https://github.com/active-oberon/minia2
 A2 is BSD-3-Clause, ETH Zurich -- see LICENSE.txt.
 EOF
 

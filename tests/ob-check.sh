@@ -357,18 +357,19 @@ elif [ ! -d "$sdk/lib-win64" ] || [ ! -f "$winbin/WinTrace.SymWw" ]; then
 else
 	win="$work/win"; winsdk="$work/winsdk/lib"
 	mkdir -p "$win" "$winsdk"
+	# Only our two modules are compiled here. Kernel32 (with the bindings ObHost needs), JSON,
+	# LSP and WinTrace come out of lib-win64 like any other library module -- they are in the
+	# Win64 release definition and in docker/headless-core-win64.txt, so a Win64 build and the
+	# bundle made from it carry them. That was not true while the Win64 build in the tree was
+	# months old, and the difference read as "the release list is missing them".
 	cp "$root/sdk/Windows.ObHost.Mod"  "$win/ObHost.Mod"
-	cp "$root/source/Windows.Kernel32.Mod" "$win/Kernel32.Mod"
-	cp "$root/source/JSON.Mod" "$root/source/LSP.Mod" "$root/sdk/Ob.Mod" "$win/"
-	# WinTrace is built for Win64 but reaches no bundle: it is in neither headless-core.txt nor
-	# moduleListWin.txt, and StdIO -- which IS in the Win boot list -- imports it.
-	cp "$winbin/WinTrace.SymWw" "$winbin/WinTrace.GofWw" "$win/"
+	cp "$root/sdk/Ob.Mod" "$win/"
 	winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
 	( cd "$win" && "$oberon" do "
 		Files.AddSearchPath $win~
 		Files.AddSearchPath $build/bin~
 		Files.AddSearchPath $sdk/lib-win64~
-		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./Kernel32.Mod ./ObHost.Mod ./JSON.Mod ./LSP.Mod ./Ob.Mod ~
+		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./ObHost.Mod ./Ob.Mod ~
 		Linker.Link --fileFormat=PE64CUI --extension=GofWw --displacement=401000H --fileName='ob.exe'
 		$winboot Ob
 		~
