@@ -18,7 +18,8 @@ MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon";
 *)
 
 IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
-	Shell, LSP, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal, ObHost;
+	Shell, LSP, Objects, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
+	ObHost;
 
 CONST
 	MaxPath = ObHost.MaxPath;
@@ -280,6 +281,71 @@ BEGIN
 END CompileFile;
 
 (*
+	The documentation backend writes to the trace channel whatever it is asked: a leftover
+	TRACE(name, extension) in FoxDocumentationBackend.ProcessSyntaxTreeModule, and "error in
+	parsing" without a position, seven times per module, from the doc-comment parser's Expect.
+	Neither is ob's to fix here -- both are the compiler's, and both are worth an upstream patch --
+	but neither belongs on the terminal of someone who asked for HTML. Trace.Char is a procedure
+	variable, so it can be pointed at nothing for as long as the backend runs.
+
+	A trap during those seconds would lose its message. It is seconds, and only around this.
+*)
+VAR previousTraceChar: Trace.CharProc;
+
+PROCEDURE Swallow(character: CHAR);
+BEGIN {UNCOOPERATIVE, UNCHECKED}
+END Swallow;
+
+PROCEDURE SilenceTrace;
+BEGIN previousTraceChar := Trace.Char; Trace.Char := Swallow
+END SilenceTrace;
+
+PROCEDURE RestoreTrace;
+BEGIN Trace.Char := previousTraceChar
+END RestoreTrace;
+
+(* The same compiler, asked for a page instead of an object: no object file extension, so nothing
+   is generated, and the Documentation backend writes the HTML into the working directory. *)
+PROCEDURE CompileForDocumentation(CONST file, page: ARRAY OF CHAR): BOOLEAN;
+VAR optionReader: Streams.StringReader; options: Compiler.CompilerOptions;
+	handle: Files.File; reader: Files.Reader;
+	diagnostics: Diagnostics.DiagnosticsList; logBuffer: Streams.Buffer; log: Streams.Writer;
+	importCache: SyntaxTree.ModuleScope; text: ARRAY 256 OF CHAR; compiled: BOOLEAN;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN Die("cannot open the source file"); RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	text := "-p="; Strings.Append(text, CompilerPlatform);
+	Strings.Append(text, " --symbolFileExtension="); Strings.Append(text, SymbolExtension);
+	Strings.Append(text, " --documentation='"); Strings.Append(text, page); Strings.AppendChar(text, "'");
+	Streams.OpenStringReader(optionReader, text);
+	NEW(diagnostics); NEW(logBuffer, 1024); log := logBuffer.GetWriter();
+	IF ~Compiler.GetOptions(optionReader, error, diagnostics, options) THEN
+		diagnostics.ToStream(error, Diagnostics.All); DieOn("the compiler rejected these options: ", text);
+		RETURN FALSE
+	END;
+	importCache := NIL;
+	SilenceTrace;
+	compiled := Compiler.Modules(file, reader, 0, diagnostics, log, options, importCache);
+	RestoreTrace;
+	log.Update;
+	(* only when it failed: the backend complains about a missing documentation template on every
+	   module, no SDK ships one, and it produces the page regardless *)
+	IF ~compiled THEN diagnostics.ToStream(error, Diagnostics.All); error.Update END;
+	RETURN compiled
+END CompileForDocumentation;
+
+(* A number out of the environment, with a fallback for anything that is not one. *)
+PROCEDURE ToInteger(CONST text: ARRAY OF CHAR; default: SIGNED32): SIGNED32;
+VAR value: SIGNED32; position: SIZE;
+BEGIN
+	position := 0; value := 0;
+	Strings.StrToIntPos(text, value, position);
+	IF value <= 0 THEN RETURN default END;
+	RETURN value
+END ToInteger;
+
+(*
 	Compile the project's other modules until nothing new compiles, so that the module the user
 	named can import its siblings with nothing listed anywhere. One round cannot do it: the
 	compiler takes files in the order given, not in dependency order, so a module whose import is
@@ -377,8 +443,8 @@ BEGIN
 	line := "  targets : "; Strings.Append(line, targets); Say(line)
 END Version;
 
-(* Read the source name and an optional -o from the command line; TRUE when they make sense. *)
-PROCEDURE ReadSourceAndOutput(CONST usage: ARRAY OF CHAR; VAR source, output: ARRAY OF CHAR): BOOLEAN;
+(* Read an optional source name and an optional -o from the command line. *)
+PROCEDURE ReadSourceAndOutputOptional(CONST usage: ARRAY OF CHAR; VAR source, output: ARRAY OF CHAR): BOOLEAN;
 VAR argument: Path;
 BEGIN
 	source := "";
@@ -390,6 +456,13 @@ BEGIN
 		ELSE COPY(argument, source)
 		END
 	END;
+	RETURN TRUE
+END ReadSourceAndOutputOptional;
+
+(* The same, for the verbs that cannot do without the source. *)
+PROCEDURE ReadSourceAndOutput(CONST usage: ARRAY OF CHAR; VAR source, output: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF ~ReadSourceAndOutputOptional(usage, source, output) THEN RETURN FALSE END;
 	IF source = "" THEN Die(usage); RETURN FALSE END;
 	RETURN TRUE
 END ReadSourceAndOutput;
@@ -651,6 +724,43 @@ BEGIN
 	DiscardScratch(scratch)
 END BuildVerb;
 
+PROCEDURE CopyFile(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR source, destination: Files.File; reader: Files.Reader; writer: Files.Writer;
+	buffer: ARRAY 4096 OF CHAR; length: SIZE;
+BEGIN
+	source := Files.Old(from);
+	IF source = NIL THEN RETURN FALSE END;
+	destination := Files.New(to);
+	IF destination = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, source, 0); Files.OpenWriter(writer, destination, 0);
+	REPEAT
+		reader.Bytes(buffer, 0, LEN(buffer), length);
+		IF length > 0 THEN writer.Bytes(buffer, 0, length) END
+	UNTIL length = 0;
+	writer.Update; Files.Register(destination);
+	RETURN TRUE
+END CopyFile;
+
+(*
+	Start another ob and give it a deadline. This is the one place a process is still involved,
+	and it is involved because the work has to be abandonable: see ObHost.Spawn.
+*)
+PROCEDURE RunProgram(CONST program: ARRAY OF CHAR; arguments: Strings.StringArray;
+		limitMilliseconds: SIGNED32; VAR exitCode: SIGNED32): BOOLEAN;
+CONST Tick = 20;
+VAR process, waited: SIGNED32;
+BEGIN
+	process := ObHost.Spawn(program, arguments);
+	IF process < 0 THEN RETURN FALSE END;
+	waited := 0;
+	WHILE waited < limitMilliseconds DO
+		IF ObHost.Finished(process, exitCode) THEN RETURN TRUE END;
+		Objects.Sleep(Tick); INC(waited, Tick)
+	END;
+	ObHost.Terminate(process);
+	RETURN FALSE
+END RunProgram;
+
 (*
 	ob lint -- every import has to point at the same tier or a lower one. The tier of a module is
 	the tier of the package that provides it, read out of the shipped std manifests and whatever
@@ -798,6 +908,148 @@ BEGIN
 END LintVerb;
 
 (*
+	ob doc -- pkg.go.dev-style HTML from the doc comments, through the compiler's Documentation
+	backend, one page per module plus an index.
+
+	Each module is documented by a second ob, started for the purpose and given a deadline. That
+	is not caution: the Documentation backend hangs outright on some modules (V4L2 is the one that
+	was found), and one of those in a project would otherwise stall the whole run with no way out.
+	A page that does not appear is reported with the reason the compiler gave, not as "timeout or
+	error", which is what the shell version had to say because it could not tell the two apart.
+*)
+PROCEDURE DocumentModule(CONST file, scratch, output: ARRAY OF CHAR): BOOLEAN;
+VAR name, page, source, destination: Path;
+BEGIN
+	IF ~ModuleName(file, name) THEN DieOn("no MODULE header in ", file); RETURN FALSE END;
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddSearchPath(scratch)
+			OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
+	COPY(name, page); Strings.Append(page, ".html");
+	IF ~CompileForDocumentation(file, page) THEN RETURN FALSE END;
+	Join(scratch, page, source); Join(output, page, destination);
+	IF ~CopyFile(source, destination) THEN DieOn("the backend produced no page for ", name); RETURN FALSE END;
+	RETURN TRUE
+END DocumentModule;
+
+(* The pages in name order, not in the order the directory happens to hand them over: two runs
+   over the same project should produce the same index. *)
+PROCEDURE WriteIndex(CONST output: ARRAY OF CHAR): SIGNED32;
+VAR handle: ADDRESS; entry, path: Path; index: Files.File; writer: Files.Writer;
+	pages: Strings.StringArray; swap: Strings.String; count, i, j: SIZE;
+BEGIN
+	NEW(pages, 1024); count := 0;
+	handle := ObHost.OpenDirectory(output);
+	IF handle # 0 THEN
+		WHILE ObHost.NextEntry(handle, entry) & (count < LEN(pages^)) DO
+			IF Strings.Match("*.html", entry) & (entry # "index.html") THEN
+				pages[count] := Strings.NewString(entry); INC(count)
+			END
+		END;
+		ObHost.CloseDirectory(handle)
+	END;
+	FOR i := 1 TO count-1 DO
+		swap := pages[i]; j := i;
+		WHILE (j > 0) & (pages[j-1]^ > swap^) DO pages[j] := pages[j-1]; DEC(j) END;
+		pages[j] := swap
+	END;
+
+	Join(output, "index.html", path);
+	index := Files.New(path);
+	IF index = NIL THEN RETURN 0 END;
+	Files.OpenWriter(writer, index, 0);
+	writer.String("<!doctype html><meta charset=utf-8><title>Package docs</title>"); writer.Char(0AX);
+	writer.String("<h1>API documentation</h1><ul>"); writer.Char(0AX);
+	FOR i := 0 TO count-1 DO
+		COPY(pages[i]^, path); path[Strings.Length(path) - 5] := 0X;	(* drop ".html" *)
+		writer.String("  <li><a href="); writer.Char('"'); writer.String(pages[i]^);
+		writer.Char('"'); writer.Char('>'); writer.String(path);
+		writer.String("</a></li>"); writer.Char(0AX)
+	END;
+	writer.String("</ul>"); writer.Char(0AX);
+	writer.Update; Files.Register(index);
+	RETURN SIGNED32(count)
+END WriteIndex;
+
+(* Not a verb for people: how ob asks another ob to document one module, so that the answer can
+   be given up on. Takes the source, the directory the siblings were compiled into, and where the
+   page goes. *)
+PROCEDURE DocModuleVerb;
+VAR file, scratch, output: Path;
+BEGIN
+	IF ~NextArgument(file) OR ~NextArgument(scratch) OR ~NextArgument(output) THEN
+		Die("doc-module is internal: ob doc-module <File.Mod> <scratch> <output>"); RETURN
+	END;
+	IF ~DocumentModule(file, scratch, output) THEN failed := TRUE END
+END DocModuleVerb;
+
+PROCEDURE DocVerb;
+VAR source, output, absolute, scratch, self, file, entry, line, limitText: Path;
+	handle: ADDRESS; arguments: Strings.StringArray; limit, exitCode, documented: SIGNED32;
+	names: Strings.StringArray; count, index: SIZE;
+BEGIN
+	output := "doc";
+	IF ~ReadSourceAndOutputOptional("usage: ob doc [File.Mod] [-o <dir>]", source, output) THEN RETURN END;
+	IF ~ObHost.Exists(output) & ~ObHost.MakeDirectory(output) THEN
+		DieOn("cannot create the output directory: ", output); RETURN
+	END;
+	IF ~ObHost.RealPath(output, absolute) THEN DieOn("no such directory: ", output); RETURN END;
+	COPY(absolute, output);
+	IF ~ObHost.ExecutablePath(self) THEN Die("cannot find my own binary"); RETURN END;
+	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
+
+	limit := 30000;
+	IF ObHost.Env("A2_DOC_TIMEOUT", limitText) & (limitText # "") THEN
+		limit := SIGNED32(1000 * ToInteger(limitText, 30))
+	END;
+
+	(* the siblings are compiled once, here, rather than by each of the children in turn *)
+	IF AddSearchPath(lib) & AddSearchPath(project) & AddSearchPath(scratch) & SetWorkPath(scratch) THEN
+		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension)
+	END;
+
+	(* what to document: the file named, or every module of the project *)
+	NEW(names, 1024); count := 0;
+	IF source # "" THEN
+		IF ObHost.RealPath(source, absolute) THEN names[0] := Strings.NewString(absolute); count := 1 END
+	ELSE
+		handle := ObHost.OpenDirectory(project);
+		IF handle # 0 THEN
+			WHILE ObHost.NextEntry(handle, entry) & (count < LEN(names^)) DO
+				IF Strings.Match("*.Mod", entry) THEN
+					Join(project, entry, file); names[count] := Strings.NewString(file); INC(count)
+				END
+			END;
+			ObHost.CloseDirectory(handle)
+		END
+	END;
+	IF count = 0 THEN Die("nothing to document here"); DiscardScratch(scratch); RETURN END;
+
+	documented := 0;
+	FOR index := 0 TO count-1 DO
+		NEW(arguments, 5);
+		arguments[0] := Strings.NewString("ob");
+		arguments[1] := Strings.NewString("doc-module");
+		arguments[2] := names[index];
+		arguments[3] := Strings.NewString(scratch);
+		arguments[4] := Strings.NewString(output);
+		IF RunProgram(self, arguments, limit, exitCode) THEN
+			IF exitCode = 0 THEN INC(documented) END
+		ELSE
+			IF ~ModuleName(names[index]^, entry) THEN COPY(names[index]^, entry) END;
+			line := "ob: doc gave up on "; Strings.Append(line, entry);
+			Strings.Append(line, " after "); Strings.AppendInt(line, limit DIV 1000);
+			Strings.Append(line, "s (the documentation backend does not return on some modules)");
+			error.String(line); EndLine(error)
+		END
+	END;
+
+	DiscardScratch(scratch);
+	line := "ob: wrote docs to "; Strings.Append(line, output);
+	Strings.Append(line, " ("); Strings.AppendInt(line, WriteIndex(output));
+	Strings.Append(line, " modules + index.html)"); Say(line);
+	IF documented = 0 THEN failed := TRUE END
+END DocVerb;
+
+(*
 	The language server, speaking LSP over this process's own standard input and output. It gets
 	the full stdlib symbols rather than the headless subset, because an editor is opened on code
 	that imports whatever it imports; then the project's own build if it has one, then its sources,
@@ -844,13 +1096,14 @@ BEGIN
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
+	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
 	Say("  ob repl                            the interactive A2 shell, in this directory");
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Verbs still served by the shell version: get, test, doc.")
+	Say("Verbs still served by the shell version: get, test.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
@@ -861,6 +1114,8 @@ BEGIN
 	IF verb = "build" THEN BuildVerb
 	ELSIF verb = "compile" THEN CompileVerb
 	ELSIF verb = "run" THEN RunVerb
+	ELSIF verb = "doc" THEN DocVerb
+	ELSIF verb = "doc-module" THEN DocModuleVerb
 	ELSIF verb = "lint" THEN LintVerb
 	ELSIF verb = "lsp" THEN LspVerb
 	ELSIF verb = "repl" THEN ReplVerb
