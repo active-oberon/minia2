@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 #
-# Fill in the modules a Windows SDK needs and `task Win64` does not build.
+# Make a Win64 build carry everything the Windows SDK ships -- and say so when it did not.
 #
-# The Win64 release list is not the headless core: of the 387 modules in docker/headless-core.txt,
-# eleven have no .SymWw after a Win64 build. Six of them should not have one --
+# The list of what it should carry is docker/headless-core-win64.txt plus the Win boot list;
+# what it does carry is the .SymWw/.GofWw in target/Win64/bin. On a build made from the current
+# tree the two agree and this script does nothing. It exists for the two cases where they don't:
 #
-#     Glue, Unix, UnixFiles, UnixBinary, Sockets, X11   -- Unix by nature
+#   -  a Win64 build older than the sources. An object compiled before a binding was added to
+#      its module compiles everything that does not use the binding and fails only what does --
+#      which is how Kernel32 without ObHost's two bindings reads: not as a stale build, but as
+#      a bug in Ob. Anything whose source is newer than its object is rebuilt.
+#   -  a build that never had the module at all, whatever the reason.
 #
-# -- and the other five are portable code that simply is not in the Win64 release definition:
-#
-#     JSON, LSP                                          -- the language server and what it speaks
-#     FoxA64InstructionSet, FoxA64Assembler, FoxA64Backend  -- so a Windows SDK can build for AArch64
-#
-# This compiles those five into the Win64 build directory, in dependency order. It is the Windows
-# counterpart of tests/a64-stdlib-check.sh and exists for the same reason: a target's release list
-# and the SDK's shipping list are not the same list.
+# Both are stale-tree cases, so this is a repair, not a step: the honest fix is `task Win64`.
+# Whatever it had to fill in is printed, because a build that silently completes itself is how
+# the tree drifts from the release definition without anybody noticing. (It was believed for a
+# while that JSON, LSP and the A64 backend were missing from the Win64 release definition. They
+# are not -- data/Release.Tool has had them since they were written, and a clean `task Win64`
+# builds all 727 modules. The tree they were "missing" from was simply months old.)
 #
 # Usage: tests/win-stdlib.sh [build directory]
 
@@ -30,50 +33,62 @@ oberon="$build/oberon"
 [ -x "$oberon" ] || { echo "no built runtime in $build; run 'task Linux64' first" >&2; exit 2; }
 [ -d "$winbin" ]  || { echo "no Win64 build in $winbin; run 'task Win64' first" >&2; exit 2; }
 
-# Dependency order, not alphabetical: the A64 backend is three modules deep and LSP imports JSON.
-# Kernel32 is here for a different reason -- it exists in the Win64 build already, but ObHost needs
-# bindings added to it after that build was made, so it is rebuilt whenever its source is newer.
-modules="Kernel32 JSON FoxA64InstructionSet FoxA64Assembler FoxA64Backend LSP"
+core="$root/docker/headless-core-win64.txt"
+[ -f "$core" ] || { echo "no $core; regenerate it with docker/gen-headless-core.sh win64" >&2; exit 2; }
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/win-stdlib.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
-
-# A module is (re)built when it has no object, or when its source is newer than the object it has.
-# The second case is not hypothetical: an object built before a binding was added to it compiles
-# everything that does not use the binding, and fails only the module that does.
+# Where a module's source is, given its module name. The platform prefix is a file-name
+# convention, not part of the name: Windows.Kernel32.Mod defines MODULE Kernel32.
 source_of() {
 	for candidate in "$root/source/$1.Mod" "$root/source/Windows.$1.Mod"; do
 		[ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
 	done
 	return 1
 }
-todo=""
-for m in $modules; do
-	src="$(source_of "$m")" || { echo "no source for $m" >&2; exit 1; }
-	if [ -f "$winbin/$m.SymWw" ] && [ -f "$winbin/$m.GofWw" ] && [ ! "$src" -nt "$winbin/$m.SymWw" ]; then
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/win-stdlib.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+missing=""; stale=""
+while read -r m; do
+	case "$m" in ''|\#*) continue ;; esac
+	src="$(source_of "$m")" || continue          # no source here: not ours to build
+	# Presence is the symbol file, not the object: a parametric module (GenericCollections,
+	# `MODULE M(TYPE T)`) has no code of its own until something instantiates it, so a correct
+	# build of it produces a .SymWw and no .GofWw at all.
+	if [ ! -f "$winbin/$m.SymWw" ]; then
+		missing="$missing $m"
+	elif [ "$src" -nt "$winbin/$m.SymWw" ]; then
+		stale="$stale $m"
+	else
 		continue
 	fi
 	cp "$src" "$work/$m.Mod"
-	todo="$todo ./$m.Mod"
-done
+done < <(sort -u "$core" "$root/configs/moduleListWin.txt")
 
+todo="$missing$stale"
 if [ -z "$todo" ]; then
-	echo "win-stdlib: nothing to do, all $(echo $modules | wc -w) modules are already built for Win64"
+	echo "win-stdlib: the Win64 build carries every module the Windows SDK ships"
 	exit 0
 fi
+[ -z "$missing" ] || echo "win-stdlib: not in the Win64 build:$missing"
+[ -z "$stale" ]   || echo "win-stdlib: source newer than the object:$stale"
+echo "win-stdlib: filling these in -- 'task Win64' is the real fix"
 
-# Compiled in the scratch directory and installed afterwards, so a failure leaves the build tree
-# as it was rather than half-filled.
+# Order matters and alphabetical is not it, so the modules are compiled in the order their
+# dependencies allow: the compiler is given the whole set and resolves the rest itself, with
+# the existing Win64 objects on the search path.
+files=""
+for m in $todo; do files="$files ./$m.Mod"; done
 ( cd "$work" && "$oberon" do "
 	Files.AddSearchPath $work~
 	Files.AddSearchPath $build/bin~
 	Files.AddSearchPath $winbin~
 	Files.SetWorkPath $work~
-	Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw$todo ~
+	Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw$files ~
 " ) || { echo "win-stdlib: compilation failed" >&2; exit 1; }
 
 installed=0
-for m in $modules; do
+for m in $todo; do
 	for e in SymWw GofWw; do
 		[ -f "$work/$m.$e" ] && { install -m 644 "$work/$m.$e" "$winbin/"; installed=1; }
 	done
