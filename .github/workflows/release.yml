@@ -57,6 +57,15 @@ jobs:
         run: |
           task win-bundle
           cp target/minia2-sdk-*-windows-amd64.tar.gz .
+      # sdk/install.sh is what `curl | sh` runs, so it is checked against the tarball this run
+      # built before that tarball is published -- the installer and the thing it installs are
+      # released together and there is no version of one that has not met the other.
+      - name: Check the installer against the tarball
+        run: tests/install-check.sh
+      # Checksums for the assets. install.sh verifies against this file when the release has one;
+      # a release without it installs anyway and says the checksum was not verified.
+      - name: Checksums
+        run: sha256sum minia2-*-*.zip minia2-sdk-*.tar.gz > SHA256SUMS
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -64,3 +73,5 @@ jobs:
           files: |
             minia2-*-*.zip
             minia2-sdk-*.tar.gz
+            SHA256SUMS
+            sdk/install.sh

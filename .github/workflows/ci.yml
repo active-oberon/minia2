@@ -119,6 +119,12 @@ jobs:
         env:
           BUNDLE_REQUIRE: "1"
         run: task bundle-check
+      - name: The installer, against the tarball just built
+        # `curl | sh` is how most people will ever meet this SDK, and it is the one script that
+        # runs before the SDK exists -- on a machine that has none of it, in whatever /bin/sh is
+        # there. Checked offline against the local tarball: where it unpacks, whether the linked
+        # ob still finds its runtime, upgrade, uninstall, and what each machine resolves to.
+        run: task install-check
       - name: ob, the driver written in Active Oberon (and the Windows SDK, under wine)
         # Builds ob from sdk/Ob.Mod, checks every verb against the shell version it replaces --
         # the three binaries `ob build` produces are compared byte for byte -- then builds the
