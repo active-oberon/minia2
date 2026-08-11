@@ -18,7 +18,7 @@ MODULE Ob;	(** AUTHOR "minia2"; PURPOSE "The ob command line, in Active Oberon";
 *)
 
 IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
-	Shell, LSP, Objects, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
+	Shell, LSP, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
 	ObHost;
 
 CONST
@@ -26,7 +26,11 @@ CONST
 
 	(* The architecture this binary was compiled for, which is the only "host" that means anything:
 	   an x86-64 SDK under an emulator is still an x86-64 SDK. *)
-#IF ARM64 THEN
+#IF WIN THEN
+	HostTarget = "win64";
+	ObjectExtension = "GofWw"; SymbolExtension = ".SymWw";
+	CompilerPlatform = "Win64"; LinkerPlatform = "Win64";
+#ELSIF ARM64 THEN
 	HostTarget = "a64";
 	ObjectExtension = "GofU8"; SymbolExtension = ".SymU8";
 	CompilerPlatform = "UnixA64"; LinkerPlatform = "LinuxA64";
@@ -51,12 +55,18 @@ VAR
 
 (* --- paths ------------------------------------------------------------------------------- *)
 
+(* Windows answers GetModuleFileName with backslashes whatever ob builds its own paths with, so
+   a path is split on either separator. On Unix ObHost.Separator is the slash and nothing changes. *)
+PROCEDURE IsSeparator(character: CHAR): BOOLEAN;
+BEGIN RETURN (character = '/') OR (character = ObHost.Separator)
+END IsSeparator;
+
 PROCEDURE Join*(CONST dir, name: ARRAY OF CHAR; VAR path: ARRAY OF CHAR);
 VAR length: SIZE;
 BEGIN
 	COPY(dir, path);
 	length := Strings.Length(path);
-	IF (length > 0) & (path[length-1] # '/') THEN Strings.AppendChar(path, '/') END;
+	IF (length > 0) & ~IsSeparator(path[length-1]) THEN Strings.AppendChar(path, '/') END;
 	Strings.Append(path, name)
 END Join;
 
@@ -66,7 +76,7 @@ VAR i: SIZE;
 BEGIN
 	COPY(path, dir);
 	i := Strings.Length(dir);
-	WHILE (i > 0) & (dir[i-1] # '/') DO DEC(i) END;
+	WHILE (i > 0) & ~IsSeparator(dir[i-1]) DO DEC(i) END;
 	IF i = 0 THEN dir := "" ELSE dir[i-1] := 0X END	(* i-1 drops the separator itself *)
 END Directory;
 
@@ -75,7 +85,7 @@ PROCEDURE BaseName*(CONST path: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
 VAR i, length: SIZE;
 BEGIN
 	length := Strings.Length(path); i := length;
-	WHILE (i > 0) & (path[i-1] # '/') DO DEC(i) END;
+	WHILE (i > 0) & ~IsSeparator(path[i-1]) DO DEC(i) END;
 	Strings.Copy(path, i, length - i, name)
 END BaseName;
 
@@ -131,8 +141,10 @@ BEGIN
 	Join(sdk, "packages", packages);
 	Join(sdk, "boot-modules.txt", bootList);
 	Join(sdk, "boot-modules-win64.txt", bootListWin);
-	(* On an AArch64 SDK the native objects ARE the AArch64 objects; there is no separate lib-a64. *)
-	IF (HostTarget = "a64") & ~ObHost.Exists(libA64) THEN COPY(lib, libA64) END
+	(* On an SDK that is not x86-64 Linux, the native objects in lib/ ARE that platform's objects
+	   and there is no separate cross directory for it. *)
+	IF (HostTarget = "a64") & ~ObHost.Exists(libA64) THEN COPY(lib, libA64) END;
+	IF (HostTarget = "win64") & ~ObHost.Exists(libWin) THEN COPY(lib, libWin) END
 END Layout;
 
 (** Where the user's sources, a2pkg.json and .a2pkg/ live: the directory ob was started in. *)
@@ -192,13 +204,14 @@ BEGIN
 END Quoted;
 
 (** Where imports are resolved from. Unlike a shell, this is the whole of what the scratch
-	directory full of symlinks used to do. *)
+	directory full of symlinks used to do. Files, not UnixFiles: Files is the one that knows
+	which file system this platform has. *)
 PROCEDURE AddSearchPath(CONST directory: ARRAY OF CHAR): BOOLEAN;
 VAR quoted: Path;
 BEGIN
 	IF ~ObHost.Exists(directory) THEN RETURN TRUE END;		(* absent lib-a64 is not an error *)
 	Quoted(directory, quoted);
-	RETURN Execute("UnixFiles.AddSearchPath", quoted)
+	RETURN Execute("Files.AddSearchPath", quoted)
 END AddSearchPath;
 
 (** Where the compiler writes what it produces. *)
@@ -206,7 +219,7 @@ PROCEDURE SetWorkPath(CONST directory: ARRAY OF CHAR): BOOLEAN;
 VAR quoted: Path;
 BEGIN
 	Quoted(directory, quoted);
-	RETURN Execute("UnixFiles.SetWorkPath", quoted)
+	RETURN Execute("Files.SetWorkPath", quoted)
 END SetWorkPath;
 
 (** The name after MODULE, which is what the compiler names its output after -- so a source
@@ -233,9 +246,11 @@ BEGIN
 				name[length] := line[position]; INC(length); INC(position)
 			END;
 			name[length] := 0X;
+			handle.Close;
 			RETURN length > 0
 		END
 	END;
+	handle.Close;
 	RETURN FALSE
 END ModuleName;
 
@@ -272,12 +287,14 @@ END CompileReader;
 
 PROCEDURE CompileFile(CONST file, platform, objectExtension, symbolExtension: ARRAY OF CHAR;
 		report: BOOLEAN): BOOLEAN;
-VAR handle: Files.File; reader: Files.Reader;
+VAR handle: Files.File; reader: Files.Reader; compiled: BOOLEAN;
 BEGIN
 	handle := Files.Old(file);
 	IF handle = NIL THEN IF report THEN Die("cannot open the source file") END; RETURN FALSE END;
 	Files.OpenReader(reader, handle, 0);
-	RETURN CompileReader(file, reader, platform, objectExtension, symbolExtension, report)
+	compiled := CompileReader(file, reader, platform, objectExtension, symbolExtension, report);
+	handle.Close;
+	RETURN compiled
 END CompileFile;
 
 (*
@@ -290,19 +307,33 @@ END CompileFile;
 
 	A trap during those seconds would lose its message. It is seconds, and only around this.
 *)
-VAR previousTraceChar: Trace.CharProc;
+CONST TraceCapacity = 64*1024;
 
-PROCEDURE Swallow(character: CHAR);
+VAR
+	previousTraceChar: Trace.CharProc;
+	traced: ARRAY TraceCapacity OF CHAR;
+	tracedLength: SIZE;
+
+(* Runs where a trap handler runs, so it allocates nothing and locks nothing: a fixed array and
+   an index. What does not fit is dropped, which is what the twentieth page of a trap is worth. *)
+PROCEDURE CaptureChar(character: CHAR);
 BEGIN {UNCOOPERATIVE, UNCHECKED}
-END Swallow;
+	IF tracedLength < LEN(traced) THEN traced[tracedLength] := character; INC(tracedLength) END
+END CaptureChar;
 
-PROCEDURE SilenceTrace;
-BEGIN previousTraceChar := Trace.Char; Trace.Char := Swallow
-END SilenceTrace;
+PROCEDURE CaptureTrace;
+BEGIN tracedLength := 0; previousTraceChar := Trace.Char; Trace.Char := CaptureChar
+END CaptureTrace;
 
 PROCEDURE RestoreTrace;
 BEGIN Trace.Char := previousTraceChar
 END RestoreTrace;
+
+PROCEDURE WriteTraced(writer: Streams.Writer);
+VAR index: SIZE;
+BEGIN
+	FOR index := 0 TO tracedLength-1 DO writer.Char(traced[index]) END
+END WriteTraced;
 
 (* The same compiler, asked for a page instead of an object: no object file extension, so nothing
    is generated, and the Documentation backend writes the HTML into the working directory. *)
@@ -325,7 +356,7 @@ BEGIN
 		RETURN FALSE
 	END;
 	importCache := NIL;
-	SilenceTrace;
+	CaptureTrace;
 	compiled := Compiler.Modules(file, reader, 0, diagnostics, log, options, importCache);
 	RestoreTrace;
 	log.Update;
@@ -414,7 +445,7 @@ BEGIN
 	file := Files.Old(name);
 	IF file = NIL THEN RETURN FALSE END;
 	Files.OpenReader(reader, file, 0);
-	reader.Ln(version);
+	reader.Ln(version); file.Close;
 	RETURN version # ""
 END ReadVersion;
 
@@ -429,7 +460,9 @@ BEGIN
 	line := "  stdlib  : "; Strings.AppendInt(line, CountModules(lib, SymbolExtension));
 	Strings.Append(line, " modules ("); Strings.Append(line, HostTarget); Strings.Append(line, ")");
 	Say(line);
-#IF ARM64 THEN
+#IF WIN THEN
+	targets := "win64 (PE .exe, native)";
+#ELSIF ARM64 THEN
 	targets := "a64 (ELF, native)";
 #ELSE
 	targets := "linux64 (ELF)";
@@ -495,7 +528,9 @@ END CompileVerb;
 PROCEDURE ScratchDirectory(VAR path: ARRAY OF CHAR): BOOLEAN;
 VAR temporary: Path; name: ARRAY 32 OF CHAR;
 BEGIN
-	IF ~ObHost.Env("TMPDIR", temporary) OR (temporary = "") THEN temporary := "/tmp" END;
+	IF ~ObHost.Env("TMPDIR", temporary) OR (temporary = "") THEN
+		IF ~ObHost.Env("TEMP", temporary) OR (temporary = "") THEN temporary := "/tmp" END
+	END;
 	name := "ob-"; Strings.AppendInt(name, ObHost.ProcessId());
 	Join(temporary, name, path);
 	RETURN ObHost.MakeDirectory(path)
@@ -613,6 +648,7 @@ BEGIN
 			Strings.Append(list, line); Strings.AppendChar(list, ' ')
 		END
 	END;
+	handle.Close;
 	RETURN list # ""
 END ReadBootList;
 
@@ -738,6 +774,7 @@ BEGIN
 		IF length > 0 THEN writer.Bytes(buffer, 0, length) END
 	UNTIL length = 0;
 	writer.Update; Files.Register(destination);
+	source.Close; destination.Close;
 	RETURN TRUE
 END CopyFile;
 
@@ -748,14 +785,15 @@ END CopyFile;
 PROCEDURE RunProgram(CONST program: ARRAY OF CHAR; arguments: Strings.StringArray;
 		limitMilliseconds: SIGNED32; VAR exitCode: SIGNED32): BOOLEAN;
 CONST Tick = 20;
-VAR process, waited: SIGNED32;
+VAR process: ADDRESS; waited: SIGNED32; timer: Kernel.Timer;
 BEGIN
 	process := ObHost.Spawn(program, arguments);
-	IF process < 0 THEN RETURN FALSE END;
+	IF process = 0 THEN RETURN FALSE END;
+	NEW(timer);		(* Kernel.Timer, not Objects.Sleep: the latter is Unix only *)
 	waited := 0;
 	WHILE waited < limitMilliseconds DO
 		IF ObHost.Finished(process, exitCode) THEN RETURN TRUE END;
-		Objects.Sleep(Tick); INC(waited, Tick)
+		timer.Sleep(Tick); INC(waited, Tick)
 	END;
 	ObHost.Terminate(process);
 	RETURN FALSE
@@ -860,6 +898,7 @@ BEGIN
 	scanner := FoxScanner.NewScanner(name, reader, 0, diagnostics);
 	parser := FoxParser.NewParser(scanner, diagnostics, "");
 	module := parser.Module();
+	handle.Close;
 	IF (module = NIL) OR parser.error THEN RETURN END;
 
 	IF ~TierOf(name, tier, package) THEN package := "project" END;
@@ -965,7 +1004,7 @@ BEGIN
 		writer.String("</a></li>"); writer.Char(0AX)
 	END;
 	writer.String("</ul>"); writer.Char(0AX);
-	writer.Update; Files.Register(index);
+	writer.Update; Files.Register(index); index.Close;
 	RETURN SIGNED32(count)
 END WriteIndex;
 
@@ -1050,6 +1089,836 @@ BEGIN
 END DocVerb;
 
 (*
+	ob get -- fetch a package into .a2pkg/, pin it in a2pkg.lock, add it to a2pkg.json and do the
+	same for whatever it requires. A name with a dot in its first segment is a git repository
+	(github.com/user/repo); a bare one is a registry package resolved through $A2_REGISTRY.
+
+	git is the one program ob still needs on the PATH, and there is no way around that: it speaks
+	a protocol, not a file format. What ob does NOT do any more is read git's answer off a pipe --
+	the commit it pins comes out of .git/HEAD, which is a file.
+*)
+PROCEDURE MakePath(CONST path: ARRAY OF CHAR): BOOLEAN;
+VAR partial: Path; index, length: SIZE;
+BEGIN
+	length := Strings.Length(path); index := 1;
+	WHILE index <= length DO
+		IF (index = length) OR (path[index] = '/') THEN
+			Strings.Copy(path, 0, index, partial);
+			IF ~ObHost.Exists(partial) & ~ObHost.MakeDirectory(partial) THEN RETURN FALSE END
+		END;
+		INC(index)
+	END;
+	RETURN ObHost.Exists(path)
+END MakePath;
+
+PROCEDURE RemoveTree(CONST path: ARRAY OF CHAR);
+VAR handle: ADDRESS; entry, child: Path; ignore: BOOLEAN;
+BEGIN
+	handle := ObHost.OpenDirectory(path);
+	IF handle = 0 THEN ignore := ObHost.Remove(path); RETURN END;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF (entry # ".") & (entry # "..") THEN Join(path, entry, child); RemoveTree(child) END
+	END;
+	ObHost.CloseDirectory(handle);
+	ignore := ObHost.RemoveDirectory(path)
+END RemoveTree;
+
+PROCEDURE CopyTree(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR handle: ADDRESS; entry, source, destination: Path; done: BOOLEAN;
+BEGIN
+	handle := ObHost.OpenDirectory(from);
+	IF handle = 0 THEN RETURN CopyFile(from, to) END;
+	IF ~MakePath(to) THEN ObHost.CloseDirectory(handle); RETURN FALSE END;
+	done := TRUE;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF (entry # ".") & (entry # "..") THEN
+			Join(from, entry, source); Join(to, entry, destination);
+			IF ~CopyTree(source, destination) THEN done := FALSE END
+		END
+	END;
+	ObHost.CloseDirectory(handle);
+	RETURN done
+END CopyTree;
+
+PROCEDURE Git(arguments: Strings.StringArray): BOOLEAN;
+VAR exitCode: SIGNED32;
+BEGIN
+	IF ~RunProgram("git", arguments, 600000, exitCode) THEN RETURN FALSE END;
+	RETURN exitCode = 0
+END Git;
+
+PROCEDURE ReadJsonFile(CONST file: ARRAY OF CHAR; VAR object: JSON.Object): BOOLEAN;
+VAR handle: Files.File; reader: Files.Reader; value: JSON.Value;
+BEGIN
+	object := NIL;
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	IF ~JSON.ParseStream(reader, value) THEN handle.Close; RETURN FALSE END;
+	handle.Close;
+	IF ~(value IS JSON.Object) THEN RETURN FALSE END;
+	object := value(JSON.Object);
+	RETURN TRUE
+END ReadJsonFile;
+
+PROCEDURE WriteJsonString(writer: Streams.Writer; CONST text: ARRAY OF CHAR);
+VAR index: SIZE;
+BEGIN
+	writer.Char('"');
+	FOR index := 0 TO Strings.Length(text)-1 DO
+		IF (text[index] = '"') OR (text[index] = '\') THEN writer.Char('\') END;
+		writer.Char(text[index])
+	END;
+	writer.Char('"')
+END WriteJsonString;
+
+(* Indented, two spaces per level, because a2pkg.json and a2pkg.lock are files people read and
+   put in version control. JSON.Write is compact, which the shell version avoided by piping
+   through jq. *)
+PROCEDURE WriteJsonIndented(writer: Streams.Writer; value: JSON.Value; depth: SIGNED32);
+VAR member: JSON.Member; item: JSON.Item; first: BOOLEAN; level: SIGNED32;
+
+	PROCEDURE Indent(by: SIGNED32);
+	VAR count: SIGNED32;
+	BEGIN FOR count := 1 TO by DO writer.String("  ") END
+	END Indent;
+
+BEGIN
+	IF (value # NIL) & (value IS JSON.Object) THEN
+		member := value(JSON.Object).members;
+		IF member = NIL THEN writer.String("{}"); RETURN END;
+		writer.String("{"); writer.Char(0AX); first := TRUE;
+		WHILE member # NIL DO
+			IF ~first THEN writer.String(","); writer.Char(0AX) END;
+			first := FALSE;
+			Indent(depth + 1); WriteJsonString(writer, member.key^); writer.String(": ");
+			WriteJsonIndented(writer, member.value, depth + 1);
+			member := member.next
+		END;
+		writer.Char(0AX); Indent(depth); writer.String("}")
+	ELSIF (value # NIL) & (value IS JSON.Array) THEN
+		item := value(JSON.Array).items;
+		IF item = NIL THEN writer.String("[]"); RETURN END;
+		writer.String("["); writer.Char(0AX); first := TRUE;
+		WHILE item # NIL DO
+			IF ~first THEN writer.String(","); writer.Char(0AX) END;
+			first := FALSE;
+			Indent(depth + 1); WriteJsonIndented(writer, item.value, depth + 1);
+			item := item.next
+		END;
+		writer.Char(0AX); Indent(depth); writer.String("]")
+	ELSE
+		level := depth;	(* nothing to indent inside a scalar *)
+		JSON.Write(writer, value)
+	END
+END WriteJsonIndented;
+
+PROCEDURE WriteJsonFile(CONST file: ARRAY OF CHAR; value: JSON.Value): BOOLEAN;
+VAR handle: Files.File; writer: Files.Writer;
+BEGIN
+	handle := Files.New(file);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenWriter(writer, handle, 0);
+	WriteJsonIndented(writer, value, 0); writer.Char(0AX);
+	writer.Update; Files.Register(handle); handle.Close;
+	RETURN TRUE
+END WriteJsonFile;
+
+PROCEDURE JsonText(object: JSON.Object; CONST key: ARRAY OF CHAR; VAR value: ARRAY OF CHAR): BOOLEAN;
+VAR member: JSON.Value;
+BEGIN
+	IF object = NIL THEN RETURN FALSE END;
+	member := object.Get(key);
+	IF (member = NIL) OR ~(member IS JSON.String) THEN RETURN FALSE END;
+	COPY(member(JSON.String).value^, value); RETURN TRUE
+END JsonText;
+
+(* The commit a fresh clone is standing on, read out of .git rather than off git's own output:
+   a tag or a detached clone puts the hash straight into HEAD, a branch puts a ref there and the
+   hash in the file it names. *)
+PROCEDURE HeadCommit(CONST repository: ARRAY OF CHAR; VAR commit: ARRAY OF CHAR): BOOLEAN;
+VAR path, line: Path; handle: Files.File; reader: Files.Reader;
+BEGIN
+	Join(repository, ".git/HEAD", path);
+	handle := Files.Old(path);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	reader.Ln(line); Strings.Trim(line, 0DX); Strings.Trim(line, ' ');
+	IF Strings.Pos("ref: ", line) = 0 THEN
+		Strings.Copy(line, 5, Strings.Length(line) - 5, commit);
+		Join(repository, ".git", path); Strings.AppendChar(path, '/'); Strings.Append(path, commit);
+		handle := Files.Old(path);
+		IF handle = NIL THEN RETURN FALSE END;
+		Files.OpenReader(reader, handle, 0);
+		reader.Ln(line); Strings.Trim(line, 0DX); Strings.Trim(line, ' ')
+	END;
+	COPY(line, commit);
+	RETURN commit # ""
+END HeadCommit;
+
+PROCEDURE RecordDependency(CONST name, version, commit: ARRAY OF CHAR);
+VAR path: Path; manifest, lock, entry: JSON.Object;
+BEGIN
+	Join(project, "a2pkg.json", path);
+	IF ~ReadJsonFile(path, manifest) THEN
+		manifest := JSON.NewObject();
+		manifest.Set("name", JSON.NewString("app"));
+		manifest.Set("requires", JSON.NewObject())
+	END;
+	IF (manifest.Get("requires") = NIL) OR ~(manifest.Get("requires") IS JSON.Object) THEN
+		manifest.Set("requires", JSON.NewObject())
+	END;
+	manifest.Get("requires")(JSON.Object).Set(name, JSON.NewString(version));
+	IF ~WriteJsonFile(path, manifest) THEN DieOn("cannot write ", path); RETURN END;
+
+	Join(project, "a2pkg.lock", path);
+	IF ~ReadJsonFile(path, lock) THEN lock := JSON.NewObject() END;
+	entry := JSON.NewObject();
+	entry.Set("version", JSON.NewString(version));
+	entry.Set("commit", JSON.NewString(commit));
+	lock.Set(name, entry);
+	IF ~WriteJsonFile(path, lock) THEN DieOn("cannot write ", path) END
+END RecordDependency;
+
+(* A package's requirements are fetched by the same procedure that fetched it, and that procedure
+   is declared after this one; the variable is what Oberon offers instead of a forward declaration. *)
+VAR fetch: PROCEDURE(CONST specification: ARRAY OF CHAR);
+
+PROCEDURE GetTransitive(CONST directory: ARRAY OF CHAR);
+VAR path: Path; manifest, requires: JSON.Object; member: JSON.Member; installed: Path;
+BEGIN
+	Join(directory, "a2pkg.json", path);
+	IF ~ReadJsonFile(path, manifest) THEN RETURN END;
+	IF (manifest.Get("requires") = NIL) OR ~(manifest.Get("requires") IS JSON.Object) THEN RETURN END;
+	requires := manifest.Get("requires")(JSON.Object);
+	member := requires.members;
+	WHILE member # NIL DO
+		IF Strings.Pos("std/", member.key^) # 0 THEN		(* the SDK provides std/*, never fetched *)
+			Join(project, ".a2pkg", installed); Strings.AppendChar(installed, '/');
+			Strings.Append(installed, member.key^);
+			IF ~ObHost.Exists(installed) THEN fetch(member.key^) END
+		END;
+		member := member.next
+	END
+END GetTransitive;
+
+PROCEDURE GetGit(CONST repository, version: ARRAY OF CHAR);
+VAR cache, parent, url, commit, manifest, line, pinned: Path;
+	arguments: Strings.StringArray;
+BEGIN
+	Join(project, ".a2pkg", cache); Strings.AppendChar(cache, '/'); Strings.Append(cache, repository);
+	RemoveTree(cache);
+	Directory(cache, parent);
+	IF ~MakePath(parent) THEN DieOn("cannot create ", parent); RETURN END;
+	url := "https://"; Strings.Append(url, repository); Strings.Append(url, ".git");
+
+	(* shallow and VCS-free: only the requested tag or branch, then .git is dropped, so what stays
+	   in the cache is the package source and nothing else *)
+	IF version # "" THEN
+		NEW(arguments, 11);
+		arguments[0] := Strings.NewString("git");
+		arguments[1] := Strings.NewString("-c");
+		arguments[2] := Strings.NewString("advice.detachedHead=false");
+		arguments[3] := Strings.NewString("clone");
+		arguments[4] := Strings.NewString("-q");
+		arguments[5] := Strings.NewString("--depth"); arguments[6] := Strings.NewString("1");
+		arguments[7] := Strings.NewString("--branch"); arguments[8] := Strings.NewString(version);
+		arguments[9] := Strings.NewString(url); arguments[10] := Strings.NewString(cache)
+	ELSE
+		NEW(arguments, 7);
+		arguments[0] := Strings.NewString("git");
+		arguments[1] := Strings.NewString("clone");
+		arguments[2] := Strings.NewString("-q");
+		arguments[3] := Strings.NewString("--depth"); arguments[4] := Strings.NewString("1");
+		arguments[5] := Strings.NewString(url); arguments[6] := Strings.NewString(cache)
+	END;
+	IF ~Git(arguments) THEN
+		DieOn("clone failed: ", repository); RETURN
+	END;
+	Join(cache, "a2pkg.json", manifest);
+	IF ~ObHost.Exists(manifest) THEN
+		DieOn("not an A2 package (no a2pkg.json): ", repository); RETURN
+	END;
+	IF ~HeadCommit(cache, commit) THEN commit := "" END;
+	COPY(version, pinned);
+	IF pinned = "" THEN COPY(commit, pinned) END;
+	Join(cache, ".git", line); RemoveTree(line);
+	RecordDependency(repository, pinned, commit);
+	line := "ob: got "; Strings.Append(line, repository);
+	Strings.Append(line, "  ("); Strings.Append(line, pinned); Strings.AppendChar(line, ')'); Say(line);
+	GetTransitive(cache)
+END GetGit;
+
+PROCEDURE GetRegistry(CONST name, version: ARRAY OF CHAR);
+VAR registry, index, path, status, destination, version2, line: Path;
+	catalogue, packages, entry: JSON.Object; arguments: Strings.StringArray; manifest: JSON.Object;
+BEGIN
+	IF ~ObHost.Env("A2_REGISTRY", registry) OR (registry = "") THEN
+		Die("ob get by name needs A2_REGISTRY (a git URL or a path to the registry)"); RETURN
+	END;
+	IF ~ObHost.Exists(registry) THEN
+		Join(project, ".a2pkg/.registry", path); RemoveTree(path);
+		NEW(arguments, 7);
+		arguments[0] := Strings.NewString("git");
+		arguments[1] := Strings.NewString("clone");
+		arguments[2] := Strings.NewString("-q");
+		arguments[3] := Strings.NewString("--depth"); arguments[4] := Strings.NewString("1");
+		arguments[5] := Strings.NewString(registry); arguments[6] := Strings.NewString(path);
+		IF ~Git(arguments) THEN DieOn("registry clone failed: ", registry); RETURN END;
+		COPY(path, registry)
+	END;
+	Join(registry, "index.json", index);
+	IF ~ReadJsonFile(index, catalogue) THEN DieOn("registry has no index.json: ", registry); RETURN END;
+	IF (catalogue.Get("packages") = NIL) OR ~(catalogue.Get("packages") IS JSON.Object) THEN
+		DieOn("registry index has no packages: ", index); RETURN
+	END;
+	packages := catalogue.Get("packages")(JSON.Object);
+	IF (packages.Get(name) = NIL) OR ~(packages.Get(name) IS JSON.Object) THEN
+		DieOn("package not in registry: ", name); RETURN
+	END;
+	entry := packages.Get(name)(JSON.Object);
+	IF ~JsonText(entry, "path", path) THEN DieOn("registry entry has no path: ", name); RETURN END;
+	IF ~JsonText(entry, "status", status) THEN status := "unknown" END;
+	Join(registry, path, line);
+	IF ~ObHost.Exists(line) THEN
+		DieOn("no installable source yet for ", name); RETURN
+	END;
+	Join(project, ".a2pkg", destination); Strings.AppendChar(destination, '/');
+	Strings.Append(destination, name);
+	RemoveTree(destination);
+	IF ~CopyTree(line, destination) THEN DieOn("cannot copy the package into ", destination); RETURN END;
+	version2 := "0.0.0";
+	Join(destination, "a2pkg.json", path);
+	IF ReadJsonFile(path, manifest) THEN
+		IF ~JsonText(manifest, "version", version2) THEN version2 := "0.0.0" END
+	END;
+	IF version # "" THEN COPY(version, version2) END;
+	RecordDependency(name, version2, "registry");
+	line := "ob: got "; Strings.Append(line, name);
+	Strings.Append(line, "  (registry @ "); Strings.Append(line, version2);
+	Strings.AppendChar(line, ')'); Say(line);
+	GetTransitive(destination)
+END GetRegistry;
+
+PROCEDURE GetOne(CONST specification: ARRAY OF CHAR);
+VAR repository, version, first: Path; at, slash: SIZE;
+BEGIN
+	COPY(specification, repository); version := "";
+	at := Strings.Length(repository);
+	WHILE (at > 0) & (repository[at-1] # '@') DO DEC(at) END;
+	IF at > 0 THEN
+		Strings.Copy(repository, at, Strings.Length(repository) - at, version);
+		repository[at-1] := 0X
+	END;
+	slash := Strings.Pos("/", repository);
+	IF slash < 0 THEN first := repository ELSE Strings.Copy(repository, 0, slash, first) END;
+	IF Strings.Pos(".", first) >= 0 THEN GetGit(repository, version)
+	ELSE GetRegistry(repository, version)
+	END
+END GetOne;
+
+PROCEDURE GetVerb;
+VAR specification: Path; any: BOOLEAN;
+BEGIN
+	any := FALSE;
+	WHILE NextArgument(specification) DO
+		IF specification[0] = '-' THEN DieOn("unknown option: ", specification); RETURN END;
+		GetOne(specification); any := TRUE;
+		IF failed THEN RETURN END
+	END;
+	IF ~any THEN Die("usage: ob get <host/user/repo>[@version] ..."); RETURN END;
+	Say("ob: updated a2pkg.json + a2pkg.lock ; deps vendored in .a2pkg/")
+END GetVerb;
+
+(* see the note on `fetch` above *)
+PROCEDURE InstallFetch;
+BEGIN fetch := GetOne
+END InstallFetch;
+
+(*
+	ob test -- the test files the tree already uses: `#` comments, then cases introduced by
+	`positive: name` or `negative: name`, each followed by the Oberon source of that case. A
+	positive case must compile and run without failing; a negative one must fail.
+
+	Each case is compiled AND loaded by a second ob, one process per case, which is what the shell
+	version did and for the same two reasons: a case that traps cannot be allowed to poison the
+	next one, and a case that damages the frame it returns through never comes back, so it needs a
+	deadline. What is different is how the verdict is read. The shell version had to grep the
+	runtime's output for "loaded." and "Could not load module", because the A2 runtime exits 0
+	whatever happens; here the child is ob, and it answers with its exit code.
+
+	The child's diagnostics and everything the case wrote to the trace channel go into a log file
+	in the scratch directory, and the parent prints it only when the case fails -- otherwise a run
+	would be buried under the output of every negative case and every test that traps on purpose.
+*)
+TYPE
+	Key = POINTER TO RECORD next: Key; text: Path END;
+	CaseRecord = POINTER TO RECORD next: CaseRecord; status, file, kind, name: Path END;
+
+VAR
+	baseline, newFailures: Key;
+	caseRecords, lastCaseRecord: CaseRecord;
+	testVerbose, testGithub, testRun: BOOLEAN;
+	testFilter, testFile, testReport, testScratch, testSelf: Path;
+	caseLimit, sinceCollection: SIGNED32;
+	totalCases, passedCases, failedCases, knownCases, fixedCases: SIGNED32;
+
+PROCEDURE AddKey(VAR list: Key; CONST text: ARRAY OF CHAR);
+VAR entry: Key;
+BEGIN NEW(entry); COPY(text, entry.text); entry.next := list; list := entry
+END AddKey;
+
+PROCEDURE HasKey(list: Key; CONST text: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	WHILE list # NIL DO
+		IF list.text = text THEN RETURN TRUE END;
+		list := list.next
+	END;
+	RETURN FALSE
+END HasKey;
+
+PROCEDURE CountKeys(list: Key): SIGNED32;
+VAR count: SIGNED32;
+BEGIN count := 0;
+	WHILE list # NIL DO INC(count); list := list.next END;
+	RETURN count
+END CountKeys;
+
+PROCEDURE LoadBaseline(CONST file: ARRAY OF CHAR);
+VAR handle: Files.File; reader: Files.Reader; line: Path;
+BEGIN
+	baseline := NIL;
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN END;
+	Files.OpenReader(reader, handle, 0);
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line); Strings.Trim(line, 0DX);
+		IF (line # "") & (line[0] # '#') THEN AddKey(baseline, line) END
+	END;
+	handle.Close;
+	line := "ob test: baseline "; Strings.Append(line, file);
+	Strings.Append(line, " ("); Strings.AppendInt(line, CountKeys(baseline));
+	Strings.Append(line, " known failure(s))"); Say(line)
+END LoadBaseline;
+
+PROCEDURE RecordCase(CONST status, kind, name: ARRAY OF CHAR);
+VAR record: CaseRecord;
+BEGIN
+	IF testReport = "" THEN RETURN END;
+	NEW(record); COPY(status, record.status); COPY(testFile, record.file);
+	COPY(kind, record.kind); COPY(name, record.name); record.next := NIL;
+	IF caseRecords = NIL THEN caseRecords := record ELSE lastCaseRecord.next := record END;
+	lastCaseRecord := record
+END RecordCase;
+
+(* One Actions annotation per case that breaks the build, so it shows on the run and not only in
+   the log. Anchored at the test file; the format carries no line information. *)
+PROCEDURE Annotate(CONST severity, kind, name: ARRAY OF CHAR);
+VAR line: Path;
+BEGIN
+	IF ~testGithub THEN RETURN END;
+	line := "::"; Strings.Append(line, severity);
+	Strings.Append(line, " file="); Strings.Append(line, testFile);
+	Strings.Append(line, ",title="); Strings.Append(line, testFile);
+	Strings.Append(line, "::"); Strings.Append(line, kind);
+	Strings.Append(line, ": "); Strings.Append(line, name);
+	Say(line)
+END Annotate;
+
+(* What the child left behind, indented, as the shell version's excerpt was. *)
+PROCEDURE ShowCaseLog;
+VAR path: Path; handle: Files.File; reader: Files.Reader; line: ARRAY 1024 OF CHAR; shown: SIGNED32;
+BEGIN
+	Join(testScratch, "case.log", path);
+	handle := Files.Old(path);
+	IF handle = NIL THEN RETURN END;
+	Files.OpenReader(reader, handle, 0);
+	shown := 0;
+	WHILE (reader.res = Streams.Ok) & (testVerbose OR (shown < 20)) DO
+		reader.Ln(line); Strings.Trim(line, 0DX);
+		IF line # "" THEN
+			out.String("        "); out.String(line); EndLine(out); INC(shown)
+		END
+	END;
+	handle.Close
+END ShowCaseLog;
+
+PROCEDURE RunCase(CONST kind, name, entry: ARRAY OF CHAR);
+VAR arguments: Strings.StringArray; exitCode: SIGNED32; line, key: Path;
+	bad, good, expected, finished: BOOLEAN;
+BEGIN
+	NEW(arguments, 5);
+	arguments[0] := Strings.NewString("ob");
+	arguments[1] := Strings.NewString("test-case");
+	arguments[2] := Strings.NewString(testScratch);
+	arguments[3] := Strings.NewString(entry);
+	IF testRun THEN arguments[4] := Strings.NewString("run") ELSE arguments[4] := Strings.NewString("compile") END;
+
+	(* A file descriptor is released when the File that held it is collected, and a run of six
+	   thousand cases would otherwise reach the limit long before the collector had a reason to
+	   run. Every so often, give it one. *)
+	INC(sinceCollection);
+	IF sinceCollection >= 200 THEN Kernel.GC; sinceCollection := 0 END;
+
+	finished := RunProgram(testSelf, arguments, caseLimit, exitCode);
+	bad := ~finished OR (exitCode # 0);
+	good := (kind = "positive") & ~bad OR (kind = "negative") & bad;
+
+	key := ""; Strings.Append(key, testFile); Strings.AppendChar(key, 9X);
+	Strings.Append(key, kind); Strings.Append(key, ": "); Strings.Append(key, name);
+	expected := HasKey(baseline, key);
+
+	IF good & ~expected THEN
+		INC(passedCases); line := "  ok    "; Strings.Append(line, kind);
+		Strings.Append(line, ": "); Strings.Append(line, name); Say(line);
+		IF testVerbose THEN ShowCaseLog END;
+		RecordCase("ok", kind, name)
+	ELSIF good THEN
+		INC(fixedCases); line := "  FIXED "; Strings.Append(line, kind);
+		Strings.Append(line, ": "); Strings.Append(line, name);
+		Strings.Append(line, "  (passes now — remove it from the baseline)"); Say(line);
+		RecordCase("fixed", kind, name);
+		Annotate("warning", kind, name)
+	ELSIF expected THEN
+		INC(knownCases); line := "  known "; Strings.Append(line, kind);
+		Strings.Append(line, ": "); Strings.Append(line, name); Say(line);
+		IF testVerbose THEN ShowCaseLog END;
+		RecordCase("known", kind, name)
+	ELSE
+		INC(failedCases); AddKey(newFailures, key);
+		line := "  FAIL  "; Strings.Append(line, kind);
+		Strings.Append(line, ": "); Strings.Append(line, name);
+		IF ~finished THEN Strings.Append(line, "  (did not come back)") END;
+		Say(line); ShowCaseLog;
+		RecordCase("failed", kind, name);
+		Annotate("error", kind, name)
+	END
+END RunCase;
+
+(* The case body, as the child will find it, and the modules it declares. *)
+PROCEDURE WriteCase(body: Streams.Buffer; modules: Strings.StringArray; count: SIZE;
+		VAR entry: ARRAY OF CHAR): BOOLEAN;
+VAR path: Path; text: Strings.String; index: SIZE; ignore: BOOLEAN;
+BEGIN
+	IF count = 0 THEN RETURN FALSE END;
+	(* start Test when the case declares it, which is the convention, else the last module *)
+	COPY(modules[count-1]^, entry);
+	FOR index := 0 TO count-1 DO
+		IF modules[index]^ = "Test" THEN entry := "Test" END
+	END;
+	(* drop only THIS case's own artifacts, so a compile failure cannot be masked by a stale
+	   object; earlier cases' modules stay, because the test files build up helpers in one case
+	   and import them in later ones *)
+	FOR index := 0 TO count-1 DO
+		Join(testScratch, modules[index]^, path); Strings.AppendChar(path, '.');
+		Strings.Append(path, ObjectExtension); ignore := ObHost.Remove(path);
+		Join(testScratch, modules[index]^, path); Strings.Append(path, SymbolExtension);
+		ignore := ObHost.Remove(path)
+	END;
+	(* Written through ObHost rather than through Files, and this is the difference between a run
+	   that reports the truth and one that does not: a Files.File keeps its descriptor until the
+	   collector finalises it, Files.File.Close is abstract and does nothing on Unix, and there is
+	   one of these per case. When the descriptors run out, Files.New quietly returns NIL and every
+	   later case is reported as having no MODULE in it -- 4240 of them, in the run that found it. *)
+	Join(testScratch, "TesterInput.txt", path);
+	text := body.GetString();
+	IF text = NIL THEN Die("the case body could not be read back"); RETURN FALSE END;
+	IF ~ObHost.WriteFile(path, text^) THEN DieOn("cannot write ", path); RETURN FALSE END;
+	RETURN TRUE
+END WriteCase;
+
+PROCEDURE CaseSelected(CONST name: ARRAY OF CHAR): BOOLEAN;
+VAR lowerName, lowerFilter: Path;
+BEGIN
+	IF testFilter = "" THEN RETURN TRUE END;
+	COPY(name, lowerName); Strings.LowerCase(lowerName);
+	COPY(testFilter, lowerFilter); Strings.LowerCase(lowerFilter);
+	RETURN Strings.Pos(lowerFilter, lowerName) >= 0
+END CaseSelected;
+
+(* A file may carry harness settings on a `# options` line. Two of them matter: a prolog asking
+   for another target cannot work against this SDK's symbol files, and a command with no
+   System.Load means the file only checks that things compile. *)
+PROCEDURE ReadFileOptions(CONST line: ARRAY OF CHAR; VAR skip: BOOLEAN);
+VAR flags: Path; start, stop: SIZE;
+BEGIN
+	skip := FALSE; testRun := TRUE;
+	IF Strings.Pos("System.Load", line) < 0 THEN testRun := FALSE END;
+	start := Strings.Pos("Compiler.Compile", line);
+	IF start < 0 THEN RETURN END;
+	INC(start, 16);
+	stop := Strings.Pos("TesterInput.txt", line);
+	IF stop <= start THEN RETURN END;
+	Strings.Copy(line, start, stop - start, flags);
+	IF Strings.Pos("-p=", flags) >= 0 THEN
+		out.String("  SKIP  whole file: it names its own target ("); out.String(flags);
+		out.String("), which is not the one being tested"); EndLine(out);
+		skip := TRUE
+	END
+END ReadFileOptions;
+
+PROCEDURE RunTestFile(CONST file: ARRAY OF CHAR);
+VAR handle: Files.File; reader: Files.Reader; line, kind, name, entry, nextKind, nextName: Path;
+	body: Streams.Buffer; writer: Streams.Writer; modules: Strings.StringArray;
+	count, position, length: SIZE; skip, pending: BOOLEAN;
+
+	PROCEDURE Flush;
+	BEGIN
+		IF pending & CaseSelected(name) THEN
+			writer.Update;
+			IF WriteCase(body, modules, count, entry) THEN
+				RunCase(kind, name, entry); INC(totalCases)
+			ELSE
+				out.String("  SKIP  "); out.String(name); out.String(" (no MODULE in case)");
+				EndLine(out); RecordCase("skipped", kind, name)
+			END
+		END;
+		pending := FALSE
+	END Flush;
+
+	PROCEDURE Begin(CONST newKind, newName: ARRAY OF CHAR);
+	BEGIN
+		COPY(newKind, kind); COPY(newName, name); Strings.Trim(name, ' ');
+		NEW(body, 4096); writer := body.GetWriter();
+		NEW(modules, 64); count := 0; pending := TRUE
+	END Begin;
+
+BEGIN
+	BaseName(file, testFile);
+	line := "=== "; Strings.Append(line, testFile); Say(line);
+	handle := Files.Old(file);
+	IF handle = NIL THEN DieOn("no such file: ", file); RETURN END;
+	Files.OpenReader(reader, handle, 0);
+	testRun := TRUE; pending := FALSE; skip := FALSE;
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line); Strings.Trim(line, 0DX);
+		IF Strings.Pos("positive:", line) = 0 THEN
+			Flush; Strings.Copy(line, 9, Strings.Length(line) - 9, nextName); Begin("positive", nextName)
+		ELSIF Strings.Pos("negative:", line) = 0 THEN
+			Flush; Strings.Copy(line, 9, Strings.Length(line) - 9, nextName); Begin("negative", nextName)
+		ELSIF (line # "") & (line[0] = '#') THEN
+			IF Strings.Pos("options", line) > 0 THEN
+				ReadFileOptions(line, skip);
+				IF skip THEN RETURN END
+			END
+		ELSIF pending THEN
+			writer.String(line); writer.Char(0AX);
+			(* a MODULE header inside the case: the module this case declares *)
+			position := 0;
+			WHILE (line[position] = ' ') OR (line[position] = 9X) DO INC(position) END;
+			IF (Strings.Pos("MODULE ", line) = position) & (count < LEN(modules^)) THEN
+				INC(position, 7);
+				WHILE line[position] = ' ' DO INC(position) END;
+				length := position;
+				WHILE ((line[length] >= 'A') & (line[length] <= 'Z'))
+						OR ((line[length] >= 'a') & (line[length] <= 'z'))
+						OR ((line[length] >= '0') & (line[length] <= '9'))
+						OR (line[length] = '_') DO INC(length) END;
+				IF length > position THEN
+					Strings.Copy(line, position, length - position, nextKind);
+					modules[count] := Strings.NewString(nextKind); INC(count)
+				END
+			END
+		END
+	END;
+	handle.Close;
+	Flush
+END RunTestFile;
+
+PROCEDURE WriteReport(CONST file: ARRAY OF CHAR);
+VAR handle: Files.File; writer: Files.Writer; record: CaseRecord; first: BOOLEAN; line: Path;
+
+	PROCEDURE Count(CONST label: ARRAY OF CHAR; value: SIGNED32);
+	BEGIN
+		writer.String("  "); WriteJsonString(writer, label); writer.String(": ");
+		writer.Int(value, 0); writer.String(","); writer.Char(0AX)
+	END Count;
+
+BEGIN
+	handle := Files.New(file);
+	IF handle = NIL THEN DieOn("cannot write the report ", file); RETURN END;
+	Files.OpenWriter(writer, handle, 0);
+	writer.String("{"); writer.Char(0AX);
+	Count("total", totalCases); Count("passed", passedCases); Count("failed", failedCases);
+	Count("known", knownCases); Count("fixed", fixedCases);
+	writer.String('  "cases": ['); writer.Char(0AX);
+	record := caseRecords; first := TRUE;
+	WHILE record # NIL DO
+		IF ~first THEN writer.String(","); writer.Char(0AX) END;
+		first := FALSE;
+		writer.String('    {"status": '); WriteJsonString(writer, record.status);
+		writer.String(', "file": '); WriteJsonString(writer, record.file);
+		writer.String(', "kind": '); WriteJsonString(writer, record.kind);
+		writer.String(', "name": '); WriteJsonString(writer, record.name);
+		writer.String("}");
+		record := record.next
+	END;
+	IF ~first THEN writer.Char(0AX) END;
+	writer.String("  ]"); writer.Char(0AX);
+	writer.String("}"); writer.Char(0AX);
+	writer.Update; Files.Register(handle); handle.Close;
+	line := "ob test: wrote report "; Strings.Append(line, file); Say(line)
+END WriteReport;
+
+PROCEDURE WriteExpected(CONST file: ARRAY OF CHAR);
+VAR handle: Files.File; writer: Files.Writer; entry: Key; sorted: Strings.StringArray;
+	swap: Strings.String; count, index, position: SIZE; line: Path;
+BEGIN
+	count := CountKeys(newFailures);
+	NEW(sorted, count + 1); index := 0; entry := newFailures;
+	WHILE entry # NIL DO sorted[index] := Strings.NewString(entry.text); INC(index); entry := entry.next END;
+	FOR index := 1 TO count-1 DO
+		swap := sorted[index]; position := index;
+		WHILE (position > 0) & (sorted[position-1]^ > swap^) DO
+			sorted[position] := sorted[position-1]; DEC(position)
+		END;
+		sorted[position] := swap
+	END;
+	handle := Files.New(file);
+	IF handle = NIL THEN DieOn("cannot write the baseline ", file); RETURN END;
+	Files.OpenWriter(writer, handle, 0);
+	writer.String("# Cases known to fail in this tree — regenerate with: ob test --write-expected ");
+	BaseName(file, line); writer.String(line); writer.Char(0AX);
+	writer.String("# Format: <TestFile><TAB><kind>: <case name>.  A listed case that PASSES is reported");
+	writer.Char(0AX);
+	writer.String("# as FIXED and fails the run, so this file cannot silently go stale."); writer.Char(0AX);
+	FOR index := 0 TO count-1 DO writer.String(sorted[index]^); writer.Char(0AX) END;
+	writer.Update; Files.Register(handle); handle.Close;
+	line := "ob test: wrote baseline "; Strings.Append(line, file);
+	Strings.Append(line, " ("); Strings.AppendInt(line, count); Strings.Append(line, " entr(ies))");
+	Say(line)
+END WriteExpected;
+
+(* Not a verb for people: one case, compiled and loaded in a process of its own, answering with
+   its exit code. Everything it says goes to case.log in the scratch directory. *)
+PROCEDURE TestCaseVerb;
+VAR scratch, entry, mode, path: Path; handle: Files.File; writer: Files.Writer;
+	source: Path; module: Modules.Module; result: INTEGER; message: ARRAY 256 OF CHAR;
+	compiled: BOOLEAN;
+BEGIN
+	IF ~NextArgument(scratch) OR ~NextArgument(entry) OR ~NextArgument(mode) THEN
+		Die("test-case is internal: ob test-case <scratch> <Entry> run|compile"); RETURN
+	END;
+	Join(scratch, "case.log", path);
+	handle := Files.New(path);
+	IF handle # NIL THEN Files.OpenWriter(writer, handle, 0); error := writer END;
+
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddSearchPath(scratch)
+			OR ~SetWorkPath(scratch) THEN
+		failed := TRUE
+	ELSE
+		Join(scratch, "TesterInput.txt", source);
+		CaptureTrace;
+		compiled := CompileFile(source, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE);
+		IF compiled & (mode = "run") THEN
+			module := Modules.ThisModule(entry, result, message);
+			IF module = NIL THEN
+				error.String("could not load module "); error.String(entry);
+				error.String(": "); error.String(message); error.Char(0AX);
+				compiled := FALSE
+			END
+		END;
+		RestoreTrace;
+		WriteTraced(error);
+		IF ~compiled THEN failed := TRUE END
+	END;
+	IF handle # NIL THEN error.Update; Files.Register(handle) END
+END TestCaseVerb;
+
+PROCEDURE TestVerb;
+VAR argument, target, expect, write, entry, path, line: Path;
+	files: Strings.StringArray; count, index: SIZE; handle: ADDRESS; limitText: Path;
+BEGIN
+	testVerbose := FALSE; testFilter := ""; testReport := ""; expect := ""; write := "";
+	COPY(HostTarget, target);
+	testGithub := ObHost.Env("GITHUB_ACTIONS", line) & (line = "true");
+	NEW(files, 256); count := 0;
+	WHILE NextArgument(argument) DO
+		IF (argument = "-v") OR (argument = "--verbose") THEN testVerbose := TRUE
+		ELSIF (argument = "-t") OR (argument = "--target") THEN
+			IF ~NextArgument(target) THEN Die("-t needs a target"); RETURN END
+		ELSIF (argument = "-r") OR (argument = "--run") THEN
+			IF ~NextArgument(testFilter) THEN Die("-r needs a substring"); RETURN END
+		ELSIF argument = "--expect" THEN
+			IF ~NextArgument(expect) THEN Die("--expect needs a file"); RETURN END
+		ELSIF argument = "--write-expected" THEN
+			IF ~NextArgument(write) THEN Die("--write-expected needs a file"); RETURN END
+		ELSIF argument = "--report" THEN
+			IF ~NextArgument(testReport) THEN Die("--report needs a file"); RETURN END
+		ELSIF argument = "--github" THEN testGithub := TRUE
+		ELSIF argument[0] = '-' THEN DieOn("unknown option: ", argument); RETURN
+		ELSIF count < LEN(files^) THEN files[count] := Strings.NewString(argument); INC(count)
+		END
+	END;
+
+	IF target # HostTarget THEN
+		DieOn("this ob cannot test for another architecture yet; the shell ob still can: -t ", target);
+		RETURN
+	END;
+
+	IF count = 0 THEN
+		handle := ObHost.OpenDirectory(project);
+		IF handle # 0 THEN
+			WHILE ObHost.NextEntry(handle, entry) & (count < LEN(files^)) DO
+				IF Strings.Match("*.Test", entry) THEN
+					Join(project, entry, path); files[count] := Strings.NewString(path); INC(count)
+				END
+			END;
+			ObHost.CloseDirectory(handle)
+		END;
+		IF count = 0 THEN Die("no *.Test files here (usage: ob test [File.Test ...])"); RETURN END
+	END;
+	(* resolved now, while the working directory is still the user's: the scratch directory the
+	   cases are compiled in becomes the working directory further down, and a name given on the
+	   command line is relative to where ob was started *)
+	FOR index := 0 TO count-1 DO
+		IF ObHost.RealPath(files[index]^, path) THEN files[index] := Strings.NewString(path)
+		ELSE DieOn("no such file: ", files[index]^); RETURN
+		END
+	END;
+
+	IF expect = "" THEN
+		IF target = "linux64" THEN expect := "a2test-expected.txt"
+		ELSE expect := "a2test-expected-"; Strings.Append(expect, target); Strings.Append(expect, ".txt")
+		END
+	END;
+	Join(project, expect, path);
+	IF ObHost.Exists(path) THEN LoadBaseline(path) ELSE baseline := NIL END;
+
+	caseLimit := 180000;
+	IF ObHost.Env("A2_TEST_CASE_TIMEOUT", limitText) & (limitText # "") THEN
+		caseLimit := SIGNED32(1000 * ToInteger(limitText, 180))
+	END;
+	IF ~ObHost.ExecutablePath(testSelf) THEN Die("cannot find my own binary"); RETURN END;
+	IF ~ScratchDirectory(testScratch) THEN Die("cannot create a scratch directory"); RETURN END;
+	IF AddSearchPath(lib) & AddSearchPath(project) & AddSearchPath(testScratch)
+			& SetWorkPath(testScratch) THEN
+		BuildSiblings(testScratch, CompilerPlatform, ObjectExtension, SymbolExtension)
+	END;
+
+	totalCases := 0; sinceCollection := 0; passedCases := 0; failedCases := 0; knownCases := 0; fixedCases := 0;
+	newFailures := NIL; caseRecords := NIL;
+	FOR index := 0 TO count-1 DO RunTestFile(files[index]^) END;
+	DiscardScratch(testScratch);
+
+	Say("");
+	line := "ob test: "; Strings.AppendInt(line, totalCases); Strings.Append(line, " case(s), ");
+	Strings.AppendInt(line, passedCases); Strings.Append(line, " passed, ");
+	Strings.AppendInt(line, failedCases); Strings.Append(line, " failed, ");
+	Strings.AppendInt(line, knownCases); Strings.Append(line, " known-failing, ");
+	Strings.AppendInt(line, fixedCases); Strings.Append(line, " fixed"); Say(line);
+
+	IF write # "" THEN Join(project, write, path); WriteExpected(path); RETURN END;
+	IF testReport # "" THEN Join(project, testReport, path); WriteReport(path) END;
+	IF fixedCases > 0 THEN
+		line := "ob test: "; Strings.AppendInt(line, fixedCases);
+		Strings.Append(line, " case(s) marked known-failing now pass — drop them from the baseline");
+		Say(line)
+	END;
+	IF (failedCases > 0) OR (fixedCases > 0) THEN failed := TRUE END
+END TestVerb;
+
+(*
 	The language server, speaking LSP over this process's own standard input and output. It gets
 	the full stdlib symbols rather than the headless subset, because an editor is opened on code
 	that imports whatever it imports; then the project's own build if it has one, then its sources,
@@ -1096,6 +1965,8 @@ BEGIN
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
+	Say("  ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin them, resolve deps");
+	Say("  ob test [File.Test ...] [-v]       run test files (default: every *.Test here)");
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
@@ -1103,7 +1974,7 @@ BEGIN
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Verbs still served by the shell version: get, test.")
+	Say("Still served by the shell version: ob test for another architecture.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
@@ -1114,6 +1985,9 @@ BEGIN
 	IF verb = "build" THEN BuildVerb
 	ELSIF verb = "compile" THEN CompileVerb
 	ELSIF verb = "run" THEN RunVerb
+	ELSIF verb = "get" THEN GetVerb
+	ELSIF verb = "test" THEN TestVerb
+	ELSIF verb = "test-case" THEN TestCaseVerb
 	ELSIF verb = "doc" THEN DocVerb
 	ELSIF verb = "doc-module" THEN DocModuleVerb
 	ELSIF verb = "lint" THEN LintVerb
@@ -1136,7 +2010,7 @@ BEGIN
 		Die("no SDK found: set A2SDK to the SDK root (the directory holding lib/)");
 		RETURN FALSE
 	END;
-	Layout; FindProject;
+	Layout; FindProject; InstallFetch;
 	ObHost.Arg(1, verb); argument := 2;
 	Dispatch(verb);
 	RETURN ~failed
