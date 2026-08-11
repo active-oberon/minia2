@@ -411,6 +411,41 @@ EOF
 	fi
 fi
 
+echo "=== the Windows SDK as it ships"
+# Not the same check as the one above: that one builds ob.exe from the tree, this one unpacks the
+# tarball a user would download and drives it where it lands. The two have disagreed before -- a
+# stale Win64 build left the shipped compiler not knowing the AArch64 platform at all.
+if ! command -v wine >/dev/null 2>&1; then
+	echo "skip  windows bundle: no wine"
+elif [ ! -d "$(dirname "$build")/Win64/bin" ]; then
+	echo "skip  windows bundle: no Win64 build (run 'task Win64' first)"
+else
+	winout="$work/win-sdk"
+	if "$root/tests/win-bundle.sh" "$build" -o "$winout" --no-tar > "$work/win-bundle.log" 2>&1; then
+		runsdk() { ( cd "$winout" && WINEDEBUG=-all env -u A2SDK timeout 900 wine "$@" 2>&1 | grep -v "Authorization required" ); }
+		case "$(runsdk ob.exe version)" in
+			*"targets : win64"*) echo "ok    the Windows bundle knows what it is and what it targets" ;;
+			*) echo "FAIL  windows bundle version: $(runsdk ob.exe version | tr '\n' ' ')"; fail=1 ;;
+		esac
+		case "$(runsdk ob.exe run examples/Hello.Mod)" in
+			*"Hello from A2"*) echo "ok    the Windows bundle compiles and runs a module" ;;
+			*) echo "FAIL  windows bundle run: $(runsdk ob.exe run examples/Hello.Mod | tr '\n' ' ')"; fail=1 ;;
+		esac
+		runsdk ob.exe build examples/Hello.Mod -t a64 -o hello-arm64 >/dev/null 2>&1 || true
+		if [ -f "$winout/hello-arm64" ] && head -c 20 "$winout/hello-arm64" | grep -q "$(printf '\177ELF')"; then
+			echo "ok    the Windows bundle cross-builds for AArch64"
+		else
+			echo "FAIL  the Windows bundle did not cross-build for AArch64"; fail=1
+		fi
+		case "$(runsdk ob.exe build examples/Hello.Mod -t linux64 -o x)" in
+			*"ships no objects for target linux64"*) echo "ok    it refuses a target it has no objects for" ;;
+			*) echo "FAIL  linux64 from Windows was not refused"; fail=1 ;;
+		esac
+	else
+		echo "FAIL  the Windows bundle did not build"; sed 's/^/        /' "$work/win-bundle.log" | tail -8; fail=1
+	fi
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "ob-check: OK"; else echo "ob-check: FAILED"; fi
 exit "$fail"

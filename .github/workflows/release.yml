@@ -50,6 +50,13 @@ jobs:
           # Renamed so the two SDKs sit side by side on the release page; inside it still unpacks
           # into a2-a64/, which is what its own README says to cd into.
           cp target/A64/bundle.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
+      # The third host. ob is a Windows binary here, not a shell script, so this SDK needs neither
+      # bash nor WSL nor Docker on the machine it lands on. Built by cross-compilation, which is
+      # why it is produced on this Linux runner like the other two.
+      - name: Tarball SDK (Windows)
+        run: |
+          task win-bundle
+          cp target/minia2-sdk-*-windows-amd64.tar.gz .
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
