@@ -4,65 +4,73 @@ The `AUTHOR` field of an A2 module usually holds a login or a pair of initials: 
 `staubesv`, `TF`, `adf`, `be`. Twenty years on that is unreadable, and a name is the only thing that
 lets the code be credited out loud — in an upstream patch, in a course, in a package registry.
 
-This file is the first pass at resolving them. It is deliberately conservative: **each entry says
-what it rests on**, and a guess dressed as a fact is worse than an admitted gap.
+This file resolves what can be resolved. It is deliberately conservative: **each entry says what the
+claim rests on**, and a guess dressed as a fact is worse than an admitted gap.
 
-## Method
+## What was read, and how much each source is worth
 
-Both vanilla trees were read: `oberon` (2266 modules) and `aos` (4003). Of those, **3089 modules
-carry an `AUTHOR` field**, holding **160 distinct values**. Three kinds of evidence were used, in
-descending order of weight:
-
-1. **The field itself already holds a name.** Several prolific authors sign in full.
-2. **An ETH address in the same module.** `AUTHOR "TF"` in a file that also carries
-   `frey@inf.ethz.ch` is not a coincidence at three separate modules.
-3. **A full name on the same line as the login**, in a comment or a history entry.
-
-What was NOT used: memory, folklore, or the wider internet. Everything below can be re-derived from
-the two trees.
+- **The two vanilla trees**, `oberon` (2266 modules) and `aos` (4003). Of these, **3089 modules carry
+  an `AUTHOR` field**, holding **160 distinct values**. Some sign in full; some carry an ETH address
+  in the same file; some name a person on the same line as the login.
+- **The ETH `oberon` mailing-list archive** (`lists.inf.ethz.ch/pipermail/oberon`). Authoritative and
+  external: the messages carry real names in their headers.
+- **The Oberon authors list** on Wikibooks, derived from an ETH document: abbreviation → name → contact.
+- **Git identities** in a clone of the ETH repository assembled locally. Two warnings about this one,
+  and they are the reason it is listed last:
+  - it is a working copy put together for our own purposes, not an authoritative upstream;
+  - **who added a file there is not who wrote it.** The import is a bulk one: the same person appears
+    as the "adder" of files signed `TF`, `pjm`, `adf`, `be`, `PL`, `eos` and `prk`. What that history
+    *does* establish is the identity of the committers themselves — a login with a real name and
+    address attached to it — and only that is used below.
 
 ## Resolved
 
 | Login | Name | Modules | Evidence |
 | --- | --- | --- | --- |
-| `TF`, `tf` | Thomas Frey | 350 | `thomas.frey@alumni.ethz.ch` appears as the `AUTHOR` value itself in 18 modules; `frey@inf.ethz.ch` in 3 more signed `TF` |
-| `pjm` | Pieter Muller | 204 (+30 as `pjm, mvt`) | full name in 154 modules signed `pjm`; `muller@inf.ethz.ch` in the tree |
-| `fof` | Felix Friedrich | 207 (+27 as `adf, fof`, +27 as `fof & fn`) | full name in 72 modules signed `fof` |
-| `adf` | Alan Freed | 108 | full name in 108 modules signed `adf`; the joint `adf, fof` modules are the numerics work |
-| `prk` | Patrik Reali | 43 (+27 as `prk / be`) | full name in 35 modules; `reali@inf.ethz.ch` in the tree |
+| `staubesv` | **Sven Stauber** | 489 | ETH mailing list, 2007: header `Stauber Sven Philipp`, address `staubesv@student.ethz.ch`, signed "Cheers, Sven Stauber". Independently, the git identity `Sven Stauber <staubesv@inf.ethz.ch>` |
+| `TF`, `tf` | Thomas Frey | 350 | `thomas.frey@alumni.ethz.ch` is itself the `AUTHOR` value of 18 modules; `frey@inf.ethz.ch` in 3 more signed `TF`; git identity `Thomas Frey <tfrey@inf.ethz.ch>` |
+| `fof` | Felix Oliver Friedrich | 207 (+27 `adf, fof`, +27 `fof & fn`) | full name in 72 modules signed `fof`; the git identity appears both as `Felix Friedrich` and `Felix Oliver Friedrich`, which is where the three initials come from |
+| `pjm` | Pieter J. Muller | 204 (+30 `pjm, mvt`) | full name in 154 modules signed `pjm`; the Oberon authors list gives `Pieter J. Muller`, and the middle initial is the `j` |
+| `adf` | Alan D. Freed | 108 (+27 `adf, fof`) | full name in 108 modules signed `adf` — the numerics and tensor work |
+| `negelef` | **Florian** Negele | 66 | git identity `Florian Negele <negelef@ethz.ch>`. Not Felix: the earlier reading of this login was wrong |
+| `G.F.`, `GF` | Günter Feldmann | 79 | git identity `Günter Feldmann <guenter@ethz.ch>`, and he is himself the one who added the `GF`-signed files. This is the Unix port (`Unix.*`, `Linux.Glue`) |
 | `swalthert` | Stefan Walthert | 48 | full name in 33 modules signed `swalthert` |
-| `rstoll` | Robin Stoll | 21 | full name on the same line as the login |
+| `prk` | Patrik Reali | 43 (+27 `prk / be`) | full name in 35 modules; `reali@inf.ethz.ch` in the tree |
+| `SAGE` | Yaroslav Romanchenko | 38 | signs `Yaroslav Romanchenko (SAGE)` in 20 modules; git identity `Yaroslav Romanchenko <sage@inf.ethz.ch>` |
+| `eos` | Erich Oswald | 34 | the Oberon authors list: `Erich Oswald - erich.oswald at ergon.ch`; `oswald@inf.ethz.ch` appears in the trees |
+| `rstoll` | Robin Stoll | 21 | full name on the same line as the login; git identity `rstoll@inf.ethz.ch` |
 | `oljeger` | Olivier Jeger | 18 | signs as `oljeger@student.ethz.ch`; full name on the same line |
+| `bmoesli` | Bernd Mösli | 9 | the Oberon authors list: `Bernd Mösli - moesli at arithmetica.ch` |
 | `chwassme` | Christian Wassmer | 6 | the field itself reads `Christian Wassmer, chwassme@student.ethz.ch` |
-| `SAGE` | Yaroslav Romanchenko | 38 | signs `Yaroslav Romanchenko (SAGE)` in 20 modules |
-| `chh` | Christoph Heinzer *(surname certain, given name not)* | 3 | `heinzerc@student.ethz.ch` in the same modules |
+| `chh` | Heinzer *(given name not established)* | 3 | `heinzerc@student.ethz.ch` in the same modules |
 
-Signed in full already, no resolution needed: **Patrick Hunziker** (183), **Timothée Martiel** (45),
-**Matthias Frei** (33), **Luc Blaeser** (27), **Simon L. Keel** (24), **BohdanT** — Bohdan
-Troshchynskyi, the A2DB author, known to us from correspondence rather than from the tree (50).
+Signed in full already: **Patrick Hunziker** (183), **Timothée Martiel** (45), **Matthias Frei** (33),
+**Luc Blaeser** (27), **Simon L. Keel** (24). **BohdanT** (50) is Bohdan Troshchynskyi, the A2DB
+author — known from correspondence, not from the trees.
 
 ## Unresolved
 
-These matter more than the resolved ones, because the largest of them is the most prolific author in
-the whole of A2:
-
-| Login | Modules | What is known |
+| Login | Modules | What it is |
 | --- | --- | --- |
-| `staubesv` | **489** | the single most frequent `AUTHOR` value in both trees. Performance monitor, USB stack, drivers. No full name and no address anywhere in either tree |
-| `be` | 51 (+27 as `prk / be`) | works alongside `prk` on the compiler; no name found |
-| `G.F.`, `GF` | 79 together | the Unix port (`Unix.*`, `Linux.Glue`) is signed `G.F.`; no name found |
-| `PL` | 39 | no name found |
-| `eos` | 34 | no name found |
-| `mvt` | 18 (+30 as `pjm, mvt`) | pairs with `pjm` on Native Oberon |
-| `ottigerm`, `gubsermi`, `ejz`, `ug`, `cplattner`, `bmoesli`, `heulemar`, `fnecati` | 15–28 each | logins only |
-
-`fn` (27 modules, always as `fof & fn` on the compiler) is a distinct person from `negelef`
-(66 modules, Felix Negele by the login) — the trees do not settle which name belongs to `fn`.
+| `be` | 51 (+27 `prk / be`) | Bluetooth stack, `FATFiles`, `Autostart`; also compiler work beside `prk`. No name in the trees, none in the authors list |
+| `PL` | 39 | the DTP editor family (`DTPData`, `DTPEditor`, `DTPText`), Cyberbit font install |
+| `mvt` | 18 (+30 `pjm, mvt`) | the Native Oberon network stack: `ICMP`, `Ping`, `TraceRoute`, `Loopback`, `InitNetwork` |
+| `ottigerm` | 23 | the USB HID driver family |
+| `ug` | 15 | `WMFileManager`, `WMSearchTool`, `Looks`, the skin loaders |
+| `ejz` | 21 | `Inflate`, `Unzip`, `LPR`, `XYModem` |
+| `heulemar` | 18 | the OSC (Open Sound Control) family |
+| `cplattner` | — | pairs with `staubesv` on USB (`cplattner/staubesv`) |
+| `gubsermi`, `fnecati`, `PL`, `fn` | 24–39 | `fn` always appears as `fof & fn` on the compiler and is a different person from `negelef` |
 
 ## What would settle the rest
 
-Nothing in these two trees will: the addresses that would resolve `staubesv` and `be` are not in
-them. The next places to look, in order of likely yield: the ETH Native Oberon and Bluebottle
-release notes and `docu/`; the papers under the offline archive; and, for the ones who are still
-reachable, asking. `staubesv` alone is worth the ask — 489 modules is more of A2 than any other
-single person wrote.
+The two trees will not: the addresses that would resolve `be` and `PL` are not in them. What worked
+for `staubesv` was the ETH mailing-list archive, and that is where the rest should be looked for
+next — by module name and date rather than by login, since a two-letter login is unsearchable. After
+that: the Native Oberon and Bluebottle release notes, and asking the people who are still reachable.
+
+## Sources
+
+- ETH `oberon` mailing list: <https://lists.inf.ethz.ch/pipermail/oberon/2007/005138.html>
+- Oberon authors list: <https://en.wikibooks.org/wiki/Oberon/authors>
+- ETH Oberon project pages: <http://www.ethoberon.ethz.ch/projects.html>
