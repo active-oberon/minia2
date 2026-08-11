@@ -23,6 +23,26 @@ claim rests on**, and a guess dressed as a fact is worse than an admitted gap.
     *does* establish is the identity of the committers themselves — a login with a real name and
     address attached to it — and only that is used below.
 
+### Where those git identities came from
+
+They are not free evidence either: they exist because the SVN commit authors were pulled out and
+mapped to names by hand (Andrii Puhachenko, June 2024), with help from **Bohdan Troschynsky**, who
+knew several of the people. That is why some entries in the history carry a full name and others are
+a bare login — **the bare ones are exactly the people nobody could put a name to at the time.**
+
+Two things from that exchange are recorded here as what they are, someone's testimony rather than a
+document:
+
+- Bohdan on `tfrey`: **"автор системы"** — the author of the system. Thomas Frey signs 350 modules
+  as `TF`/`tf`, the second-largest body of work in the tree, which is consistent with it.
+- Bohdan on `eth.metacore`: **"Константин, если не ошибаюсь"** — Konstantin, if he is not mistaken.
+  Left unresolved below, because that is what "if I am not mistaken" means.
+
+One gap worth naming: the 2024 map carried `guenter = Guenter <guenter@ethz.ch>`, with **no
+surname**. The surname Feldmann appears in the history as it stands now, so it was established after
+that map was written; it is consistent with `G.F.` signing the Unix port, but the map itself does
+not carry it.
+
 ## Resolved
 
 | Login | Name | Modules | Evidence |
@@ -43,6 +63,12 @@ claim rests on**, and a guess dressed as a fact is worse than an admitted gap.
 | `bmoesli` | Bernd Mösli | 9 | the Oberon authors list: `Bernd Mösli - moesli at arithmetica.ch` |
 | `chwassme` | Christian Wassmer | 6 | the field itself reads `Christian Wassmer, chwassme@student.ethz.ch` |
 | `chh` | Heinzer *(given name not established)* | 3 | `heinzerc@student.ethz.ch` in the same modules |
+| `easthope` | Peter Easthope | — | the 2024 SVN map, and the history: `Peter Easthope <easthope@inf.ethz.ch>` |
+| `skoster` | Stephan Koster | — | the same map: `skoster@student.ethz.ch` |
+| `shulga` | Dmytro Shulga | — | the history: `Dmytro Shulga <shulga@inf.ethz.ch>` |
+| `andre` | Andre Fischer | — | the 2024 SVN map: `andref@inf.ethz.ch`. Not to be confused with `adf`, which is Alan D. Freed |
+| `morozova` | Oleksii Morozov | — | the same map, across three servers (`highdim.com`, `ethz.ch`, `inf.ethz.ch`) |
+| `sergundo` | Sergey Durmanov | — | the same map; the correspondent our upstream patches go to |
 
 Signed in full already: **Patrick Hunziker** (183), **Timothée Martiel** (45), **Matthias Frei** (33),
 **Luc Blaeser** (27), **Simon L. Keel** (24). **BohdanT** (50) is Bohdan Troshchynskyi, the A2DB
@@ -62,12 +88,26 @@ author — known from correspondence, not from the trees.
 | `cplattner` | — | pairs with `staubesv` on USB (`cplattner/staubesv`) |
 | `gubsermi`, `fnecati`, `PL`, `fn` | 24–39 | `fn` always appears as `fof & fn` on the compiler and is a different person from `negelef` |
 
-## What would settle the rest
+Bare logins in the history with no name anywhere: `metacore`, `ulrikeg`, `tom`, `lisa`, `clerco`,
+`ursf`, `pboenhof`, `pnonava`, `rschmid`, `sedlacek`, `bomarie`, `ofgeorg`, `gubsermi`, `mancos`,
+`infos`.
 
-The two trees will not: the addresses that would resolve `be` and `PL` are not in them. What worked
-for `staubesv` was the ETH mailing-list archive, and that is where the rest should be looked for
-next — by module name and date rather than by login, since a two-letter login is unsearchable. After
-that: the Native Oberon and Bluebottle release notes, and asking the people who are still reachable.
+## What would settle the rest — and what probably will not
+
+The likeliest explanation for most of the remainder is the plainest one, and it was Andrii's reading
+of the SVN map when he made it: **semester and diploma students.** Someone wrote the USB HID stack or
+the DTP editor for one term, signed it with two letters, and left; the name never entered the
+repository because the repository was never where names lived.
+
+That sets the expectation honestly. What worked for `staubesv` was the ETH mailing-list archive, and
+it worked because he was there for years and wrote to it. A student who wrote one driver family in a
+semester will not be found that way. Worth trying anyway, in this order: the mailing list **by module
+name and date** rather than by login (a two-letter login is unsearchable); the Native Oberon and
+Bluebottle release notes, which credited semester work; and asking the people who are still
+reachable — Bohdan Troschynsky and Sergey Durmanov both knew that generation.
+
+Where a name is never found, the login stays. A login is not anonymity: it is the name the person
+chose to sign with, and it is better than an invented attribution.
 
 ## Sources
 
