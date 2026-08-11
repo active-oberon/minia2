@@ -9,7 +9,7 @@ MODULE ObHost;	(** AUTHOR "minia2"; PURPOSE "Host services Ob needs and portable
 	`ob build "My Module.Mod"` has to work, hence Unix.argc/argv read directly.
 *)
 
-IMPORT S := SYSTEM, Unix;
+IMPORT S := SYSTEM, Unix, Strings;
 
 CONST
 	MaxPath* = 1024;
@@ -147,5 +147,54 @@ PROCEDURE ProcessId*(): SIGNED32;
 BEGIN
 	RETURN Unix.getpid()
 END ProcessId;
+
+(*
+	Starting another program, which ob needs in exactly two places and for one reason: work that
+	has to be given up on. The documentation backend hangs on some modules (V4L2 is the one that
+	was found), and a test case that damages the frame it returns through never comes back. Both
+	need a deadline, and a deadline needs something that can be killed -- which a procedure call
+	in this process is not.
+
+	arguments[0] is the program name as the child will see it, as usual.
+*)
+PROCEDURE Spawn*(CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): SIGNED32;
+VAR vector: POINTER TO ARRAY OF ADDRESS; index, count: SIZE; process: SIGNED32;
+BEGIN
+	count := LEN(arguments^);
+	NEW(vector, count + 1);
+	FOR index := 0 TO count-1 DO vector[index] := ADDRESSOF(arguments[index][0]) END;
+	vector[count] := 0;
+	process := 0;
+	IF Unix.posix_spawn(ADDRESSOF(process), ADDRESSOF(program), 0, 0,
+			ADDRESSOF(vector[0]), Unix.environ) # 0 THEN
+		RETURN -1
+	END;
+	RETURN process
+END Spawn;
+
+(**
+	Has the child finished, without waiting for it. The exit code is what it passed to exit; a
+	child killed by a signal reports 128 plus the signal, as a shell does.
+*)
+PROCEDURE Finished*(process: SIGNED32; VAR exitCode: SIGNED32): BOOLEAN;
+VAR status, result: SIGNED32;
+BEGIN
+	status := 0;
+	result := Unix.waitpid(process, ADDRESSOF(status), 1);	(* 1 is WNOHANG *)
+	IF result # process THEN RETURN FALSE END;
+	IF status MOD 80H = 0 THEN exitCode := status DIV 100H MOD 100H
+	ELSE exitCode := 128 + status MOD 80H
+	END;
+	RETURN TRUE
+END Finished;
+
+(** Kill the child and collect it, so that nothing is left behind for the process table. *)
+PROCEDURE Terminate*(process: SIGNED32);
+VAR status, ignore: SIGNED32;
+BEGIN
+	ignore := Unix.kill(process, Unix.SIGKILL);
+	status := 0;
+	ignore := Unix.waitpid(process, ADDRESSOF(status), 0)
+END Terminate;
 
 END ObHost.

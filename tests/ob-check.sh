@@ -197,6 +197,73 @@ else
 fi
 check "lint passes on a project with no upward edge" 0 "$ob" lint
 
+echo "=== doc, against the shell version page by page"
+docs="$work/docs"
+mkdir -p "$docs"
+cp "$root/source/JSON.Mod" "$root/source/Strings.Mod" "$docs/"
+cp "$root/source/Unix.ObHost.Mod" "$docs/ObHost.Mod"
+( cd "$docs"
+  rc=0; "$ob"     doc -o pages       >/dev/null 2>&1 || rc=$?
+  rc=0; "$sdk/ob" doc -o pages-shell  >/dev/null 2>&1 || rc=$? )
+docfail=0
+for page in "$docs"/pages/*.html; do
+	name="$(basename "$page")"
+	[ "$name" = index.html ] && continue
+	if [ ! -f "$docs/pages-shell/$name" ]; then echo "FAIL  doc wrote $name, the shell version did not"; docfail=1; continue; fi
+	# The anchor ids are derived from addresses and differ between any two runs of either version.
+	if diff -q <(sed -E 's/#_[0-9A-F]+/#_X/g; s/\r$//' "$page") \
+	           <(sed -E 's/#_[0-9A-F]+/#_X/g; s/\r$//' "$docs/pages-shell/$name") >/dev/null; then :
+	else echo "FAIL  doc page $name differs from the shell version's"; docfail=1; fi
+done
+[ -f "$docs/pages/index.html" ] || { echo "FAIL  doc wrote no index.html"; docfail=1; }
+pages_written="$(ls "$docs"/pages/*.html 2>/dev/null | grep -vc '/index.html$' || true)"
+[ "$pages_written" = 3 ] || { echo "FAIL  doc wrote $pages_written pages, expected 3"; docfail=1; }
+[ "$docfail" = 0 ] && echo "ok    doc wrote the same pages as the shell version" || fail=1
+
+# The one thing ob still starts a process for, and the reason it does: work that has to be given
+# up on. Checked here through ob's own host layer, run by ob.
+echo "=== a child process, and a deadline it does not meet"
+spawn="$work/spawn"
+mkdir -p "$spawn"
+cp "$root/source/Unix.ObHost.Mod" "$spawn/ObHost.Mod"
+cat > "$spawn/SpawnProbe.Mod" <<'EOF'
+MODULE SpawnProbe;
+IMPORT Commands, Strings, Objects, ObHost;
+
+PROCEDURE Try(context: Commands.Context; CONST what: ARRAY OF CHAR; seconds, limit: SIGNED32);
+VAR arguments: Strings.StringArray; process, exitCode, waited: SIGNED32; text: ARRAY 32 OF CHAR;
+BEGIN
+	NEW(arguments, 2);
+	arguments[0] := Strings.NewString("sleep");
+	text := ""; Strings.AppendInt(text, seconds);
+	arguments[1] := Strings.NewString(text);
+	process := ObHost.Spawn("/bin/sleep", arguments);
+	context.out.String(what); context.out.String(": ");
+	waited := 0; exitCode := -1;
+	WHILE (waited < limit) & ~ObHost.Finished(process, exitCode) DO Objects.Sleep(20); INC(waited, 20) END;
+	IF waited < limit THEN context.out.String("finished, exit "); context.out.Int(exitCode, 0)
+	ELSE ObHost.Terminate(process); context.out.String("gave up and killed it") END;
+	context.out.Ln; context.out.Update
+END Try;
+
+PROCEDURE Do*(context: Commands.Context);
+BEGIN
+	Try(context, "short child", 0, 5000);
+	Try(context, "long child", 30, 500)
+END Do;
+
+END SpawnProbe.
+EOF
+spawn_output="$( cd "$spawn" && timeout 120 "$ob" run SpawnProbe.Mod 2>&1 || true )"
+case "$spawn_output" in
+	*"short child: finished, exit 0"*) echo "ok    a child that finishes is reaped with its exit code" ;;
+	*) echo "FAIL  short child: $spawn_output"; fail=1 ;;
+esac
+case "$spawn_output" in
+	*"long child: gave up and killed it"*) echo "ok    a child that overruns is killed" ;;
+	*) echo "FAIL  long child: $spawn_output"; fail=1 ;;
+esac
+
 echo "=== the language server, over this process's own stdio"
 frame() { printf 'Content-Length: %d\r\n\r\n%s' "${#1}" "$1"; }
 lsp_input() {
