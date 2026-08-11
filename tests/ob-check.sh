@@ -115,8 +115,14 @@ printf 'MODULE Bad;\nBEGIN nonsense\nEND Bad.\n' > "$project/Bad.Mod"
 
 cd "$project"
 
+# ob names its scratch directory after its process id and puts it under $TMPDIR. Point that at a
+# directory of this check's own: a glob over /tmp/ob-* would belong to every ob on the machine, and
+# deleting one out from under a running `ob test` makes it report every later case as having no
+# MODULE in it -- which is exactly how this check spent an afternoon accusing the wrong code.
+export TMPDIR="$work/tmp"
+mkdir -p "$TMPDIR"
+
 # Nothing is precompiled: the sibling has to be built on the way, or the import does not resolve.
-rm -rf /tmp/ob-[0-9]* 2>/dev/null || true
 check "run, sibling compiled on the way" 0 "$ob" run Hello.Mod
 case "$LAST_OUTPUT" in
 	*"hello from a sibling!"*) echo "ok    run printed what the module prints" ;;
@@ -128,8 +134,8 @@ leftovers="$(ls "$project" | grep -vE '\.Mod$' || true)"
 if [ -z "$leftovers" ]; then echo "ok    run left the project alone"
 else echo "FAIL  run left in the project: $leftovers"; fail=1; fi
 
-if [ -z "$(ls -d /tmp/ob-[0-9]* 2>/dev/null || true)" ]; then echo "ok    run removed its scratch directory"
-else echo "FAIL  run left a scratch directory behind: $(ls -d /tmp/ob-[0-9]*)"; fail=1; fi
+if [ -z "$(ls -A "$TMPDIR" 2>/dev/null || true)" ]; then echo "ok    run removed its scratch directory"
+else echo "FAIL  run left a scratch directory behind: $(ls -A "$TMPDIR")"; fail=1; fi
 
 check "compile" 0 "$ob" compile Hello.Mod -o out
 [ -f "$project/out/Hello.GofUu" ] && echo "ok    compile wrote the object file" \
@@ -197,6 +203,38 @@ else
 fi
 check "lint passes on a project with no upward edge" 0 "$ob" lint
 
+echo "=== test, against the shell version case by case"
+suite="$work/suite"
+mkdir -p "$suite"
+cp "$root/tests/JSON.Test" "$root/tests/CSV.Test" "$suite/"
+( cd "$suite"
+  rc=0; "$ob"     test > "$work/test-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/test-native.txt"
+  rc=0; "$sdk/ob" test > "$work/test-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/test-shell.txt" )
+if diff -u "$work/test-shell.txt" "$work/test-native.txt" > "$work/test.diff"; then
+	echo "ok    test reports every case exactly as the shell version does"
+else
+	echo "FAIL  test differs from the shell version"; sed 's/^/        /' "$work/test.diff" | head -40; fail=1
+fi
+
+# A case listed in the baseline must be reported as known and must not break the run; one that
+# passes anyway must be reported as FIXED and must break it, or the file quietly goes stale.
+printf 'JSON.Test\tpositive: booleans carry their value\n' > "$suite/a2test-expected.txt"
+( cd "$suite"; rc=0; "$ob" test JSON.Test > "$work/test-baseline.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/test-baseline.txt" )
+case "$(cat "$work/test-baseline.txt")" in
+	*"FIXED positive: booleans carry their value"*"exit 1"*) echo "ok    a baseline entry that passes is FIXED and fails the run" ;;
+	*) echo "FAIL  baseline handling"; sed 's/^/        /' "$work/test-baseline.txt" | tail -8; fail=1 ;;
+esac
+rm -f "$suite/a2test-expected.txt"
+
+# A report is what CI reads; it has to be JSON and it has to have every case in it.
+( cd "$suite"; "$ob" test JSON.Test --report report.json >/dev/null 2>&1 || true )
+if [ -f "$suite/report.json" ] && grep -q '"cases"' "$suite/report.json" \
+		&& grep -q '"status": "ok"' "$suite/report.json"; then
+	echo "ok    test wrote a JSON report with its cases in it"
+else
+	echo "FAIL  test wrote no usable report"; fail=1
+fi
+
 echo "=== doc, against the shell version page by page"
 docs="$work/docs"
 mkdir -p "$docs"
@@ -231,7 +269,7 @@ MODULE SpawnProbe;
 IMPORT Commands, Strings, Objects, ObHost;
 
 PROCEDURE Try(context: Commands.Context; CONST what: ARRAY OF CHAR; seconds, limit: SIGNED32);
-VAR arguments: Strings.StringArray; process, exitCode, waited: SIGNED32; text: ARRAY 32 OF CHAR;
+VAR arguments: Strings.StringArray; process: ADDRESS; exitCode, waited: SIGNED32; text: ARRAY 32 OF CHAR;
 BEGIN
 	NEW(arguments, 2);
 	arguments[0] := Strings.NewString("sleep");
@@ -264,6 +302,25 @@ case "$spawn_output" in
 	*) echo "FAIL  long child: $spawn_output"; fail=1 ;;
 esac
 
+echo "=== get, against the shell version tree for tree"
+# Only when a registry is at hand: this check fetches nothing over the network on purpose, and a
+# registry checkout is not part of the SDK.
+registry="${A2_REGISTRY:-$root/../a2-registry}"
+if [ -f "$registry/index.json" ]; then
+	for who in native shell; do
+		rm -rf "$work/get-$who"; mkdir -p "$work/get-$who"
+	done
+	( cd "$work/get-native" && A2_REGISTRY="$registry" "$ob"     get community/matrix >/dev/null 2>&1 || true )
+	( cd "$work/get-shell"  && A2_REGISTRY="$registry" "$sdk/ob" get community/matrix >/dev/null 2>&1 || true )
+	if diff -r "$work/get-shell" "$work/get-native" > "$work/get.diff" 2>&1; then
+		echo "ok    get vendored the same tree, manifest and lock as the shell version"
+	else
+		echo "FAIL  get differs from the shell version"; sed 's/^/        /' "$work/get.diff" | head -20; fail=1
+	fi
+else
+	echo "skip  get: no registry at $registry (set A2_REGISTRY)"
+fi
+
 echo "=== the language server, over this process's own stdio"
 frame() { printf 'Content-Length: %d\r\n\r\n%s' "${#1}" "$1"; }
 lsp_input() {
@@ -287,6 +344,72 @@ case "$repl_output" in
 	*"hello from the repl"*) echo "ok    repl ran a command and left" ;;
 	*) echo "FAIL  repl printed: $repl_output"; fail=1 ;;
 esac
+
+echo "=== ob.exe: the same driver, native on Windows"
+# The point of writing ob in Active Oberon rather than in bash: a Windows SDK that needs no shell.
+# Checked here under wine, which runs A2's Win64 binaries as they are. Skipped, not faked, when
+# wine or the Win64 objects are absent.
+winbin="$(dirname "$build")/Win64/bin"
+if ! command -v wine >/dev/null 2>&1; then
+	echo "skip  ob.exe: no wine"
+elif [ ! -d "$sdk/lib-win64" ] || [ ! -f "$winbin/WinTrace.SymWw" ]; then
+	echo "skip  ob.exe: no Win64 objects (run 'task Win64' and 'task bundle' first)"
+else
+	win="$work/win"; winsdk="$work/winsdk/lib"
+	mkdir -p "$win" "$winsdk"
+	cp "$root/source/Windows.ObHost.Mod"  "$win/ObHost.Mod"
+	cp "$root/source/Windows.Kernel32.Mod" "$win/Kernel32.Mod"
+	cp "$root/source/JSON.Mod" "$root/source/LSP.Mod" "$root/source/Ob.Mod" "$win/"
+	# WinTrace is built for Win64 but reaches no bundle: it is in neither headless-core.txt nor
+	# moduleListWin.txt, and StdIO -- which IS in the Win boot list -- imports it.
+	cp "$winbin/WinTrace.SymWw" "$winbin/WinTrace.GofWw" "$win/"
+	winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
+	( cd "$win" && "$oberon" do "
+		Files.AddSearchPath $win~
+		Files.AddSearchPath $build/bin~
+		Files.AddSearchPath $sdk/lib-win64~
+		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./Kernel32.Mod ./ObHost.Mod ./JSON.Mod ./LSP.Mod ./Ob.Mod ~
+		Linker.Link --fileFormat=PE64CUI --extension=GofWw --displacement=401000H --fileName='ob.exe'
+		$winboot Ob
+		~
+	" ) > "$work/win-build.log" 2>&1 || true
+	if [ ! -f "$win/ob.exe" ]; then
+		echo "FAIL  ob.exe did not build"; sed 's/^/        /' "$work/win-build.log" | head -12; fail=1
+	else
+		cp "$sdk/lib-win64"/*.SymWw "$sdk/lib-win64"/*.GofWw "$winsdk/" 2>/dev/null || true
+		cp "$win"/*.SymWw "$win"/*.GofWw "$winsdk/" 2>/dev/null || true
+		cp "$win/ob.exe" "$work/winsdk/"
+		cp "$root/configs/moduleListWin.txt" "$work/winsdk/boot-modules-win64.txt"
+		cp "$sdk/VERSION" "$work/winsdk/" 2>/dev/null || true
+		cat > "$work/winsdk/Hello.Mod" <<'EOF'
+MODULE Hello;
+IMPORT Commands;
+PROCEDURE Do*(context: Commands.Context);
+BEGIN context.out.String("hello from ob.exe"); context.out.Ln; context.out.Update
+END Do;
+END Hello.
+EOF
+		# A2SDK is exported above and points at the Linux bundle; ob.exe has to find its own SDK
+		# beside itself, which is the property being checked.
+		runwine() { ( cd "$work/winsdk" && WINEDEBUG=-all env -u A2SDK timeout 900 wine "$@" 2>&1 | grep -v "Authorization required" ); }
+		case "$(runwine ob.exe version)" in
+			*"runtime : this binary (win64)"*) echo "ok    ob.exe found its SDK beside itself and knows what it is" ;;
+			*) echo "FAIL  ob.exe version: $(runwine ob.exe version | tr '\n' ' ')"; fail=1 ;;
+		esac
+		wincompile="$(runwine ob.exe compile Hello.Mod || true)"
+		[ -f "$work/winsdk/Hello.GofWw" ] && echo "ok    ob.exe compiled a module" \
+			|| { echo "FAIL  ob.exe compiled nothing: $(printf '%s' "$wincompile" | tr '\n' ' ')"; fail=1; }
+		runwine ob.exe build Hello.Mod >/dev/null 2>&1 || true
+		if [ -f "$work/winsdk/Hello.exe" ]; then
+			case "$(runwine Hello.exe)" in
+				*"hello from ob.exe"*) echo "ok    ob.exe built a Windows binary and it runs" ;;
+				*) echo "FAIL  the binary ob.exe built did not run"; fail=1 ;;
+			esac
+		else
+			echo "FAIL  ob.exe built no binary"; fail=1
+		fi
+	fi
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "ob-check: OK"; else echo "ob-check: FAILED"; fi

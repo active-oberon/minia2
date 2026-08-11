@@ -13,6 +13,7 @@ IMPORT S := SYSTEM, Unix, Strings;
 
 CONST
 	MaxPath* = 1024;
+	Separator* = '/';
 
 	(* chmod(2) modes are bit numbers, not the octal literal: 0755 is rwx r-x r-x. *)
 	Mode755 = {0, 2, 3, 5, 6, 7, 8};
@@ -142,6 +143,26 @@ BEGIN
 	Unix.closedir(directory)
 END CloseDirectory;
 
+(*
+	Writing a file without going through Files, which is not a shortcut but the only way: a
+	Files.File holds its descriptor until the collector finalises it, Files.File.Close is abstract
+	and empty on Unix, and `ob test` writes one file per case. Six thousand cases then run the
+	process out of descriptors -- and what that looks like is not an error but every later case
+	reported as having no MODULE in it.
+*)
+PROCEDURE WriteFile*(CONST path, contents: ARRAY OF CHAR): BOOLEAN;
+VAR file: SIGNED32; length, written: SIZE; ignore: SIGNED32;
+BEGIN
+	file := Unix.open(ADDRESSOF(path), SET32(Unix.O_WRONLY) + Unix.creat + Unix.trunc, Unix.rwrwr);
+	IF file < 0 THEN RETURN FALSE END;
+	length := 0;
+	WHILE contents[length] # 0X DO INC(length) END;
+	written := length;
+	IF length > 0 THEN written := Unix.write(file, ADDRESSOF(contents), length) END;
+	ignore := Unix.close(file);
+	RETURN written = length
+END WriteFile;
+
 (** This process's id -- the only thing making a scratch directory name unique here. *)
 PROCEDURE ProcessId*(): SIGNED32;
 BEGIN
@@ -157,7 +178,7 @@ END ProcessId;
 
 	arguments[0] is the program name as the child will see it, as usual.
 *)
-PROCEDURE Spawn*(CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): SIGNED32;
+PROCEDURE Spawn*(CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): ADDRESS;
 VAR vector: POINTER TO ARRAY OF ADDRESS; index, count: SIZE; process: SIGNED32;
 BEGIN
 	count := LEN(arguments^);
@@ -165,9 +186,11 @@ BEGIN
 	FOR index := 0 TO count-1 DO vector[index] := ADDRESSOF(arguments[index][0]) END;
 	vector[count] := 0;
 	process := 0;
-	IF Unix.posix_spawn(ADDRESSOF(process), ADDRESSOF(program), 0, 0,
+	(* spawnp, not spawn: `ob get` has to find git wherever the PATH says it is, and an absolute
+	   path still works *)
+	IF Unix.posix_spawnp(ADDRESSOF(process), ADDRESSOF(program), 0, 0,
 			ADDRESSOF(vector[0]), Unix.environ) # 0 THEN
-		RETURN -1
+		RETURN 0
 	END;
 	RETURN process
 END Spawn;
@@ -176,12 +199,12 @@ END Spawn;
 	Has the child finished, without waiting for it. The exit code is what it passed to exit; a
 	child killed by a signal reports 128 plus the signal, as a shell does.
 *)
-PROCEDURE Finished*(process: SIGNED32; VAR exitCode: SIGNED32): BOOLEAN;
+PROCEDURE Finished*(process: ADDRESS; VAR exitCode: SIGNED32): BOOLEAN;
 VAR status, result: SIGNED32;
 BEGIN
 	status := 0;
-	result := Unix.waitpid(process, ADDRESSOF(status), 1);	(* 1 is WNOHANG *)
-	IF result # process THEN RETURN FALSE END;
+	result := Unix.waitpid(SIGNED32(process), ADDRESSOF(status), 1);	(* 1 is WNOHANG *)
+	IF result # SIGNED32(process) THEN RETURN FALSE END;
 	IF status MOD 80H = 0 THEN exitCode := status DIV 100H MOD 100H
 	ELSE exitCode := 128 + status MOD 80H
 	END;
@@ -189,12 +212,12 @@ BEGIN
 END Finished;
 
 (** Kill the child and collect it, so that nothing is left behind for the process table. *)
-PROCEDURE Terminate*(process: SIGNED32);
+PROCEDURE Terminate*(process: ADDRESS);
 VAR status, ignore: SIGNED32;
 BEGIN
-	ignore := Unix.kill(process, Unix.SIGKILL);
+	ignore := Unix.kill(SIGNED32(process), Unix.SIGKILL);
 	status := 0;
-	ignore := Unix.waitpid(process, ADDRESSOF(status), 0)
+	ignore := Unix.waitpid(SIGNED32(process), ADDRESSOF(status), 0)
 END Terminate;
 
 END ObHost.

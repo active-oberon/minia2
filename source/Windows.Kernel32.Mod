@@ -578,6 +578,11 @@ VAR
 																			  nBufferLength: SIGNED32;
 																			  VAR lpBuffer: ARRAY   OF CHAR;
 																			  lpFilePart: LPSTR ): SIGNED32;
+	(** The GetEnvironmentVariable function retrieves the value of a variable from the calling
+			process's environment; 0 means it is not set. *)
+	GetEnvironmentVariable-: PROCEDURE {WINAPI} ( CONST lpName: ARRAY   OF CHAR;
+																					   VAR lpBuffer: ARRAY   OF CHAR;
+																					   nSize: DWORD ): SIGNED32;
 	(** The GetLastError function returns the calling thread's last-error code value. *)
 	GetLastError-: PROCEDURE {WINAPI} ( ): SIGNED32;
 	(** The GetLocalTime function retrieves the current local date and time. *)
@@ -826,6 +831,8 @@ VAR
 	(** The Sleep function suspends the execution of the current thread for a specified interval. *)
 	Sleep-: PROCEDURE {WINAPI} ( dwMilliseconds: SIGNED32 );
 	(** The SuspendThread function suspends the specified thread. *)
+	(** The TerminateProcess function ends a process and all of its threads. *)
+	TerminateProcess-: PROCEDURE {WINAPI} ( hProcess: HANDLE;  uExitCode: SIGNED32 ): BOOL;
 	SuspendThread-: PROCEDURE {WINAPI} ( hThread: HANDLE ): SIGNED32;
 	(** The SystemTimeToFileTime function converts a system time to a file time. *)
 	SystemTimeToFileTime-: PROCEDURE {WINAPI} ( VAR lpSystemTime: SystemTime;
@@ -993,6 +1000,7 @@ VAR
 		GetProcAddress(mod, "GetFileSizeEx",SYSTEM.VAL(ADDRESS,GetFileSizeEx));
 		GetProcAddress(mod, "GetFileTime",SYSTEM.VAL(ADDRESS,GetFileTime));
 		GetProcAddress(mod, "GetFullPathNameA",SYSTEM.VAL(ADDRESS,GetFullPathName));
+		GetProcAddress(mod, "GetEnvironmentVariableA",SYSTEM.VAL(ADDRESS,GetEnvironmentVariable));
 		GetProcAddress(mod, "GetLastError",SYSTEM.VAL(ADDRESS,GetLastError));
 		GetProcAddress(mod, "GetLocalTime",SYSTEM.VAL(ADDRESS,GetLocalTime));
 		GetProcAddress(mod, "GetLogicalDriveStringsA",SYSTEM.VAL(ADDRESS,GetLogicalDriveStrings));
@@ -1082,6 +1090,7 @@ VAR
 		GetProcAddress(mod, "SetThreadPriority",SYSTEM.VAL(ADDRESS,SetThreadPriority));
 		GetProcAddress(mod, "SetupComm",SYSTEM.VAL(ADDRESS,SetupComm));
 		GetProcAddress(mod, "Sleep",SYSTEM.VAL(ADDRESS,Sleep));
+		GetProcAddress(mod, "TerminateProcess",SYSTEM.VAL(ADDRESS,TerminateProcess));
 		GetProcAddress(mod, "SuspendThread",SYSTEM.VAL(ADDRESS,SuspendThread));
 		GetProcAddress(mod, "SystemTimeToFileTime",SYSTEM.VAL(ADDRESS,SystemTimeToFileTime));
 		GetProcAddress(mod, "TerminateThread",SYSTEM.VAL(ADDRESS,TerminateThread));
