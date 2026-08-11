@@ -26,6 +26,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user-static libc6-arm64-cross llvm
+      - name: Install wine, which is what runs the Windows SDK here
+        # ob is a Windows binary now, not a shell script, so the only way to answer for the Windows
+        # SDK on a Linux runner is to run it. Without wine the Windows part of `task ob` skips, and
+        # a skip reads exactly like a pass.
+        run: sudo apt-get install -y --no-install-recommends wine64
       - name: Build (Linux64 + Win64)
         run: |
           task Linux64
@@ -114,6 +119,11 @@ jobs:
         env:
           BUNDLE_REQUIRE: "1"
         run: task bundle-check
+      - name: ob, the driver written in Active Oberon (and the Windows SDK, under wine)
+        # Builds ob from source/Ob.Mod, checks every verb against the shell version it replaces --
+        # the three binaries `ob build` produces are compared byte for byte -- then builds the
+        # Windows bundle and drives ob.exe inside it under wine.
+        run: task ob
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4

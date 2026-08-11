@@ -513,6 +513,13 @@ tasks:
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
 
+  win-bundle:
+    desc: The Windows SDK -- ob.exe and the library it compiles against, needing no bash on the target
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/win-bundle.sh {{.BUILD_DIR}}/{{.HOST}}
+
   ob:
     desc: "`ob` written in Active Oberon -- linked with the compiler inside, and made to answer for itself"
     cmds:

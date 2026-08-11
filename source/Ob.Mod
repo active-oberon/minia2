@@ -50,7 +50,7 @@ VAR
 	failed: BOOLEAN;
 
 	sdk-, project-: Path;			(* the SDK this binary belongs to; the directory the user is in *)
-	lib-, libWin-, libA64-, libSym-: Path;
+	lib-, libWin-, libA64-, libLinux-, libSym-: Path;
 	packages-, bootList-, bootListWin-: Path;
 
 (* --- paths ------------------------------------------------------------------------------- *)
@@ -137,6 +137,7 @@ BEGIN
 	Join(sdk, "lib", lib);
 	Join(sdk, "lib-win64", libWin);
 	Join(sdk, "lib-a64", libA64);
+	Join(sdk, "lib-linux64", libLinux);
 	Join(sdk, "lib-sym", libSym);
 	Join(sdk, "packages", packages);
 	Join(sdk, "boot-modules.txt", bootList);
@@ -144,7 +145,8 @@ BEGIN
 	(* On an SDK that is not x86-64 Linux, the native objects in lib/ ARE that platform's objects
 	   and there is no separate cross directory for it. *)
 	IF (HostTarget = "a64") & ~ObHost.Exists(libA64) THEN COPY(lib, libA64) END;
-	IF (HostTarget = "win64") & ~ObHost.Exists(libWin) THEN COPY(lib, libWin) END
+	IF (HostTarget = "win64") & ~ObHost.Exists(libWin) THEN COPY(lib, libWin) END;
+	IF (HostTarget = "linux64") & ~ObHost.Exists(libLinux) THEN COPY(lib, libLinux) END
 END Layout;
 
 (** Where the user's sources, a2pkg.json and .a2pkg/ live: the directory ob was started in. *)
@@ -462,6 +464,9 @@ BEGIN
 	Say(line);
 #IF WIN THEN
 	targets := "win64 (PE .exe, native)";
+	IF ObHost.Exists(libA64) THEN
+		WriteCount("a64", libA64, ".SymU8"); Strings.Append(targets, ", a64 (AArch64 ELF)")
+	END;
 #ELSIF ARM64 THEN
 	targets := "a64 (ELF, native)";
 #ELSE
@@ -633,12 +638,17 @@ BEGIN
 	RETURN TRUE
 END TargetSettings;
 
-(** Where the objects for a target live. *)
+(*
+	Where the objects for a target live. lib/ is this SDK's own platform and nothing else: on a
+	Windows SDK it holds Win64 objects, so asking for linux64 there has to land on a directory that
+	is not present rather than on the wrong objects.
+*)
 PROCEDURE TargetLibrary(CONST target: ARRAY OF CHAR; VAR directory: ARRAY OF CHAR): BOOLEAN;
 BEGIN
-	IF target = "win64" THEN COPY(libWin, directory)
-	ELSIF (target = "a64") & (HostTarget # "a64") THEN COPY(libA64, directory)
-	ELSE COPY(lib, directory)
+	IF target = HostTarget THEN COPY(lib, directory)
+	ELSIF target = "win64" THEN COPY(libWin, directory)
+	ELSIF target = "a64" THEN COPY(libA64, directory)
+	ELSE COPY(libLinux, directory)
 	END;
 	IF ~ObHost.Exists(directory) THEN
 		DieOn("this SDK ships no objects for target ", target); RETURN FALSE
