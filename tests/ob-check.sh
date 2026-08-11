@@ -173,6 +173,30 @@ case "$LAST_OUTPUT" in
 	*) echo "FAIL  the built binary printed: $LAST_OUTPUT"; fail=1 ;;
 esac
 
+echo "=== the language server, over this process's own stdio"
+frame() { printf 'Content-Length: %d\r\n\r\n%s' "${#1}" "$1"; }
+lsp_input() {
+	frame '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":null,"capabilities":{}}}'
+	frame "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://$project/Bad.Mod\",\"languageId\":\"oberon\",\"version\":1,\"text\":\"MODULE Bad;\\nBEGIN nonsense\\nEND Bad.\\n\"}}}"
+	frame '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+}
+lsp_output="$(lsp_input | timeout 60 "$ob" lsp 2>&1 || true)"
+case "$lsp_output" in
+	*'"hoverProvider":true'*) echo "ok    lsp answered initialize" ;;
+	*) echo "FAIL  lsp did not answer initialize"; echo "$lsp_output" | head -c 400 | sed 's/^/        /'; fail=1 ;;
+esac
+case "$lsp_output" in
+	*publishDiagnostics*'"severity":1'*) echo "ok    lsp reported the error in the file" ;;
+	*) echo "FAIL  lsp reported no diagnostics"; fail=1 ;;
+esac
+
+echo "=== the interactive shell"
+repl_output="$(printf 'System.Show hello from the repl~\nexit\n' | timeout 60 "$ob" repl 2>&1 || true)"
+case "$repl_output" in
+	*"hello from the repl"*) echo "ok    repl ran a command and left" ;;
+	*) echo "FAIL  repl printed: $repl_output"; fail=1 ;;
+esac
+
 echo
 if [ "$fail" = 0 ]; then echo "ob-check: OK"; else echo "ob-check: FAILED"; fi
 exit "$fail"
