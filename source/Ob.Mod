@@ -1652,6 +1652,7 @@ BEGIN
 	stop := Strings.Pos("TesterInput.txt", line);
 	IF stop <= start THEN RETURN END;
 	Strings.Copy(line, start, stop - start, flags);
+	Strings.TrimLeft(flags, ' ');
 	IF Strings.Pos("-p=", flags) >= 0 THEN
 		out.String("  SKIP  whole file: it names its own target ("); out.String(flags);
 		out.String("), which is not the one being tested"); EndLine(out);
