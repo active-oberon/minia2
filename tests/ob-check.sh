@@ -2,8 +2,8 @@
 #
 # `ob` written in Active Oberon: built, and made to answer for itself.
 #
-# The shell `ob` (docker/ob) drives a separate `oberon` process for every compile. This one IS the
-# compiler: source/Ob.Mod is linked last into a binary that already holds Fox, so a verb calls
+# The shell `ob` (sdk/ob) drives a separate `oberon` process for every compile. This one IS the
+# compiler: sdk/Ob.Mod is linked last into a binary that already holds Fox, so a verb calls
 # Compiler.Modules in this process and nothing is started. What that removes, besides the process:
 #
 #   -  the scratch directory full of symlinks to the standard library. Imports resolve through the
@@ -40,8 +40,8 @@ trap 'rm -rf "$work"' EXIT
 
 # The sources go in under their MODULE names: a platform-prefixed file compiles to the module's
 # name whatever the file is called, but the linker is given module names and looks for objects.
-cp "$root/source/Unix.ObHost.Mod" "$work/ObHost.Mod"
-cp "$root/source/Ob.Mod"          "$work/Ob.Mod"
+cp "$root/sdk/Unix.ObHost.Mod" "$work/ObHost.Mod"
+cp "$root/sdk/Ob.Mod"          "$work/Ob.Mod"
 
 echo "=== compiling"
 ( cd "$work" && "$oberon" do "
@@ -239,7 +239,7 @@ echo "=== doc, against the shell version page by page"
 docs="$work/docs"
 mkdir -p "$docs"
 cp "$root/source/JSON.Mod" "$root/source/Strings.Mod" "$docs/"
-cp "$root/source/Unix.ObHost.Mod" "$docs/ObHost.Mod"
+cp "$root/sdk/Unix.ObHost.Mod" "$docs/ObHost.Mod"
 ( cd "$docs"
   rc=0; "$ob"     doc -o pages       >/dev/null 2>&1 || rc=$?
   rc=0; "$sdk/ob" doc -o pages-shell  >/dev/null 2>&1 || rc=$? )
@@ -263,7 +263,7 @@ pages_written="$(ls "$docs"/pages/*.html 2>/dev/null | grep -vc '/index.html$' |
 echo "=== a child process, and a deadline it does not meet"
 spawn="$work/spawn"
 mkdir -p "$spawn"
-cp "$root/source/Unix.ObHost.Mod" "$spawn/ObHost.Mod"
+cp "$root/sdk/Unix.ObHost.Mod" "$spawn/ObHost.Mod"
 cat > "$spawn/SpawnProbe.Mod" <<'EOF'
 MODULE SpawnProbe;
 IMPORT Commands, Strings, Objects, ObHost;
@@ -357,9 +357,9 @@ elif [ ! -d "$sdk/lib-win64" ] || [ ! -f "$winbin/WinTrace.SymWw" ]; then
 else
 	win="$work/win"; winsdk="$work/winsdk/lib"
 	mkdir -p "$win" "$winsdk"
-	cp "$root/source/Windows.ObHost.Mod"  "$win/ObHost.Mod"
+	cp "$root/sdk/Windows.ObHost.Mod"  "$win/ObHost.Mod"
 	cp "$root/source/Windows.Kernel32.Mod" "$win/Kernel32.Mod"
-	cp "$root/source/JSON.Mod" "$root/source/LSP.Mod" "$root/source/Ob.Mod" "$win/"
+	cp "$root/source/JSON.Mod" "$root/source/LSP.Mod" "$root/sdk/Ob.Mod" "$win/"
 	# WinTrace is built for Win64 but reaches no bundle: it is in neither headless-core.txt nor
 	# moduleListWin.txt, and StdIO -- which IS in the Win boot list -- imports it.
 	cp "$winbin/WinTrace.SymWw" "$winbin/WinTrace.GofWw" "$win/"

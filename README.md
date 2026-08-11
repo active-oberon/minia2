@@ -63,7 +63,8 @@ See [`docker/README.md`](docker/README.md) for all of them and
 | Path | What |
 |------|------|
 | `compilers/{Linux64,Win64}/` | bootstrap A2+Fox binaries (the only prebuilt artifacts) |
-| `source/` | the 762-module closure (`.Mod`) |
+| `sdk/` | **ours**: `ob` (the CLI, in Active Oberon), its host layer, and `OURS.md` |
+| `source/` | the system and the compiler — ETH's, except where `sdk/OURS.md` says otherwise |
 | `configs/` | `env.yml` (per-target build flags) + static-link module lists |
 | `data/` | fonts, config XML, skins, curated `MenuPage*.XML`, `Release.Tool` |
 | `data/Release.Tool` | package definitions (fork-local: WebBrowser + IMAP mail removed) |

@@ -78,7 +78,7 @@ COPY --from=builder /opt/a2sdk ${A2SDK}
 
 # The same `ob` on the PATH, which is what the ENTRYPOINT runs; A2SDK is set, so it makes
 # no difference which of the two copies is invoked.
-COPY docker/ob /usr/local/bin/ob
+COPY sdk/ob /usr/local/bin/ob
 RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob
 
 # Unprivileged user; /work is the bind-mount point for user sources.

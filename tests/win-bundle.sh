@@ -79,8 +79,8 @@ fi
 # set without the interactive shell -- Ob's own body is the program.
 work="$(mktemp -d "${TMPDIR:-/tmp}/win-bundle.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-cp "$root/source/Windows.ObHost.Mod" "$work/ObHost.Mod"
-cp "$root/source/Ob.Mod" "$work/"
+cp "$root/sdk/Windows.ObHost.Mod" "$work/ObHost.Mod"
+cp "$root/sdk/Ob.Mod" "$work/"
 winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
 ( cd "$work" && "$oberon" do "
 	Files.AddSearchPath $work~

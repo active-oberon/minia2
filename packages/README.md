@@ -142,7 +142,7 @@ Packaging respects this: a package's identity is `name` + optional `context` + t
   compiler-level isolation, one level deep. Costs source edits + import rewrites;
   reserved for packages that need hard isolation.
 
-## Tooling (implemented in `docker/ob`)
+## Tooling (implemented in `sdk/ob`)
 
 - **`ob get <host/user/repo>[@version] …`** — shallow-clones (`--depth 1`, tag/branch)
   the package(s) into the project's `.a2pkg/` cache, **strips `.git`** so only the

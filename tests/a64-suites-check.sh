@@ -73,7 +73,7 @@ log="${A64_SUITES_LOG:-$(dirname "$objects")/a64-suites-check.log}"
 # one while it is going.
 status=0
 (cd "$root/tests" && A2SDK="$sdk" A2_QEMU="$qemu" A2_A64_SYSROOT="$sysroot" \
-	timeout "${A64_SUITES_TIMEOUT:-10800}" bash "$root/docker/ob" test -t a64 --report "$report" \
+	timeout "${A64_SUITES_TIMEOUT:-10800}" bash "$root/sdk/ob" test -t a64 --report "$report" \
 	> "$log" 2>&1) || status=$?
 
 tail -1 "$log" | tr -d '\r'
