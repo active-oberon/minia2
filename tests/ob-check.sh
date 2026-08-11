@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+#
+# `ob` written in Active Oberon: built, and made to answer for itself.
+#
+# The shell `ob` (docker/ob) drives a separate `oberon` process for every compile. This one IS the
+# compiler: source/Ob.Mod is linked last into a binary that already holds Fox, so a verb calls
+# Compiler.Modules in this process and nothing is started. What that removes, besides the process:
+#
+#   -  the scratch directory full of symlinks to the standard library. Imports resolve through the
+#      Files search path, so a verb names lib/ and is done.
+#   -  reading the SDK's own ELF header to learn its architecture. This binary is the architecture.
+#
+# The checks below are the ones that would have caught every mistake made while writing it: the
+# banner against the shell version's, a module that imports a sibling with nothing precompiled,
+# the two failure paths (bad source, missing file) and their exit codes, and the scratch directory
+# afterwards -- which is where Files' own enumerator, blind to dot files, left one behind.
+#
+# Usage: tests/ob-check.sh [build directory] [SDK directory]
+
+set -eo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+build="${1:-$root/target/Linux64}"
+case "$build" in /*) ;; *) build="$PWD/$build" ;; esac
+sdk="${2:-$root/target/bundle}"
+case "$sdk" in /*) ;; *) sdk="$PWD/$sdk" ;; esac
+
+oberon="$build/oberon"
+if [ ! -x "$oberon" ]; then
+	echo "no built runtime in $build; run 'task Linux64' first" >&2
+	exit 2
+fi
+if [ ! -d "$sdk/lib" ]; then
+	echo "no SDK layout in $sdk; run 'task bundle' first" >&2
+	exit 2
+fi
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/ob-check.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+# The sources go in under their MODULE names: a platform-prefixed file compiles to the module's
+# name whatever the file is called, but the linker is given module names and looks for objects.
+cp "$root/source/Unix.ObHost.Mod" "$work/ObHost.Mod"
+cp "$root/source/Ob.Mod"          "$work/Ob.Mod"
+
+echo "=== compiling"
+( cd "$work" && "$oberon" do "
+	Files.AddSearchPath $work~
+	Files.AddSearchPath $build/bin~
+	Compiler.Compile -p=Unix64 --objectFileExtension=GofUu --symbolFileExtension=.SymUu ./ObHost.Mod ~
+	Compiler.Compile -p=Unix64 --objectFileExtension=GofUu --symbolFileExtension=.SymUu ./Ob.Mod ~
+" ) || { echo "FAIL: ob does not compile" >&2; exit 1; }
+
+# The boot set without the interactive shell -- Ob's own body is the program. Everything else it
+# needs, Fox included, the linker pulls in as the import closure of Ob.
+boot="$(grep -vE '^(StdIOShell|Shell)$' "$sdk/boot-modules.txt" | tr '\n' ' ')"
+
+echo "=== linking"
+( cd "$work" && "$oberon" do "
+	Files.AddSearchPath $work~
+	Files.AddSearchPath $build/bin~
+	Linker.Link -p=Linux64 --extension=GofUu --fileName='ob'
+	$boot Ob
+	~
+" ) | grep -vE '^GC mode|^WORK:' || true
+[ -f "$work/ob" ] || { echo "FAIL: link produced no binary" >&2; exit 1; }
+chmod +x "$work/ob"
+ob="$work/ob"
+
+fail=0
+check() {  # check <name> <expected exit> <command...>
+	local name="$1" want="$2"; shift 2
+	local output rc=0
+	output="$("$@" 2>&1)" || rc=$?
+	if [ "$rc" != "$want" ]; then
+		echo "FAIL  $name: exit $rc, expected $want"; echo "$output" | sed 's/^/        /'; fail=1
+	else
+		echo "ok    $name"
+	fi
+	LAST_OUTPUT="$output"
+}
+
+export A2SDK="$sdk"
+
+echo "=== the banner says what the shell version says"
+"$sdk/ob" version | grep -v '^  runtime' > "$work/banner-shell.txt"
+"$ob"      version | grep -v '^  runtime' > "$work/banner-native.txt"
+if diff -u "$work/banner-shell.txt" "$work/banner-native.txt" > "$work/banner.diff"; then
+	echo "ok    version banner"
+else
+	echo "FAIL  version banner differs from the shell version"; sed 's/^/        /' "$work/banner.diff"; fail=1
+fi
+
+echo "=== verbs"
+project="$work/project"
+mkdir -p "$project"
+cat > "$project/Greet.Mod" <<'EOF'
+MODULE Greet;
+IMPORT Strings;
+PROCEDURE Text*(VAR s: ARRAY OF CHAR);
+BEGIN s := "hello from a sibling"; Strings.Append(s, "!")
+END Text;
+END Greet.
+EOF
+cat > "$project/Hello.Mod" <<'EOF'
+MODULE Hello;
+IMPORT Commands, Greet;
+PROCEDURE Do*(context: Commands.Context);
+VAR s: ARRAY 64 OF CHAR;
+BEGIN Greet.Text(s); context.out.String(s); context.out.Ln; context.out.Update
+END Do;
+END Hello.
+EOF
+printf 'MODULE Bad;\nBEGIN nonsense\nEND Bad.\n' > "$project/Bad.Mod"
+
+cd "$project"
+
+# Nothing is precompiled: the sibling has to be built on the way, or the import does not resolve.
+rm -rf /tmp/ob-[0-9]* 2>/dev/null || true
+check "run, sibling compiled on the way" 0 "$ob" run Hello.Mod
+case "$LAST_OUTPUT" in
+	*"hello from a sibling!"*) echo "ok    run printed what the module prints" ;;
+	*) echo "FAIL  run printed: $LAST_OUTPUT"; fail=1 ;;
+esac
+
+# A verb that leaves objects in the user's directory is a verb that has broken the project.
+leftovers="$(ls "$project" | grep -vE '\.Mod$' || true)"
+if [ -z "$leftovers" ]; then echo "ok    run left the project alone"
+else echo "FAIL  run left in the project: $leftovers"; fail=1; fi
+
+if [ -z "$(ls -d /tmp/ob-[0-9]* 2>/dev/null || true)" ]; then echo "ok    run removed its scratch directory"
+else echo "FAIL  run left a scratch directory behind: $(ls -d /tmp/ob-[0-9]*)"; fail=1; fi
+
+check "compile" 0 "$ob" compile Hello.Mod -o out
+[ -f "$project/out/Hello.GofUu" ] && echo "ok    compile wrote the object file" \
+	|| { echo "FAIL  compile wrote no out/Hello.GofUu"; fail=1; }
+
+check "compile reports an error and fails" 1 "$ob" compile Bad.Mod
+case "$LAST_OUTPUT" in
+	*"Undeclared Identifier"*) echo "ok    compile said what was wrong" ;;
+	*) echo "FAIL  compile said: $LAST_OUTPUT"; fail=1 ;;
+esac
+
+check "a missing file fails" 1 "$ob" compile NoSuchModule.Mod
+check "an unknown verb fails"  1 "$ob" frobnicate
+check "help" 0 "$ob" help
+
+echo
+if [ "$fail" = 0 ]; then echo "ob-check: OK"; else echo "ob-check: FAILED"; fi
+exit "$fail"

@@ -513,6 +513,13 @@ tasks:
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
 
+  ob:
+    desc: "`ob` written in Active Oberon -- linked with the compiler inside, and made to answer for itself"
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/ob-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/bundle
+
   sigchain:
     desc: Faults on a thread that is not A2's go back to the handler that was there before A2
     cmds:
