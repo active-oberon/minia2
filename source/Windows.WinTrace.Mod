@@ -4,6 +4,7 @@ IMPORT Kernel32, Modules,Trace,Commands;
 
 CONST
 	none = 0; console = 1; file = 2;
+	eof = 4201;   (* Streams.EOF, spelled out: this module sits below Streams and cannot import it *)
 VAR
 	hin-, hout-, herr-: Kernel32.HANDLE;
 	mode: SIGNED32; (* none, console or file *)
@@ -32,18 +33,23 @@ END SendError;
 
 
 (* Receiver to be used with Stream.Reader *)
+(*	The Unix side of this had the same two faults, and they are both about the end of input:
+	the loop asked for more without ever looking at whether the last read gave any, so a closed
+	standard input was read forever at a full core, and `res` said Ok either way, so the reader
+	above could not tell an empty stream from a full one. A second read also wrote over the
+	first one's bytes, because ofs never moved. *)
 PROCEDURE Receive* (VAR buf: ARRAY OF CHAR; ofs, size, min: SIZE; VAR len: SIZE; VAR res: INTEGER);
 VAR b: Kernel32.BOOL; tlen: SIGNED32;
 BEGIN
-	tlen := 0;
-	b := Kernel32.ReadFile (hin, buf[ofs], size(Kernel32.DWORD), tlen, NIL);
-	len := tlen; DEC(size, len);
-	WHILE (len < min) DO
+	len := 0;
+	LOOP
+		tlen := 0;
 		b := Kernel32.ReadFile (hin, buf[ofs], size(Kernel32.DWORD), tlen, NIL);
-		INC(len, tlen);
-		DEC(size, tlen);
+		IF (b = 0) OR (tlen <= 0) THEN EXIT END;   (* the read failed, or the input ended *)
+		INC(ofs, tlen); DEC(size, tlen); INC(len, tlen);
+		IF (len >= min) OR (size <= 0) THEN EXIT END
 	END;
-	res := 0;
+	IF len >= min THEN res := 0 ELSE res := eof END
 END Receive;
 
 PROCEDURE Init;

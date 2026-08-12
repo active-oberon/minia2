@@ -96,17 +96,26 @@ END Args;
 
 #END
 
+(* read(2) reports the end of input by returning 0, and leaves errno alone doing it. The
+   loop used to stop only on `err # 0`, and err is assigned nowhere but the error branch --
+   so a closed standard input was read again forever, at a full core. Anything reading stdin
+   to its end hit this; `ob lsp` made it visible, because an editor that goes away closes the
+   pipe and leaves the language server spinning. End of input is now its own case. *)
 PROCEDURE ReceiveStdin( VAR data: ARRAY OF CHAR;  ofs, size, min: SIZE;  VAR len: SIZE; VAR res: INTEGER );
-VAR ures: SIZE;  err: INTEGER;
+VAR ures: SIZE;  err: INTEGER;  done: BOOLEAN;
 BEGIN
-	len := 0;
+	len := 0;  done := FALSE;
 	REPEAT
 		ures := Read( ADDRESSOF (data[ofs]), size );
 		IF ures > 0 THEN
 			INC( ofs, ures );  DEC( size, ures );  INC( len, ures )
-		END;
-		IF ures < 0 THEN err := Unix.errno() END;
-	UNTIL (len >= min) OR ((ures <= 0) & (err # Unix.EINTR) & (err # 0));
+		ELSIF ures = 0 THEN
+			done := TRUE                          (* end of input *)
+		ELSE
+			err := Unix.errno();
+			done := err # Unix.EINTR              (* EINTR alone is worth retrying *)
+		END
+	UNTIL (len >= min) OR done;
 	IF len >= min THEN  res := Streams.Ok  ELSE  res := Streams.EOF  END;
 END ReceiveStdin;
 
