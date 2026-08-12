@@ -71,6 +71,13 @@ ln -s "$build"/bin/*.SymUu "$build"/bin/*.GofUu "$sdk/lib/"
 ln -s "$objects"/*.SymU8 "$objects"/*.GofU8 "$sdk/lib-a64/"
 cp "$root/configs/moduleListLinux.txt" "$sdk/boot-modules.txt"
 
+# The harness is `ob` itself, built from the tree rather than taken from a bundle that may or may
+# not have been assembled yet in this run. It is the driver written in Active Oberon, and the
+# reason it is worth the forty seconds is -j below.
+chmod +x "$root/tests/ob-binary.sh"
+"$root/tests/ob-binary.sh" "$build" "$sdk" || exit 1
+mv "$sdk"/Ob.SymUu "$sdk"/ObHost.SymUu "$sdk/lib/"
+
 report="${A64_SUITES_REPORT:-$(dirname "$objects")/a64-suites-report.json}"
 log="${A64_SUITES_LOG:-$(dirname "$objects")/a64-suites-check.log}"
 
@@ -78,8 +85,14 @@ log="${A64_SUITES_LOG:-$(dirname "$objects")/a64-suites-check.log}"
 # an hour under an emulator, and the case it is on is the only way to tell a slow run from a hung
 # one while it is going.
 status=0
+#
+# -j: every one of the 6965 cases is a process here and most of them start an emulator, so this
+# was the longest thing in the build. It is the same run in pieces -- the verdicts and their order
+# are what tests/ob-check.sh holds to be identical to a sequential one. Measured on eight cores:
+# 3m42s against the better part of an hour. A64_SUITES_JOBS=1 goes back to one at a time.
 (cd "$root/tests" && A2SDK="$sdk" A2_QEMU="$qemu" A2_A64_SYSROOT="$sysroot" \
-	timeout "${A64_SUITES_TIMEOUT:-10800}" bash "$root/sdk/ob" test -t a64 --report "$report" \
+	timeout "${A64_SUITES_TIMEOUT:-10800}" "$sdk/ob" test -t a64 \
+	-j "${A64_SUITES_JOBS:-$(nproc 2>/dev/null || echo 2)}" --report "$report" \
 	> "$log" 2>&1) || status=$?
 
 tail -1 "$log" | tr -d '\r'
