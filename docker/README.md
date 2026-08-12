@@ -9,18 +9,20 @@ produces) behind an `ob` CLI that feels like Go: `ob run` (compile+run), `ob bui
 for the current scope.
 
 **Docker is one way to have it, not the only one.** The same payload ships as a
-tarball, and `ob` is the same script in both — it finds its SDK beside itself and
-takes the project to be the current directory. Which one to pick:
+tarball for three hosts — `linux-amd64`, `linux-arm64`, `windows-amd64` — and `ob`
+finds its SDK beside itself and takes the project to be the current directory.
+Which one to pick:
 
 | | Docker image | Tarball |
 |---|---|---|
-| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit x86 Linux, glibc, bash, coreutils |
-| get it | `docker pull puhachenko/minia2-sdk` | `task bundle`, or a release tarball |
-| use it | `docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod` | `./ob run Hello.Mod` |
+| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit Linux (x86 or ARM) + glibc, or 64-bit Windows |
+| get it | `docker pull puhachenko/minia2-sdk` | `curl -fsSL …/sdk/install.sh \| sh`, a release tarball, or `task bundle` |
+| use it | `docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod` | `ob run Hello.Mod` |
 | editor (LSP) | a container per session, sources bind-mounted | `cmd = { "/path/to/ob", "lsp" }` |
 
 The tarball is the better fit for an editor and for a machine where a container in the
-loop is a nuisance; the image is the better fit for CI and for macOS/Windows.
+loop is a nuisance; the image is the better fit for CI and for macOS. On Windows the
+tarball is `ob.exe` and wants no bash, Cygwin or WSL.
 
 ## Build
 
@@ -30,6 +32,8 @@ From the repository root (both compile the runtime + stdlib from source):
 task sdk                    # the image (docker build, and then a smoke test of it)
 task bundle                 # the tarball: target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz
 task bundle-check           # unpack the tarball elsewhere and use it with an empty environment
+task win-bundle             # the Windows SDK: ob.exe and the library it compiles against
+task a64-bundle             # the AArch64 SDK, native on the device
 ```
 
 Or by hand:
@@ -39,6 +43,17 @@ docker build -f docker/Dockerfile -t minia2-sdk .
 ```
 
 ## Use it without Docker
+
+One command puts the latest release on a machine — download, unpack into
+`~/.local/share/a2sdk`, link `ob` into `~/.local/bin`, nothing else touched and no
+privilege asked for:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/active-oberon/minia2/main/sdk/install.sh | sh
+```
+
+`--dir`, `--bin`, `--version`, `--tarball` and `--uninstall` are the whole interface.
+Or by hand, from a release tarball:
 
 ```sh
 tar xzf minia2-sdk-<version>-linux-amd64.tar.gz
@@ -56,7 +71,8 @@ overrides the location if you want it elsewhere. The project is the current dire
 
 For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone under Termux —
 `task a64-bundle` builds the SDK where a64 is the native target and the compiler runs on
-the device.
+the device. On Windows the SDK is `ob.exe` and the same library layout beside it; it
+wants no bash, no Cygwin and no WSL, and `ob.exe build` writes a `.exe` natively.
 
 ## Projects of more than one module
 
@@ -116,6 +132,9 @@ docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 # run the test files in the current directory (every *.Test); exit code 1 on failure
 docker run --rm -v "$PWD:/work" minia2-sdk test
 docker run --rm -v "$PWD:/work" minia2-sdk test CSV.Test -v
+
+# ... or compiled for AArch64 and executed under qemu-aarch64 (needs qemu in the image's host)
+docker run --rm -v "$PWD:/work" minia2-sdk test -t a64
 
 # iterate on one case: -r matches part of its name (case-insensitive)
 docker run --rm -v "$PWD:/work" minia2-sdk test Utf8Strings.Execution.Test -r overlong -v
@@ -325,7 +344,7 @@ END Hello.
 | `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 387 modules (symbol + object files) |
 | `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 396 modules, for `build -t win64` |
 | `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 408 modules including the runtime's, for `build -t a64` |
-| `ob` | the CLI wrapper hiding `.cfg` / `System.DoFile` / search-path plumbing |
+| `ob` | the driver: one command over the compiler, the linker and the language server |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
 naive ~255MB Linux-only image in three steps:
@@ -346,11 +365,19 @@ naive ~255MB Linux-only image in three steps:
   module both compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is
   a compile error by design — use the full desktop build for GUI work.
 
-The A2 compiler resolves imported modules from its **current working directory**,
-not from a configurable search path. So `ob` runs each build inside a private
-scratch dir seeded with symlinks to the stdlib, keeping the shared SDK read-only
-and letting builds run concurrently. `compile` then emits `Module.GofUu`; `run`
-compiles and hands the module name to the runtime, which loads and executes it.
+**`ob` is also Active Oberon** (`sdk/Ob.Mod`), linked into a binary that already holds
+Fox: a verb calls `Compiler.Modules` in this process rather than starting one, and that
+SDK needs no shell on the target — which is what lets the Windows one be `ob.exe` and
+nothing else. (The Linux tarball and this image still ship the shell driver; `task ob`
+holds the two to the same output.) Imports resolve through the Files search path, so
+each build gets a
+private scratch directory to write into and the shared SDK stays read-only; several
+builds can run at once. `compile` emits `Module.GofUu`; `run` compiles and loads the
+module into this same process, which is the mechanism `build` bakes into a binary.
+
+A process is still started in the two places where the work has to be abandonable: a
+test case (which may not come back) and the documentation backend (which hangs on some
+modules). Both get a deadline; nothing else does.
 
 `build` goes further: it compiles the module, generates a tiny boot driver
 (`ObEntry`) whose module body calls your command and then exits, and invokes
@@ -377,13 +404,29 @@ Linux, an ARM server, an Android chroot, or `qemu-aarch64` with an AArch64 sysro
 `test` reads the test-file format the repo's own `tests/*.Test` use: `#` comments,
 then cases introduced by `positive: <name>` or `negative: <name>`, each followed by
 the Oberon source of that case (one or more `MODULE`s). Every case is compiled and —
-unless the file's `# options` line says compile-only — started in a **fresh `oberon`
-process**, so a trapping case cannot poison the next one and no `System.Free`
-bookkeeping is needed. A positive case must compile and run without a trap, a negative
-one must fail; the verdict is read off the output because the A2 runtime always exits 0.
-Modules a case declares are kept in the scratch dir, since the in-tree files build a
-shared helper module in one case and import it from later ones. Your own `*.Mod` in
-`/work` are compiled first, so tests can import the code under test.
+unless the file's `# options` line says compile-only — loaded in a **process of its
+own**, so a trapping case cannot poison the next one and no `System.Free` bookkeeping is
+needed; a case that never comes back is killed on a deadline (`A2_TEST_CASE_TIMEOUT`,
+seconds). A positive case must compile and run without failing, a negative one must
+fail, and the verdict is the child's exit code — the child is `ob`, which answers for
+itself, where the bare A2 runtime exits 0 whatever happened. Modules a case declares are
+kept in the scratch directory, since the in-tree files build a shared helper module in
+one case and import it from later ones. Your own `*.Mod` in `/work` are compiled first,
+so tests can import the code under test.
+
+`-t a64` runs the suites for AArch64: the cases are compiled here and executed under
+`qemu-aarch64` on an image linked out of the SDK's own AArch64 objects. Without the
+emulator or an AArch64 C library, the files whose cases execute are reported as
+**skipped** rather than passed — saying so out loud is the whole point.
+
+`-j N` — in the Active Oberon driver, so the Windows SDK and `task ob` have it and the
+shell one does not — runs N pieces of the suites at a time. Files are not the unit: 5450
+of this tree's 6965 cases are in one file, so the case lists themselves are cut into
+chunks, and a chunk brings with it the earlier cases its own cases import (found from
+the IMPORT clauses at parse time, replayed compile-only in the chunk's own directory).
+Output is buffered per chunk and printed in order, so a parallel run reads exactly like
+a sequential one: this tree's 6965 cases give the same 7034 verdict lines in the same
+order, in **2m31s on eight cores against 19m02s on one**.
 
 This deliberately does *not* use the in-tree `FoxTest`/`TestSuite` harness: their
 import closure reaches `Texts` → `TextUtilities` → `Codecs` → `Displays`/`Raster`/
@@ -396,7 +439,7 @@ than failing every case.
 what CI keeps as an artifact. `--github` prints an Actions annotation per failing case, so
 it lands on the run rather than inside the log; it turns itself on when `GITHUB_ACTIONS`
 is set. `-r <text>` runs only the cases whose name contains `<text>`, which is how you
-iterate on one failure without waiting out the 5442-case compilation suite — mind that a
+iterate on one failure without waiting out the 5450-case compilation suite — mind that a
 case relying on a helper module built by an earlier case cannot run alone.
 
 Cases that are known to fail in the tree are listed in a baseline file —
@@ -414,13 +457,10 @@ fails the build.
   x86-64` image, confirmed running under Wine. Native macOS Mach-O is not
   supported at all.
 - Networking on the Win64 target is incomplete (the Linux `Sockets` module has no
-  Win64 build in this stdlib); the Linux target has the full TCP/UDP/HTTP stack.
+  Win64 build in this stdlib); Linux and AArch64 have the full TCP/UDP/HTTP stack.
 - The base must be glibc (the runtime links `libc`/`libdl`); musl/Alpine will not
   work — for the SDK image and for running Linux `build` output.
 - Dead-code elimination is module-granular, so binaries are larger than Go's
   (hello-world ≈ 1.3 MB — it contains the full kernel + GC + scheduler).
-- **There is no native Windows SDK yet.** Win64 is a *cross* target: the tarball and the
-  image both run on Linux and write a `.exe`. `ob` is a bash script and would plausibly
-  work under Git Bash / MSYS2 against a `target/Win64` payload, but that has not been
-  tried, so nothing claims it. On Windows today: Docker Desktop, or WSL2 with the
-  tarball.
+- The Windows SDK (`ob.exe`) cross-builds for `a64` but not for `linux64`: it carries no
+  Linux objects, and says so rather than writing something that cannot link.
