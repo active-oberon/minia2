@@ -55,14 +55,13 @@ The build drives A2's own `Release.Build` with a package `--exclude` list
 ## SDK (the toolchain without the desktop)
 
 The compiler, the standard library and the language server, packaged for people who
-want to *write Active Oberon* rather than run the A2 desktop. `ob` exists twice: as the
-shell script the Linux tarball and the image still ship, and as `sdk/Ob.Mod` — the same
-driver written in Active Oberon, with the compiler and the linker linked into it, so a
-verb is a procedure call and not a process. That is the one the Windows SDK ships
-(`ob.exe`, no bash on the machine), and `task ob` holds the two to the same output,
-down to byte-identical binaries and case-by-case identical test runs. Three hosts and
-three forms of the same payload, assembled by the same scripts, so they cannot drift
-apart:
+want to *write Active Oberon* rather than run the A2 desktop. `ob` is itself written in
+Active Oberon (`sdk/Ob.Mod`) with the compiler and the linker linked into it, so a verb
+is a procedure call and not a process, and an SDK is one binary and a library — no bash,
+no Docker, nothing to install. The shell version stays in the tree as the reference:
+`task ob` holds the two to the same output, down to byte-identical binaries and
+case-by-case identical test runs. Three hosts and three forms of the same payload,
+assembled by the same scripts, so they cannot drift apart:
 
 ```sh
 task bundle          # target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz  (no Docker)

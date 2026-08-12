@@ -11,7 +11,7 @@
 #
 # Two stages: (1) build the A2 runtime + stdlib from source with the repo's own
 # self-hosting toolchain (`task Linux64`); (2) ship only the runtime + the
-# precompiled standard library + the `ob` wrapper on a slim glibc base.
+# precompiled standard library + the `ob` driver on a slim glibc base.
 
 # ---------------------------------------------------------------------------
 # Stage 1 — build the Linux64 runtime and standard library from source.
@@ -50,7 +50,7 @@ ARG SDK_VERSION=docker
 RUN A2_SDK_VERSION="$SDK_VERSION" tests/bundle.sh --no-tar -o /opt/a2sdk target/Linux64
 
 # ---------------------------------------------------------------------------
-# Stage 2 — the SDK image: runtime + stdlib + `ob` wrapper on a slim base.
+# Stage 2 — the SDK image: runtime + stdlib + `ob` on a slim base.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS sdk
 
@@ -59,12 +59,11 @@ FROM debian:bookworm-slim AS sdk
 # (fonts, wallpapers, skins) is deliberately NOT copied — headless compile/run
 # never touches it, and it was ~48MB.
 #
-# `git`, `jq` and `ca-certificates` are added only for the package manager
-# (`ob get` clones package repos; `ob get`/`ob lint` read a2pkg.json via jq). The
-# `ob` script guards both with `have` and degrades gracefully, so a size-minimal
-# variant image can drop this layer if it does not need `ob get`.
+# `git` and `ca-certificates` are here only for the package manager: `ob get` clones
+# package repos. Nothing else in the image needs them -- `ob` reads and writes JSON
+# itself -- so a size-minimal variant can drop this layer if it does not fetch packages.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git jq ca-certificates \
+        git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ENV A2SDK=/opt/a2sdk \
@@ -76,10 +75,10 @@ ENV A2SDK=/opt/a2sdk \
 # notice) and `ob`: all of it assembled at /opt/a2sdk by tests/bundle.sh in the builder.
 COPY --from=builder /opt/a2sdk ${A2SDK}
 
-# The same `ob` on the PATH, which is what the ENTRYPOINT runs; A2SDK is set, so it makes
-# no difference which of the two copies is invoked.
-COPY sdk/ob /usr/local/bin/ob
-RUN chmod +x ${A2SDK}/oberon /usr/local/bin/ob
+# The same `ob` on the PATH, which is what the ENTRYPOINT runs. A link rather than a copy:
+# `ob` is a binary now and finds its SDK by resolving its own path through the link, so there
+# is one of it in the image and no second copy to go stale.
+RUN chmod +x ${A2SDK}/oberon ${A2SDK}/ob && ln -s ${A2SDK}/ob /usr/local/bin/ob
 
 # Unprivileged user; /work is the bind-mount point for user sources.
 RUN useradd -m -u 1000 oberon && mkdir -p /work && chown oberon:oberon /work

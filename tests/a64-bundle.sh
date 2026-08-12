@@ -234,7 +234,46 @@ fi
 # nothing. It is some 200 MB of objects before compression and a good deal less after.
 cp -L "$link"/*.SymU8 "$link"/*.GofU8 "$out/lib/"
 cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
-install -m 755 "$root/sdk/ob" "$out/ob"
+
+# `ob` itself, as an AArch64 binary: Ob.Mod and its Unix host layer compiled for UnixA64 by the
+# host compiler and linked last into the boot set without the interactive shell, exactly as the
+# other two hosts do it. The shell version is not shipped -- this SDK needs no shell.
+obwork="$(mktemp -d "${TMPDIR:-/tmp}/a64ob.XXXXXX")"
+cp "$root/sdk/Unix.ObHost.Mod" "$obwork/ObHost.Mod"
+cp "$root/sdk/Ob.Mod" "$obwork/Ob.Mod"
+obboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')"
+# Written into a directory of its own rather than into the object tree: those objects are what
+# a64-stdlib-check.sh compiled and what every count of them means, and the driver is not part of
+# the standard library.
+obsaid=$( (cd "$build" && PWD="$build" "$oberon" do "
+	System.DoFile oberon.cfg ~
+	Files.AddSearchPath $link ~
+	Files.AddSearchPath $obwork ~
+	Files.SetWorkPath $obwork ~
+	Compiler.Compile -p=UnixA64 ./ObHost.Mod ./Ob.Mod ~
+	Linker.Link -p=LinuxA64 --fileName=ob $obboot Ob ~
+") 2>&1 | tr -d '\r' ) || true
+if [ ! -f "$obwork/ob" ]; then
+	printf '%s\n' "$obsaid" | grep -E 'error' | head -10 >&2
+	echo "the AArch64 ob did not link" >&2
+	rm -rf "$obwork"; exit 1
+fi
+# Ob and ObHost go into lib/ like any other module, for the language server and for a project
+# that imports them.
+cp "$obwork"/Ob.SymU8 "$obwork"/ObHost.SymU8 "$out/lib/"
+if [ "$android" = 1 ]; then
+	# Same reason as the image: Bionic will not start an ET_EXEC, so a2boot goes in as `ob` and
+	# starts the real binary beside it. a2boot takes the image from the name it was invoked as,
+	# so `ob` finds `ob.img` with nothing else to configure.
+	install -m 755 "$obwork/ob" "$out/ob.img"
+	"$clang" -O2 -o "$out/ob" "$root/android/a2boot.c" || {
+		echo "the Android loader for ob did not compile" >&2; rm -rf "$obwork"; exit 1
+	}
+	chmod 755 "$out/ob"
+else
+	install -m 755 "$obwork/ob" "$out/ob"
+fi
+rm -rf "$obwork"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
 cp "$root"/tests/*.Test "$out/tests/"
 cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$root/tests/wm-expected.txt" "$out/tests/"
