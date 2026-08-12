@@ -70,6 +70,18 @@ BEGIN
 	Strings.Append(path, name)
 END Join;
 
+(**
+	A path the caller gave, resolved against a directory -- unless it is absolute already, in which
+	case it is taken as it stands. A leading separator on Unix, a drive letter or a leading
+	separator on Windows.
+*)
+PROCEDURE Absolute*(CONST dir, name: ARRAY OF CHAR; VAR path: ARRAY OF CHAR);
+VAR letter: BOOLEAN;
+BEGIN
+	letter := ((CAP(name[0]) >= 'A') & (CAP(name[0]) <= 'Z')) & (LEN(name) > 1) & (name[1] = ':');
+	IF IsSeparator(name[0]) OR letter THEN COPY(name, path) ELSE Join(dir, name, path) END
+END Absolute;
+
 (** The directory part of a path, without its trailing separator. "" when there is none. *)
 PROCEDURE Directory*(CONST path: ARRAY OF CHAR; VAR dir: ARRAY OF CHAR);
 VAR i: SIZE;
@@ -88,6 +100,24 @@ BEGIN
 	WHILE (i > 0) & ~IsSeparator(path[i-1]) DO DEC(i) END;
 	Strings.Copy(path, i, length - i, name)
 END BaseName;
+
+(*
+	Put a list of names in order. Wanted wherever ob enumerates a directory: what order a directory
+	hands its entries back in is the file system's business and changes as files are written, so a
+	run over "everything here" would otherwise not be the same run twice -- and the shell version,
+	which enumerated with a glob, was sorted without having to think about it.
+*)
+PROCEDURE SortNames*(names: Strings.StringArray; count: SIZE);
+VAR index, place: SIZE; held: Strings.String;
+BEGIN
+	FOR index := 1 TO count-1 DO
+		held := names[index]; place := index;
+		WHILE (place > 0) & (names[place-1]^ > held^) DO
+			names[place] := names[place-1]; DEC(place)
+		END;
+		names[place] := held
+	END
+END SortNames;
 
 (* --- output ------------------------------------------------------------------------------ *)
 
@@ -660,7 +690,13 @@ END TargetLibrary;
 	The boot set as one line for the linker, without the interactive shell: the generated entry
 	module drives startup instead. The rest of the closure the linker resolves by itself.
 *)
-PROCEDURE ReadBootList(CONST file: ARRAY OF CHAR; VAR list: ARRAY OF CHAR): BOOLEAN;
+(*
+	The boot set as one line for the linker. `withShell` is the difference between the two images
+	ob links: a built program has its own entry module and must not also start the interactive
+	shell, while the image `ob test -t <other architecture>` runs cases in is driven by commands
+	and is nothing without it.
+*)
+PROCEDURE ReadBootList(CONST file: ARRAY OF CHAR; withShell: BOOLEAN; VAR list: ARRAY OF CHAR): BOOLEAN;
 VAR handle: Files.File; reader: Files.Reader; line: Path;
 BEGIN
 	handle := Files.Old(file);
@@ -670,7 +706,8 @@ BEGIN
 	WHILE reader.res = Streams.Ok DO
 		reader.Ln(line);
 		Strings.Trim(line, ' '); Strings.Trim(line, 0DX);
-		IF (line # "") & (line[0] # '#') & (line # "StdIOShell") & (line # "Shell") THEN
+		IF (line # "") & (line[0] # '#')
+				& (withShell OR ((line # "StdIOShell") & (line # "Shell"))) THEN
 			Strings.Append(list, line); Strings.AppendChar(list, ' ')
 		END
 	END;
@@ -738,10 +775,10 @@ BEGIN
 	IF ~TargetSettings(target, compilerPlatform, objectExtension, symbolExtension,
 			linkOptions, suffix, boot) THEN RETURN END;
 	IF ~TargetLibrary(target, library) THEN RETURN END;
-	IF ~ReadBootList(boot, bootModules) THEN DieOn("cannot read the boot module list ", boot); RETURN END;
+	IF ~ReadBootList(boot, FALSE, bootModules) THEN DieOn("cannot read the boot module list ", boot); RETURN END;
 
 	IF output = "" THEN COPY(name, output); Strings.Append(output, suffix) END;
-	IF output[0] = '/' THEN COPY(output, destination) ELSE Join(project, output, destination) END;
+	Absolute(project, output, destination);
 	Directory(destination, directory); BaseName(destination, fileName);
 	IF directory = "" THEN COPY(project, directory) END;
 	IF ~ObHost.Exists(directory) THEN DieOn("no such directory: ", directory); RETURN END;
@@ -999,7 +1036,7 @@ END DocumentModule;
    over the same project should produce the same index. *)
 PROCEDURE WriteIndex(CONST output: ARRAY OF CHAR): SIGNED32;
 VAR handle: ADDRESS; entry, path: Path; index: Files.File; writer: Files.Writer;
-	pages: Strings.StringArray; swap: Strings.String; count, i, j: SIZE;
+	pages: Strings.StringArray; count, i: SIZE;
 BEGIN
 	NEW(pages, 1024); count := 0;
 	handle := ObHost.OpenDirectory(output);
@@ -1011,11 +1048,7 @@ BEGIN
 		END;
 		ObHost.CloseDirectory(handle)
 	END;
-	FOR i := 1 TO count-1 DO
-		swap := pages[i]; j := i;
-		WHILE (j > 0) & (pages[j-1]^ > swap^) DO pages[j] := pages[j-1]; DEC(j) END;
-		pages[j] := swap
-	END;
+	SortNames(pages, count);
 
 	Join(output, "index.html", path);
 	index := Files.New(path);
@@ -1084,7 +1117,8 @@ BEGIN
 				END
 			END;
 			ObHost.CloseDirectory(handle)
-		END
+		END;
+		SortNames(names, count)
 	END;
 	IF count = 0 THEN Die("nothing to document here"); DiscardScratch(scratch); RETURN END;
 
@@ -1475,6 +1509,15 @@ VAR
 	caseLimit, sinceCollection: SIGNED32;
 	totalCases, passedCases, failedCases, knownCases, fixedCases: SIGNED32;
 
+	(* The target the cases are compiled for, and what compiling for it means. Equal to this
+	   binary's own settings unless -t named another architecture. *)
+	testTarget, testPlatform, testObject, testSymbol, testLibrary: Path;
+	(* The emulator a case built for another architecture is run in, empty when there is none --
+	   which is how the run knows to skip the cases that execute rather than report them on no
+	   evidence. The C library and the image are the child's business: it resolves them the same
+	   way and from the same environment, so nothing has to be handed over. *)
+	testEmulator: Path;
+
 PROCEDURE AddKey(VAR list: Key; CONST text: ARRAY OF CHAR);
 VAR entry: Key;
 BEGIN NEW(entry); COPY(text, entry.text); entry.next := list; list := entry
@@ -1496,7 +1539,7 @@ BEGIN count := 0;
 	RETURN count
 END CountKeys;
 
-PROCEDURE LoadBaseline(CONST file: ARRAY OF CHAR);
+PROCEDURE LoadBaseline(CONST file, name: ARRAY OF CHAR);
 VAR handle: Files.File; reader: Files.Reader; line: Path;
 BEGIN
 	baseline := NIL;
@@ -1508,10 +1551,182 @@ BEGIN
 		IF (line # "") & (line[0] # '#') THEN AddKey(baseline, line) END
 	END;
 	handle.Close;
-	line := "ob test: baseline "; Strings.Append(line, file);
+	(* Named as it was asked for, not as it was found: the baseline is looked up inside the project,
+	   and printing the absolute path would say something different from the shell version for no
+	   gain to whoever reads it. *)
+	line := "ob test: baseline "; Strings.Append(line, name);
 	Strings.Append(line, " ("); Strings.AppendInt(line, CountKeys(baseline));
 	Strings.Append(line, " known failure(s))"); Say(line)
 END LoadBaseline;
+
+(*
+	--- testing for another architecture -------------------------------------------------------
+
+	A case for another architecture cannot be loaded into this process, so it is compiled here and
+	executed in an emulator, on an image of that architecture linked out of the objects this SDK
+	carries for it. Both halves of that are needed: without the emulator or a C library for it,
+	the suites that only compile still run and the ones that execute are skipped -- reported as
+	skipped, not as passed, which is the whole point of saying it out loud.
+
+	Both the parent and the case child resolve this the same way and from the same environment, so
+	the child needs no more than the name of the target on its command line.
+*)
+(*
+	How long a case is given before it is taken to be not coming back. Both processes need it: the
+	parent bounds the case child, and the child bounds the emulator it starts -- and a limit of
+	zero, which is what the child had while this lived in TestVerb alone, kills the emulator before
+	it has drawn breath. Nothing is reported then, which reads as a case that produced no output.
+*)
+PROCEDURE ReadCaseLimit;
+VAR text: Path;
+BEGIN
+	caseLimit := 180000;
+	IF ObHost.Env("A2_TEST_CASE_TIMEOUT", text) & (text # "") THEN
+		caseLimit := SIGNED32(1000 * ToInteger(text, 180))
+	END
+END ReadCaseLimit;
+
+PROCEDURE TestTargetSettings(CONST target: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	COPY(target, testTarget);
+	IF target = HostTarget THEN
+		COPY(CompilerPlatform, testPlatform); COPY(ObjectExtension, testObject);
+		COPY(SymbolExtension, testSymbol); COPY(lib, testLibrary);
+		RETURN TRUE
+	END;
+	IF target # "a64" THEN
+		DieOn("cannot test for this target from this SDK: ", target); RETURN FALSE
+	END;
+	testPlatform := "UnixA64"; testObject := "GofU8"; testSymbol := ".SymU8";
+	COPY(libA64, testLibrary);
+	IF ~ObHost.Exists(testLibrary) THEN
+		DieOn("this SDK ships no objects for target ", target); RETURN FALSE
+	END;
+	RETURN TRUE
+END TestTargetSettings;
+
+(* The first of the named programs that exists on the PATH. *)
+PROCEDURE OnPath(CONST first, second: ARRAY OF CHAR; VAR program: ARRAY OF CHAR): BOOLEAN;
+VAR directories, directory, candidate: Path; position, start: SIZE; index: SIGNED32;
+
+	PROCEDURE Look(CONST name: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		Join(directory, name, candidate);
+		IF ObHost.Executable(candidate) THEN COPY(candidate, program); RETURN TRUE END;
+		RETURN FALSE
+	END Look;
+
+BEGIN
+	IF ~ObHost.Env("PATH", directories) THEN RETURN FALSE END;
+	position := 0; start := 0;
+	LOOP
+		IF (directories[position] = ':') OR (directories[position] = 0X) THEN
+			IF position > start THEN
+				Strings.Copy(directories, start, position - start, directory);
+				IF Look(first) OR Look(second) THEN RETURN TRUE END
+			END;
+			IF directories[position] = 0X THEN EXIT END;
+			start := position + 1
+		END;
+		INC(position);
+		IF position >= LEN(directories) THEN EXIT END
+	END;
+	RETURN FALSE
+END OnPath;
+
+PROCEDURE FindEmulator(VAR program: ARRAY OF CHAR): BOOLEAN;
+VAR named: Path;
+BEGIN
+	IF ObHost.Env("A2_QEMU", named) & (named # "") THEN
+		IF ~ObHost.Executable(named) THEN
+			DieOn("A2_QEMU names something that cannot be run: ", named); RETURN FALSE
+		END;
+		COPY(named, program); RETURN TRUE
+	END;
+	RETURN OnPath("qemu-aarch64-static", "qemu-aarch64", program)
+END FindEmulator;
+
+(* The emulator needs an AArch64 C library to load the image against: the image is dynamically
+   linked, as every A2 Unix binary is. On Debian and Ubuntu that is the libc6-arm64-cross package;
+   tests/a64-sysroot.sh unpacks one where the package cannot be installed. *)
+PROCEDURE FindSysroot(VAR directory: ARRAY OF CHAR): BOOLEAN;
+VAR named, loader: Path;
+
+	PROCEDURE Holds(CONST candidate: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		Join(candidate, "lib", loader); Join(loader, "ld-linux-aarch64.so.1", loader);
+		RETURN ObHost.Exists(loader)
+	END Holds;
+
+BEGIN
+	IF ObHost.Env("A2_A64_SYSROOT", named) & (named # "") THEN
+		IF ~Holds(named) THEN
+			DieOn("A2_A64_SYSROOT has no lib/ld-linux-aarch64.so.1: ", named); RETURN FALSE
+		END;
+		COPY(named, directory); RETURN TRUE
+	END;
+	IF Holds("/usr/aarch64-linux-gnu") THEN directory := "/usr/aarch64-linux-gnu"; RETURN TRUE END;
+	IF Holds("/usr/local/aarch64-linux-gnu") THEN directory := "/usr/local/aarch64-linux-gnu"; RETURN TRUE END;
+	RETURN FALSE
+END FindSysroot;
+
+(* Where the image lives, given the scratch directory the run works in. Both the parent, which
+   links it, and the child, which runs it, compute this rather than passing it along. *)
+PROCEDURE EmulatorImage(CONST scratch: ARRAY OF CHAR; VAR path: ARRAY OF CHAR);
+BEGIN
+	Join(scratch, "oberon-", path); Strings.Append(path, testTarget)
+END EmulatorImage;
+
+(* Look for the emulator and a C library, and link an image to run cases in. Anything missing
+   leaves testEmulator empty, which is how the run knows to skip the suites that execute. *)
+PROCEDURE PrepareEmulator;
+VAR arguments, list, image, name, sysroot, line: Path;
+
+	PROCEDURE Without(CONST reason: ARRAY OF CHAR);
+	BEGIN
+		line := "ob test: "; Strings.Append(line, reason);
+		Strings.Append(line, " — cases that execute will be skipped"); Say(line);
+		testEmulator := ""
+	END Without;
+
+BEGIN
+	testEmulator := "";
+	IF testTarget # "a64" THEN RETURN END;
+	IF testTarget = HostTarget THEN
+		(* On an AArch64 SDK there is nothing to emulate and no image to link: this process is
+		   already the machine the cases are compiled for, so they load into it like any other
+		   case. It is also the only way the suites see a processor that reorders memory accesses
+		   -- qemu-user does not -- which is the whole reason for running them on the phone. *)
+		Say("ob test: AArch64 cases run natively, in this process"); RETURN
+	END;
+	IF ~FindEmulator(testEmulator) OR ~FindSysroot(sysroot) THEN
+		Without("no qemu-aarch64 or AArch64 C library"); RETURN
+	END;
+	IF ~ReadBootList(bootList, TRUE, list) THEN
+		line := "no boot module list ("; Strings.Append(line, bootList);
+		Strings.AppendChar(line, ')'); Without(line); RETURN
+	END;
+
+	EmulatorImage(testScratch, image); BaseName(image, name);
+	(* No --path: the objects come off the search path and the image is written to the work path,
+	   both of which are already the scratch directory. Naming it here would not survive the
+	   linker's option parser anyway -- an unquoted value ends at the first character that cannot
+	   be in a name, and a scratch directory is called ob-<pid>. The interactive shell stays in the
+	   set on purpose: a case is loaded by a command given to that shell. *)
+	arguments := "-p=LinuxA64 --extension="; Strings.Append(arguments, testObject);
+	Strings.Append(arguments, " --fileName='"); Strings.Append(arguments, name);
+	Strings.Append(arguments, "' "); Strings.Append(arguments, list);
+	IF ~Link(arguments) OR ~ObHost.Exists(image) OR ~ObHost.MakeExecutable(image) THEN
+		Without("could not link an AArch64 image"); RETURN
+	END;
+
+	(* Word for word what the shell version says, down to the name of the emulator: the check that
+	   this driver replaced it compares the two transcripts, and a run is only the same run if it
+	   reads the same. *)
+	BaseName(testEmulator, name);
+	line := "ob test: AArch64 cases run under "; Strings.Append(line, name);
+	Strings.Append(line, " in a linked image"); Say(line)
+END PrepareEmulator;
 
 PROCEDURE RecordCase(CONST status, kind, name: ARRAY OF CHAR);
 VAR record: CaseRecord;
@@ -1559,12 +1774,15 @@ PROCEDURE RunCase(CONST kind, name, entry: ARRAY OF CHAR);
 VAR arguments: Strings.StringArray; exitCode: SIGNED32; line, key: Path;
 	bad, good, expected, finished: BOOLEAN;
 BEGIN
-	NEW(arguments, 5);
+	NEW(arguments, 6);
 	arguments[0] := Strings.NewString("ob");
 	arguments[1] := Strings.NewString("test-case");
 	arguments[2] := Strings.NewString(testScratch);
 	arguments[3] := Strings.NewString(entry);
 	IF testRun THEN arguments[4] := Strings.NewString("run") ELSE arguments[4] := Strings.NewString("compile") END;
+	(* The target, so that the child compiles for it and knows whether it may load what it built.
+	   Everything else about running for another architecture the child resolves for itself. *)
+	arguments[5] := Strings.NewString(testTarget);
 
 	(* A file descriptor is released when the File that held it is collected, and a run of six
 	   thousand cases would otherwise reach the limit long before the collector had a reason to
@@ -1600,7 +1818,16 @@ BEGIN
 		INC(failedCases); AddKey(newFailures, key);
 		line := "  FAIL  "; Strings.Append(line, kind);
 		Strings.Append(line, ": "); Strings.Append(line, name);
-		IF ~finished THEN Strings.Append(line, "  (did not come back)") END;
+		IF ~finished THEN
+			IF ObHost.spawnError # 0 THEN
+				(* The case never started, which is not the case failing. Said apart because it
+				   reads as a defect in the code under test and is a defect in the machine. *)
+				Strings.Append(line, "  (could not be started: error ");
+				Strings.AppendInt(line, ObHost.spawnError); Strings.AppendChar(line, ')')
+			ELSE
+				Strings.Append(line, "  (did not come back)")
+			END
+		END;
 		Say(line); ShowCaseLog;
 		RecordCase("failed", kind, name);
 		Annotate("error", kind, name)
@@ -1623,8 +1850,8 @@ BEGIN
 	   and import them in later ones *)
 	FOR index := 0 TO count-1 DO
 		Join(testScratch, modules[index]^, path); Strings.AppendChar(path, '.');
-		Strings.Append(path, ObjectExtension); ignore := ObHost.Remove(path);
-		Join(testScratch, modules[index]^, path); Strings.Append(path, SymbolExtension);
+		Strings.Append(path, testObject); ignore := ObHost.Remove(path);
+		Join(testScratch, modules[index]^, path); Strings.Append(path, testSymbol);
 		ignore := ObHost.Remove(path)
 	END;
 	(* Written through ObHost rather than through Files, and this is the difference between a run
@@ -1677,6 +1904,15 @@ VAR handle: Files.File; reader: Files.Reader; line, kind, name, entry, nextKind,
 
 	PROCEDURE Flush;
 	BEGIN
+		(* Whether a file's cases execute is settled by its `# options` line, which is read before
+		   the first case -- so the first case is the earliest this can be known. Compiled for
+		   another architecture with nothing able to run it, they are skipped: reporting them on
+		   no evidence is the one outcome worse than not running them. *)
+		IF pending & testRun & (testTarget # HostTarget) & (testEmulator = "") THEN
+			out.String("  SKIP  whole file: its cases execute, and nothing here can execute ");
+			out.String(testPlatform); out.String(" code"); EndLine(out);
+			skip := TRUE; pending := FALSE; RETURN
+		END;
 		IF pending & CaseSelected(name) THEN
 			writer.Update;
 			IF WriteCase(body, modules, count, entry) THEN
@@ -1703,7 +1939,7 @@ BEGIN
 	IF handle = NIL THEN DieOn("no such file: ", file); RETURN END;
 	Files.OpenReader(reader, handle, 0);
 	testRun := TRUE; pending := FALSE; skip := FALSE;
-	WHILE reader.res = Streams.Ok DO
+	WHILE (reader.res = Streams.Ok) & ~skip DO
 		reader.Ln(line); Strings.Trim(line, 0DX);
 		IF Strings.Pos("positive:", line) = 0 THEN
 			Flush; Strings.Copy(line, 9, Strings.Length(line) - 9, nextName); Begin("positive", nextName)
@@ -1735,7 +1971,7 @@ BEGIN
 		END
 	END;
 	handle.Close;
-	Flush
+	IF ~skip THEN Flush END
 END RunTestFile;
 
 PROCEDURE WriteReport(CONST file: ARRAY OF CHAR);
@@ -1775,18 +2011,12 @@ END WriteReport;
 
 PROCEDURE WriteExpected(CONST file: ARRAY OF CHAR);
 VAR handle: Files.File; writer: Files.Writer; entry: Key; sorted: Strings.StringArray;
-	swap: Strings.String; count, index, position: SIZE; line: Path;
+	count, index: SIZE; line: Path;
 BEGIN
 	count := CountKeys(newFailures);
 	NEW(sorted, count + 1); index := 0; entry := newFailures;
 	WHILE entry # NIL DO sorted[index] := Strings.NewString(entry.text); INC(index); entry := entry.next END;
-	FOR index := 1 TO count-1 DO
-		swap := sorted[index]; position := index;
-		WHILE (position > 0) & (sorted[position-1]^ > swap^) DO
-			sorted[position] := sorted[position-1]; DEC(position)
-		END;
-		sorted[position] := swap
-	END;
+	SortNames(sorted, count);
 	handle := Files.New(file);
 	IF handle = NIL THEN DieOn("cannot write the baseline ", file); RETURN END;
 	Files.OpenWriter(writer, handle, 0);
@@ -1802,28 +2032,110 @@ BEGIN
 	Say(line)
 END WriteExpected;
 
+(*
+	A case built for another architecture, run in the emulator on the image the parent linked.
+
+	The verdict cannot be an exit code here: the A2 runtime exits 0 whatever happened, so what is
+	read is what it said, exactly as the shell version had to. A bare `Trap` line is not a failure
+	-- cases trap on purpose and the runtime carries on -- but "Could not load module", an `error:`
+	or a missing "<entry> loaded." are.
+
+	The emulator's output goes to the same case.log as everything else, appended after what has
+	already been written to it, so a failing case reads as one story.
+*)
+PROCEDURE RunInEmulator(CONST scratch, entry: ARRAY OF CHAR): BOOLEAN;
+VAR arguments: Strings.StringArray; command, image, sysroot, marker, log: Path;
+	handle: Files.File; reader: Files.Reader; line: ARRAY 1024 OF CHAR;
+	exitCode: SIGNED32; finished, loaded, bad, ignore: BOOLEAN;
+BEGIN
+	EmulatorImage(scratch, image);
+	IF ~ObHost.Exists(image) THEN RETURN FALSE END;
+	IF ~FindEmulator(command) OR ~FindSysroot(sysroot) THEN RETURN FALSE END;
+	(* A file of its own, and not the case log this process is already writing: a Files.File that
+	   this process created holds the length it had when it was registered, so a second process
+	   appending to it is read back as nothing at all -- intermittently, which is worse. What the
+	   emulator writes is copied into the case log afterwards, so a failing case still reads as one
+	   story. *)
+	Join(scratch, "case-run.log", log);
+	(* Removed first, and this is not tidiness. The scratch directory is shared by every case of the
+	   run, and the redirection below appends: what the previous case's emulator said would be read
+	   back as this one's, so a single `error:` anywhere early would fail every case after it. The
+	   shell version was safe from this by writing the file with `>`. *)
+	ignore := ObHost.Remove(log);
+
+	(* Both directories have to be named. What a process was started in is not on its search path
+	   by itself, and the standard library for this target is not in the image: the image holds the
+	   boot set, and everything the case imports beyond it is loaded from lib-a64 at run time --
+	   which is the same thing that happens on a real AArch64 machine. *)
+	line := "Files.AddSearchPath "; Strings.Append(line, testLibrary);
+	Strings.Append(line, "~ Files.AddSearchPath "); Strings.Append(line, scratch);
+	Strings.Append(line, "~ System.Load "); Strings.Append(line, entry); Strings.Append(line, " ~");
+
+	NEW(arguments, 6);
+	arguments[0] := Strings.NewString("qemu");
+	arguments[1] := Strings.NewString("-L");
+	arguments[2] := Strings.NewString(sysroot);
+	arguments[3] := Strings.NewString(image);
+	arguments[4] := Strings.NewString("do");
+	arguments[5] := Strings.NewString(line);
+
+	(* From here on this process writes to the log file rather than to a terminal, which is what
+	   lets the emulator -- which knows nothing of A2 -- be captured at all. *)
+	IF ~ObHost.Redirect(log) THEN
+		error.String("this host cannot capture an emulator's output"); error.Char(0AX);
+		RETURN FALSE
+	END;
+	finished := RunProgram(command, arguments, caseLimit, exitCode);
+	IF ~finished THEN RETURN FALSE END;
+
+	loaded := FALSE; bad := exitCode # 0;
+	COPY(entry, marker); Strings.Append(marker, " loaded.");
+	handle := Files.Old(log);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line); Strings.Trim(line, 0DX);
+		error.String(line); error.Char(0AX);		(* into the case log, for the parent to show *)
+		IF (Strings.Pos("error:", line) >= 0) OR (Strings.Pos("Could not load module", line) >= 0)
+				OR (Strings.Pos("not successful", line) >= 0) THEN
+			bad := TRUE
+		END;
+		IF Strings.Pos(marker, line) >= 0 THEN loaded := TRUE END
+	END;
+	handle.Close;
+	RETURN loaded & ~bad
+END RunInEmulator;
+
 (* Not a verb for people: one case, compiled and loaded in a process of its own, answering with
    its exit code. Everything it says goes to case.log in the scratch directory. *)
 PROCEDURE TestCaseVerb;
-VAR scratch, entry, mode, path: Path; handle: Files.File; writer: Files.Writer;
+VAR scratch, entry, mode, target, path: Path; handle: Files.File; writer: Files.Writer;
 	source: Path; module: Modules.Module; result: INTEGER; message: ARRAY 256 OF CHAR;
 	compiled: BOOLEAN;
 BEGIN
 	IF ~NextArgument(scratch) OR ~NextArgument(entry) OR ~NextArgument(mode) THEN
-		Die("test-case is internal: ob test-case <scratch> <Entry> run|compile"); RETURN
+		Die("test-case is internal: ob test-case <scratch> <Entry> run|compile [target]"); RETURN
 	END;
+	IF ~NextArgument(target) THEN COPY(HostTarget, target) END;
+	IF ~TestTargetSettings(target) THEN RETURN END;
+	ReadCaseLimit;
+
 	Join(scratch, "case.log", path);
 	handle := Files.New(path);
 	IF handle # NIL THEN Files.OpenWriter(writer, handle, 0); error := writer END;
 
-	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddSearchPath(scratch)
-			OR ~SetWorkPath(scratch) THEN
+	(* lib is on the path even when the case is built for another architecture: the backend and the
+	   front end are loaded by name when the compiler runs, and what runs here is this machine's
+	   code whatever is being compiled. The two libraries cannot be confused for each other -- a
+	   target is its object and symbol file extensions. *)
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(testLibrary) OR ~AddSearchPath(project)
+			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
 		failed := TRUE
 	ELSE
 		Join(scratch, "TesterInput.txt", source);
 		CaptureTrace;
-		compiled := CompileFile(source, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE);
-		IF compiled & (mode = "run") THEN
+		compiled := CompileFile(source, testPlatform, testObject, testSymbol, TRUE);
+		IF compiled & (mode = "run") & (target = HostTarget) THEN
 			module := Modules.ThisModule(entry, result, message);
 			IF module = NIL THEN
 				error.String("could not load module "); error.String(entry);
@@ -1833,6 +2145,9 @@ BEGIN
 		END;
 		RestoreTrace;
 		WriteTraced(error);
+		IF compiled & (mode = "run") & (target # HostTarget) THEN
+			compiled := RunInEmulator(scratch, entry)
+		END;
 		IF ~compiled THEN failed := TRUE END
 	END;
 	IF handle # NIL THEN error.Update; Files.Register(handle) END
@@ -1840,7 +2155,7 @@ END TestCaseVerb;
 
 PROCEDURE TestVerb;
 VAR argument, target, expect, write, entry, path, line: Path;
-	files: Strings.StringArray; count, index: SIZE; handle: ADDRESS; limitText: Path;
+	files: Strings.StringArray; count, index: SIZE; handle: ADDRESS;
 BEGIN
 	testVerbose := FALSE; testFilter := ""; testReport := ""; expect := ""; write := "";
 	COPY(HostTarget, target);
@@ -1864,10 +2179,7 @@ BEGIN
 		END
 	END;
 
-	IF target # HostTarget THEN
-		DieOn("this ob cannot test for another architecture yet; the shell ob still can: -t ", target);
-		RETURN
-	END;
+	IF ~TestTargetSettings(target) THEN RETURN END;
 
 	IF count = 0 THEN
 		handle := ObHost.OpenDirectory(project);
@@ -1879,7 +2191,8 @@ BEGIN
 			END;
 			ObHost.CloseDirectory(handle)
 		END;
-		IF count = 0 THEN Die("no *.Test files here (usage: ob test [File.Test ...])"); RETURN END
+		IF count = 0 THEN Die("no *.Test files here (usage: ob test [File.Test ...])"); RETURN END;
+		SortNames(files, count)
 	END;
 	(* resolved now, while the working directory is still the user's: the scratch directory the
 	   cases are compiled in becomes the working directory further down, and a name given on the
@@ -1896,18 +2209,17 @@ BEGIN
 		END
 	END;
 	Join(project, expect, path);
-	IF ObHost.Exists(path) THEN LoadBaseline(path) ELSE baseline := NIL END;
+	IF ObHost.Exists(path) THEN LoadBaseline(path, expect) ELSE baseline := NIL END;
 
-	caseLimit := 180000;
-	IF ObHost.Env("A2_TEST_CASE_TIMEOUT", limitText) & (limitText # "") THEN
-		caseLimit := SIGNED32(1000 * ToInteger(limitText, 180))
-	END;
+	ReadCaseLimit;
 	IF ~ObHost.ExecutablePath(testSelf) THEN Die("cannot find my own binary"); RETURN END;
 	IF ~ScratchDirectory(testScratch) THEN Die("cannot create a scratch directory"); RETURN END;
-	IF AddSearchPath(lib) & AddSearchPath(project) & AddSearchPath(testScratch)
-			& SetWorkPath(testScratch) THEN
-		BuildSiblings(testScratch, CompilerPlatform, ObjectExtension, SymbolExtension)
+	IF AddSearchPath(lib) & AddSearchPath(testLibrary) & AddSearchPath(project)
+			& AddSearchPath(testScratch) & SetWorkPath(testScratch) THEN
+		BuildSiblings(testScratch, testPlatform, testObject, testSymbol)
 	END;
+	(* Only now, because the image is linked into the scratch directory. *)
+	PrepareEmulator;
 
 	totalCases := 0; sinceCollection := 0; passedCases := 0; failedCases := 0; knownCases := 0; fixedCases := 0;
 	newFailures := NIL; caseRecords := NIL;
@@ -1921,8 +2233,11 @@ BEGIN
 	Strings.AppendInt(line, knownCases); Strings.Append(line, " known-failing, ");
 	Strings.AppendInt(line, fixedCases); Strings.Append(line, " fixed"); Say(line);
 
-	IF write # "" THEN Join(project, write, path); WriteExpected(path); RETURN END;
-	IF testReport # "" THEN Join(project, testReport, path); WriteReport(path) END;
+	(* Relative to the project, which is where the baseline lives and where CI expects the report --
+	   unless it was given as an absolute path, which used to be appended to the project directory
+	   and produced a name no file system would take. *)
+	IF write # "" THEN Absolute(project, write, path); WriteExpected(path); RETURN END;
+	IF testReport # "" THEN Absolute(project, testReport, path); WriteReport(path) END;
 	IF fixedCases > 0 THEN
 		line := "ob test: "; Strings.AppendInt(line, fixedCases);
 		Strings.Append(line, " case(s) marked known-failing now pass — drop them from the baseline");

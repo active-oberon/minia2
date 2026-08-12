@@ -34,6 +34,9 @@ TYPE
 VAR
 	arguments: Strings.StringArray;
 	count: SIZE;
+	(* Why the last Spawn failed, 0 when it did not -- GetLastError here, the code posix_spawnp
+	   returns on the Unix side. Same question, different numbers. *)
+	spawnError-: SIGNED32;
 
 (* --- the command line, split the way a C runtime splits it -------------------------------- *)
 
@@ -251,6 +254,18 @@ BEGIN
 END WriteFile;
 
 (** This process's id -- the only thing making a scratch directory name unique here. *)
+(*
+	The Unix half sends this process's output to a file with dup2, so that a child which is not A2
+	-- an emulator running a case built for another architecture -- can be captured. There is no
+	such thing to capture here: driving qemu is a Unix arrangement, and the only Windows binding
+	that would do it, SetStdHandle, is not in Kernel32.Mod. Refusing is the honest answer, and ob
+	reads it as "this host cannot execute cases for another architecture" -- it still compiles them.
+*)
+PROCEDURE Redirect*(CONST path: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	RETURN FALSE
+END Redirect;
+
 PROCEDURE ProcessId*(): SIGNED32;
 BEGIN
 	RETURN Kernel32.GetCurrentProcessId()
@@ -287,8 +302,9 @@ BEGIN
 	startup.dwFlags := {}; startup.cbReserved2 := 0; startup.lpReserved2 := 0;
 	IF Kernel32.CreateProcess(application, line, NIL, NIL, 1, 0, NIL,
 			directory, startup, information) = 0 THEN
-		RETURN 0
+		spawnError := SIGNED32(Kernel32.GetLastError()); RETURN 0
 	END;
+	spawnError := 0;
 	RETURN information.hProcess
 END Spawn;
 
