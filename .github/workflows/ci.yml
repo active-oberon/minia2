@@ -100,18 +100,29 @@ jobs:
           fi
       - name: Test (all tests/ suites via ob test)
         # `task test` only drives the two Oberon.Compilation/Execution suites; this runs
-        # every tests/*.Test file through the SDK's `ob test` — the SDK as it ships, built
-        # here, rather than a layout assembled for the occasion. Cases in
-        # tests/a2test-expected.txt are known-failing and do not break the build; one of
-        # them starting to pass does.
+        # every tests/*.Test file through `ob test`. Cases in tests/a2test-expected.txt are
+        # known-failing and do not break the build; one of them starting to pass does.
+        #
+        # The library here is the WHOLE build, not the headless core the SDK ships: this
+        # step is about the tree, and one case imports JPEGEncoder, whose closure reaches
+        # the raster stack that a headless SDK leaves out. Against the shipped subset it
+        # cannot compile -- which is true of the SDK and says nothing about the compiler.
+        # What the SDK as it ships can do is the next step's business.
         #
         # -j: the runner has cores and the suites are 6965 cases in one process each. It is
         # the same run in pieces -- the verdicts and their order are what tests/ob-check.sh
         # holds to be identical to a sequential run, so a difference here is a real one.
         run: |
-          tests/bundle.sh --no-tar -o target/bundle target/Linux64
-          cd tests && ../target/bundle/ob test -j "$(nproc)" \
-            --report "$RUNNER_TEMP/ob-test-report.json"
+          mkdir -p "$RUNNER_TEMP/a2sdk/lib"
+          ln -s "$PWD/target/Linux64/oberon" "$RUNNER_TEMP/a2sdk/oberon"
+          ln -s "$PWD"/target/Linux64/bin/*.SymUu "$PWD"/target/Linux64/bin/*.GofUu \
+                "$RUNNER_TEMP/a2sdk/lib/"
+          cp configs/moduleListLinux.txt "$RUNNER_TEMP/a2sdk/boot-modules.txt"
+          tests/ob-binary.sh target/Linux64 "$RUNNER_TEMP/a2sdk"
+          mv "$RUNNER_TEMP/a2sdk"/Ob.SymUu "$RUNNER_TEMP/a2sdk"/ObHost.SymUu \
+             "$RUNNER_TEMP/a2sdk/lib/"
+          cd tests && A2SDK="$RUNNER_TEMP/a2sdk" "$RUNNER_TEMP/a2sdk/ob" test \
+            -j "$(nproc)" --report "$RUNNER_TEMP/ob-test-report.json"
       - name: Tarball SDK (assemble it, unpack it elsewhere, use it with an empty environment)
         # Unpacks the tarball into a temporary directory and runs the bundle's own run.sh under
         # `env -i`, so anything the SDK cannot find beside itself fails here rather than in a
