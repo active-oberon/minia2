@@ -88,8 +88,13 @@ check() {  # check <name> <expected exit> <command...>
 
 export A2SDK="$sdk"
 
+# The shell driver is the reference, and it is taken from the tree rather than from the SDK: the
+# SDK ships this very binary now, so `$sdk/ob` would compare the native version with itself and
+# every check below would pass without proving anything. It reads $A2SDK for its payload.
+shellob="$root/sdk/ob"
+
 echo "=== the banner says what the shell version says"
-"$sdk/ob" version | grep -v '^  runtime' > "$work/banner-shell.txt"
+"$shellob" version | grep -v '^  runtime' > "$work/banner-shell.txt"
 "$ob"      version | grep -v '^  runtime' > "$work/banner-native.txt"
 if diff -u "$work/banner-shell.txt" "$work/banner-native.txt" > "$work/banner.diff"; then
 	echo "ok    version banner"
@@ -170,7 +175,7 @@ for spec in "linux64 hello" "win64 hello.exe" "a64 hello-arm64"; do
 	fi
 	rm -f "$name" "shell/$name"
 	if "$ob" build Hello.Mod -t "$target" -o "$name" >/dev/null 2>&1 \
-			&& "$sdk/ob" build Hello.Mod -t "$target" -o "shell/$name" >/dev/null 2>&1; then
+			&& "$shellob" build Hello.Mod -t "$target" -o "shell/$name" >/dev/null 2>&1; then
 		if cmp -s "$name" "shell/$name"; then echo "ok    build $target is byte for byte the shell version's"
 		else echo "FAIL  build $target differs from the shell version's binary"; fail=1; fi
 	else
@@ -201,7 +206,7 @@ END Strings.
 EOF
 ( cd "$lint"
   rc=0; "$ob"     lint > "$work/lint-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/lint-native.txt"
-  rc=0; "$sdk/ob" lint > "$work/lint-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/lint-shell.txt" )
+  rc=0; "$shellob" lint > "$work/lint-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/lint-shell.txt" )
 if diff -u "$work/lint-shell.txt" "$work/lint-native.txt" > "$work/lint.diff"; then
 	echo "ok    lint says what the shell version says, and fails the same way"
 else
@@ -215,7 +220,7 @@ mkdir -p "$suite"
 cp "$root/tests/JSON.Test" "$root/tests/CSV.Test" "$suite/"
 ( cd "$suite"
   rc=0; "$ob"     test > "$work/test-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/test-native.txt"
-  rc=0; "$sdk/ob" test > "$work/test-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/test-shell.txt" )
+  rc=0; "$shellob" test > "$work/test-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/test-shell.txt" )
 if diff -u "$work/test-shell.txt" "$work/test-native.txt" > "$work/test.diff"; then
 	echo "ok    test reports every case exactly as the shell version does"
 else
@@ -277,7 +282,7 @@ elif [ -z "$emulator" ] || [ ! -f "$sysroot/lib/ld-linux-aarch64.so.1" ]; then
 else
 	( cd "$suite" && export A2_QEMU="$emulator" A2_A64_SYSROOT="$sysroot"
 	  rc=0; "$ob"     test -t a64 > "$work/a64-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/a64-native.txt"
-	  rc=0; "$sdk/ob" test -t a64 > "$work/a64-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/a64-shell.txt" )
+	  rc=0; "$shellob" test -t a64 > "$work/a64-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/a64-shell.txt" )
 	if ! diff -u "$work/a64-shell.txt" "$work/a64-native.txt" > "$work/a64.diff"; then
 		echo "FAIL  test -t a64 differs from the shell version"
 		sed 's/^/        /' "$work/a64.diff" | head -40; fail=1
@@ -295,7 +300,7 @@ cp "$root/source/JSON.Mod" "$root/source/Strings.Mod" "$docs/"
 cp "$root/sdk/Unix.ObHost.Mod" "$docs/ObHost.Mod"
 ( cd "$docs"
   rc=0; "$ob"     doc -o pages       >/dev/null 2>&1 || rc=$?
-  rc=0; "$sdk/ob" doc -o pages-shell  >/dev/null 2>&1 || rc=$? )
+  rc=0; "$shellob" doc -o pages-shell  >/dev/null 2>&1 || rc=$? )
 docfail=0
 for page in "$docs"/pages/*.html; do
 	name="$(basename "$page")"
@@ -364,7 +369,7 @@ if [ -f "$registry/index.json" ]; then
 		rm -rf "$work/get-$who"; mkdir -p "$work/get-$who"
 	done
 	( cd "$work/get-native" && A2_REGISTRY="$registry" "$ob"     get community/matrix >/dev/null 2>&1 || true )
-	( cd "$work/get-shell"  && A2_REGISTRY="$registry" "$sdk/ob" get community/matrix >/dev/null 2>&1 || true )
+	( cd "$work/get-shell"  && A2_REGISTRY="$registry" "$shellob" get community/matrix >/dev/null 2>&1 || true )
 	if diff -r "$work/get-shell" "$work/get-native" > "$work/get.diff" 2>&1; then
 		echo "ok    get vendored the same tree, manifest and lock as the shell version"
 	else

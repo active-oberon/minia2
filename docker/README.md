@@ -15,7 +15,7 @@ Which one to pick:
 
 | | Docker image | Tarball |
 |---|---|---|
-| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit Linux (x86 or ARM) + glibc, or 64-bit Windows |
+| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit Linux (x86 or ARM) + glibc, or 64-bit Windows. No shell, no runtime, nothing installed |
 | get it | `docker pull puhachenko/minia2-sdk` | `curl -fsSL …/sdk/install.sh \| sh`, a release tarball, or `task bundle` |
 | use it | `docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod` | `ob run Hello.Mod` |
 | editor (LSP) | a container per session, sources bind-mounted | `cmd = { "/path/to/ob", "lsp" }` |
@@ -132,6 +132,9 @@ docker run --rm -v "$PWD:/work" minia2-sdk compile Hello.Mod -o out
 # run the test files in the current directory (every *.Test); exit code 1 on failure
 docker run --rm -v "$PWD:/work" minia2-sdk test
 docker run --rm -v "$PWD:/work" minia2-sdk test CSV.Test -v
+
+# ... eight pieces at a time, which is the same run in a fraction of the wall clock
+docker run --rm -v "$PWD:/work" minia2-sdk test -j 8
 
 # ... or compiled for AArch64 and executed under qemu-aarch64 (needs qemu in the image's host)
 docker run --rm -v "$PWD:/work" minia2-sdk test -t a64
@@ -365,12 +368,12 @@ naive ~255MB Linux-only image in three steps:
   module both compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is
   a compile error by design — use the full desktop build for GUI work.
 
-**`ob` is also Active Oberon** (`sdk/Ob.Mod`), linked into a binary that already holds
-Fox: a verb calls `Compiler.Modules` in this process rather than starting one, and that
-SDK needs no shell on the target — which is what lets the Windows one be `ob.exe` and
-nothing else. (The Linux tarball and this image still ship the shell driver; `task ob`
-holds the two to the same output.) Imports resolve through the Files search path, so
-each build gets a
+**`ob` is itself Active Oberon** (`sdk/Ob.Mod`), linked into a binary that already holds
+Fox: a verb calls `Compiler.Modules` in this process rather than starting one, and an SDK
+is that binary plus a library — no shell on the target, which is what lets the Windows one
+be `ob.exe` and nothing else. The shell version stays in the source tree as the reference
+`tests/ob-check.sh` measures this one against, verb by verb. Imports resolve through the
+Files search path, so each build gets a
 private scratch directory to write into and the shared SDK stays read-only; several
 builds can run at once. `compile` emits `Module.GofUu`; `run` compiles and loads the
 module into this same process, which is the mechanism `build` bakes into a binary.
@@ -419,8 +422,7 @@ so tests can import the code under test.
 emulator or an AArch64 C library, the files whose cases execute are reported as
 **skipped** rather than passed — saying so out loud is the whole point.
 
-`-j N` — in the Active Oberon driver, so the Windows SDK and `task ob` have it and the
-shell one does not — runs N pieces of the suites at a time. Files are not the unit: 5450
+`-j N` runs N pieces of the suites at a time. Files are not the unit: 5450
 of this tree's 6965 cases are in one file, so the case lists themselves are cut into
 chunks, and a chunk brings with it the earlier cases its own cases import (found from
 the IMPORT clauses at parse time, replayed compile-only in the chunk's own directory).

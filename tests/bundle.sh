@@ -103,10 +103,34 @@ if ls "$targets/A64/bin"/*.SymU8 >/dev/null 2>&1; then
 	install -m 644 "$targets/A64/bin"/*.SymU8 "$targets/A64/bin"/*.GofU8 "$out/lib-a64/"
 fi
 
-# The CLI, the BSD-3-Clause notice binary redistribution has to carry, the std manifests lint
-# and get read, something to compile in the first minute, and the suites -- because a tarball
-# nobody can check is a tarball nobody should trust.
-install -m 755 "$root/sdk/ob" "$out/ob"
+# `ob` itself, built here rather than copied out of sdk/, because it is a binary now: Ob.Mod and
+# its Unix host layer, compiled and linked last into the boot set without the interactive shell --
+# Ob's own body is the program, and the compiler and the linker are inside it. The shell version
+# stays in the tree as the reference tests/ob-check.sh measures this one against; it is not
+# shipped, because shipping it would say the shell is still needed to use this SDK.
+work="$(mktemp -d "${TMPDIR:-/tmp}/bundle-ob.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+cp "$root/sdk/Unix.ObHost.Mod" "$work/ObHost.Mod"
+cp "$root/sdk/Ob.Mod" "$work/"
+boot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')"
+( cd "$work" && "$runtime" do "
+	Files.AddSearchPath $work~
+	Files.AddSearchPath $build/bin~
+	Compiler.Compile -p=Unix64 --objectFileExtension=GofUu --symbolFileExtension=.SymUu ./ObHost.Mod ./Ob.Mod ~
+	Linker.Link -p=Linux64 --extension=GofUu --fileName='ob'
+	$boot Ob
+	~
+" ) > "$work/ob.log" 2>&1 || true
+[ -f "$work/ob" ] || { sed 's/^/    /' "$work/ob.log" >&2; echo "ob did not link" >&2; exit 1; }
+install -m 755 "$work/ob" "$out/ob"
+# Ob and ObHost belong in the library too: a project that imports them, and the language server,
+# resolve them from there like any other module.
+install -m 644 "$work"/Ob.SymUu "$work"/ObHost.SymUu "$out/lib/"
+install -m 644 "$work"/Ob.SymUu "$work"/ObHost.SymUu "$out/lib-sym/"
+
+# The BSD-3-Clause notice binary redistribution has to carry, the std manifests lint and get
+# read, something to compile in the first minute, and the suites -- because a tarball nobody
+# can check is a tarball nobody should trust.
 install -m 755 "$root/tests/bundle-selfcheck.sh" "$out/run.sh"
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
 cp -r "$root/packages" "$out/packages"
@@ -119,8 +143,9 @@ cat > "$out/README" <<'EOF'
 A2 / Active Oberon SDK -- the compiler, the standard library and the language server, in one
 directory. No Docker, no installer, no daemon, nothing written outside this directory.
 
-Needs: 64-bit x86 Linux with a glibc C library, bash and coreutils. `ob get` additionally
-wants git and jq; every other verb works without them.
+Needs: 64-bit x86 Linux with a glibc C library. That is the whole list -- `ob` is a binary
+with the compiler and the linker inside it, not a script. `ob get` additionally wants git,
+and run.sh below is bash; every verb works without either.
 
     ./ob version                      what this SDK is and which targets it has
     ./ob run examples/Hello.Mod       compile and run, in one step

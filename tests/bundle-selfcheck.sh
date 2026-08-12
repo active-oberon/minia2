@@ -45,7 +45,7 @@ cp "$root"/examples/*.Mod "$work/"
 
 echo "machine:  $(uname -m), $(uname -r)"
 echo "sdk:      $root ($(cat "$root/VERSION" 2>/dev/null || echo "no VERSION"))"
-echo "shell:    ${BASH_VERSION:-unknown}, $(command -v git >/dev/null && echo "git yes" || echo "git no"), $(command -v jq >/dev/null && echo "jq yes" || echo "jq no")"
+echo "shell:    ${BASH_VERSION:-unknown}, $(command -v git >/dev/null && echo "git yes" || echo "git no") (this script is the only thing here that wants a shell; ob is a binary)"
 echo
 
 pass=0; fail=0; skip=0

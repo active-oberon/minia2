@@ -235,8 +235,12 @@ if [ "$quick" = 1 ]; then
 else
 	echo "  ..    language suites            running; this is the long one"
 	s=0; started=$SECONDS
+	#    -j: a case is a process, and a phone has cores. Four rather than all of them because
+	#    this has not been run on a device yet and a compiler per core is the memory-hungry
+	#    shape; A64_SUITES_JOBS overrides, and 1 is the old behaviour.
 	( cd "$root/tests" && A2SDK="$root" \
-		timeout "${A64_SUITES_TIMEOUT:-10800}" bash "$root/ob" test -t a64 \
+		timeout "${A64_SUITES_TIMEOUT:-10800}" "$root/ob" test -t a64 \
+			-j "${A64_SUITES_JOBS:-4}" \
 			--report "$results/suites.json" > "$results/suites.log" 2>&1 ) || s=$?
 	_ELAPSED=$((SECONDS - started))
 	line="$(grep -a '^ob test: .* case(s)' "$results/suites.log" | tail -1 | tr -d '\r')"
