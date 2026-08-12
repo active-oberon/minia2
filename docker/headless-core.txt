@@ -200,6 +200,8 @@ Kernel
 KernelLog
 LPR
 LSP
+Terminal
+TerminalCodes
 Linker
 Loader
 Localization

@@ -203,6 +203,7 @@ Kernel32
 KernelLog
 LPR
 LSP
+TerminalCodes
 Linker
 Loader
 Localization

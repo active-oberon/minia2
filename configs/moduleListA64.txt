@@ -304,6 +304,8 @@ NewHTTPClient.Mod
 CSV.Mod
 JSON.Mod
 LSP.Mod
+TerminalCodes.Mod
+Unix.Terminal.Mod
 ColorModels.Mod
 OpenTypeInt.Mod
 OpenTypeScan.Mod
