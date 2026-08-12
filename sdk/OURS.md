@@ -7,7 +7,7 @@ and ETH's sit in one directory and cannot be told apart by looking.
 
 | | modules |
 | --- | ---: |
-| ours outright (in no vanilla tree) | 10 |
+| ours outright (in no vanilla tree) | 12 |
 | vanilla, changed by us | 33 |
 | vanilla, untouched | 719 |
 
@@ -22,6 +22,8 @@ and ETH's sit in one directory and cannot be told apart by looking.
 - `FoxA64InstructionSet.Mod`
 - `JSON.Mod`
 - `LSP.Mod`
+- `TerminalCodes.Mod`
+- `Unix.Terminal.Mod`
 - `WMDemo.Mod`
 
 ## Vanilla, changed by us
