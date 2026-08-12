@@ -32,6 +32,11 @@ TYPE
 		(* collect mode (find-all-references): gather every use-site matching a key.
 		   tokenize mode (semantic tokens): gather EVERY resolved occurrence + its class. *)
 		collect, tokenize: BOOLEAN; keyName, keyOwner: ARRAY 128 OF CHAR; keyKind: SIGNED32;
+		(* Non-NIL narrows the key to one declaring scope, so that a local `i` in one
+		   procedure is not confused with an unrelated local `i` in its sibling. Only
+		   usable within the module the scope was taken from, hence NIL for the
+		   cross-file sweep, which visits module-level symbols only. *)
+		keyScope: SyntaxTree.Scope;
 		refOff: ARRAY 16384 OF SIGNED64; refLen, refKind: ARRAY 16384 OF SIGNED32; refN: SIGNED32;
 
 		(* LSP semantic-token type index (see the legend in Serve), or -1 to skip. *)
@@ -73,6 +78,7 @@ TYPE
 		BEGIN
 			sym.GetName(nm); IF nm # keyName THEN RETURN FALSE END;
 			IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN FALSE END;
+			IF keyScope # NIL THEN RETURN sym.scope = keyScope END;
 			sym.scope.ownerModule.GetName(onm);
 			RETURN (onm = keyOwner) & (KindOf(sym) = keyKind)
 		END SymMatches;
@@ -270,12 +276,15 @@ TYPE
 			RETURN hasFound
 		END Find;
 
-		(* Collect every use-site of the symbol identified by (name, owner, kind). *)
-		PROCEDURE CollectRefs (module: SyntaxTree.Module; CONST name, owner: ARRAY OF CHAR; kind: SIGNED32);
+		(* Collect every use-site of the symbol identified by (name, owner, kind), or by
+		   its declaring scope when `scope` is given (see keyScope). *)
+		PROCEDURE CollectRefs (module: SyntaxTree.Module; CONST name, owner: ARRAY OF CHAR; kind: SIGNED32;
+			scope: SyntaxTree.Scope);
 		BEGIN
-			collect := TRUE; tokenize := FALSE; COPY(name, keyName); COPY(owner, keyOwner); keyKind := kind; refN := 0;
+			collect := TRUE; tokenize := FALSE; COPY(name, keyName); COPY(owner, keyOwner); keyKind := kind;
+			keyScope := scope; refN := 0;
 			Traverse(module);
-			collect := FALSE
+			collect := FALSE; keyScope := NIL
 		END CollectRefs;
 
 		(* Collect every resolved occurrence + its semantic class. *)
@@ -509,6 +518,41 @@ VAR
 	BEGIN RETURN FoxBasic.GetFileReader(fn) # NIL
 	END FileExists;
 
+	(* The directory of an open document, with its trailing slash, taken from the document's
+	   own URI. The sweep over a project's other modules used to enumerate "./*.Mod", which
+	   is the process's working directory -- and `ob lsp` sets that to a scratch directory,
+	   so under the SDK the sweep listed an empty directory and every rename across files
+	   quietly edited nothing but the declaration. What the editor has open is the one
+	   directory we can always name. Returns FALSE for a URI with no path or no scheme we
+	   understand, and the caller then falls back to the working directory. *)
+	PROCEDURE DocumentDir (uri: Strings.String; VAR dir: ARRAY OF CHAR): BOOLEAN;
+	CONST scheme = "file://";
+	VAR i, from, last, n: SIZE;
+	BEGIN
+		IF uri = NIL THEN RETURN FALSE END;
+		from := 0; i := 0;
+		WHILE (scheme[i] # 0X) & (uri[i] = scheme[i]) DO INC(i) END;
+		IF scheme[i] = 0X THEN from := i ELSIF uri[0] # "/" THEN RETURN FALSE END;
+		last := -1; i := from;
+		WHILE uri[i] # 0X DO IF uri[i] = "/" THEN last := i END; INC(i) END;
+		IF last < from THEN RETURN FALSE END;
+		n := 0; i := from;
+		WHILE (i <= last) & (n < LEN(dir)-1) DO dir[n] := uri[i]; INC(n); INC(i) END;
+		dir[n] := 0X;
+		RETURN n > 0
+	END DocumentDir;
+
+	(* Mask for enumerating the other modules beside `uri`, and the prefix to read them by. *)
+	PROCEDURE SiblingMask (uri: Strings.String; VAR mask, prefix: ARRAY OF CHAR);
+	BEGIN
+		IF DocumentDir(uri, prefix) THEN
+			COPY(prefix, mask); Strings.Append(mask, "*.Mod")
+		ELSE
+			(* RelativeFileSystem needs the ./ prefix *)
+			COPY("./", prefix); COPY("./*.Mod", mask)
+		END
+	END SiblingMask;
+
 	(* Read a whole source file into a string (NIL if it can't be opened). *)
 	PROCEDURE ReadFile (CONST fn: ARRAY OF CHAR): Strings.String;
 	VAR reader: Streams.Reader; buf: Streams.Buffer; w: Streams.Writer; ch: CHAR;
@@ -646,12 +690,16 @@ VAR
 		RETURN n
 	END ContentLength;
 
-	(* Read one framed message body; returns NIL on EOF/parse failure. *)
-	PROCEDURE ReadMessage (in: Streams.Reader): JSON.Value;
+	(* Reads one framed message. `alive` says whether the stream is still usable: it is
+	   FALSE only for end of input or a header we cannot make sense of, and TRUE with a NIL
+	   result for a message whose body is not JSON -- the frame gave its length, so exactly
+	   that many bytes were consumed and the next message is still where it should be. One
+	   bad message from an editor is not a reason to drop the session. *)
+	PROCEDURE ReadMessage (in: Streams.Reader; VAR alive: BOOLEAN): JSON.Value;
 	VAR line: ARRAY 256 OF CHAR; n, got: SIGNED32; len: SIZE;
 		buf: POINTER TO ARRAY OF CHAR; v: JSON.Value; ok: BOOLEAN;
 	BEGIN
-		n := -1;
+		alive := FALSE; n := -1;
 		LOOP
 			in.Ln(line);
 			IF (line[0] = 0X) THEN
@@ -668,6 +716,7 @@ VAR
 			got := got + SIGNED32(len)
 		END;
 		buf[n] := 0X;
+		alive := TRUE;                                (* the frame was whole, whatever it held *)
 		ok := JSON.Parse(buf^, v);
 		IF ~ok THEN RETURN NIL END;
 		RETURN v
@@ -1446,8 +1495,8 @@ VAR
 	   the declaration. *)
 	PROCEDURE ReferencesAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
 	VAR module, fm: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; arr: JSON.Array;
-		name, owner, modName: ARRAY 128 OF CHAR; readName: ARRAY 256 OF CHAR;
-		kind: SIGNED32; wide: BOOLEAN; en: Files.Enumerator; fn: ARRAY 256 OF CHAR;
+		name, owner, modName: ARRAY 128 OF CHAR; readName, mask, prefix: ARRAY 1024 OF CHAR;
+		kind: SIGNED32; wide: BOOLEAN; narrow: SyntaxTree.Scope; en: Files.Enumerator; fn: ARRAY 256 OF CHAR;
 		flags: SET; tm, dt: SIGNED32; sz: Files.Size; ftext, declUri, sibUri: Strings.String;
 		line, char: SIGNED32; range, loc: JSON.Object;
 	BEGIN
@@ -1460,23 +1509,29 @@ VAR
 		kind := f.KindOf(sym);
 		wide := (sym.scope IS SyntaxTree.ModuleScope) OR (sym.scope IS SyntaxTree.RecordScope);
 
-		f.CollectRefs(module, name, owner, kind);   (* current buffer *)
+		(* a symbol nobody outside can see is collected by its own scope, not by name *)
+		IF wide THEN narrow := NIL ELSE narrow := sym.scope END;
+		f.CollectRefs(module, name, owner, kind, narrow);   (* current buffer *)
 		AddLocs(arr, f, text, uri);
 
 		IF wide THEN
-			NEW(en); en.Open("./*.Mod", {});   (* RelativeFileSystem needs the ./ prefix *)
+			SiblingMask(uri, mask, prefix);
+			NEW(en); en.Open(mask, {});
 			WHILE en.HasMoreEntries() DO
 				IF en.GetEntry(fn, flags, tm, dt, sz) THEN
 					ModuleBaseName(fn, modName);
 					sibUri := SiblingUri(uri, modName);
 					(* skip the current document itself (already collected from the buffer) *)
 					IF (modName[0] # 0X) & (sibUri # NIL) & (sibUri^ # uri^) THEN
-						COPY(modName, readName); Strings.Append(readName, ".Mod");
+						(* by full path, not by name: the search path holds the standard
+						   library too, and a project module may share a name with one *)
+						COPY(prefix, readName); Strings.Append(readName, modName);
+						Strings.Append(readName, ".Mod");
 						ftext := ReadFile(readName);
 						IF (ftext # NIL) & Contains(ftext, owner) THEN
 							fm := Analyze(ftext);
 							IF fm # NIL THEN
-								f.CollectRefs(fm, name, owner, kind);
+								f.CollectRefs(fm, name, owner, kind, NIL);
 								AddLocs(arr, f, ftext, sibUri)
 							END
 						END
@@ -1486,7 +1541,11 @@ VAR
 			en.Close
 		END;
 
-		declUri := SourceUriFor(uri, owner);   (* declaration site *)
+		(* The declaration site, for a symbol whose own module may not be the open buffer.
+		   Only for the wide case: FindDeclPos searches by name alone, so on a local it
+		   would happily return a sibling procedure's same-named declaration -- and the
+		   real one is in `arr` already, collected by scope. *)
+		IF wide THEN declUri := SourceUriFor(uri, owner) ELSE declUri := NIL END;
 		IF (declUri # NIL) & FindDeclPos(owner, name, line, char) & ~LocExists(arr, declUri^, line, char) THEN
 			range := JSON.NewObject();
 			range.Set("start", Position(line, char));
@@ -1598,38 +1657,51 @@ VAR
 	   siblings. *)
 	PROCEDURE RenameAt (text: Strings.String; offset: SIGNED64; uri, newName: Strings.String): JSON.Value;
 	VAR module, fm: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; changes: JSON.Object;
-		name, owner, modName: ARRAY 128 OF CHAR; readName: ARRAY 256 OF CHAR; kind: SIGNED32;
+		name, owner, modName: ARRAY 128 OF CHAR; readName, mask, prefix: ARRAY 1024 OF CHAR;
+		kind: SIGNED32;
 		en: Files.Enumerator; fn: ARRAY 256 OF CHAR; flags: SET; tm, dt: SIGNED32; sz: Files.Size;
-		ftext: Strings.String; result: JSON.Object;
+		ftext: Strings.String; result: JSON.Object; local: BOOLEAN; narrow: SyntaxTree.Scope;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
 		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
 		sym := f.foundSym; sym.GetName(name);
 		IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN NIL END;
-		IF ~(sym.scope IS SyntaxTree.ModuleScope) THEN RETURN NIL END;   (* module-level only *)
+		(* Two kinds of rename are safe. A module-level symbol is swept across the project,
+		   as find-all-references does. A procedure-local (or parameter) cannot be named
+		   from another file at all, so renaming it inside this buffer is complete — but it
+		   must be collected by its own scope, or a sibling procedure's same-named local
+		   would be renamed too. A record field is still refused: its key is only
+		   (name, module, kind), which is too loose to rewrite other files with. *)
+		local := ~(sym.scope IS SyntaxTree.ModuleScope);
+		IF local & (sym.scope IS SyntaxTree.RecordScope) THEN RETURN NIL END;
 		sym.scope.ownerModule.GetName(owner); kind := f.KindOf(sym);
 		changes := JSON.NewObject();
 
-		f.CollectRefs(module, name, owner, kind); AddEdits(changes, f, text, uri, newName);
+		IF local THEN narrow := sym.scope ELSE narrow := NIL END;
+		f.CollectRefs(module, name, owner, kind, narrow); AddEdits(changes, f, text, uri, newName);
 
-		NEW(en); en.Open("./*.Mod", {});
-		WHILE en.HasMoreEntries() DO
-			IF en.GetEntry(fn, flags, tm, dt, sz) THEN
-				ModuleBaseName(fn, modName);
-				IF (modName[0] # 0X) & (SiblingUri(uri, modName) # NIL) & (SiblingUri(uri, modName)^ # uri^) THEN
-					COPY(modName, readName); Strings.Append(readName, ".Mod");
-					ftext := ReadFile(readName);
-					IF (ftext # NIL) & Contains(ftext, owner) THEN
-						fm := Analyze(ftext);
-						IF fm # NIL THEN
-							f.CollectRefs(fm, name, owner, kind);
-							AddEdits(changes, f, ftext, SiblingUri(uri, modName), newName)
+		IF ~local THEN
+			SiblingMask(uri, mask, prefix);
+			NEW(en); en.Open(mask, {});
+			WHILE en.HasMoreEntries() DO
+				IF en.GetEntry(fn, flags, tm, dt, sz) THEN
+					ModuleBaseName(fn, modName);
+					IF (modName[0] # 0X) & (SiblingUri(uri, modName) # NIL) & (SiblingUri(uri, modName)^ # uri^) THEN
+						COPY(prefix, readName); Strings.Append(readName, modName);
+						Strings.Append(readName, ".Mod");
+						ftext := ReadFile(readName);
+						IF (ftext # NIL) & Contains(ftext, owner) THEN
+							fm := Analyze(ftext);
+							IF fm # NIL THEN
+								f.CollectRefs(fm, name, owner, kind, NIL);
+								AddEdits(changes, f, ftext, SiblingUri(uri, modName), newName)
+							END
 						END
 					END
 				END
-			END
+			END;
+			en.Close
 		END;
-		en.Close;
 		(* the declaration is collected too: WScope treats a declaration name as a
 		   resolvable site, and the owner module is always processed above. *)
 		result := JSON.NewObject(); result.Set("changes", changes);
@@ -1654,6 +1726,32 @@ VAR
 		w.Update; RETURN buf.GetString()
 	END CleanUnresolved;
 
+	(* The printer ends a declaration with a space before its newline ("TYPE ", "END; ").
+	   Nobody wants an editor's format command to plant trailing whitespace in every file,
+	   so it is taken off here; the printer itself is vanilla, and this is our surface. *)
+	PROCEDURE StripTrailingBlanks (s: Strings.String): Strings.String;
+	VAR buf: Streams.Buffer; w: Streams.Writer; i, held, j: SIZE;
+	BEGIN
+		IF s = NIL THEN RETURN NIL END;
+		NEW(buf, 4096); w := buf.GetWriter(); i := 0; held := -1;
+		WHILE s[i] # 0X DO
+			IF (s[i] = " ") OR (s[i] = 09X) THEN
+				IF held < 0 THEN held := i END     (* hold it: it may be at end of line *)
+			ELSE
+				IF held >= 0 THEN
+					(* replay it verbatim, tabs included, unless the line ended right here *)
+					IF (s[i] # CR) & (s[i] # LF) THEN
+						j := held; WHILE j < i DO w.Char(s[j]); INC(j) END
+					END;
+					held := -1
+				END;
+				w.Char(s[i])
+			END;
+			INC(i)
+		END;
+		w.Update; RETURN buf.GetString()
+	END StripTrailingBlanks;
+
 	(* textDocument/formatting: reprint the whole module in Fox's canonical style. Only
 	   syntactically-valid files are formatted (else NIL). A single whole-document edit. *)
 	PROCEDURE Formatting (text: Strings.String): JSON.Value;
@@ -1669,7 +1767,7 @@ VAR
 		module := parser.Module();
 		IF (module = NIL) OR parser.error THEN RETURN NIL END;   (* never reformat broken source *)
 		NEW(buf, 8192); w := buf.GetWriter(); p := Printout.NewPrinter(w, Printout.SourceCode, FALSE);
-		p.Module(module); w.Update; s := CleanUnresolved(buf.GetString());
+		p.Module(module); w.Update; s := StripTrailingBlanks(CleanUnresolved(buf.GetString()));
 		IF s = NIL THEN RETURN NIL END;
 		lastLine := 0; lastChar := 0; i := 0;
 		WHILE text[i] # 0X DO
@@ -1818,14 +1916,14 @@ VAR
 		rng, ctx, endO: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
 		changes: JSON.Value; arr, trig, sigtrig, ttypes, diagsArr: JSON.Array; first, res, diagsV: JSON.Value;
-		line, char, line2, char2: SIGNED32; doc: Document;
+		line, char, line2, char2: SIGNED32; doc: Document; alive: BOOLEAN;
 	BEGIN
 		in := context.in; out := context.out;
 		documents := NIL; initialized := FALSE; stdlibSrcHost[0] := 0X;
 		LOOP
-			msg := ReadMessage(in);
-			IF msg = NIL THEN EXIT END;              (* EOF or unrecoverable *)
-			req := AsObject(msg);
+			msg := ReadMessage(in, alive);
+			IF (msg = NIL) & ~alive THEN EXIT END;   (* end of input, or a header past saving *)
+			req := AsObject(msg);                    (* NIL for a message we skipped: read on *)
 			IF req # NIL THEN
 				IF GetStr(req, "method", method) THEN
 					params := AsObject(req.Get("params"));
