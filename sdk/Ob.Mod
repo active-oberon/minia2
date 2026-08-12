@@ -842,6 +842,31 @@ BEGIN
 END CopyFile;
 
 (*
+	Copy a prepared scratch directory into a fresh one. `ob test -j` gives every job a directory of
+	its own -- the cases of one file leave objects behind that its later cases import, and two files
+	sharing a directory would overwrite each other's -- and every job needs what the run prepared
+	once: the project's siblings compiled, and, for another architecture, the image cases are
+	executed in. Copying beats preparing it N times, and it is the same bytes by construction. The
+	prepared directory holds files only; the job directories are made beside it, not inside it.
+*)
+PROCEDURE SeedScratch(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR handle: ADDRESS; name, source, destination: Path; ignore: BOOLEAN;
+BEGIN
+	handle := ObHost.OpenDirectory(from);
+	IF handle = 0 THEN RETURN FALSE END;
+	WHILE ObHost.NextEntry(handle, name) DO
+		IF (name # ".") & (name # "..") THEN
+			Join(from, name, source); Join(to, name, destination);
+			IF CopyFile(source, destination) & ObHost.Executable(source) THEN
+				ignore := ObHost.MakeExecutable(destination)
+			END
+		END
+	END;
+	ObHost.CloseDirectory(handle);
+	RETURN TRUE
+END SeedScratch;
+
+(*
 	Start another ob and give it a deadline. This is the one place a process is still involved,
 	and it is involved because the work has to be abandonable: see ObHost.Spawn.
 *)
@@ -1497,16 +1522,95 @@ END InstallFetch;
 	in the scratch directory, and the parent prints it only when the case fails -- otherwise a run
 	would be buried under the output of every negative case and every test that traps on purpose.
 *)
+(*
+	-j -- several pieces of the suites at a time.
+
+	Files alone are not enough to divide by: 5450 of this tree's 6965 cases are in one file, so a run
+	split by file is still that file long. What is divided is the case list itself, into chunks a job
+	takes one at a time, in a directory of its own.
+
+	The cases of a file are NOT independent -- the files build up a helper module in one case and
+	import it in a later one -- and this is what a chunk has to carry with it. Every case's imports
+	are read at parse time; a case whose import was declared by an earlier case depends on it, and a
+	chunk begins by replaying, silently and compile-only, the earlier cases its own cases depend on
+	(transitively). Everything else a case might have found in the directory it never asked for, so
+	not having it changes nothing -- and being generous here is safe by construction: anything
+	replayed is something the sequential run had at that point too.
+
+	A job is a state machine the parent steps, not a thread: there is nothing to synchronise then,
+	and a case is still a process of its own with a deadline, as it has to be. Output is buffered per
+	chunk and printed when every chunk before it has been, so a parallel run reads exactly like a
+	sequential one and the two can be diffed line by line. With -j 1 there is one chunk per file,
+	nothing is buffered, and the run streams as it always did.
+*)
+CONST DeclarationTableSize = 4096;
+
 TYPE
 	Key = POINTER TO RECORD next: Key; text: Path END;
 	CaseRecord = POINTER TO RECORD next: CaseRecord; status, file, kind, name: Path END;
 
+	(* A case as the parser found it. Reading a file is separated from running it because a job that
+	   has to stop at every case to read the next line cannot be stepped alongside others. *)
+	TestCase = POINTER TO RECORD
+		next: TestCase;
+		kind, name, entry: Path;
+		body: Strings.String;
+		modules: Strings.StringArray; count: SIZE;
+		imports: Strings.StringArray; importCount: SIZE;
+		needs: CaseLink;					(* earlier cases of this file that declare what this one imports *)
+		index: SIZE
+	END;
+
+	CaseLink = POINTER TO RECORD next: CaseLink; case: TestCase END;
+
+	(* Which case last declared a module, while a file is being planned. *)
+	Declaration = POINTER TO RECORD next: Declaration; name: Path; case: TestCase END;
+
+	(* A piece of one file: the cases to report on, the earlier ones to replay first, and whether the
+	   file's cases execute or only compile. *)
+	Chunk = POINTER TO RECORD
+		next: Chunk;
+		name: Path;						(* the test file's base name *)
+		header: BOOLEAN;				(* this is the file's first chunk, so it prints the === line *)
+		message: Path;					(* a whole-file SKIP, printed instead of running anything *)
+		execute: BOOLEAN;
+		replay: CaseLink;
+		first: TestCase; count: SIZE;
+		index: SIZE
+	END;
+
+	Job = POINTER TO RECORD
+		scratch: Path;					(* its own directory *)
+		chunk: Chunk;
+		pending: TestCase; remaining: SIZE;
+		replay: CaseLink;
+		current: TestCase;				(* the case in flight *)
+		replaying: BOOLEAN;				(* ... and whether it is only being replayed, so it is not judged *)
+		busy: BOOLEAN;
+		buffered: BOOLEAN;
+		buffer: Streams.Buffer;			(* NIL when the job writes straight to the terminal *)
+		writer: Streams.Writer;
+		records, lastRecord: CaseRecord;
+		process: ADDRESS;
+		spawnFault: SIGNED32;			(* why the case would not start; per job, because ObHost's is not *)
+		deadline: Kernel.MilliTimer
+	END;
+
+	(* One finished chunk, held until every chunk before it has been printed. *)
+	Block = POINTER TO RECORD
+		text: Strings.String;
+		records: CaseRecord
+	END;
+
 VAR
 	baseline, newFailures: Key;
 	caseRecords, lastCaseRecord: CaseRecord;
-	testVerbose, testGithub, testRun: BOOLEAN;
-	testFilter, testFile, testReport, testScratch, testSelf: Path;
+	testVerbose, testGithub: BOOLEAN;
+	testFilter, testReport, testScratch, testSelf: Path;
 	caseLimit, sinceCollection: SIGNED32;
+	blocks: POINTER TO ARRAY OF Block;		(* one per chunk, in the order the chunks were planned *)
+	declarations: ARRAY DeclarationTableSize OF Declaration;
+	seedKeep: Path;							(* the one file a job's directory keeps when it is emptied *)
 	totalCases, passedCases, failedCases, knownCases, fixedCases: SIGNED32;
 
 	(* The target the cases are compiled for, and what compiling for it means. Equal to this
@@ -1728,35 +1832,40 @@ BEGIN
 	Strings.Append(line, " in a linked image"); Say(line)
 END PrepareEmulator;
 
-PROCEDURE RecordCase(CONST status, kind, name: ARRAY OF CHAR);
+(* Everything a job says goes through its own writer: the terminal with -j 1, a buffer otherwise. *)
+PROCEDURE Tell(job: Job; CONST text: ARRAY OF CHAR);
+BEGIN job.writer.String(text); EndLine(job.writer)
+END Tell;
+
+PROCEDURE RecordCase(job: Job; CONST status, kind, name: ARRAY OF CHAR);
 VAR record: CaseRecord;
 BEGIN
 	IF testReport = "" THEN RETURN END;
-	NEW(record); COPY(status, record.status); COPY(testFile, record.file);
+	NEW(record); COPY(status, record.status); COPY(job.chunk.name, record.file);
 	COPY(kind, record.kind); COPY(name, record.name); record.next := NIL;
-	IF caseRecords = NIL THEN caseRecords := record ELSE lastCaseRecord.next := record END;
-	lastCaseRecord := record
+	IF job.records = NIL THEN job.records := record ELSE job.lastRecord.next := record END;
+	job.lastRecord := record
 END RecordCase;
 
 (* One Actions annotation per case that breaks the build, so it shows on the run and not only in
    the log. Anchored at the test file; the format carries no line information. *)
-PROCEDURE Annotate(CONST severity, kind, name: ARRAY OF CHAR);
+PROCEDURE Annotate(job: Job; CONST severity, kind, name: ARRAY OF CHAR);
 VAR line: Path;
 BEGIN
 	IF ~testGithub THEN RETURN END;
 	line := "::"; Strings.Append(line, severity);
-	Strings.Append(line, " file="); Strings.Append(line, testFile);
-	Strings.Append(line, ",title="); Strings.Append(line, testFile);
+	Strings.Append(line, " file="); Strings.Append(line, job.chunk.name);
+	Strings.Append(line, ",title="); Strings.Append(line, job.chunk.name);
 	Strings.Append(line, "::"); Strings.Append(line, kind);
 	Strings.Append(line, ": "); Strings.Append(line, name);
-	Say(line)
+	Tell(job, line)
 END Annotate;
 
 (* What the child left behind, indented, as the shell version's excerpt was. *)
-PROCEDURE ShowCaseLog;
+PROCEDURE ShowCaseLog(job: Job);
 VAR path: Path; handle: Files.File; reader: Files.Reader; line: ARRAY 1024 OF CHAR; shown: SIGNED32;
 BEGIN
-	Join(testScratch, "case.log", path);
+	Join(job.scratch, "case.log", path);
 	handle := Files.Old(path);
 	IF handle = NIL THEN RETURN END;
 	Files.OpenReader(reader, handle, 0);
@@ -1764,94 +1873,72 @@ BEGIN
 	WHILE (reader.res = Streams.Ok) & (testVerbose OR (shown < 20)) DO
 		reader.Ln(line); Strings.Trim(line, 0DX);
 		IF line # "" THEN
-			out.String("        "); out.String(line); EndLine(out); INC(shown)
+			job.writer.String("        "); job.writer.String(line); EndLine(job.writer); INC(shown)
 		END
 	END;
 	handle.Close
 END ShowCaseLog;
 
-PROCEDURE RunCase(CONST kind, name, entry: ARRAY OF CHAR);
-VAR arguments: Strings.StringArray; exitCode: SIGNED32; line, key: Path;
-	bad, good, expected, finished: BOOLEAN;
+(* The verdict on the case in flight. Split from starting it, because between the two the parent
+   goes off and steps the other jobs. *)
+PROCEDURE Verdict(job: Job; finished: BOOLEAN; exitCode: SIGNED32);
+VAR line, key: Path; bad, good, expected: BOOLEAN;
 BEGIN
-	NEW(arguments, 6);
-	arguments[0] := Strings.NewString("ob");
-	arguments[1] := Strings.NewString("test-case");
-	arguments[2] := Strings.NewString(testScratch);
-	arguments[3] := Strings.NewString(entry);
-	IF testRun THEN arguments[4] := Strings.NewString("run") ELSE arguments[4] := Strings.NewString("compile") END;
-	(* The target, so that the child compiles for it and knows whether it may load what it built.
-	   Everything else about running for another architecture the child resolves for itself. *)
-	arguments[5] := Strings.NewString(testTarget);
-
-	(* A file descriptor is released when the File that held it is collected, and a run of six
-	   thousand cases would otherwise reach the limit long before the collector had a reason to
-	   run. Every so often, give it one. *)
-	INC(sinceCollection);
-	IF sinceCollection >= 200 THEN Kernel.GC; sinceCollection := 0 END;
-
-	finished := RunProgram(testSelf, arguments, caseLimit, exitCode);
 	bad := ~finished OR (exitCode # 0);
-	good := (kind = "positive") & ~bad OR (kind = "negative") & bad;
+	good := (job.current.kind = "positive") & ~bad OR (job.current.kind = "negative") & bad;
 
-	key := ""; Strings.Append(key, testFile); Strings.AppendChar(key, 9X);
-	Strings.Append(key, kind); Strings.Append(key, ": "); Strings.Append(key, name);
+	key := ""; Strings.Append(key, job.chunk.name); Strings.AppendChar(key, 9X);
+	Strings.Append(key, job.current.kind); Strings.Append(key, ": ");
+	Strings.Append(key, job.current.name);
 	expected := HasKey(baseline, key);
 
 	IF good & ~expected THEN
-		INC(passedCases); line := "  ok    "; Strings.Append(line, kind);
-		Strings.Append(line, ": "); Strings.Append(line, name); Say(line);
-		IF testVerbose THEN ShowCaseLog END;
-		RecordCase("ok", kind, name)
+		INC(passedCases); line := "  ok    "; Strings.Append(line, job.current.kind);
+		Strings.Append(line, ": "); Strings.Append(line, job.current.name); Tell(job, line);
+		IF testVerbose THEN ShowCaseLog(job) END;
+		RecordCase(job, "ok", job.current.kind, job.current.name)
 	ELSIF good THEN
-		INC(fixedCases); line := "  FIXED "; Strings.Append(line, kind);
-		Strings.Append(line, ": "); Strings.Append(line, name);
-		Strings.Append(line, "  (passes now — remove it from the baseline)"); Say(line);
-		RecordCase("fixed", kind, name);
-		Annotate("warning", kind, name)
+		INC(fixedCases); line := "  FIXED "; Strings.Append(line, job.current.kind);
+		Strings.Append(line, ": "); Strings.Append(line, job.current.name);
+		Strings.Append(line, "  (passes now — remove it from the baseline)"); Tell(job, line);
+		RecordCase(job, "fixed", job.current.kind, job.current.name);
+		Annotate(job, "warning", job.current.kind, job.current.name)
 	ELSIF expected THEN
-		INC(knownCases); line := "  known "; Strings.Append(line, kind);
-		Strings.Append(line, ": "); Strings.Append(line, name); Say(line);
-		IF testVerbose THEN ShowCaseLog END;
-		RecordCase("known", kind, name)
+		INC(knownCases); line := "  known "; Strings.Append(line, job.current.kind);
+		Strings.Append(line, ": "); Strings.Append(line, job.current.name); Tell(job, line);
+		IF testVerbose THEN ShowCaseLog(job) END;
+		RecordCase(job, "known", job.current.kind, job.current.name)
 	ELSE
 		INC(failedCases); AddKey(newFailures, key);
-		line := "  FAIL  "; Strings.Append(line, kind);
-		Strings.Append(line, ": "); Strings.Append(line, name);
+		line := "  FAIL  "; Strings.Append(line, job.current.kind);
+		Strings.Append(line, ": "); Strings.Append(line, job.current.name);
 		IF ~finished THEN
-			IF ObHost.spawnError # 0 THEN
+			IF job.spawnFault # 0 THEN
 				(* The case never started, which is not the case failing. Said apart because it
 				   reads as a defect in the code under test and is a defect in the machine. *)
 				Strings.Append(line, "  (could not be started: error ");
-				Strings.AppendInt(line, ObHost.spawnError); Strings.AppendChar(line, ')')
+				Strings.AppendInt(line, job.spawnFault); Strings.AppendChar(line, ')')
 			ELSE
 				Strings.Append(line, "  (did not come back)")
 			END
 		END;
-		Say(line); ShowCaseLog;
-		RecordCase("failed", kind, name);
-		Annotate("error", kind, name)
+		Tell(job, line); ShowCaseLog(job);
+		RecordCase(job, "failed", job.current.kind, job.current.name);
+		Annotate(job, "error", job.current.kind, job.current.name)
 	END
-END RunCase;
+END Verdict;
 
-(* The case body, as the child will find it, and the modules it declares. *)
-PROCEDURE WriteCase(body: Streams.Buffer; modules: Strings.StringArray; count: SIZE;
-		VAR entry: ARRAY OF CHAR): BOOLEAN;
-VAR path: Path; text: Strings.String; index: SIZE; ignore: BOOLEAN;
+(* The case body, as the child will find it, in the job's own directory. *)
+PROCEDURE WriteCase(job: Job; case: TestCase): BOOLEAN;
+VAR path: Path; index: SIZE; ignore: BOOLEAN;
 BEGIN
-	IF count = 0 THEN RETURN FALSE END;
-	(* start Test when the case declares it, which is the convention, else the last module *)
-	COPY(modules[count-1]^, entry);
-	FOR index := 0 TO count-1 DO
-		IF modules[index]^ = "Test" THEN entry := "Test" END
-	END;
 	(* drop only THIS case's own artifacts, so a compile failure cannot be masked by a stale
 	   object; earlier cases' modules stay, because the test files build up helpers in one case
 	   and import them in later ones *)
-	FOR index := 0 TO count-1 DO
-		Join(testScratch, modules[index]^, path); Strings.AppendChar(path, '.');
+	FOR index := 0 TO case.count-1 DO
+		Join(job.scratch, case.modules[index]^, path); Strings.AppendChar(path, '.');
 		Strings.Append(path, testObject); ignore := ObHost.Remove(path);
-		Join(testScratch, modules[index]^, path); Strings.Append(path, testSymbol);
+		Join(job.scratch, case.modules[index]^, path); Strings.Append(path, testSymbol);
 		ignore := ObHost.Remove(path)
 	END;
 	(* Written through ObHost rather than through Files, and this is the difference between a run
@@ -1859,10 +1946,8 @@ BEGIN
 	   collector finalises it, Files.File.Close is abstract and does nothing on Unix, and there is
 	   one of these per case. When the descriptors run out, Files.New quietly returns NIL and every
 	   later case is reported as having no MODULE in it -- 4240 of them, in the run that found it. *)
-	Join(testScratch, "TesterInput.txt", path);
-	text := body.GetString();
-	IF text = NIL THEN Die("the case body could not be read back"); RETURN FALSE END;
-	IF ~ObHost.WriteFile(path, text^) THEN DieOn("cannot write ", path); RETURN FALSE END;
+	Join(job.scratch, "TesterInput.txt", path);
+	IF ~ObHost.WriteFile(path, case.body^) THEN DieOn("cannot write ", path); RETURN FALSE END;
 	RETURN TRUE
 END WriteCase;
 
@@ -1878,11 +1963,12 @@ END CaseSelected;
 (* A file may carry harness settings on a `# options` line. Two of them matter: a prolog asking
    for another target cannot work against this SDK's symbol files, and a command with no
    System.Load means the file only checks that things compile. *)
-PROCEDURE ReadFileOptions(CONST line: ARRAY OF CHAR; VAR skip: BOOLEAN);
+PROCEDURE ReadFileOptions(CONST line: ARRAY OF CHAR; VAR execute, skip: BOOLEAN;
+		VAR message: ARRAY OF CHAR);
 VAR flags: Path; start, stop: SIZE;
 BEGIN
-	skip := FALSE; testRun := TRUE;
-	IF Strings.Pos("System.Load", line) < 0 THEN testRun := FALSE END;
+	skip := FALSE; execute := TRUE;
+	IF Strings.Pos("System.Load", line) < 0 THEN execute := FALSE END;
 	start := Strings.Pos("Compiler.Compile", line);
 	IF start < 0 THEN RETURN END;
 	INC(start, 16);
@@ -1891,71 +1977,108 @@ BEGIN
 	Strings.Copy(line, start, stop - start, flags);
 	Strings.TrimLeft(flags, ' ');
 	IF Strings.Pos("-p=", flags) >= 0 THEN
-		out.String("  SKIP  whole file: it names its own target ("); out.String(flags);
-		out.String("), which is not the one being tested"); EndLine(out);
+		COPY("  SKIP  whole file: it names its own target (", message);
+		Strings.Append(message, flags);
+		Strings.Append(message, "), which is not the one being tested");
 		skip := TRUE
 	END
 END ReadFileOptions;
 
-PROCEDURE RunTestFile(CONST file: ARRAY OF CHAR);
-VAR handle: Files.File; reader: Files.Reader; line, kind, name, entry, nextKind, nextName: Path;
-	body: Streams.Buffer; writer: Streams.Writer; modules: Strings.StringArray;
-	count, position, length: SIZE; skip, pending: BOOLEAN;
+(* Every name in an IMPORT clause, which may run over several lines. Read generously: a name too
+   many costs one replayed case, a name too few costs a case that cannot find what it imports. *)
+PROCEDURE ReadImports(case: TestCase; CONST line: ARRAY OF CHAR; VAR inside: BOOLEAN);
+VAR position, start: SIZE; word: Path;
 
-	PROCEDURE Flush;
+	PROCEDURE Letter(character: CHAR): BOOLEAN;
 	BEGIN
-		(* Whether a file's cases execute is settled by its `# options` line, which is read before
-		   the first case -- so the first case is the earliest this can be known. Compiled for
-		   another architecture with nothing able to run it, they are skipped: reporting them on
-		   no evidence is the one outcome worse than not running them. *)
-		IF pending & testRun & (testTarget # HostTarget) & (testEmulator = "") THEN
-			out.String("  SKIP  whole file: its cases execute, and nothing here can execute ");
-			out.String(testPlatform); out.String(" code"); EndLine(out);
-			skip := TRUE; pending := FALSE; RETURN
-		END;
-		IF pending & CaseSelected(name) THEN
-			writer.Update;
-			IF WriteCase(body, modules, count, entry) THEN
-				RunCase(kind, name, entry); INC(totalCases)
-			ELSE
-				out.String("  SKIP  "); out.String(name); out.String(" (no MODULE in case)");
-				EndLine(out); RecordCase("skipped", kind, name)
+		RETURN ((character >= 'A') & (character <= 'Z')) OR ((character >= 'a') & (character <= 'z'))
+			OR (character = '_')
+	END Letter;
+
+BEGIN
+	position := 0;
+	IF ~inside THEN
+		position := Strings.Pos("IMPORT", line);
+		IF position < 0 THEN RETURN END;
+		INC(position, 6); inside := TRUE
+	END;
+	WHILE (line[position] # 0X) & (line[position] # ';') DO
+		IF Letter(line[position]) THEN
+			start := position;
+			WHILE Letter(line[position]) OR ((line[position] >= '0') & (line[position] <= '9')) DO
+				INC(position)
+			END;
+			IF case.importCount < LEN(case.imports^) THEN
+				Strings.Copy(line, start, position - start, word);
+				case.imports[case.importCount] := Strings.NewString(word); INC(case.importCount)
+			END
+		ELSE
+			INC(position)
+		END
+	END;
+	IF line[position] = ';' THEN inside := FALSE END
+END ReadImports;
+
+(*
+	Read one file into cases. FALSE when the file is skipped as a whole -- with the reason in
+	message, which the run prints where it would have printed the cases.
+*)
+PROCEDURE ParseTestFile(CONST file: ARRAY OF CHAR; VAR cases: TestCase; VAR count: SIZE;
+		VAR execute: BOOLEAN; VAR message: ARRAY OF CHAR): BOOLEAN;
+VAR handle: Files.File; reader: Files.Reader; line, word: Path;
+	body: Streams.Buffer; writer: Streams.Writer; modules: Strings.StringArray;
+	case, last: TestCase; modent, position, length, index: SIZE; skip, lost, inImport: BOOLEAN;
+
+	PROCEDURE Close;
+	BEGIN
+		IF case = NIL THEN RETURN END;
+		writer.Update; case.body := body.GetString();
+		IF case.body = NIL THEN case.body := Strings.NewString(""); lost := TRUE END;
+		case.modules := modules; case.count := modent;
+		IF modent > 0 THEN
+			(* start Test when the case declares it, which is the convention, else the last module *)
+			COPY(modules[modent-1]^, case.entry);
+			FOR index := 0 TO modent-1 DO
+				IF modules[index]^ = "Test" THEN case.entry := "Test" END
 			END
 		END;
-		pending := FALSE
-	END Flush;
+		case.index := count; INC(count);
+		IF cases = NIL THEN cases := case ELSE last.next := case END;
+		last := case; case := NIL
+	END Close;
 
-	PROCEDURE Begin(CONST newKind, newName: ARRAY OF CHAR);
+	PROCEDURE Begin(CONST kind, name: ARRAY OF CHAR);
 	BEGIN
-		COPY(newKind, kind); COPY(newName, name); Strings.Trim(name, ' ');
+		Close;
+		NEW(case); case.next := NIL; COPY(kind, case.kind);
+		COPY(name, case.name); Strings.Trim(case.name, ' '); case.entry := "";
 		NEW(body, 4096); writer := body.GetWriter();
-		NEW(modules, 64); count := 0; pending := TRUE
+		NEW(modules, 64); modent := 0;
+		NEW(case.imports, 64); case.importCount := 0; case.needs := NIL;
+		inImport := FALSE
 	END Begin;
 
 BEGIN
-	BaseName(file, testFile);
-	line := "=== "; Strings.Append(line, testFile); Say(line);
+	cases := NIL; count := 0; execute := TRUE; COPY("", message);
+	case := NIL; last := NIL; skip := FALSE; lost := FALSE; inImport := FALSE;
 	handle := Files.Old(file);
-	IF handle = NIL THEN DieOn("no such file: ", file); RETURN END;
+	IF handle = NIL THEN DieOn("no such file: ", file); RETURN FALSE END;
 	Files.OpenReader(reader, handle, 0);
-	testRun := TRUE; pending := FALSE; skip := FALSE;
 	WHILE (reader.res = Streams.Ok) & ~skip DO
 		reader.Ln(line); Strings.Trim(line, 0DX);
 		IF Strings.Pos("positive:", line) = 0 THEN
-			Flush; Strings.Copy(line, 9, Strings.Length(line) - 9, nextName); Begin("positive", nextName)
+			Strings.Copy(line, 9, Strings.Length(line) - 9, word); Begin("positive", word)
 		ELSIF Strings.Pos("negative:", line) = 0 THEN
-			Flush; Strings.Copy(line, 9, Strings.Length(line) - 9, nextName); Begin("negative", nextName)
+			Strings.Copy(line, 9, Strings.Length(line) - 9, word); Begin("negative", word)
 		ELSIF (line # "") & (line[0] = '#') THEN
-			IF Strings.Pos("options", line) > 0 THEN
-				ReadFileOptions(line, skip);
-				IF skip THEN RETURN END
-			END
-		ELSIF pending THEN
+			IF Strings.Pos("options", line) > 0 THEN ReadFileOptions(line, execute, skip, message) END
+		ELSIF case # NIL THEN
 			writer.String(line); writer.Char(0AX);
+			ReadImports(case, line, inImport);
 			(* a MODULE header inside the case: the module this case declares *)
 			position := 0;
 			WHILE (line[position] = ' ') OR (line[position] = 9X) DO INC(position) END;
-			IF (Strings.Pos("MODULE ", line) = position) & (count < LEN(modules^)) THEN
+			IF (Strings.Pos("MODULE ", line) = position) & (modent < LEN(modules^)) THEN
 				INC(position, 7);
 				WHILE line[position] = ' ' DO INC(position) END;
 				length := position;
@@ -1964,15 +2087,378 @@ BEGIN
 						OR ((line[length] >= '0') & (line[length] <= '9'))
 						OR (line[length] = '_') DO INC(length) END;
 				IF length > position THEN
-					Strings.Copy(line, position, length - position, nextKind);
-					modules[count] := Strings.NewString(nextKind); INC(count)
+					Strings.Copy(line, position, length - position, word);
+					modules[modent] := Strings.NewString(word); INC(modent)
 				END
 			END
 		END
 	END;
 	handle.Close;
-	IF ~skip THEN Flush END
-END RunTestFile;
+	IF skip THEN cases := NIL; count := 0; RETURN FALSE END;
+	Close;
+	IF lost THEN Die("the case body could not be read back"); RETURN FALSE END;
+	(* Whether a file's cases execute is settled by its `# options` line. Compiled for another
+	   architecture with nothing able to run them, they are skipped: reporting them on no evidence
+	   is the one outcome worse than not running them. *)
+	IF (cases # NIL) & execute & (testTarget # HostTarget) & (testEmulator = "") THEN
+		COPY("  SKIP  whole file: its cases execute, and nothing here can execute ", message);
+		Strings.Append(message, testPlatform); Strings.Append(message, " code");
+		cases := NIL; count := 0; RETURN FALSE
+	END;
+	RETURN TRUE
+END ParseTestFile;
+
+(* --- what a chunk has to bring with it --------------------------------------------------- *)
+
+PROCEDURE HashName(CONST name: ARRAY OF CHAR): SIZE;
+VAR value, index: SIZE;
+BEGIN
+	value := 0; index := 0;
+	WHILE name[index] # 0X DO
+		value := (value * 31 + ORD(name[index])) MOD DeclarationTableSize; INC(index)
+	END;
+	RETURN value
+END HashName;
+
+PROCEDURE ClearDeclarations;
+VAR index: SIZE;
+BEGIN FOR index := 0 TO DeclarationTableSize-1 DO declarations[index] := NIL END
+END ClearDeclarations;
+
+(* The last case before this point that declared the module, NIL when nothing did. *)
+PROCEDURE DeclaredBy(CONST name: ARRAY OF CHAR): TestCase;
+VAR entry: Declaration;
+BEGIN
+	entry := declarations[HashName(name)];
+	WHILE entry # NIL DO
+		IF entry.name = name THEN RETURN entry.case END;
+		entry := entry.next
+	END;
+	RETURN NIL
+END DeclaredBy;
+
+PROCEDURE Declare(CONST name: ARRAY OF CHAR; case: TestCase);
+VAR entry: Declaration; slot: SIZE;
+BEGIN
+	slot := HashName(name); entry := declarations[slot];
+	WHILE entry # NIL DO
+		IF entry.name = name THEN entry.case := case; RETURN END;
+		entry := entry.next
+	END;
+	NEW(entry); COPY(name, entry.name); entry.case := case;
+	entry.next := declarations[slot]; declarations[slot] := entry
+END Declare;
+
+PROCEDURE DeclaresItself(case: TestCase; CONST name: ARRAY OF CHAR): BOOLEAN;
+VAR index: SIZE;
+BEGIN
+	FOR index := 0 TO case.count-1 DO
+		IF case.modules[index]^ = name THEN RETURN TRUE END
+	END;
+	RETURN FALSE
+END DeclaresItself;
+
+(* Add a case to a list kept in the order the cases are in the file. FALSE when it was already
+   there, which is what stops the closure below from going round for ever. *)
+PROCEDURE AddLink(VAR list: CaseLink; case: TestCase): BOOLEAN;
+VAR entry, item: CaseLink;
+BEGIN
+	IF (list = NIL) OR (list.case.index > case.index) THEN
+		NEW(entry); entry.case := case; entry.next := list; list := entry; RETURN TRUE
+	END;
+	item := list;
+	WHILE (item.next # NIL) & (item.next.case.index <= case.index) DO item := item.next END;
+	IF item.case = case THEN RETURN FALSE END;
+	NEW(entry); entry.case := case; entry.next := item.next; item.next := entry;
+	RETURN TRUE
+END AddLink;
+
+(* Which earlier case of this file declares what each case imports. *)
+PROCEDURE FindDependencies(cases: TestCase);
+VAR case, provider: TestCase; index: SIZE; ignore: BOOLEAN;
+BEGIN
+	ClearDeclarations;
+	case := cases;
+	WHILE case # NIL DO
+		case.needs := NIL;
+		FOR index := 0 TO case.importCount-1 DO
+			IF ~DeclaresItself(case, case.imports[index]^) THEN
+				provider := DeclaredBy(case.imports[index]^);
+				IF provider # NIL THEN ignore := AddLink(case.needs, provider) END
+			END
+		END;
+		FOR index := 0 TO case.count-1 DO Declare(case.modules[index]^, case) END;
+		case := case.next
+	END;
+	ClearDeclarations
+END FindDependencies;
+
+(* The cases before this chunk that it cannot do without, transitively and in file order. A case the
+   -r filter drops is not replayed: the sequential run would not have run it either. *)
+PROCEDURE PlanReplay(first: TestCase; count, start: SIZE): CaseLink;
+VAR list, item: CaseLink; case: TestCase; need: CaseLink; index: SIZE; added: BOOLEAN;
+
+	PROCEDURE Want(case: TestCase);
+	BEGIN
+		IF (case.index < start) & CaseSelected(case.name) & AddLink(list, case) THEN added := TRUE END
+	END Want;
+
+BEGIN
+	list := NIL; case := first;
+	FOR index := 0 TO count-1 DO
+		need := case.needs;
+		WHILE need # NIL DO Want(need.case); need := need.next END;
+		case := case.next
+	END;
+	(* A replayed case may itself need an earlier one, and that one is inserted before it -- so the
+	   list is walked again until a pass adds nothing. It is a handful of cases; this is not a cost. *)
+	REPEAT
+		added := FALSE; item := list;
+		WHILE item # NIL DO
+			need := item.case.needs;
+			WHILE need # NIL DO Want(need.case); need := need.next END;
+			item := item.next
+		END
+	UNTIL ~added;
+	RETURN list
+END PlanReplay;
+
+(*
+	Plan one file: its cases, cut into chunks of at most `size`, each with what it has to replay.
+	A file that is skipped whole still gets a chunk, so that the run says so in the right place.
+*)
+PROCEDURE PlanFile(CONST file: ARRAY OF CHAR; pieces: SIZE; VAR list, last: Chunk; VAR total: SIZE);
+CONST Smallest = 32;			(* below this a chunk is all overhead: a directory to fill, cases to replay *)
+VAR cases, case: TestCase; count, size, taken: SIZE; execute, header: BOOLEAN;
+	message, name: Path; chunk: Chunk;
+
+	PROCEDURE Add(first: TestCase; count: SIZE): Chunk;
+	VAR piece: Chunk;
+	BEGIN
+		NEW(piece); piece.next := NIL; COPY(name, piece.name); piece.header := header;
+		COPY(message, piece.message); piece.execute := execute;
+		piece.first := first; piece.count := count; piece.replay := NIL;
+		piece.index := total; INC(total);
+		header := FALSE; message := "";
+		IF list = NIL THEN list := piece ELSE last.next := piece END;
+		last := piece;
+		RETURN piece
+	END Add;
+
+BEGIN
+	BaseName(file, name); header := TRUE; message := "";
+	IF ~ParseTestFile(file, cases, count, execute, message) THEN
+		(* Skipped whole, or not there at all -- either way the file is still announced, and the
+		   reason with it. *)
+		chunk := Add(NIL, 0); RETURN
+	END;
+	size := (count + pieces - 1) DIV pieces;
+	IF size < Smallest THEN size := Smallest END;
+	IF size < count THEN FindDependencies(cases) END;
+	case := cases;
+	WHILE case # NIL DO
+		taken := 0;
+		chunk := Add(case, 0);
+		WHILE (case # NIL) & (taken < size) DO case := case.next; INC(taken) END;
+		chunk.count := taken;
+		IF chunk.first.index > 0 THEN
+			chunk.replay := PlanReplay(chunk.first, taken, chunk.first.index)
+		END
+	END
+END PlanFile;
+
+(* --- running them ------------------------------------------------------------------------ *)
+
+PROCEDURE SpawnCase(job: Job; run: BOOLEAN): ADDRESS;
+VAR arguments: Strings.StringArray;
+BEGIN
+	NEW(arguments, 6);
+	arguments[0] := Strings.NewString("ob");
+	arguments[1] := Strings.NewString("test-case");
+	arguments[2] := Strings.NewString(job.scratch);
+	arguments[3] := Strings.NewString(job.current.entry);
+	IF run THEN arguments[4] := Strings.NewString("run")
+	ELSE arguments[4] := Strings.NewString("compile")
+	END;
+	(* The target, so that the child compiles for it and knows whether it may load what it built.
+	   Everything else about running for another architecture the child resolves for itself. *)
+	arguments[5] := Strings.NewString(testTarget);
+	RETURN ObHost.Spawn(testSelf, arguments)
+END SpawnCase;
+
+PROCEDURE StartCase(job: Job; run: BOOLEAN): BOOLEAN;
+BEGIN
+	job.process := SpawnCase(job, run); job.spawnFault := ObHost.spawnError;
+	IF job.process = 0 THEN RETURN FALSE END;
+	Kernel.SetTimer(job.deadline, caseLimit);
+	RETURN TRUE
+END StartCase;
+
+(* Finished with this chunk: what it said and what it recorded are kept as one block, to be printed
+   when every chunk before it has been. *)
+PROCEDURE FinishChunk(job: Job);
+VAR block: Block;
+BEGIN
+	NEW(block); block.records := job.records; block.text := NIL;
+	IF job.buffered THEN job.writer.Update; block.text := job.buffer.GetString() END;
+	blocks[job.chunk.index] := block;
+	job.busy := FALSE; job.current := NIL; job.pending := NIL; job.remaining := 0;
+	job.records := NIL; job.lastRecord := NIL
+END FinishChunk;
+
+(* Start the next case of this job's chunk -- replaying the ones it depends on first -- or end the
+   chunk when there is none left. *)
+PROCEDURE Advance(job: Job);
+VAR line: Path; started: BOOLEAN;
+BEGIN
+	LOOP
+		IF job.replay # NIL THEN
+			job.current := job.replay.case; job.replay := job.replay.next; job.replaying := TRUE;
+			(* Compiled, never run: all this case is here for is what it leaves in the directory.
+			   Nothing is reported and nothing is counted -- it was judged where it belongs. *)
+			IF (job.current.count > 0) & WriteCase(job, job.current) & StartCase(job, FALSE) THEN
+				RETURN
+			END
+		ELSIF job.remaining > 0 THEN
+			job.replaying := FALSE;
+			job.current := job.pending; job.pending := job.pending.next; DEC(job.remaining);
+			started := FALSE;
+			IF ~CaseSelected(job.current.name) THEN				(* -r dropped it *)
+			ELSIF job.current.count = 0 THEN
+				line := "  SKIP  "; Strings.Append(line, job.current.name);
+				Strings.Append(line, " (no MODULE in case)"); Tell(job, line);
+				RecordCase(job, "skipped", job.current.kind, job.current.name)
+			ELSIF WriteCase(job, job.current) THEN
+				INC(totalCases);
+				(* A file descriptor is released when the File that held it is collected, and a run
+				   of six thousand cases would otherwise reach the limit long before the collector
+				   had a reason to run. Every so often, give it one. *)
+				INC(sinceCollection);
+				IF sinceCollection >= 200 THEN Kernel.GC; sinceCollection := 0 END;
+				started := StartCase(job, job.chunk.execute);
+				IF ~started THEN
+					Verdict(job, FALSE, 0)			(* it never started, which is not the case failing *)
+				END
+			END;
+			IF started THEN RETURN END
+		ELSE
+			EXIT
+		END
+	END;
+	FinishChunk(job)
+END Advance;
+
+(* One step of a job that holds a chunk: TRUE when the case in flight settled and the next one
+   started, FALSE when it is still running and the parent has nothing to do here. *)
+PROCEDURE StepJob(job: Job): BOOLEAN;
+VAR exitCode: SIGNED32; done: BOOLEAN;
+BEGIN
+	IF job.process = 0 THEN RETURN FALSE END;
+	done := ObHost.Finished(job.process, exitCode);
+	IF ~done THEN
+		IF ~Kernel.Expired(job.deadline) THEN RETURN FALSE END;
+		ObHost.Terminate(job.process); exitCode := 0
+	END;
+	job.process := 0;
+	IF ~job.replaying THEN Verdict(job, done, exitCode) END;
+	Advance(job);
+	RETURN TRUE
+END StepJob;
+
+(* Empty a job's directory and put back what every chunk starts from. The image is left where it is:
+   nothing writes to it, and it is the one file here big enough for copying it per chunk to show. *)
+PROCEDURE ResetScratch(job: Job): BOOLEAN;
+VAR handle: ADDRESS; name, path: Path; ignore: BOOLEAN;
+BEGIN
+	handle := ObHost.OpenDirectory(job.scratch);
+	IF handle # 0 THEN
+		WHILE ObHost.NextEntry(handle, name) DO
+			IF (name # ".") & (name # "..") & (name # seedKeep) THEN
+				Join(job.scratch, name, path); ignore := ObHost.Remove(path)
+			END
+		END;
+		ObHost.CloseDirectory(handle)
+	END;
+	RETURN SeedScratch(testScratch, job.scratch)
+END ResetScratch;
+
+PROCEDURE TakeChunk(job: Job; chunk: Chunk);
+VAR line: Path;
+BEGIN
+	job.busy := TRUE; job.chunk := chunk;
+	job.records := NIL; job.lastRecord := NIL; job.process := 0; job.spawnFault := 0;
+	IF job.buffered THEN
+		NEW(job.buffer, 4096); job.writer := job.buffer.GetWriter();
+		IF ~ResetScratch(job) THEN DieOn("cannot prepare a job directory: ", job.scratch) END
+	END;
+	IF chunk.header THEN line := "=== "; Strings.Append(line, chunk.name); Tell(job, line) END;
+	IF chunk.message # "" THEN Tell(job, chunk.message) END;
+	job.replay := chunk.replay; job.pending := chunk.first; job.remaining := chunk.count;
+	Advance(job)
+END TakeChunk;
+
+(*
+	The run itself. One chunk per job in flight, each stepped in turn; a job with nothing to report
+	costs a poll, and when no job moved at all the parent sleeps rather than spinning a core that a
+	case could be using. Chunks are printed in the order they were planned, however they finish.
+*)
+PROCEDURE RunChunks(chunks: Chunk; count: SIZE; jobs: SIGNED32);
+VAR pool: POINTER TO ARRAY OF Job; job: Job; block: Block; timer: Kernel.Timer; image: Path;
+	printed: SIZE; index, tick: SIGNED32; moved: BOOLEAN;
+BEGIN
+	(* How long the parent sleeps when no job moved. One job waits on one case, as it always did;
+	   with several, this is the latency between a case ending and the next one starting, once per
+	   case and on every job -- 20ms of it is a core's worth of the run. *)
+	IF jobs > 1 THEN tick := 5 ELSE tick := 20 END;
+	NEW(blocks, count);
+	seedKeep := "";
+	IF testEmulator # "" THEN EmulatorImage(testScratch, image); BaseName(image, seedKeep) END;
+	NEW(pool, jobs);
+	FOR index := 0 TO jobs-1 DO
+		NEW(job); job.busy := FALSE; job.buffered := jobs > 1;
+		COPY(testScratch, job.scratch);
+		IF job.buffered THEN
+			(* A directory of its own, beside the prepared one rather than inside it, and seeded
+			   from it: the siblings compiled for the cases to import, and the image cases are
+			   executed in when they are not this machine's code. *)
+			Strings.Append(job.scratch, "-j"); Strings.AppendInt(job.scratch, index);
+			IF ~MakePath(job.scratch) THEN
+				DieOn("cannot make a job directory: ", job.scratch); RETURN
+			END
+		ELSE
+			job.writer := out
+		END;
+		pool[index] := job
+	END;
+
+	NEW(timer); printed := 0;
+	WHILE printed < count DO
+		moved := FALSE;
+		FOR index := 0 TO jobs-1 DO
+			job := pool[index];
+			IF ~job.busy & (chunks # NIL) THEN
+				TakeChunk(job, chunks); chunks := chunks.next; moved := TRUE
+			END;
+			IF StepJob(job) THEN moved := TRUE END
+		END;
+		WHILE (printed < count) & (blocks[printed] # NIL) DO
+			block := blocks[printed]; blocks[printed] := NIL; INC(printed);
+			IF block.text # NIL THEN out.String(block.text^); out.Update END;
+			IF block.records # NIL THEN
+				IF caseRecords = NIL THEN caseRecords := block.records
+				ELSE lastCaseRecord.next := block.records
+				END;
+				lastCaseRecord := block.records;
+				WHILE lastCaseRecord.next # NIL DO lastCaseRecord := lastCaseRecord.next END
+			END;
+			moved := TRUE
+		END;
+		IF ~moved THEN timer.Sleep(tick) END
+	END;
+	IF jobs > 1 THEN
+		FOR index := 0 TO jobs-1 DO DiscardScratch(pool[index].scratch) END
+	END
+END RunChunks;
 
 PROCEDURE WriteReport(CONST file: ARRAY OF CHAR);
 VAR handle: Files.File; writer: Files.Writer; record: CaseRecord; first: BOOLEAN; line: Path;
@@ -2154,15 +2640,21 @@ BEGIN
 END TestCaseVerb;
 
 PROCEDURE TestVerb;
+CONST MaxJobs = 64;
 VAR argument, target, expect, write, entry, path, line: Path;
-	files: Strings.StringArray; count, index: SIZE; handle: ADDRESS;
+	files: Strings.StringArray; count, index, chunkCount: SIZE; handle: ADDRESS; jobs: SIGNED32;
+	chunks, lastChunk: Chunk;
 BEGIN
 	testVerbose := FALSE; testFilter := ""; testReport := ""; expect := ""; write := "";
-	COPY(HostTarget, target);
+	COPY(HostTarget, target); jobs := 1;
 	testGithub := ObHost.Env("GITHUB_ACTIONS", line) & (line = "true");
 	NEW(files, 256); count := 0;
 	WHILE NextArgument(argument) DO
 		IF (argument = "-v") OR (argument = "--verbose") THEN testVerbose := TRUE
+		ELSIF (argument = "-j") OR (argument = "--jobs") THEN
+			IF ~NextArgument(line) THEN Die("-j needs a number of files to run at a time"); RETURN END;
+			jobs := ToInteger(line, 0);
+			IF (jobs < 1) OR (jobs > MaxJobs) THEN DieOn("-j takes 1 to 64: ", line); RETURN END
 		ELSIF (argument = "-t") OR (argument = "--target") THEN
 			IF ~NextArgument(target) THEN Die("-t needs a target"); RETURN END
 		ELSIF (argument = "-r") OR (argument = "--run") THEN
@@ -2221,9 +2713,25 @@ BEGIN
 	(* Only now, because the image is linked into the scratch directory. *)
 	PrepareEmulator;
 
+	(*
+		How finely the case lists are cut. One piece per file leaves the run as long as its longest
+		file -- and 5450 of this tree's 6965 cases are in one -- so with jobs to fill there are
+		several pieces per job: the tail of the run is then one chunk long rather than one file.
+	*)
+	chunks := NIL; lastChunk := NIL; chunkCount := 0;
+	FOR index := 0 TO count-1 DO
+		PlanFile(files[index]^, SIZE(4 * jobs), chunks, lastChunk, chunkCount)
+	END;
+	IF jobs > 1 THEN
+		line := "ob test: "; Strings.AppendInt(line, jobs);
+		Strings.Append(line, " at a time, in "); Strings.AppendInt(line, SIGNED32(chunkCount));
+		Strings.Append(line, " piece(s); each piece is printed when it ends");
+		Say(line)
+	END;
+
 	totalCases := 0; sinceCollection := 0; passedCases := 0; failedCases := 0; knownCases := 0; fixedCases := 0;
-	newFailures := NIL; caseRecords := NIL;
-	FOR index := 0 TO count-1 DO RunTestFile(files[index]^) END;
+	newFailures := NIL; caseRecords := NIL; lastCaseRecord := NIL;
+	RunChunks(chunks, chunkCount, jobs);
 	DiscardScratch(testScratch);
 
 	Say("");
@@ -2294,7 +2802,7 @@ BEGIN
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
 	Say("  ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin them, resolve deps");
-	Say("  ob test [File.Test ...] [-v]       run test files (default: every *.Test here)");
+	Say("  ob test [File.Test ...] [-v] [-j N] run test files (default: every *.Test here)");
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
@@ -2302,7 +2810,7 @@ BEGIN
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("Still served by the shell version: ob test for another architecture.")
+	Say("ob test -j N runs N test files at a time; -t names another architecture.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)

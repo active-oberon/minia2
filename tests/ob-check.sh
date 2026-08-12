@@ -232,6 +232,23 @@ case "$(cat "$work/test-baseline.txt")" in
 esac
 rm -f "$suite/a2test-expected.txt"
 
+# -j: the same run, in pieces, at the same time. The point of the check is that the transcript is
+# the same one -- the verdicts, in the same order, under a header line saying how it was divided.
+# Files.Test is in here on purpose: its cases build helper modules and import them from later ones,
+# which is what a chunk has to bring with it when it starts in a directory of its own.
+cp "$root/tests/Files.Test" "$suite/"
+( cd "$suite"
+  rc=0; "$ob" test -j 1 > "$work/test-j1.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/test-j1.txt"
+  rc=0; "$ob" test -j 4 > "$work/test-j4.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/test-j4.txt" )
+if ! grep -q '^ob test: 4 at a time, in [0-9]* piece' "$work/test-j4.txt"; then
+	echo "FAIL  test -j 4 did not divide the run"; sed 's/^/        /' "$work/test-j4.txt" | head -5; fail=1
+elif diff -u "$work/test-j1.txt" <(grep -v '^ob test: 4 at a time' "$work/test-j4.txt") > "$work/j.diff"; then
+	echo "ok    test -j 4 reads exactly like test -j 1"
+else
+	echo "FAIL  test -j 4 differs from a sequential run"; sed 's/^/        /' "$work/j.diff" | head -40; fail=1
+fi
+rm -f "$suite/Files.Test"
+
 # A report is what CI reads; it has to be JSON and it has to have every case in it.
 ( cd "$suite"; "$ob" test JSON.Test --report report.json >/dev/null 2>&1 || true )
 if [ -f "$suite/report.json" ] && grep -q '"cases"' "$suite/report.json" \
