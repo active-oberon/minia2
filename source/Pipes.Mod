@@ -83,7 +83,7 @@ TYPE ReadDecoupler*= OBJECT
 		inputReceiver: Receiver;
 		smallbuf: ARRAY 128 OF CHAR;
 		len: SIZE;
-		res: INTEGER;
+		res, sendRes: INTEGER;
 
 	PROCEDURE &InitReadDecoupler*(inputReceiver: Receiver);
 	BEGIN
@@ -98,10 +98,18 @@ TYPE ReadDecoupler*= OBJECT
 
 BEGIN{ACTIVE}
 		LOOP
-			(*todo: check res, if inputReceiver throws anything but 'OK' exit the loop*)
 			inputReceiver(smallbuf, 0, 128, 1, len, res); (*read at least 1 byte into the small buffer*)
-			pipe.Send(smallbuf, 0, len, FALSE, res);   (*feed the amount read (usually 1 entire line) into the pipe to cross threads*)
+			IF len > 0 THEN
+				(*feed the amount read (usually 1 entire line) into the pipe to cross threads*)
+				pipe.Send(smallbuf, 0, len, FALSE, sendRes);
+				IF sendRes # Ok THEN EXIT END      (*nobody is reading any more*)
+			END;
+			(*	The source ended or broke. Reading it again returns nothing again, so this used to
+				be a loop at a full core for as long as the program lived -- and the reader on the
+				other side of the pipe waited for input that could never come. Both stop here. *)
+			IF res # Ok THEN EXIT END
 		END;
+		pipe.Close;
 END ReadDecoupler;
 
 END Pipes.

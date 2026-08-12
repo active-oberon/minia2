@@ -8,8 +8,8 @@ and ETH's sit in one directory and cannot be told apart by looking.
 | | modules |
 | --- | ---: |
 | ours outright (in no vanilla tree) | 10 |
-| vanilla, changed by us | 31 |
-| vanilla, untouched | 721 |
+| vanilla, changed by us | 33 |
+| vanilla, untouched | 719 |
 
 ## Ours outright
 
@@ -47,6 +47,7 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `Math32.Mod`
 - `Math64.Mod`
 - `Network.Mod`
+- `Pipes.Mod`
 - `Raster.Mod`
 - `Reflection.Mod`
 - `Streams.Mod`
@@ -60,3 +61,4 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `WindowManager.Mod`
 - `Windows.Display.Mod`
 - `Windows.Kernel32.Mod`
+- `Windows.WinTrace.Mod`

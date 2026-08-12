@@ -386,7 +386,16 @@ lsp_input() {
 	frame "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://$project/Bad.Mod\",\"languageId\":\"oberon\",\"version\":1,\"text\":\"MODULE Bad;\\nBEGIN nonsense\\nEND Bad.\\n\"}}}"
 	frame '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
 }
-lsp_output="$(lsp_input | timeout 60 "$ob" lsp 2>&1 || true)"
+# No `exit` notification on purpose: the input simply ends, which is what an editor that dies
+# leaves behind. The server has to notice and go -- it used to read the closed pipe forever at a
+# full core, and this check only passed because the timeout killed it, a minute at a time.
+lsp_status=0
+lsp_output="$(lsp_input | timeout 60 "$ob" lsp 2>&1)" || lsp_status=$?
+case "$lsp_status" in
+	0) echo "ok    lsp left when its client closed the pipe" ;;
+	124) echo "FAIL  lsp kept running after its client closed the pipe"; fail=1 ;;
+	*) echo "FAIL  lsp exited with status $lsp_status"; fail=1 ;;
+esac
 case "$lsp_output" in
 	*'"hoverProvider":true'*) echo "ok    lsp answered initialize" ;;
 	*) echo "FAIL  lsp did not answer initialize"; echo "$lsp_output" | head -c 400 | sed 's/^/        /'; fail=1 ;;
@@ -499,6 +508,20 @@ else
 		case "$(runsdk ob.exe build examples/Hello.Mod -t linux64 -o x)" in
 			*"ships no objects for target linux64"*) echo "ok    it refuses a target it has no objects for" ;;
 			*) echo "FAIL  linux64 from Windows was not refused"; fail=1 ;;
+		esac
+		# The Windows reader of standard input had the same fault as the Unix one, so the
+		# language server has to be seen leaving here too, and not under a timeout.
+		win_lsp=0
+		lsp_input | ( cd "$winout" && WINEDEBUG=-all env -u A2SDK timeout 120 wine ob.exe lsp ) \
+			> "$work/win-lsp.log" 2>&1 || win_lsp=$?
+		case "$win_lsp" in
+			0) if grep -q '"hoverProvider":true' "$work/win-lsp.log"; then
+					echo "ok    ob.exe lsp answered, then left when the pipe closed"
+				else
+					echo "FAIL  ob.exe lsp left without answering"; tail -c 300 "$work/win-lsp.log" | sed 's/^/        /'; fail=1
+				fi ;;
+			124) echo "FAIL  ob.exe lsp kept running after its client closed the pipe"; fail=1 ;;
+			*) echo "FAIL  ob.exe lsp exited with status $win_lsp"; fail=1 ;;
 		esac
 	else
 		echo "FAIL  the Windows bundle did not build"; sed 's/^/        /' "$work/win-bundle.log" | tail -8; fail=1
