@@ -2,9 +2,10 @@
 
 A full editor experience for **A2 / Active Oberon**, with no per-OS toolchain to
 build: the compiler, standard library and a language server ship as one SDK — either
-a **tarball** you unpack (64-bit x86 Linux; nothing installed, no container in the
-loop) or a **Docker image** (`minia2-sdk`, anywhere Docker runs: Linux, macOS, Windows
-via Docker Desktop / WSL2). Your editor talks to it over LSP either way.
+a **tarball** you unpack (64-bit Linux on x86 or ARM, and Windows, where it is `ob.exe`
+and wants no bash; nothing installed, no container in the loop) or a **Docker image**
+(`minia2-sdk`, anywhere Docker runs: Linux, macOS, Windows via Docker Desktop / WSL2).
+Your editor talks to it over LSP either way.
 
 This document covers **installation, editor setup, every feature, and the
 keybindings**. For how the toolchain itself works (`ob run/build/compile`, standalone
@@ -19,6 +20,8 @@ binaries, image internals) see [`docker/README.md`](../docker/README.md).
 **The tarball** — one directory, no daemon, and the shortest path to a working editor:
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/active-oberon/minia2/main/sdk/install.sh | sh
+# ...or by hand, from a release tarball:
 tar xzf minia2-sdk-<version>-linux-amd64.tar.gz
 cd minia2-sdk-<version>-linux-amd64
 ./run.sh --quick                 # does it work? every verb, in about a minute
@@ -60,7 +63,7 @@ alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # for the interact
 | Command | Does |
 |---------|------|
 | `ob run <File.Mod> [Proc]` | compile + execute (`go run` model) |
-| `ob build <File.Mod> [-o name] [-t linux64\|win64] [Proc]` | standalone native executable |
+| `ob build <File.Mod> [-o name] [-t linux64\|win64\|a64] [Proc]` | standalone native executable |
 | `ob compile <File.Mod> [-o dir]` | just the `.GofUu` object file |
 | `obit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
 | `ob lsp [--live]` | the language server (editors spawn this) |

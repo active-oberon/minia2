@@ -58,3 +58,26 @@ jobs:
             sleep $((i * 30))
           done
           exit 1
+      # The page people read before they pull anything. It used to be pasted in by hand and
+      # was therefore always one release behind; it is docker/README.md now, uploaded here.
+      - name: Docker Hub description
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -eu
+          docker/hub-description.sh > "$RUNNER_TEMP/hub.md"
+          token="$(curl -sS -X POST https://hub.docker.com/v2/users/login/ \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg u "$HUB_USER" --arg p "$HUB_TOKEN" '{username:$u,password:$p}')" \
+            | jq -r '.token // empty')"
+          [ -n "$token" ] || { echo "::error::could not get a Docker Hub token"; exit 1; }
+          status="$(curl -sS -o "$RUNNER_TEMP/hub-response.json" -w '%{http_code}' \
+            -X PATCH "https://hub.docker.com/v2/repositories/$HUB_USER/minia2-sdk/" \
+            -H "Authorization: JWT $token" -H 'Content-Type: application/json' \
+            -d "$(jq -n --rawfile d "$RUNNER_TEMP/hub.md" '{full_description:$d}')")"
+          if [ "$status" != "200" ]; then
+            echo "::error::Docker Hub refused the description (HTTP $status)"
+            cat "$RUNNER_TEMP/hub-response.json"; exit 1
+          fi
+          echo "description updated ($(wc -c < "$RUNNER_TEMP/hub.md") bytes)"
