@@ -1,0 +1,914 @@
+# Tests for source/LSP.Mod -- the language server, driven in this process.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test LSPTestShared;System.Load Test"
+#
+# The server speaks LSP over a Commands.Context, so a test needs no pipe and no second
+# process: the input is a string of framed messages, the output is a buffer, and the
+# answers are read back with our own JSON. Every case is a whole conversation.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE LSPTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Drive the language server in this process" *)
+
+	(*	The server speaks LSP over a Commands.Context, so it needs no pipe and no other process:
+		the input is a string of framed messages, the output is a buffer, and the answers are read
+		back with our own JSON. A session is set up, run to its end, and then asked what it said.
+
+		Positions are never written as line and column numbers. They are searched for in the
+		fixture text (Where below), because a hand-counted line is wrong exactly when the fixture
+		is edited -- and the null that comes back from a wrong position reads like a defect in the
+		server. *)
+
+	IMPORT Commands, Streams, Strings, Files, JSON, LSP;
+
+	CONST
+		CR = 0DX; LF = 0AX;
+		Dir* = "lsp";                    (* the fixtures live here, not in the working directory *)
+		LibUri* = "file://lsp/LspLib.Mod";
+		MainUri* = "file://lsp/LspMain.Mod";
+
+	TYPE
+		Text* = ARRAY 4096 OF CHAR;
+
+		(* One conversation: queue the messages, run the server, read the transcript. *)
+		Session* = OBJECT
+		VAR
+			inbuf: Streams.Buffer; w: Streams.Writer;
+			nextId: SIGNED32;
+			msg-: ARRAY 64 OF JSON.Value; count-: SIGNED32;
+
+			PROCEDURE &Init*;
+			BEGIN
+				NEW(inbuf, 4096); w := inbuf.GetWriter(); nextId := 0; count := 0
+			END Init;
+
+			PROCEDURE Frame (CONST body: ARRAY OF CHAR);
+			BEGIN
+				w.String("Content-Length: "); w.Int(SIGNED32(Strings.Length(body)), 0);
+				w.Char(CR); w.Char(LF); w.Char(CR); w.Char(LF); w.String(body)
+			END Frame;
+
+			(** A request, answered by id. *)
+			PROCEDURE Request* (CONST method, params: ARRAY OF CHAR): SIGNED32;
+			VAR s: Text;
+			BEGIN
+				INC(nextId);
+				s := '{"jsonrpc":"2.0","id":';
+				Strings.AppendInt(s, nextId);
+				Strings.Append(s, ',"method":"'); Strings.Append(s, method);
+				Strings.Append(s, '","params":'); Strings.Append(s, params); Strings.Append(s, "}");
+				Frame(s); RETURN nextId
+			END Request;
+
+			(** A notification, never answered. *)
+			PROCEDURE Notify* (CONST method, params: ARRAY OF CHAR);
+			VAR s: Text;
+			BEGIN
+				s := '{"jsonrpc":"2.0","method":"';
+				Strings.Append(s, method); Strings.Append(s, '","params":');
+				Strings.Append(s, params); Strings.Append(s, "}");
+				Frame(s)
+			END Notify;
+
+			(** A whole frame whose body is not JSON: input the server has to survive. *)
+			PROCEDURE Garbage* (CONST body: ARRAY OF CHAR);
+			BEGIN Frame(body)
+			END Garbage;
+
+			PROCEDURE Start* (): SIGNED32;
+			VAR id: SIGNED32;
+			BEGIN
+				id := Request("initialize", '{"processId":null,"capabilities":{}}');
+				Notify("initialized", "{}");
+				RETURN id
+			END Start;
+
+			PROCEDURE Open* (CONST uri, text: ARRAY OF CHAR);
+			VAR s: Text; quoted: Text;
+			BEGIN
+				Quote(text, quoted);
+				s := '{"textDocument":{"uri":"'; Strings.Append(s, uri);
+				Strings.Append(s, '","languageId":"oberon","version":1,"text":"');
+				Strings.Append(s, quoted); Strings.Append(s, '"}}');
+				Notify("textDocument/didOpen", s)
+			END Open;
+
+			PROCEDURE Change* (CONST uri, text: ARRAY OF CHAR);
+			VAR s: Text; quoted: Text;
+			BEGIN
+				Quote(text, quoted);
+				s := '{"textDocument":{"uri":"'; Strings.Append(s, uri);
+				Strings.Append(s, '","version":2},"contentChanges":[{"text":"');
+				Strings.Append(s, quoted); Strings.Append(s, '"}]}');
+				Notify("textDocument/didChange", s)
+			END Change;
+
+			PROCEDURE Save* (CONST uri, text: ARRAY OF CHAR);
+			VAR s: Text; quoted: Text;
+			BEGIN
+				Quote(text, quoted);
+				s := '{"textDocument":{"uri":"'; Strings.Append(s, uri);
+				Strings.Append(s, '"},"text":"'); Strings.Append(s, quoted);
+				Strings.Append(s, '"}');
+				Notify("textDocument/didSave", s)
+			END Save;
+
+			PROCEDURE Close* (CONST uri: ARRAY OF CHAR);
+			VAR s: Text;
+			BEGIN
+				s := '{"textDocument":{"uri":"'; Strings.Append(s, uri); Strings.Append(s, '"}}');
+				Notify("textDocument/didClose", s)
+			END Close;
+
+			(** Run the whole conversation and remember every message that came back. *)
+			PROCEDURE Run* (live: BOOLEAN);
+			VAR r: Streams.StringReader; out: Streams.Buffer; ow: Streams.Writer;
+				ctx: Commands.Context; text: Strings.String; pos: SIZE; v: JSON.Value;
+				body: Strings.String; id: SIGNED32;
+			BEGIN
+				id := Request("shutdown", "null"); Notify("exit", "null");
+				w.Update; text := inbuf.GetString();
+				NEW(r, Strings.Length(text^) + 1); r.Set(text^);
+				NEW(out, 8192); ow := out.GetWriter();
+				NEW(ctx, r, NIL, ow, ow, NIL);
+				IF live THEN LSP.RunLive(ctx) ELSE LSP.Run(ctx) END;
+				ow.Update; text := out.GetString();
+				pos := 0; count := 0;
+				WHILE (count < LEN(msg)) & NextBody(text, pos, body) DO
+					IF JSON.Parse(body^, v) THEN msg[count] := v; INC(count) END
+				END
+			END Run;
+
+			(** The answer to one request, or NIL if it was never answered. *)
+			PROCEDURE Answer* (id: SIGNED32): JSON.Value;
+			VAR i: SIGNED32; o: JSON.Object;
+			BEGIN
+				FOR i := 0 TO count-1 DO
+					o := AsObject(msg[i]);
+					IF (o # NIL) & (Number(o.Get("id")) = id) & (o.Get("result") # NIL) THEN
+						RETURN o.Get("result")
+					END
+				END;
+				RETURN NIL
+			END Answer;
+
+			(** How many results came back at all: no notification may be answered. *)
+			PROCEDURE Answers* (): SIGNED32;
+			VAR i, n: SIGNED32; o: JSON.Object;
+			BEGIN
+				n := 0;
+				FOR i := 0 TO count-1 DO
+					o := AsObject(msg[i]);
+					IF (o # NIL) & (o.Get("result") # NIL) THEN INC(n) END
+				END;
+				RETURN n
+			END Answers;
+
+			(** The nth (from 0) diagnostics published for uri, or NIL if there was no nth. *)
+			PROCEDURE Published* (CONST uri: ARRAY OF CHAR; nth: SIGNED32): JSON.Value;
+			VAR i, seen: SIGNED32; o, p: JSON.Object; m: Strings.String;
+			BEGIN
+				seen := 0;
+				FOR i := 0 TO count-1 DO
+					o := AsObject(msg[i]);
+					IF o # NIL THEN
+						m := Str(o.Get("method"));
+						p := AsObject(o.Get("params"));
+						IF (m # NIL) & (m^ = "textDocument/publishDiagnostics") & (p # NIL)
+								& Is(p.Get("uri"), uri) THEN
+							IF seen = nth THEN RETURN p.Get("diagnostics") END;
+							INC(seen)
+						END
+					END
+				END;
+				RETURN NIL
+			END Published;
+
+			(** How many times diagnostics were published for uri. *)
+			PROCEDURE Publishes* (CONST uri: ARRAY OF CHAR): SIGNED32;
+			VAR n: SIGNED32;
+			BEGIN
+				n := 0;
+				WHILE Published(uri, n) # NIL DO INC(n) END;
+				RETURN n
+			END Publishes;
+
+		END Session;
+
+	(* ---- reading the transcript ---- *)
+
+	PROCEDURE IndexOf* (CONST text, pattern: ARRAY OF CHAR; from: SIZE): SIZE;
+	VAR i, j, plen, tlen: SIZE;
+	BEGIN
+		plen := Strings.Length(pattern); tlen := Strings.Length(text);
+		i := from;
+		WHILE i + plen <= tlen DO
+			j := 0; WHILE (j < plen) & (text[i+j] = pattern[j]) DO INC(j) END;
+			IF j = plen THEN RETURN i END;
+			INC(i)
+		END;
+		RETURN -1
+	END IndexOf;
+
+	(* The next framed message body at or after pos; pos moves past it. *)
+	PROCEDURE NextBody (text: Strings.String; VAR pos: SIZE; VAR body: Strings.String): BOOLEAN;
+	CONST header = "Content-Length: ";
+	VAR at, i: SIZE; len, k: SIGNED32; buf: Strings.String;
+	BEGIN
+		at := IndexOf(text^, header, pos);
+		IF at < 0 THEN RETURN FALSE END;
+		i := at + Strings.Length(header); len := 0;
+		WHILE (text[i] >= "0") & (text[i] <= "9") DO
+			len := len * 10 + (ORD(text[i]) - ORD("0")); INC(i)
+		END;
+		WHILE (text[i] = CR) OR (text[i] = LF) DO INC(i) END;
+		NEW(buf, len + 1);
+		FOR k := 0 TO len-1 DO buf[k] := text[i + k] END;
+		buf[len] := 0X;
+		pos := i + len; body := buf;
+		RETURN TRUE
+	END NextBody;
+
+	(* ---- looking into what came back ---- *)
+
+	PROCEDURE AsObject* (v: JSON.Value): JSON.Object;
+	BEGIN
+		IF (v # NIL) & (v IS JSON.Object) THEN RETURN v(JSON.Object) ELSE RETURN NIL END
+	END AsObject;
+
+	PROCEDURE AsArray* (v: JSON.Value): JSON.Array;
+	BEGIN
+		IF (v # NIL) & (v IS JSON.Array) THEN RETURN v(JSON.Array) ELSE RETURN NIL END
+	END AsArray;
+
+	(** The value of a field, NIL for anything that is not an object with it. *)
+	PROCEDURE Field* (v: JSON.Value; CONST key: ARRAY OF CHAR): JSON.Value;
+	VAR o: JSON.Object;
+	BEGIN
+		o := AsObject(v); IF o = NIL THEN RETURN NIL END;
+		RETURN o.Get(key)
+	END Field;
+
+	(** The value of a field of a field, which is most of what an LSP answer is. *)
+	PROCEDURE Field2* (v: JSON.Value; CONST key1, key2: ARRAY OF CHAR): JSON.Value;
+	BEGIN RETURN Field(Field(v, key1), key2)
+	END Field2;
+
+	PROCEDURE Str* (v: JSON.Value): Strings.String;
+	BEGIN
+		IF (v # NIL) & (v IS JSON.String) THEN RETURN v(JSON.String).value ELSE RETURN NIL END
+	END Str;
+
+	PROCEDURE Number* (v: JSON.Value): SIGNED32;
+	BEGIN
+		IF (v # NIL) & (v IS JSON.Number) THEN RETURN ENTIER(v(JSON.Number).value) ELSE RETURN MIN(SIGNED32) END
+	END Number;
+
+	PROCEDURE True* (v: JSON.Value): BOOLEAN;
+	BEGIN RETURN (v # NIL) & (v IS JSON.Bool) & v(JSON.Bool).value
+	END True;
+
+	(** A string value equal to what is expected. *)
+	PROCEDURE Is* (v: JSON.Value; CONST expected: ARRAY OF CHAR): BOOLEAN;
+	VAR s: Strings.String;
+	BEGIN s := Str(v); RETURN (s # NIL) & (s^ = expected)
+	END Is;
+
+	PROCEDURE Count* (v: JSON.Value): SIGNED32;
+	VAR a: JSON.Array;
+	BEGIN a := AsArray(v); IF a = NIL THEN RETURN -1 END; RETURN SIGNED32(a.length)
+	END Count;
+
+	PROCEDURE Item* (v: JSON.Value; i: SIGNED32): JSON.Value;
+	VAR a: JSON.Array;
+	BEGIN
+		a := AsArray(v); IF (a = NIL) OR (i >= SIGNED32(a.length)) THEN RETURN NIL END;
+		RETURN a.At(i)
+	END Item;
+
+	(** An item of an array whose field `key` is `value` -- the answers are not ordered. *)
+	PROCEDURE ItemWith* (v: JSON.Value; CONST key, value: ARRAY OF CHAR): JSON.Value;
+	VAR a: JSON.Array; i: SIGNED32;
+	BEGIN
+		a := AsArray(v); IF a = NIL THEN RETURN NIL END;
+		FOR i := 0 TO SIGNED32(a.length)-1 DO
+			IF Is(Field(a.At(i), key), value) THEN RETURN a.At(i) END
+		END;
+		RETURN NIL
+	END ItemWith;
+
+	PROCEDURE IsNull* (v: JSON.Value): BOOLEAN;
+	BEGIN RETURN (v # NIL) & (v IS JSON.Null)
+	END IsNull;
+
+	(** No line of it ends in a blank. *)
+	PROCEDURE NoTrailingBlanks* (CONST s: ARRAY OF CHAR): BOOLEAN;
+	VAR i: SIZE;
+	BEGIN
+		i := 1;
+		WHILE s[i] # 0X DO
+			IF ((s[i] = CR) OR (s[i] = LF)) & ((s[i-1] = " ") OR (s[i-1] = 09X)) THEN RETURN FALSE END;
+			INC(i)
+		END;
+		RETURN TRUE
+	END NoTrailingBlanks;
+
+	(* ---- positions, searched for and never counted by hand ---- *)
+
+	(** The line and character of `needle` plus `delta` characters, both from zero. *)
+	PROCEDURE Where* (CONST text, needle: ARRAY OF CHAR; delta: SIZE; VAR line, char: SIGNED32): BOOLEAN;
+	VAR at, i, bol: SIZE;
+	BEGIN
+		at := IndexOf(text, needle, 0); IF at < 0 THEN RETURN FALSE END;
+		at := at + delta;
+		line := 0; bol := 0; i := 0;
+		WHILE i < at DO
+			IF text[i] = LF THEN INC(line); bol := i + 1 END;
+			INC(i)
+		END;
+		char := SIGNED32(at - bol);
+		RETURN TRUE
+	END Where;
+
+	(** {"line":l,"character":c} for a place in a fixture. *)
+	PROCEDURE Position* (CONST text, needle: ARRAY OF CHAR; delta: SIZE; VAR out: ARRAY OF CHAR);
+	VAR line, char: SIGNED32;
+	BEGIN
+		ASSERT(Where(text, needle, delta, line, char));
+		out := '{"line":'; Strings.AppendInt(out, line);
+		Strings.Append(out, ',"character":'); Strings.AppendInt(out, char);
+		Strings.Append(out, "}")
+	END Position;
+
+	(** Does a {"line","character"} answer point at that place in the fixture? *)
+	PROCEDURE At* (v: JSON.Value; CONST text, needle: ARRAY OF CHAR; delta: SIZE): BOOLEAN;
+	VAR line, char: SIGNED32;
+	BEGIN
+		IF ~Where(text, needle, delta, line, char) THEN RETURN FALSE END;
+		RETURN (Number(Field(v, "line")) = line) & (Number(Field(v, "character")) = char)
+	END At;
+
+	(** Does a range start at that place? *)
+	PROCEDURE Starts* (v: JSON.Value; CONST text, needle: ARRAY OF CHAR; delta: SIZE): BOOLEAN;
+	BEGIN RETURN At(Field2(v, "range", "start"), text, needle, delta)
+	END Starts;
+
+	(** Is one of the items -- a location or an edit -- at that place in the fixture? *)
+	PROCEDURE Anywhere* (v: JSON.Value; CONST text, needle: ARRAY OF CHAR; delta: SIZE): BOOLEAN;
+	VAR a: JSON.Array; i: SIGNED32;
+	BEGIN
+		a := AsArray(v); IF a = NIL THEN RETURN FALSE END;
+		FOR i := 0 TO SIGNED32(a.length)-1 DO
+			IF Starts(a.At(i), text, needle, delta) THEN RETURN TRUE END
+		END;
+		RETURN FALSE
+	END Anywhere;
+
+	(** Params naming a document. *)
+	PROCEDURE Doc* (CONST uri: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	BEGIN
+		out := '{"textDocument":{"uri":"'; Strings.Append(out, uri); Strings.Append(out, '"}}')
+	END Doc;
+
+	(** Params naming a document and a stretch of it, for a code action. *)
+	PROCEDURE DocRange* (CONST uri, text, needle: ARRAY OF CHAR; from, to: SIZE; VAR out: ARRAY OF CHAR);
+	VAR a, b: ARRAY 64 OF CHAR;
+	BEGIN
+		Position(text, needle, from, a); Position(text, needle, to, b);
+		out := '{"textDocument":{"uri":"'; Strings.Append(out, uri);
+		Strings.Append(out, '"},"range":{"start":'); Strings.Append(out, a);
+		Strings.Append(out, ',"end":'); Strings.Append(out, b);
+		Strings.Append(out, '},"context":{"diagnostics":[]}}')
+	END DocRange;
+
+	(** A copy of the text with the first `needle` replaced -- how an edit is made here. *)
+	PROCEDURE Edited* (CONST text, needle, replacement: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR at, i, n: SIZE;
+	BEGIN
+		at := IndexOf(text, needle, 0); ASSERT(at >= 0);
+		n := 0;
+		FOR i := 0 TO at-1 DO out[n] := text[i]; INC(n) END;
+		out[n] := 0X;
+		Strings.Append(out, replacement);
+		n := Strings.Length(out); i := at + Strings.Length(needle);
+		WHILE text[i] # 0X DO out[n] := text[i]; INC(n); INC(i) END;
+		out[n] := 0X
+	END Edited;
+
+	(** Params naming a document and a place in it, plus whatever else the request wants. *)
+	PROCEDURE DocAt* (CONST uri, text, needle: ARRAY OF CHAR; delta: SIZE;
+		CONST extra: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR pos: ARRAY 64 OF CHAR;
+	BEGIN
+		Position(text, needle, delta, pos);
+		out := '{"textDocument":{"uri":"'; Strings.Append(out, uri);
+		Strings.Append(out, '"},"position":'); Strings.Append(out, pos);
+		Strings.Append(out, extra); Strings.Append(out, "}")
+	END DocAt;
+
+	(* ---- the fixtures ---- *)
+
+	(* One line of a fixture, indented with that many tabs. *)
+	PROCEDURE Line (VAR s: ARRAY OF CHAR; indent: SIGNED32; CONST t: ARRAY OF CHAR);
+	VAR one: ARRAY 2 OF CHAR; i: SIGNED32;
+	BEGIN
+		one[1] := 0X;
+		one[0] := 09X; FOR i := 1 TO indent DO Strings.Append(s, one) END;
+		Strings.Append(s, t);
+		one[0] := LF; Strings.Append(s, one)
+	END Line;
+
+	(** A module with something to look up in it: an exported procedure, a record, a field. *)
+	PROCEDURE Lib* (VAR s: ARRAY OF CHAR);
+	BEGIN
+		s := "";
+		Line(s, 0, "MODULE LspLib;");
+		Line(s, 0, "");
+		Line(s, 0, "TYPE");
+		Line(s, 1, "Point* = RECORD");
+		Line(s, 2, "x*, y*: SIGNED32;");
+		Line(s, 1, "END;");
+		Line(s, 0, "");
+		Line(s, 1, "PROCEDURE Add* (a, b: SIGNED32): SIGNED32;");
+		Line(s, 1, "BEGIN");
+		Line(s, 2, "RETURN a + b");
+		Line(s, 1, "END Add;");
+		Line(s, 0, "");
+		Line(s, 1, "PROCEDURE Shift* (VAR p: Point; dx, dy: SIGNED32);");
+		Line(s, 1, "BEGIN");
+		Line(s, 2, "p.x := p.x + dx;");
+		Line(s, 2, "p.y := p.y + dy");
+		Line(s, 1, "END Shift;");
+		Line(s, 0, "");
+		Line(s, 0, "END LspLib.")
+	END Lib;
+
+	(**	A module that uses it. `i` is declared in Sum and again in Other, and the two are
+		unrelated: every check that names `i` is there to see the server keep them apart. *)
+	PROCEDURE Main* (VAR s: ARRAY OF CHAR);
+	BEGIN
+		s := "";
+		Line(s, 0, "MODULE LspMain;");
+		Line(s, 0, "");
+		Line(s, 0, "IMPORT LspLib;");
+		Line(s, 0, "");
+		Line(s, 0, "VAR total*: SIGNED32;");
+		Line(s, 0, "");
+		Line(s, 1, "PROCEDURE Sum;");
+		Line(s, 1, "VAR i: SIGNED32;");
+		Line(s, 1, "BEGIN");
+		Line(s, 2, "i := 0;");
+		Line(s, 2, "total := LspLib.Add(i, 2);");
+		Line(s, 2, "total := total + i");
+		Line(s, 1, "END Sum;");
+		Line(s, 0, "");
+		Line(s, 1, "PROCEDURE Other;");
+		Line(s, 1, "VAR i: SIGNED32;");
+		Line(s, 1, "BEGIN");
+		Line(s, 2, "i := 99");
+		Line(s, 1, "END Other;");
+		Line(s, 0, "");
+		Line(s, 0, "BEGIN");
+		Line(s, 1, "Sum; Other");
+		Line(s, 0, "END LspMain.")
+	END Main;
+
+	(** A module with one error in it, at a place the checks can point to. *)
+	PROCEDURE Broken* (VAR s: ARRAY OF CHAR);
+	BEGIN
+		s := "";
+		Line(s, 0, "MODULE Broken;");
+		Line(s, 0, "");
+		Line(s, 0, "BEGIN");
+		Line(s, 1, "nosuch := 1");
+		Line(s, 0, "END Broken.")
+	END Broken;
+
+	(* ---- the fixtures on disk ---- *)
+
+	(*	JSON has no literal newline or tab in a string, and the fixtures are full of both. *)
+	PROCEDURE Quote (CONST text: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR i, n: SIZE;
+	BEGIN
+		i := 0; n := 0;
+		WHILE (text[i] # 0X) & (n < LEN(out)-3) DO
+			IF text[i] = LF THEN out[n] := "\"; out[n+1] := "n"; INC(n, 2)
+			ELSIF text[i] = CR THEN out[n] := "\"; out[n+1] := "r"; INC(n, 2)
+			ELSIF text[i] = 09X THEN out[n] := "\"; out[n+1] := "t"; INC(n, 2)
+			ELSIF (text[i] = '"') OR (text[i] = "\") THEN out[n] := "\"; out[n+1] := text[i]; INC(n, 2)
+			ELSE out[n] := text[i]; INC(n)
+			END;
+			INC(i)
+		END;
+		out[n] := 0X
+	END Quote;
+
+	PROCEDURE WriteFile (CONST name, content: ARRAY OF CHAR);
+	VAR f: Files.File; w: Files.Writer;
+	BEGIN
+		f := Files.New(name); ASSERT(f # NIL);
+		Files.OpenWriter(w, f, 0); w.String(content); w.Update; Files.Register(f)
+	END WriteFile;
+
+	PROCEDURE Command (CONST command, argument: ARRAY OF CHAR);
+	VAR ctx: Commands.Context; arg, in: Streams.StringReader;
+		sink: Streams.Buffer; w: Streams.Writer; res: INTEGER; ignoreMsg: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument) + 1); arg.Set(argument);
+		NEW(in, 1); in.Set("");
+		NEW(sink, 256); w := sink.GetWriter();
+		NEW(ctx, in, arg, w, w, NIL);
+		Commands.Activate(command, ctx, {Commands.Wait}, res, ignoreMsg)
+	END Command;
+
+	(*	The fixtures go in a directory of their own, and only the search path is told about it.
+		That is the shape of a real project under `ob lsp`: the modules are reachable by name,
+		and the working directory is somewhere else entirely -- a scratch directory there. A sweep
+		that looks beside the process instead of beside the open document finds nothing here, which
+		is what it did until 2026-08-12. *)
+	PROCEDURE Setup*;
+	VAR text: Text; name: ARRAY 64 OF CHAR; res: INTEGER;
+	BEGIN
+		Files.CreateDirectory(Dir, res);
+		name := Dir; Strings.Append(name, "/LspLib.Mod"); Lib(text); WriteFile(name, text);
+		name := Dir; Strings.Append(name, "/LspMain.Mod"); Main(text); WriteFile(name, text);
+		Command("Files.AddSearchPath", Dir)
+	END Setup;
+
+	(** A session with both fixtures open, which is what most of the checks want. *)
+	PROCEDURE Project* (VAR s: Session; VAR lib, main: Text);
+	VAR id: SIGNED32;
+	BEGIN
+		Setup; Lib(lib); Main(main);
+		NEW(s); id := s.Start(); s.Open(LibUri, lib); s.Open(MainUri, main)
+	END Project;
+
+	END LSPTestShared.
+
+positive: initialize announces every provider, with the triggers and the token legend
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; id: SIGNED32; caps, legend: JSON.Value;
+	BEGIN
+		NEW(s); id := s.Start(); s.Run(FALSE);
+		caps := T.Field(s.Answer(id), "capabilities");
+		ASSERT(T.True(T.Field(caps, "hoverProvider")));
+		ASSERT(T.True(T.Field(caps, "definitionProvider")));
+		ASSERT(T.True(T.Field(caps, "documentSymbolProvider")));
+		ASSERT(T.True(T.Field(caps, "referencesProvider")));
+		ASSERT(T.True(T.Field(caps, "renameProvider")));
+		ASSERT(T.True(T.Field(caps, "documentFormattingProvider")));
+		ASSERT(T.True(T.Field(caps, "codeActionProvider")));
+		ASSERT(T.Number(T.Field(caps, "textDocumentSync")) = 1);
+		ASSERT(T.Is(T.Item(T.Field2(caps, "completionProvider", "triggerCharacters"), 0), "."));
+		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
+		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 1), ","));
+		legend := T.Field2(T.Field(caps, "semanticTokensProvider"), "legend", "tokenTypes");
+		ASSERT(T.Count(legend) = 8);
+		ASSERT(T.Is(T.Item(legend, 0), "namespace"));
+		ASSERT(T.Is(T.Item(legend, 7), "method"));
+		ASSERT(T.IsNull(s.Answer(id + 1)))                (* shutdown is answered with null *)
+	END Test.
+
+positive: a module opens with no diagnostics, and a broken one is diagnosed where the error is
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, broken: T.Text; id: SIGNED32; d: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.Broken(broken); s.Open("file://lsp/Broken.Mod", broken);
+		s.Run(FALSE);
+		ASSERT(T.Count(s.Published(T.LibUri, 0)) = 0);
+		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0);
+		d := T.Item(s.Published("file://lsp/Broken.Mod", 0), 0);
+		ASSERT(d # NIL);
+		ASSERT(T.Number(T.Field(d, "severity")) = 1);
+		ASSERT(T.Is(T.Field(d, "source"), "oberon"));
+		ASSERT(T.Str(T.Field(d, "message")) # NIL);
+		ASSERT(T.Starts(d, broken, "nosuch", 0))
+	END Test.
+
+positive: hover answers about a call into another module, and about a local
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main: T.Text; p: T.Text; call, local: SIGNED32; r: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "LspLib.Add", 8, "", p);
+		call := s.Request("textDocument/hover", p);
+		T.DocAt(T.MainUri, main, "i := 0", 0, "", p);
+		local := s.Request("textDocument/hover", p);
+		s.Run(FALSE);
+		r := s.Answer(call);
+		ASSERT(T.Is(T.Field2(r, "contents", "value"),
+			"procedure Add : PROCEDURE(a: SIGNED32; b: SIGNED32): SIGNED32"));
+		ASSERT(T.Starts(r, main, "LspLib.Add", 7));   (* asked inside the name, answered about all of it *)
+		r := s.Answer(local);
+		ASSERT(T.IndexOf(T.Str(T.Field2(r, "contents", "value"))^, "SIGNED32", 0) >= 0)
+	END Test.
+
+positive: go-to-definition crosses into the other module, and works inside one procedure
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; far, near: SIGNED32; r: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "LspLib.Add", 8, "", p);
+		far := s.Request("textDocument/definition", p);
+		T.DocAt(T.MainUri, main, "i := 0", 0, "", p);
+		near := s.Request("textDocument/definition", p);
+		s.Run(FALSE);
+		r := s.Answer(far);
+		ASSERT(T.Is(T.Field(r, "uri"), T.LibUri));
+		ASSERT(T.Starts(r, lib, "PROCEDURE Add*", 10));
+		r := s.Answer(near);
+		ASSERT(T.Starts(r, main, "VAR i: SIGNED32", 4))
+	END Test.
+
+positive: the outline lists what a module declares, and nests a record's fields under it
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; root, kids, point: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.Doc(T.LibUri, p);
+		id := s.Request("textDocument/documentSymbol", p);
+		s.Run(FALSE);
+		ASSERT(T.Count(s.Answer(id)) = 1);
+		root := T.Item(s.Answer(id), 0);
+		ASSERT(T.Is(T.Field(root, "name"), "LspLib"));
+		ASSERT(T.Number(T.Field(root, "kind")) = 2);
+		kids := T.Field(root, "children");
+		ASSERT(T.Count(kids) = 3);
+		ASSERT(T.Number(T.Field(T.ItemWith(kids, "name", "Add"), "kind")) = 12);
+		ASSERT(T.ItemWith(kids, "name", "Shift") # NIL);
+		point := T.ItemWith(kids, "name", "Point");
+		ASSERT(T.Number(T.Field(point, "kind")) = 5);
+		ASSERT(T.Number(T.Field(T.ItemWith(T.Field(point, "children"), "name", "x"), "kind")) = 8);
+		ASSERT(T.ItemWith(T.Field(point, "children"), "name", "y") # NIL)
+	END Test.
+
+positive: completion after the dot offers exactly what that module exports, with signatures
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; items, add: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "LspLib.Add", 7, ',"context":{"triggerKind":2,"triggerCharacter":"."}', p);
+		id := s.Request("textDocument/completion", p);
+		s.Run(FALSE);
+		items := s.Answer(id);
+		ASSERT(T.Count(items) = 3);
+		add := T.ItemWith(items, "label", "Add");
+		ASSERT(T.Number(T.Field(add, "kind")) = 3);
+		ASSERT(T.Is(T.Field(add, "detail"), "PROCEDURE(a: SIGNED32; b: SIGNED32): SIGNED32"));
+		ASSERT(T.Number(T.Field(T.ItemWith(items, "label", "Point"), "kind")) = 7);
+		ASSERT(T.ItemWith(items, "label", "Shift") # NIL)
+	END Test.
+
+positive: completion outside a qualified name offers the language's own words
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; items: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "total := total + i", 0, ',"context":{"triggerKind":1}', p);
+		id := s.Request("textDocument/completion", p);
+		s.Run(FALSE);
+		items := s.Answer(id);
+		ASSERT(T.ItemWith(items, "label", "BEGIN") # NIL);
+		ASSERT(T.ItemWith(items, "label", "PROCEDURE") # NIL);
+		ASSERT(T.ItemWith(items, "label", "AWAIT") # NIL)
+	END Test.
+
+positive: signature help names the procedure, its parameters, and which one is being typed
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; first, second: SIGNED32; r, sig: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "Add(i, 2)", 4, "", p);
+		first := s.Request("textDocument/signatureHelp", p);
+		T.DocAt(T.MainUri, main, "Add(i, 2)", 7, "", p);
+		second := s.Request("textDocument/signatureHelp", p);
+		s.Run(FALSE);
+		r := s.Answer(first);
+		sig := T.Item(T.Field(r, "signatures"), 0);
+		ASSERT(T.Is(T.Field(sig, "label"), "Add(a: SIGNED32; b: SIGNED32): SIGNED32"));
+		ASSERT(T.Is(T.Field(T.Item(T.Field(sig, "parameters"), 0), "label"), "a: SIGNED32"));
+		ASSERT(T.Is(T.Field(T.Item(T.Field(sig, "parameters"), 1), "label"), "b: SIGNED32"));
+		ASSERT(T.Number(T.Field(r, "activeParameter")) = 0);
+		ASSERT(T.Number(T.Field(s.Answer(second), "activeParameter")) = 1)
+	END Test.
+
+positive: find-all-references on a local stays inside its own procedure
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; r: JSON.Value;
+	BEGIN
+		(*	The fixture declares `i` in Sum and again in Other. Until 2026-08-12 the collection
+			key was (name, module, kind), which cannot tell two procedures' locals apart, and the
+			sibling's uses were reported as well. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "i := 0", 0, ',"context":{"includeDeclaration":true}', p);
+		id := s.Request("textDocument/references", p);
+		s.Run(FALSE);
+		r := s.Answer(id);
+		ASSERT(T.Count(r) = 4);
+		ASSERT(T.Anywhere(r, main, "VAR i: SIGNED32", 4));
+		ASSERT(T.Anywhere(r, main, "i := 0", 0));
+		ASSERT(T.Anywhere(r, main, "LspLib.Add(i", 11));
+		ASSERT(T.Anywhere(r, main, "total + i", 8));
+		ASSERT(~T.Anywhere(r, main, "i := 99", 0))
+	END Test.
+
+positive: find-all-references on an exported procedure reaches the other file
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; declared, used: SIGNED32; r: JSON.Value;
+	BEGIN
+		(*	The fixtures are in a directory of their own, reachable by search path and not from
+			the working directory -- which is the shape of a project under `ob lsp`, where the
+			working directory is a scratch directory. A sweep that looks beside the process
+			instead of beside the open document finds nothing here. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.LibUri, lib, "PROCEDURE Add*", 10, ',"context":{"includeDeclaration":true}', p);
+		declared := s.Request("textDocument/references", p);
+		T.DocAt(T.MainUri, main, "total*", 0, ',"context":{"includeDeclaration":true}', p);
+		used := s.Request("textDocument/references", p);
+		s.Run(FALSE);
+		r := s.Answer(declared);
+		ASSERT(T.Count(r) = 2);
+		ASSERT(T.ItemWith(r, "uri", T.LibUri) # NIL);
+		ASSERT(T.ItemWith(r, "uri", T.MainUri) # NIL);
+		r := s.Answer(used);
+		ASSERT(T.Count(r) = 4);
+		ASSERT(T.ItemWith(r, "uri", T.LibUri) = NIL)
+	END Test.
+
+positive: semantic tokens come back as five-tuples, in reading order
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; data: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.Doc(T.LibUri, p);
+		id := s.Request("textDocument/semanticTokens/full", p);
+		s.Run(FALSE);
+		data := T.Field(s.Answer(id), "data");
+		ASSERT(T.Count(data) > 20);
+		ASSERT(T.Count(data) MOD 5 = 0);
+		ASSERT(T.Number(T.Item(data, 0)) = 3);          (* the first declaration, three lines down *)
+		ASSERT(T.Number(T.Item(data, 2)) = 5);          (* "Point" is five characters *)
+		ASSERT(T.Number(T.Item(data, 3)) = 1)           (* and it is a type *)
+	END Test.
+
+positive: a local can be renamed, and only where that local is used
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; changes, edits: JSON.Value;
+	BEGIN
+		(*	The commonest rename an editor is asked for, and it was refused outright until
+			2026-08-12: the cross-file sweep cannot see locals, so rename was module-level only. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "i := 0", 0, ',"newName":"counter"', p);
+		id := s.Request("textDocument/rename", p);
+		s.Run(FALSE);
+		changes := T.Field(s.Answer(id), "changes");
+		ASSERT(changes # NIL);
+		ASSERT(T.Field(changes, T.LibUri) = NIL);       (* nothing to do in the other file *)
+		edits := T.Field(changes, T.MainUri);
+		ASSERT(T.Count(edits) = 4);
+		ASSERT(T.Anywhere(edits, main, "VAR i: SIGNED32", 4));
+		ASSERT(T.Anywhere(edits, main, "total + i", 8));
+		ASSERT(~T.Anywhere(edits, main, "i := 99", 0));
+		ASSERT(T.Is(T.Field(T.Item(edits, 0), "newText"), "counter"))
+	END Test.
+
+positive: renaming an exported procedure rewrites its call in the other file
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; proc, field: SIGNED32; changes: JSON.Value;
+	BEGIN
+		(*	This is the one that mattered: under `ob lsp` the sweep listed a scratch directory,
+			so a rename rewrote the declaration, left every call site, and said nothing. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.LibUri, lib, "PROCEDURE Add*", 10, ',"newName":"Plus"', p);
+		proc := s.Request("textDocument/rename", p);
+		T.DocAt(T.LibUri, lib, "x*, y*", 0, ',"newName":"col"', p);
+		field := s.Request("textDocument/rename", p);
+		s.Run(FALSE);
+		changes := T.Field(s.Answer(proc), "changes");
+		ASSERT(T.Count(T.Field(changes, T.LibUri)) = 1);
+		ASSERT(T.Count(T.Field(changes, T.MainUri)) = 1);
+		ASSERT(T.Is(T.Field(T.Item(T.Field(changes, T.MainUri), 0), "newText"), "Plus"));
+		(*	A record field is refused rather than done by name: its key is only
+			(name, module, kind), which is too loose to rewrite other files with. *)
+		ASSERT(T.IsNull(s.Answer(field)))
+	END Test.
+
+positive: formatting reprints the module and leaves no line ending in a blank
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON, Strings;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; edits: JSON.Value; new: Strings.String;
+	BEGIN
+		T.Project(s, lib, main);
+		T.Doc(T.LibUri, p);
+		id := s.Request("textDocument/formatting", p);
+		s.Run(FALSE);
+		edits := s.Answer(id);
+		ASSERT(T.Count(edits) = 1);
+		ASSERT(T.At(T.Field2(T.Item(edits, 0), "range", "start"), lib, "MODULE", 0));
+		new := T.Str(T.Field(T.Item(edits, 0), "newText"));
+		ASSERT(new # NIL);
+		ASSERT(T.IndexOf(new^, "MODULE LspLib;", 0) = 0);
+		ASSERT(T.IndexOf(new^, "PROCEDURE Add*", 0) > 0);
+		ASSERT(T.IndexOf(new^, "PROCEDURE Shift*", 0) > 0);
+		ASSERT(T.IndexOf(new^, "Point* = RECORD", 0) > 0);
+		(* the printer ends a declaration with a space before its newline; the server takes it off *)
+		ASSERT(T.NoTrailingBlanks(new^))
+	END Test.
+
+positive: a stretch of a line can be commented out by a code action
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; action: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocRange(T.MainUri, main, "i := 0", 0, 6, p);
+		id := s.Request("textDocument/codeAction", p);
+		s.Run(FALSE);
+		action := T.Item(s.Answer(id), 0);
+		ASSERT(T.Is(T.Field(action, "title"), "Comment selection"));
+		ASSERT(T.Is(T.Field(T.Item(T.Field(T.Field2(action, "edit", "changes"), T.MainUri), 0),
+			"newText"), "(*i := 0*)"))
+	END Test.
+
+positive: a change is not diagnosed, a save is, and closing withdraws what was said
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, edited: T.Text;
+	BEGIN
+		(*	Not compiling on every keystroke is deliberate: it is too heavy, and half-typed code
+			produces errors that are gone by the time they are drawn. --live is the other mode. *)
+		T.Project(s, lib, main);
+		T.Edited(main, "i := 0", "i := nosuch", edited);
+		s.Change(T.MainUri, edited);
+		s.Save(T.MainUri, edited);
+		s.Close(T.MainUri);
+		s.Run(FALSE);
+		ASSERT(s.Publishes(T.MainUri) = 3);             (* open, save, close -- the change is not one *)
+		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0);
+		ASSERT(T.Number(T.Field(T.Item(s.Published(T.MainUri, 1), 0), "severity")) = 1);
+		ASSERT(T.Count(s.Published(T.MainUri, 2)) = 0)
+	END Test.
+
+positive: in live mode the change itself is diagnosed
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, edited: T.Text;
+	BEGIN
+		T.Project(s, lib, main);
+		T.Edited(main, "i := 0", "i := nosuch", edited);
+		s.Change(T.MainUri, edited);
+		s.Run(TRUE);
+		ASSERT(s.Publishes(T.MainUri) = 2);
+		ASSERT(T.Number(T.Field(T.Item(s.Published(T.MainUri, 1), 0), "severity")) = 1)
+	END Test.
+
+positive: input the server has to survive: a message that is not JSON, and a method it has not got
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; p: T.Text; id, unknown: SIGNED32;
+	BEGIN
+		NEW(s);
+		s.Garbage("{not json at all}");   (* the frame gave its length, so the stream is still aligned *)
+		id := s.Start();
+		T.Doc("file://lsp/Nothing.Mod", p);
+		unknown := s.Request("textDocument/typeDefinition", p);
+		s.Notify("textDocument/whatever", "{}");
+		s.Run(FALSE);
+		ASSERT(s.Answer(id) # NIL);        (* the session outlived the message it could not read *)
+		ASSERT(T.IsNull(s.Answer(unknown)));  (* answered with null, so no editor waits for ever *)
+		ASSERT(s.Answers() = 3)            (* initialize, that one, shutdown -- and no notification *)
+	END Test.
