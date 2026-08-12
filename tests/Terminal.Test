@@ -1,0 +1,342 @@
+# Tests for source/TerminalCodes.Mod -- what a terminal sends, and what it is told to draw.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test TerminalTestShared;System.Load Test"
+#
+# A terminal is not needed to answer what a key press means: the decoder reads from any
+# Streams.Reader, so here it reads from a string of the bytes a terminal would have sent.
+# What raw mode and the window size are is Terminal's, one module up, and that part is the
+# only one that wants a real terminal.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE TerminalTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Ask the decoder what a key press means" *)
+
+	(*	What a terminal sends is bytes, so what it means can be asked for without a terminal: the
+		decoder reads from any Streams.Reader, and here it reads from a string. The other direction
+		is the same trick -- drawing goes into a buffer and the buffer is compared with the escape
+		sequence it should be. *)
+
+	IMPORT Streams, Strings, TerminalCodes;
+
+	TYPE
+		Text* = ARRAY 128 OF CHAR;
+
+	VAR
+		buf: Streams.Buffer;
+		W-: Streams.Writer;                (** where the drawing checks draw *)
+
+	(** ESC and whatever follows it: the escape byte cannot be written in a string literal. *)
+	PROCEDURE Esc* (CONST rest: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR one: ARRAY 2 OF CHAR;
+	BEGIN
+		one[0] := TerminalCodes.ESC; one[1] := 0X;
+		COPY(one, out); Strings.Append(out, rest)
+	END Esc;
+
+	(** ESC [ and whatever follows: the shape of nearly every key sequence. *)
+	PROCEDURE CSI* (CONST rest: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR s: Text;
+	BEGIN
+		s := "["; Strings.Append(s, rest); Esc(s, out)
+	END CSI;
+
+	PROCEDURE Decode (CONST input: ARRAY OF CHAR; VAR e: TerminalCodes.Event): BOOLEAN;
+	VAR r: Streams.StringReader;
+	BEGIN
+		NEW(r, LEN(input) + 1); r.Set(input);
+		RETURN TerminalCodes.Read(r, e)
+	END Decode;
+
+	(** Does that input decode to this character, with these modifiers and nothing else? *)
+	PROCEDURE IsChar* (CONST input: ARRAY OF CHAR; c: TerminalCodes.Char32; modifiers: SET): BOOLEAN;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		IF ~Decode(input, e) THEN RETURN FALSE END;
+		RETURN (e.kind = TerminalCodes.Character) & (e.char = c) & (e.modifiers = modifiers)
+	END IsChar;
+
+	(** Does it decode to this key? *)
+	PROCEDURE IsKey* (CONST input: ARRAY OF CHAR; key: SIGNED32; modifiers: SET): BOOLEAN;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		IF ~Decode(input, e) THEN RETURN FALSE END;
+		RETURN (e.kind = TerminalCodes.Key) & (e.key = key) & (e.modifiers = modifiers)
+	END IsKey;
+
+	(** Does it decode to the mouse doing that, there? *)
+	PROCEDURE IsMouse* (CONST input: ARRAY OF CHAR; button, x, y: SIGNED32; modifiers: SET): BOOLEAN;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		IF ~Decode(input, e) THEN RETURN FALSE END;
+		RETURN (e.kind = TerminalCodes.Mouse) & (e.button = button) & (e.x = x) & (e.y = y)
+			& (e.modifiers = modifiers)
+	END IsMouse;
+
+	(** Is it a sequence the decoder does not name -- which it must pass over, not choke on? *)
+	PROCEDURE IsUnknown* (CONST input: ARRAY OF CHAR): BOOLEAN;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		IF ~Decode(input, e) THEN RETURN FALSE END;
+		RETURN e.kind = TerminalCodes.Unknown
+	END IsUnknown;
+
+	(** Nothing at all to read. *)
+	PROCEDURE IsNothing* (CONST input: ARRAY OF CHAR): BOOLEAN;
+	VAR e: TerminalCodes.Event;
+	BEGIN RETURN ~Decode(input, e)
+	END IsNothing;
+
+	(**	A reader over bytes rather than over a string: a string cannot carry a zero byte, and
+		Ctrl and the space bar send exactly that. *)
+	PROCEDURE OverBytes* (CONST b: ARRAY OF CHAR; n: SIZE): Streams.Reader;
+	VAR buf: Streams.Buffer; w: Streams.Writer; r: Streams.StringReader; s: Strings.String;
+	BEGIN
+		NEW(buf, 64); w := buf.GetWriter(); w.Bytes(b, 0, n); w.Update;
+		s := buf.GetString();
+		NEW(r, n + 1); r.SetRaw(s^, 0, n);
+		RETURN r
+	END OverBytes;
+
+	(** A reader over a whole burst, for the checks that read several events in a row. *)
+	PROCEDURE Over* (CONST input: ARRAY OF CHAR): Streams.Reader;
+	VAR r: Streams.StringReader;
+	BEGIN NEW(r, LEN(input) + 1); r.Set(input); RETURN r
+	END Over;
+
+	PROCEDURE Next* (r: Streams.Reader; VAR e: TerminalCodes.Event): BOOLEAN;
+	BEGIN RETURN TerminalCodes.Read(r, e)
+	END Next;
+
+	(** Start drawing afresh. *)
+	PROCEDURE Restart*;
+	BEGIN NEW(buf, 256); W := buf.GetWriter()
+	END Restart;
+
+	(** Is what has been drawn since Restart exactly this? *)
+	PROCEDURE Drawn* (CONST expected: ARRAY OF CHAR): BOOLEAN;
+	VAR s: Strings.String;
+	BEGIN
+		W.Update; s := buf.GetString();
+		RETURN (s # NIL) & (s^ = expected)
+	END Drawn;
+
+	BEGIN
+		Restart
+	END TerminalTestShared.
+
+positive: a typed character is that character
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	BEGIN
+		ASSERT(T.IsChar("a", ORD("a"), {}));
+		ASSERT(T.IsChar("Z", ORD("Z"), {}));
+		ASSERT(T.IsChar(" ", ORD(" "), {}));
+		ASSERT(T.IsChar("~", ORD("~"), {}));
+		ASSERT(T.IsNothing(""))
+	END Test.
+
+positive: a character outside ASCII arrives as UTF-8 and comes back whole
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes, UTF8Strings;
+	VAR s: T.Text; i: SIZE;
+	BEGIN
+		(* the same bytes a terminal sends for them, built the way anything writes UTF-8 *)
+		i := 0; ASSERT(UTF8Strings.EncodeChar(444H, s, i)); s[i] := 0X;   (* CYRILLIC SMALL EF *)
+		ASSERT(T.IsChar(s, 444H, {}));
+		i := 0; ASSERT(UTF8Strings.EncodeChar(2500H, s, i)); s[i] := 0X;  (* BOX DRAWINGS LIGHT HORIZONTAL *)
+		ASSERT(T.IsChar(s, 2500H, {}));
+		i := 0; ASSERT(UTF8Strings.EncodeChar(28FFH, s, i)); s[i] := 0X;  (* a braille cell, all eight dots *)
+		ASSERT(T.IsChar(s, 28FFH, {}));
+		i := 0; ASSERT(UTF8Strings.EncodeChar(1F600H, s, i)); s[i] := 0X; (* four bytes *)
+		ASSERT(T.IsChar(s, 1F600H, {}))
+	END Test.
+
+positive: the keys that have always been control bytes
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: ARRAY 2 OF CHAR;
+	BEGIN
+		s[1] := 0X;
+		s[0] := 0DX; ASSERT(T.IsKey(s, TC.Enter, {}));
+		s[0] := 0AX; ASSERT(T.IsKey(s, TC.Enter, {}));
+		s[0] := 09X; ASSERT(T.IsKey(s, TC.Tab, {}));
+		s[0] := 7FX; ASSERT(T.IsKey(s, TC.Backspace, {}));
+		s[0] := 08X; ASSERT(T.IsKey(s, TC.Backspace, {}))
+	END Test.
+
+positive: a letter with Ctrl held is that letter, said so
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: ARRAY 2 OF CHAR; e: TC.Event;
+	BEGIN
+		s[1] := 0X;
+		s[0] := 01X; ASSERT(T.IsChar(s, ORD("a"), {TC.Ctrl}));
+		s[0] := 03X; ASSERT(T.IsChar(s, ORD("c"), {TC.Ctrl}));   (* the one every program watches for *)
+		s[0] := 1AX; ASSERT(T.IsChar(s, ORD("z"), {TC.Ctrl}));
+		(* Ctrl and the space bar send a zero byte, which no string can carry *)
+		s[0] := 00X;
+		ASSERT(T.Next(T.OverBytes(s, 1), e) & (e.kind = TC.Character) & (e.char = ORD(" "))
+			& (e.modifiers = {TC.Ctrl}))
+	END Test.
+
+positive: escape alone is the escape key, and escape with a letter is Alt
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.Esc("", s); ASSERT(T.IsKey(s, TC.Escape, {}));
+		T.Esc("x", s); ASSERT(T.IsChar(s, ORD("x"), {TC.Alt}))
+	END Test.
+
+positive: the arrow keys, in both the forms a terminal sends them
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.CSI("A", s); ASSERT(T.IsKey(s, TC.Up, {}));
+		T.CSI("B", s); ASSERT(T.IsKey(s, TC.Down, {}));
+		T.CSI("C", s); ASSERT(T.IsKey(s, TC.Right, {}));
+		T.CSI("D", s); ASSERT(T.IsKey(s, TC.Left, {}));
+		(* the application-keypad form, which is what a terminal sends after DECCKM *)
+		T.Esc("OA", s); ASSERT(T.IsKey(s, TC.Up, {}));
+		T.Esc("OD", s); ASSERT(T.IsKey(s, TC.Left, {}))
+	END Test.
+
+positive: the keys around the arrows
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.CSI("H", s); ASSERT(T.IsKey(s, TC.Home, {}));
+		T.CSI("F", s); ASSERT(T.IsKey(s, TC.End, {}));
+		T.CSI("1~", s); ASSERT(T.IsKey(s, TC.Home, {}));
+		T.CSI("2~", s); ASSERT(T.IsKey(s, TC.Insert, {}));
+		T.CSI("3~", s); ASSERT(T.IsKey(s, TC.Delete, {}));
+		T.CSI("4~", s); ASSERT(T.IsKey(s, TC.End, {}));
+		T.CSI("5~", s); ASSERT(T.IsKey(s, TC.PageUp, {}));
+		T.CSI("6~", s); ASSERT(T.IsKey(s, TC.PageDown, {}));
+		T.CSI("Z", s); ASSERT(T.IsKey(s, TC.Tab, {TC.Shift}))
+	END Test.
+
+positive: the function keys, which are numbered with holes in them
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.Esc("OP", s); ASSERT(T.IsKey(s, TC.F1, {}));
+		T.Esc("OQ", s); ASSERT(T.IsKey(s, TC.F2, {}));
+		T.Esc("OR", s); ASSERT(T.IsKey(s, TC.F3, {}));
+		T.Esc("OS", s); ASSERT(T.IsKey(s, TC.F4, {}));
+		T.CSI("15~", s); ASSERT(T.IsKey(s, TC.F5, {}));
+		T.CSI("17~", s); ASSERT(T.IsKey(s, TC.F6, {}));
+		T.CSI("21~", s); ASSERT(T.IsKey(s, TC.F10, {}));
+		T.CSI("23~", s); ASSERT(T.IsKey(s, TC.F11, {}));
+		T.CSI("24~", s); ASSERT(T.IsKey(s, TC.F12, {}));
+		T.CSI("16~", s); ASSERT(T.IsUnknown(s))          (* there is no key with that number *)
+	END Test.
+
+positive: a key with Shift, Alt or Ctrl held says which
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.CSI("1;2A", s); ASSERT(T.IsKey(s, TC.Up, {TC.Shift}));
+		T.CSI("1;3D", s); ASSERT(T.IsKey(s, TC.Left, {TC.Alt}));
+		T.CSI("1;5C", s); ASSERT(T.IsKey(s, TC.Right, {TC.Ctrl}));
+		T.CSI("1;6B", s); ASSERT(T.IsKey(s, TC.Down, {TC.Shift, TC.Ctrl}));
+		T.CSI("1;7C", s); ASSERT(T.IsKey(s, TC.Right, {TC.Alt, TC.Ctrl}));
+		T.CSI("1;8C", s); ASSERT(T.IsKey(s, TC.Right, {TC.Shift, TC.Alt, TC.Ctrl}));
+		T.CSI("3;5~", s); ASSERT(T.IsKey(s, TC.Delete, {TC.Ctrl}))
+	END Test.
+
+positive: the mouse, as SGR 1006 reports it
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: T.Text;
+	BEGIN
+		T.CSI("<0;10;5M", s); ASSERT(T.IsMouse(s, TC.LeftButton, 10, 5, {}));
+		T.CSI("<1;10;5M", s); ASSERT(T.IsMouse(s, TC.MiddleButton, 10, 5, {}));
+		T.CSI("<2;10;5M", s); ASSERT(T.IsMouse(s, TC.RightButton, 10, 5, {}));
+		T.CSI("<0;10;5m", s); ASSERT(T.IsMouse(s, TC.Released, 10, 5, {}));
+		T.CSI("<32;7;8M", s); ASSERT(T.IsMouse(s, TC.Moved, 7, 8, {}));
+		T.CSI("<64;3;4M", s); ASSERT(T.IsMouse(s, TC.WheelUp, 3, 4, {}));
+		T.CSI("<65;3;4M", s); ASSERT(T.IsMouse(s, TC.WheelDown, 3, 4, {}));
+		T.CSI("<16;1;1M", s); ASSERT(T.IsMouse(s, TC.LeftButton, 1, 1, {TC.Ctrl}));
+		(* past column 223, which is the whole reason this form exists *)
+		T.CSI("<0;300;120M", s); ASSERT(T.IsMouse(s, TC.LeftButton, 300, 120, {}))
+	END Test.
+
+positive: a burst of bytes is read as the events it is, in order
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes, Streams, Strings;
+	VAR r: Streams.Reader; e: TC.Event; s, burst: T.Text;
+	BEGIN
+		(* what arrives when somebody holds a key down and then types: two arrows, then "hi" *)
+		T.CSI("A", s); burst := s; T.CSI("1;5C", s); Strings.Append(burst, s);
+		Strings.Append(burst, "hi");
+		r := T.Over(burst);
+		ASSERT(T.Next(r, e) & (e.kind = TC.Key) & (e.key = TC.Up));
+		ASSERT(T.Next(r, e) & (e.kind = TC.Key) & (e.key = TC.Right) & (e.modifiers = {TC.Ctrl}));
+		ASSERT(T.Next(r, e) & (e.kind = TC.Character) & (e.char = ORD("h")));
+		ASSERT(T.Next(r, e) & (e.kind = TC.Character) & (e.char = ORD("i")));
+		ASSERT(~T.Next(r, e))
+	END Test.
+
+positive: a sequence the decoder does not name leaves the stream where it should be
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes, Streams, Strings;
+	VAR r: Streams.Reader; e: TC.Event; burst, s: T.Text;
+	BEGIN
+		(* a device report, which nothing here asks for, and then a key that must still arrive *)
+		T.CSI("6;1R", burst); T.CSI("B", s); Strings.Append(burst, s);
+		r := T.Over(burst);
+		ASSERT(T.Next(r, e) & (e.kind = TC.Unknown));
+		ASSERT(T.Next(r, e) & (e.kind = TC.Key) & (e.key = TC.Down))
+	END Test.
+
+positive: drawing is the escape sequences and nothing else
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR e: T.Text;
+	BEGIN
+		T.Restart; TC.MoveTo(T.W, 3, 7); T.Esc("[3;7H", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Clear(T.W); T.Esc("[2J", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.ClearLine(T.W); T.Esc("[K", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Foreground(T.W, 255, 128, 0); T.Esc("[38;2;255;128;0m", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Background(T.W, 0, 0, 32); T.Esc("[48;2;0;0;32m", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Bold(T.W, TRUE); T.Esc("[1m", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Inverse(T.W, TRUE); T.Esc("[7m", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.Plain(T.W); T.Esc("[0m", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.AltScreen(T.W, TRUE); T.Esc("[?1049h", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.AltScreen(T.W, FALSE); T.Esc("[?1049l", e); ASSERT(T.Drawn(e));
+		T.Restart; TC.ShowCursor(T.W, FALSE); T.Esc("[?25l", e); ASSERT(T.Drawn(e))
+	END Test.
+
+positive: what is drawn can be read back as what it draws
+
+	MODULE Test;
+	IMPORT T := TerminalTestShared, TC := TerminalCodes;
+	VAR s: ARRAY 8 OF CHAR;
+	BEGIN
+		(*	The bytes are written out here rather than encoded again, so this says what a terminal
+			receives and not merely that two calls of one encoder agree. *)
+		s[0] := 0E2X; s[1] := 094X; s[2] := 080X; s[3] := 0X;   (* BOX DRAWINGS LIGHT HORIZONTAL *)
+		T.Restart; TC.WriteChar(T.W, 2500H); ASSERT(T.Drawn(s));
+		s[0] := 0E2X; s[1] := 0A3X; s[2] := 0BFX; s[3] := 0X;   (* a braille cell with all eight dots *)
+		T.Restart; TC.WriteChar(T.W, 28FFH); ASSERT(T.Drawn(s))
+	END Test.
