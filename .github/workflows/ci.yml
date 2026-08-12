@@ -123,6 +123,16 @@ jobs:
              "$RUNNER_TEMP/a2sdk/lib/"
           cd tests && A2SDK="$RUNNER_TEMP/a2sdk" "$RUNNER_TEMP/a2sdk/ob" test \
             -j "$(nproc)" --report "$RUNNER_TEMP/ob-test-report.json"
+      - name: The terminal, on a terminal
+        # What a key sequence means is decided in tests/Terminal.Test, which needs no device.
+        # What raw mode and the window size are cannot be answered without one, so this drives
+        # the example on a pseudo-terminal -- against the SDK the step above already assembled,
+        # so it costs a compile and not a build. TERMINAL_REQUIRE: that SDK is there, so a skip
+        # would mean the step did nothing.
+        env:
+          TERMINAL_REQUIRE: "1"
+        run: tests/terminal-check.sh "$RUNNER_TEMP/a2sdk"
+
       - name: Tarball SDK (assemble it, unpack it elsewhere, use it with an empty environment)
         # Unpacks the tarball into a temporary directory and runs the bundle's own run.sh under
         # `env -i`, so anything the SDK cannot find beside itself fails here rather than in a

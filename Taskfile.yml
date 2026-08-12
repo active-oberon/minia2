@@ -498,6 +498,7 @@ tasks:
       - task: sigchain
       - task: display
       - task: wm
+      - task: terminal
 
   display:
     desc: What a display driver is handed -- the picture, checked without a screen
@@ -512,6 +513,23 @@ tasks:
       - |
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
+
+  terminal:
+    desc: The terminal as a device -- raw mode, the keys and the size, on a real pseudo-terminal
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/terminal-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # Same rule as the other checks: where the SDK is meant to exist -- CI -- a silent
+            # skip is the check not running at all, which reads the same as it passing.
+            [ -z "$TERMINAL_REQUIRE" ] || { echo "[FAIL] checking the terminal needs an SDK and script(1), and TERMINAL_REQUIRE is set"; exit 1; }
+            echo "[SKIP] checking the terminal needs the bundled SDK (task bundle) and script(1)"
+          else
+            exit "$status"
+          fi
+        }
 
   win-bundle:
     desc: The Windows SDK -- ob.exe and the library it compiles against, needing no bash on the target
