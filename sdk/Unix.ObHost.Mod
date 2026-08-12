@@ -21,6 +21,12 @@ CONST
 TYPE
 	Path* = ARRAY MaxPath OF CHAR;
 
+VAR
+	(* Why the last Spawn failed, 0 when it did not. `ob test` starts a process per case, six
+	   thousand of them, and "the case did not come back" and "the case never started" are
+	   different truths -- reading the second as the first cost an afternoon. *)
+	spawnError-: SIGNED32;
+
 (* Copy a NUL-terminated C string at adr into s, truncating rather than overrunning. *)
 PROCEDURE CopyIn(adr: ADDRESS; VAR s: ARRAY OF CHAR);
 VAR i: SIZE; ch: CHAR;
@@ -163,6 +169,29 @@ BEGIN
 	RETURN written = length
 END WriteFile;
 
+(*
+	Send this process's standard output and standard error to a file, appending, and keep them
+	there. Needed for exactly one thing: `ob test -t a64` on a machine that is not AArch64 runs
+	each case in an emulator, and an emulator writes to the descriptors it inherits. Nothing else
+	can capture it -- the child is not A2, so the trace channel is not involved, and Files opens a
+	file rather than becoming one.
+
+	Everything ob writes itself before this call is already in the file through Files, so the mode
+	is append: what follows is added after it rather than over it.
+*)
+PROCEDURE Redirect*(CONST path: ARRAY OF CHAR): BOOLEAN;
+CONST StandardOutput = 1; StandardError = 2;
+VAR file: SIGNED32; ignore: SIGNED32;
+BEGIN
+	file := Unix.open(ADDRESSOF(path), SET32(Unix.O_WRONLY) + SET32(Unix.O_CREAT) + SET32(Unix.O_APPEND),
+		Unix.rwrwr);
+	IF file < 0 THEN RETURN FALSE END;
+	IF Unix.dup2(file, StandardOutput) < 0 THEN ignore := Unix.close(file); RETURN FALSE END;
+	IF Unix.dup2(file, StandardError) < 0 THEN ignore := Unix.close(file); RETURN FALSE END;
+	ignore := Unix.close(file);		(* 1 and 2 are the copies now; the original is not needed *)
+	RETURN TRUE
+END Redirect;
+
 (** This process's id -- the only thing making a scratch directory name unique here. *)
 PROCEDURE ProcessId*(): SIGNED32;
 BEGIN
@@ -187,11 +216,10 @@ BEGIN
 	vector[count] := 0;
 	process := 0;
 	(* spawnp, not spawn: `ob get` has to find git wherever the PATH says it is, and an absolute
-	   path still works *)
-	IF Unix.posix_spawnp(ADDRESSOF(process), ADDRESSOF(program), 0, 0,
-			ADDRESSOF(vector[0]), Unix.environ) # 0 THEN
-		RETURN 0
-	END;
+	   path still works. The error is the return value, not errno -- posix_spawnp does not touch it. *)
+	spawnError := Unix.posix_spawnp(ADDRESSOF(process), ADDRESSOF(program), 0, 0,
+		ADDRESSOF(vector[0]), Unix.environ);
+	IF spawnError # 0 THEN RETURN 0 END;
 	RETURN process
 END Spawn;
 

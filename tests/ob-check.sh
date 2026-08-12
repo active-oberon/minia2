@@ -19,6 +19,12 @@
 
 set -eo pipefail
 
+# The shell version walks a directory by globbing, and a glob is sorted by the locale's collation;
+# the native one sorts by character. On an en_US machine those disagree about where CSV.Test goes,
+# and two transcripts that differ only in the order of whole files read as a difference in results.
+# Fixing the collation here is what makes "the same run" a statement about the drivers.
+export LC_ALL=C
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/target/Linux64}"
 case "$build" in /*) ;; *) build="$PWD/$build" ;; esac
@@ -233,6 +239,36 @@ if [ -f "$suite/report.json" ] && grep -q '"cases"' "$suite/report.json" \
 	echo "ok    test wrote a JSON report with its cases in it"
 else
 	echo "FAIL  test wrote no usable report"; fail=1
+fi
+
+# The same suites compiled for another architecture and executed in an emulator -- the last thing
+# the shell version could do that this one could not. Both files here execute rather than only
+# compile, so a run that quietly compiled and reported success would show up as a transcript of
+# its own: the banner naming the emulator is checked separately for exactly that reason.
+echo "=== test for another architecture, against the shell version case by case"
+emulator="${A2_QEMU:-$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)}"
+sysroot="${A2_A64_SYSROOT:-}"
+if [ -z "$sysroot" ]; then
+	for candidate in "$root/target/A64/sysroot" /usr/aarch64-linux-gnu /usr/local/aarch64-linux-gnu; do
+		[ -f "$candidate/lib/ld-linux-aarch64.so.1" ] && sysroot="$candidate" && break
+	done
+fi
+if [ ! -d "$sdk/lib-a64" ]; then
+	echo "skip  test -t a64: this SDK ships no lib-a64"
+elif [ -z "$emulator" ] || [ ! -f "$sysroot/lib/ld-linux-aarch64.so.1" ]; then
+	echo "skip  test -t a64: no qemu-aarch64 or no AArch64 C library"
+else
+	( cd "$suite" && export A2_QEMU="$emulator" A2_A64_SYSROOT="$sysroot"
+	  rc=0; "$ob"     test -t a64 > "$work/a64-native.txt" 2>&1 || rc=$?; echo "exit $rc" >> "$work/a64-native.txt"
+	  rc=0; "$sdk/ob" test -t a64 > "$work/a64-shell.txt"  2>&1 || rc=$?; echo "exit $rc" >> "$work/a64-shell.txt" )
+	if ! diff -u "$work/a64-shell.txt" "$work/a64-native.txt" > "$work/a64.diff"; then
+		echo "FAIL  test -t a64 differs from the shell version"
+		sed 's/^/        /' "$work/a64.diff" | head -40; fail=1
+	elif ! grep -q 'cases run under' "$work/a64-native.txt"; then
+		echo "FAIL  test -t a64 executed nothing -- no image or no emulator"; fail=1
+	else
+		echo "ok    test -t a64 reports every case as the shell version does, and executed them"
+	fi
 fi
 
 echo "=== doc, against the shell version page by page"

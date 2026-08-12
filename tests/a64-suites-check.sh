@@ -19,6 +19,12 @@
 
 set -eo pipefail
 
+# The order the suites run in should be the machine's business as little as possible: a glob is
+# sorted by the locale's collation, so without this the transcript of this run is not comparable
+# with one made on a differently configured machine -- or with the native driver, which sorts by
+# character.
+export LC_ALL=C
+
 absolute() {
 	case "$1" in
 		/*) printf '%s\n' "$1" ;;
