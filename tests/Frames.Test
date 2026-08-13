@@ -213,20 +213,53 @@ positive: a frame that is not for editing takes the caret but not the typing
 		ASSERT(~used)
 	END Test.
 
-positive: a screen tiles what it holds, one above the other or side by side
+positive: frames in one track are stacked, and share its height
 
 	MODULE Test;
 	IMPORT T := FramesTestShared, Frames, TerminalCodes;
 	VAR a, b: Frames.Frame; s: Frames.Screen;
 	BEGIN
 		NEW(a, "above", T.Numbered(3)); NEW(b, "below", T.Numbered(3));
-		NEW(s); s.Add(a); s.Add(b);
+		NEW(s); s.Add(a); s.Add(b);                (* the first Add starts a track *)
+		ASSERT(s.tracks = 1);
 		s.Layout(25, 80);
 		ASSERT(a.row = 1); ASSERT(a.height = 12); ASSERT(a.width = 80);
-		ASSERT(b.row = 13); ASSERT(b.height = 13);   (* the last one takes what is left over *)
-		s.sideBySide := TRUE; s.Layout(24, 81);
-		ASSERT(a.col = 1); ASSERT(a.width = 40); ASSERT(a.height = 24);
-		ASSERT(b.col = 41); ASSERT(b.width = 41)
+		ASSERT(b.row = 13); ASSERT(b.height = 13); (* the last one takes what is left over *)
+		ASSERT(b.width = 80)
+	END Test.
+
+positive: tracks stand side by side, as wide as the shares they were given
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR a, b: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(a, "narrow", T.Numbered(3)); NEW(b, "wide", T.Numbered(3));
+		NEW(s);
+		s.NewTrack(1); s.Add(a);
+		s.NewTrack(3); s.Add(b);
+		ASSERT(s.tracks = 2);
+		s.Layout(24, 80);
+		ASSERT(a.col = 1); ASSERT(a.width = 20); ASSERT(a.height = 24);
+		ASSERT(b.col = 21); ASSERT(b.width = 60); ASSERT(b.height = 24)
+	END Test.
+
+positive: a narrow list beside two frames, which is what neither alone could say
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR side, upper, lower: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(side, "genres", T.Numbered(3));
+		NEW(upper, "stations", T.Numbered(3));
+		NEW(lower, "log", T.Numbered(3));
+		NEW(s);
+		s.NewTrack(1); s.Add(side);
+		s.NewTrack(3); s.Add(upper); s.Add(lower);
+		s.Layout(24, 80);
+		ASSERT(side.col = 1); ASSERT(side.width = 20); ASSERT(side.height = 24);
+		ASSERT(upper.col = 21); ASSERT(upper.width = 60); ASSERT(upper.height = 12);
+		ASSERT(lower.col = 21); ASSERT(lower.row = 13); ASSERT(lower.height = 12)
 	END Test.
 
 positive: the caret moves from frame to frame, and the keys with it
