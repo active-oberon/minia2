@@ -25,7 +25,8 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 	is where its own header lives.
 *)
 
-IMPORT Files, Streams, Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects;
+IMPORT Files, Streams, Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
+	Random, Kernel;
 
 CONST
 	Idle = 40;                         (* milliseconds to wait when nothing at all has happened *)
@@ -51,6 +52,7 @@ VAR
 	volume: SIGNED32;
 	paused: BOOLEAN;
 	rows, columns: SIGNED32;
+	dice: Random.Sequence;
 
 	(* ---- the catalogue ---- *)
 
@@ -257,6 +259,7 @@ VAR
 		socketPath := "/tmp/a2-radio-"; Strings.AppendInt(socketPath, Unix.getpid());
 		Strings.Append(socketPath, ".sock");
 		playing := -1; volume := 70; paused := FALSE;
+		NEW(dice); dice.InitSeed(SIGNED32(Kernel.GetTicks()));   (* a different station each run *)
 		IF ~Compose() THEN
 			Terminal.Close;
 			context.error.String("Radio: no catalogue in $XDG_CONFIG_HOME/radio/stations.tsv");
@@ -282,7 +285,7 @@ VAR
 						| "p": Pause
 						| "+", "=": Volume(volume + 5)
 						| "-": Volume(volume - 5)
-						| "r": Play(SIGNED32(Unix.getpid() * 7 + stations) MOD stations)
+						| "r": Play(dice.Integer() MOD stations)
 					ELSE
 					END
 				ELSE
