@@ -542,14 +542,19 @@ VAR
 		RETURN n > 0
 	END DocumentDir;
 
-	(* Mask for enumerating the other modules beside `uri`, and the prefix to read them by. *)
+	(*	Mask for enumerating the other modules beside `uri`, and the prefix to read them by.
+
+		The fallback is a bare mask, not "./". They are not the same thing: measured from a
+		program with a working directory of its own, "./*.Mod" lists that directory on x86-64
+		and the search path on AArch64, while a bare "*.Mod" lists the working directory on
+		both. A client that sends a URI with no directory in it means the directory the server
+		works in, and that is how to spell it. *)
 	PROCEDURE SiblingMask (uri: Strings.String; VAR mask, prefix: ARRAY OF CHAR);
 	BEGIN
 		IF DocumentDir(uri, prefix) THEN
 			COPY(prefix, mask); Strings.Append(mask, "*.Mod")
 		ELSE
-			(* RelativeFileSystem needs the ./ prefix *)
-			COPY("./", prefix); COPY("./*.Mod", mask)
+			COPY("", prefix); COPY("*.Mod", mask)
 		END
 	END SiblingMask;
 
