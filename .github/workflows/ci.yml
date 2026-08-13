@@ -67,6 +67,19 @@ jobs:
         env:
           A64_REQUIRE: "1"
         run: task a64-suites
+      - name: The AArch64 suite transcript, when it has something to say
+        # The step above prints which cases failed and nothing else -- the case-by-case detail,
+        # which is the only thing that says *why*, is thousands of lines and stays in a file on
+        # the runner. Uploading it on failure is the difference between reading the reason and
+        # guessing at it from another machine.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a64-suites-transcript
+          path: |
+            target/A64/a64-suites-check.log
+            target/A64/a64-suites-report.json
+          if-no-files-found: ignore
       - name: Second stage (compile the tree with the freshly built compiler)
         # `task Linux64` compiles the tree with the committed bootstrap in compilers/, so a
         # patch to the compiler itself is never exercised by it -- the new binary is produced
