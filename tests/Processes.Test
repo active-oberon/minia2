@@ -147,3 +147,16 @@ positive: two programs at once do not take each other's output
 		expected := "first"; Append(expected, Newline); ASSERT(first^ = expected);
 		expected := "second"; Append(expected, Newline); ASSERT(second^ = expected)
 	END Test.
+
+positive: what the environment says, as the program was started with it
+
+	MODULE Test;
+	IMPORT Processes;
+	VAR value: ARRAY 256 OF CHAR;
+	BEGIN
+		(* PATH is how a program is found at all, so it is there wherever this runs *)
+		ASSERT(Processes.Environment("PATH", value));
+		ASSERT(value # "");
+		ASSERT(~Processes.Environment("A2_NOTHING_IS_CALLED_THIS", value));
+		ASSERT(value = "")
+	END Test.

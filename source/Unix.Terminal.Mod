@@ -149,6 +149,13 @@ VAR
 		RETURN TerminalCodes.Read(in, e)
 	END Read;
 
+	(**	Has something been typed? A program with more than the keyboard to watch -- a child's
+		output, a socket -- asks this instead of reading, and gets on with the rest when the
+		answer is no. *)
+	PROCEDURE Pending* (): BOOLEAN;
+	BEGIN RETURN in.Available() > 0
+	END Pending;
+
 	(** Everything drawn so far, sent to the terminal. *)
 	PROCEDURE Flush*;
 	BEGIN out.Update

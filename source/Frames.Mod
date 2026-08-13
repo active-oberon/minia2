@@ -100,7 +100,7 @@ TYPE
 		is set by the screen that holds it; what it shows and where the caret is are its own. *)
 	Frame* = OBJECT
 	VAR
-		title*: ARRAY 64 OF CHAR;
+		title*: ARRAY 128 OF CHAR;
 		text*: Text;
 		top*: SIGNED32;                (** the first line drawn *)
 		caret*: SIGNED32;              (** the line the caret is on *)
