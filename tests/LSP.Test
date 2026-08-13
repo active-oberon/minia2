@@ -25,9 +25,7 @@ positive: the helpers these tests are written with
 
 	CONST
 		CR = 0DX; LF = 0AX;
-		Dir* = "lsp";                    (* the fixtures live here, not in the working directory *)
-		LibUri* = "file://lsp/LspLib.Mod";
-		MainUri* = "file://lsp/LspMain.Mod";
+		Fixtures = "lsp";                (* the fixtures live here, not in the working directory *)
 
 	TYPE
 		Text* = ARRAY 4096 OF CHAR;
@@ -196,6 +194,12 @@ positive: the helpers these tests are written with
 			END Publishes;
 
 		END Session;
+
+	VAR
+		(** Where the fixtures are, as this run has to name them, and the two documents in them. *)
+		Dir-: ARRAY 256 OF CHAR;
+		LibUri-, MainUri-: ARRAY 320 OF CHAR;
+		ready: BOOLEAN;
 
 	(* ---- reading the transcript ---- *)
 
@@ -523,18 +527,42 @@ positive: the helpers these tests are written with
 		Commands.Activate(command, ctx, {Commands.Wait}, res, ignoreMsg)
 	END Command;
 
+	(*	Where a file this case makes actually lands. A relative name is enough on a host running
+		its own suites, but a case compiled for another architecture runs from a directory of the
+		driver's making, and only the file system knows which: it is asked, by making a file and
+		reading back the name it was given. An answer without a directory in it means the relative
+		name was good enough. *)
+	PROCEDURE WorkDirectory (VAR dir: ARRAY OF CHAR);
+	VAR f: Files.File; name: Files.FileName; i, last: SIZE;
+	BEGIN
+		dir := "";
+		WriteFile("lsp-probe.tmp", "x");
+		f := Files.Old("lsp-probe.tmp"); IF f = NIL THEN RETURN END;
+		f.GetName(name);
+		last := -1; i := 0;
+		WHILE name[i] # 0X DO IF name[i] = "/" THEN last := i END; INC(i) END;
+		IF last < 0 THEN RETURN END;
+		FOR i := 0 TO last DO dir[i] := name[i] END;
+		dir[last+1] := 0X
+	END WorkDirectory;
+
 	(*	The fixtures go in a directory of their own, and only the search path is told about it.
 		That is the shape of a real project under `ob lsp`: the modules are reachable by name,
 		and the working directory is somewhere else entirely -- a scratch directory there. A sweep
 		that looks beside the process instead of beside the open document finds nothing here, which
 		is what it did until 2026-08-12. *)
 	PROCEDURE Setup*;
-	VAR text: Text; name: ARRAY 64 OF CHAR; res: INTEGER;
+	VAR text: Text; name: ARRAY 320 OF CHAR; res: INTEGER;
 	BEGIN
+		IF ready THEN RETURN END;
+		WorkDirectory(Dir); Strings.Append(Dir, Fixtures);
 		Files.CreateDirectory(Dir, res);
-		name := Dir; Strings.Append(name, "/LspLib.Mod"); Lib(text); WriteFile(name, text);
-		name := Dir; Strings.Append(name, "/LspMain.Mod"); Main(text); WriteFile(name, text);
-		Command("Files.AddSearchPath", Dir)
+		COPY("file://", LibUri); Strings.Append(LibUri, Dir); Strings.Append(LibUri, "/LspLib.Mod");
+		COPY("file://", MainUri); Strings.Append(MainUri, Dir); Strings.Append(MainUri, "/LspMain.Mod");
+		COPY(Dir, name); Strings.Append(name, "/LspLib.Mod"); Lib(text); WriteFile(name, text);
+		COPY(Dir, name); Strings.Append(name, "/LspMain.Mod"); Main(text); WriteFile(name, text);
+		Command("Files.AddSearchPath", Dir);
+		ready := TRUE
 	END Setup;
 
 	(** A session with both fixtures open, which is what most of the checks want. *)
@@ -545,6 +573,8 @@ positive: the helpers these tests are written with
 		NEW(s); id := s.Start(); s.Open(LibUri, lib); s.Open(MainUri, main)
 	END Project;
 
+	BEGIN
+		ready := FALSE
 	END LSPTestShared.
 
 positive: initialize announces every provider, with the triggers and the token legend
