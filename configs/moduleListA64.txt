@@ -308,6 +308,7 @@ TerminalCodes.Mod
 Unix.Terminal.Mod
 Frames.Mod
 Unix.Processes.Mod
+Unix.LocalSockets.Mod
 ColorModels.Mod
 OpenTypeInt.Mod
 OpenTypeScan.Mod

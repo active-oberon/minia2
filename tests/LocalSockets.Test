@@ -1,0 +1,98 @@
+# Tests for source/Unix.LocalSockets.Mod -- sockets named by a path.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The two sides are in one process here: a listening socket accepts what is queued for it, so
+# connect, accept and talk can be done in order without a second activity. What a real program
+# does -- talk to something already running, like mpv's control socket -- is the same calls in
+# the same order, minus the listening.
+#
+# The path is in /tmp and carries this process's number: two runs at once, which is what -j is,
+# must not take each other's socket.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: two sides of a path talk to each other
+
+	MODULE Test;
+	IMPORT LocalSockets, Unix, Strings;
+	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
+		path: ARRAY 64 OF CHAR; line: ARRAY 128 OF CHAR;
+	BEGIN
+		path := "/tmp/a2-localsockets-"; Strings.AppendInt(path, Unix.getpid()); Strings.Append(path, ".sock");
+		l := LocalSockets.Listen(path);
+		ASSERT(l # NIL);
+		client := LocalSockets.Connect(path);      (* queued by the system: accept comes after *)
+		ASSERT(client # NIL);
+		server := l.Accept();
+		ASSERT(server # NIL);
+
+		ASSERT(server.Waiting() = 0);              (* nothing said yet, and asking does not wait *)
+		client.WriteLine('{ "command": ["get_property", "volume"] }');
+		ASSERT(server.ReadLine(line));
+		ASSERT(line = '{ "command": ["get_property", "volume"] }');
+
+		server.WriteLine('{ "data": 42 }');
+		ASSERT(client.ReadLine(line));
+		ASSERT(line = '{ "data": 42 }');
+
+		client.Close; server.Close; l.Close
+	END Test.
+
+positive: a path with nothing listening is nothing to connect to
+
+	MODULE Test;
+	IMPORT LocalSockets, Unix, Strings;
+	VAR l: LocalSockets.Listener; path: ARRAY 64 OF CHAR;
+	BEGIN
+		path := "/tmp/a2-localsockets-gone-"; Strings.AppendInt(path, Unix.getpid());
+		Strings.Append(path, ".sock");
+		ASSERT(LocalSockets.Connect(path) = NIL);  (* it was never there *)
+		l := LocalSockets.Listen(path);
+		ASSERT(l # NIL);
+		l.Close;
+		ASSERT(LocalSockets.Connect(path) = NIL)   (* and closing took the name away with it *)
+	END Test.
+
+positive: more than one line, in the order they were said
+
+	MODULE Test;
+	IMPORT LocalSockets, Unix, Strings;
+	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
+		path: ARRAY 64 OF CHAR; line: ARRAY 64 OF CHAR; i: SIGNED32; expected: ARRAY 64 OF CHAR;
+	BEGIN
+		path := "/tmp/a2-localsockets-many-"; Strings.AppendInt(path, Unix.getpid());
+		Strings.Append(path, ".sock");
+		l := LocalSockets.Listen(path); ASSERT(l # NIL);
+		client := LocalSockets.Connect(path); ASSERT(client # NIL);
+		server := l.Accept(); ASSERT(server # NIL);
+		FOR i := 1 TO 5 DO
+			line := "line "; Strings.AppendInt(line, i); client.WriteLine(line)
+		END;
+		FOR i := 1 TO 5 DO
+			ASSERT(server.ReadLine(line));
+			expected := "line "; Strings.AppendInt(expected, i);
+			ASSERT(line = expected)
+		END;
+		client.Close; server.Close; l.Close
+	END Test.
+
+positive: when one side goes away the other is told, not left waiting
+
+	MODULE Test;
+	IMPORT LocalSockets, Unix, Strings;
+	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
+		path: ARRAY 64 OF CHAR; line: ARRAY 64 OF CHAR;
+	BEGIN
+		path := "/tmp/a2-localsockets-end-"; Strings.AppendInt(path, Unix.getpid());
+		Strings.Append(path, ".sock");
+		l := LocalSockets.Listen(path); ASSERT(l # NIL);
+		client := LocalSockets.Connect(path); ASSERT(client # NIL);
+		server := l.Accept(); ASSERT(server # NIL);
+		client.WriteLine("last word");
+		client.Close;
+		ASSERT(server.ReadLine(line));
+		ASSERT(line = "last word");
+		ASSERT(~server.ReadLine(line));            (* and then there is nothing more, ever *)
+		server.Close; l.Close
+	END Test.
