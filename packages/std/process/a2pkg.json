@@ -1,0 +1,18 @@
+{
+  "name": "std/process",
+  "tier": 1,
+  "context": "A2",
+  "status": "draft",
+  "description": "Other programs on this machine: starting one with its input and output on pipes or with the terminal, waiting for it or killing it, reading the environment, and sockets named by a path -- the way a program is driven when a port would be the wrong thing.",
+  "provides": [
+    "Processes", "LocalSockets"
+  ],
+  "requires": {
+    "std/runtime": "*"
+  },
+  "residual": [
+    "Unix only: posix_spawn with file actions, and AF_UNIX. What a process is on Windows differs enough that a twin belongs beside these rather than inside them.",
+    "Reading blocks the activity that reads; both modules answer `Waiting` without waiting, which is what an event loop needs. Where output is wanted as it appears, the reading belongs in an active object -- neither module chooses that for the program.",
+    "No Pending on a listening socket: what answers that is poll, not the count of bytes waiting, and an answer that is only right on some systems is worse than none."
+  ]
+}

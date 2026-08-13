@@ -1,0 +1,18 @@
+{
+  "name": "std/terminal",
+  "tier": 1,
+  "context": "A2",
+  "status": "draft",
+  "description": "Full-screen terminal programs: what a terminal sends and understands, the terminal as a device, and Oberon's model of a screen drawn into it -- tiled frames of text with a caret, and any line runnable as a command.",
+  "provides": [
+    "TerminalCodes", "Terminal", "Frames"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Terminal is Unix only: raw mode is termios and the size is an ioctl. A Windows console twin is what a TUI there waits for, and until it exists this package builds on Unix targets alone; TerminalCodes and Frames are portable and carry no platform code.",
+    "Draft until a second program beside examples/Radio.Mod has been written on it: one program is not enough to say the shape of Frames is right."
+  ]
+}
