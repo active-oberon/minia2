@@ -250,6 +250,24 @@ BEGIN
 	RETURN TRUE
 END Run;
 
+(**	What the environment says a name means, as the program was started with it. FALSE when it says
+	nothing, which is not the same as saying nothing at all: an empty value is still a value. *)
+PROCEDURE Environment* (CONST name: ARRAY OF CHAR; VAR value: ARRAY OF CHAR): BOOLEAN;
+VAR address: ADDRESS; i: SIZE; ch: CHAR;
+BEGIN
+	value := "";
+	address := Unix.getenv(ADDRESSOF(name[0]));
+	IF address = 0 THEN RETURN FALSE END;
+	i := 0;
+	LOOP
+		SYSTEM.GET(address + i, ch);
+		IF (ch = 0X) OR (i >= LEN(value)-1) THEN EXIT END;
+		value[i] := ch; INC(i)
+	END;
+	value[i] := 0X;
+	RETURN TRUE
+END Environment;
+
 (** The arguments of a program, made from a program name and what follows it. *)
 PROCEDURE Arguments* (CONST first, second, third, fourth: ARRAY OF CHAR): Strings.StringArray;
 VAR a: Strings.StringArray; n, i: SIZE;
