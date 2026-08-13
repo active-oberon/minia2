@@ -18,7 +18,13 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 	    ob run examples/Radio.Mod
 
 	  ↑ ↓  choose        Enter  play        s  stop        p  pause
-	  + −  volume        r      a station at random        Ctrl-Q  leave
+	  + −  volume        r      one of those shown, at random
+	  Tab  change frame  m      write the catalogue out as M3U
+	  e    edit the catalogue in $EDITOR       Ctrl-Q  leave
+
+	Choosing a genre in the left frame narrows the middle one, and everything that follows --
+	playing, the random one, what is written out -- follows what is shown. `Radio.List` prints
+	the catalogue and needs no terminal at all.
 
 	The catalogue is $XDG_CONFIG_HOME/radio/stations.tsv (or ~/.config/radio), one station a
 	line: genre, name and address, separated by tabs. Lines beginning with # are ignored, which
@@ -40,10 +46,14 @@ TYPE
 VAR
 	station: ARRAY MaxStations OF Station;
 	stations: SIGNED32;
+	genre: ARRAY MaxStations OF Strings.String;   (* the genres, once each, in the order met *)
+	genres: SIGNED32;
+	shown: ARRAY MaxStations OF SIGNED32;         (* which station each line of the list is *)
+	listed: SIGNED32;
 
 	screen: Frames.Screen;
-	list, log: Frames.Frame;
-	catalogue, output: Frames.Text;
+	genreFrame, list, log: Frames.Frame;
+	genreText, catalogue, output: Frames.Text;
 
 	player: Processes.Process;         (* mpv, while something is playing *)
 	control: LocalSockets.Connection;  (* and the socket it listens on *)
@@ -82,9 +92,17 @@ VAR
 		RETURN TRUE
 	END Field;
 
+	(* Each genre once, in the order the catalogue mentions them. *)
+	PROCEDURE Met (CONST what: ARRAY OF CHAR);
+	VAR i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO genres-1 DO IF genre[i]^ = what THEN RETURN END END;
+		IF genres < MaxStations THEN genre[genres] := Strings.NewString(what); INC(genres) END
+	END Met;
+
 	PROCEDURE Read (CONST path: ARRAY OF CHAR): BOOLEAN;
 	VAR f: Files.File; r: Files.Reader; line: ARRAY 1024 OF CHAR;
-		genre, name, url: ARRAY 256 OF CHAR; from: SIZE; shown: ARRAY 300 OF CHAR;
+		kind, name, url: ARRAY 256 OF CHAR; from: SIZE;
 	BEGIN
 		f := Files.Old(path); IF f = NIL THEN RETURN FALSE END;
 		Files.OpenReader(r, f, 0);
@@ -93,19 +111,37 @@ VAR
 			r.Ln(line);
 			IF (line[0] # "#") & (line[0] # 0X) THEN
 				from := 0;
-				IF Field(line, from, genre) & Field(line, from, name) & Field(line, from, url) THEN
-					station[stations].genre := Strings.NewString(genre);
+				IF Field(line, from, kind) & Field(line, from, name) & Field(line, from, url) THEN
+					station[stations].genre := Strings.NewString(kind);
 					station[stations].name := Strings.NewString(name);
 					station[stations].url := Strings.NewString(url);
-					COPY(name, shown); Strings.Append(shown, "   ");
-					Strings.Append(shown, genre);
-					catalogue.Add(shown);
+					Met(kind);
 					INC(stations)
 				END
 			END
 		END;
 		RETURN stations > 0
 	END Read;
+
+	(*	The stations of one genre, or all of them. Everything that follows -- what is played, the
+		random one, what is written out -- goes by what is shown, so narrowing the list narrows
+		them too, which is what the genre menu of the shell version did in its own way. *)
+	PROCEDURE Fill (which: SIGNED32);
+	VAR i: SIGNED32; line: ARRAY 300 OF CHAR;
+	BEGIN
+		catalogue.Clear; listed := 0;
+		FOR i := 0 TO stations-1 DO
+			IF (which < 0) OR (station[i].genre^ = genre[which]^) THEN
+				COPY(station[i].name^, line);
+				IF which < 0 THEN
+					Strings.Append(line, "   "); Strings.Append(line, station[i].genre^)
+				END;
+				catalogue.Add(line); shown[listed] := i; INC(listed)
+			END
+		END;
+		IF listed = 0 THEN catalogue.Add("(no stations of that kind)") END;
+		list.top := 0; list.caret := 0
+	END Fill;
 
 	(* ---- mpv, and the socket it listens on ---- *)
 
@@ -141,6 +177,13 @@ VAR
 		END;
 		playing := -1; paused := FALSE
 	END Stop;
+
+	(* The station on that line of the list, or -1 where the list is empty. *)
+	PROCEDURE Chosen (line: SIGNED32): SIGNED32;
+	BEGIN
+		IF (line < 0) OR (line >= listed) THEN RETURN -1 END;
+		RETURN shown[line]
+	END Chosen;
 
 	PROCEDURE Play (which: SIGNED32);
 	VAR arguments: Strings.StringArray; include, ipc: ARRAY 256 OF CHAR;
@@ -205,6 +248,59 @@ VAR
 		END
 	END Listen;
 
+	(*	The catalogue as a playlist, in the form every player reads. What is written is what is
+		shown, so a narrowed list writes one genre's worth -- which is the same rule as playing. *)
+	PROCEDURE Export;
+	VAR directory, path: ARRAY 256 OF CHAR; f: Files.File; w: Files.Writer;
+		i, which: SIGNED32; said: ARRAY 300 OF CHAR;
+	BEGIN
+		IF ~Home(directory) THEN RETURN END;
+		COPY(directory, path); Strings.Append(path, "radio.m3u");
+		f := Files.New(path);
+		IF f = NIL THEN Say("could not write the playlist"); RETURN END;
+		Files.OpenWriter(w, f, 0);
+		w.String("#EXTM3U"); w.Char(0AX);
+		FOR i := 0 TO listed-1 DO
+			which := shown[i];
+			w.String('#EXTINF:-1 group-title="'); w.String(station[which].genre^);
+			w.String('",'); w.String(station[which].name^); w.Char(0AX);
+			w.String(station[which].url^); w.Char(0AX)
+		END;
+		w.Update; Files.Register(f);
+		said := "wrote "; Strings.AppendInt(said, listed);
+		Strings.Append(said, " stations to "); Strings.Append(said, path); Say(said)
+	END Export;
+
+	(*	The catalogue in an editor. The editor wants the terminal the way it found it, so this
+		gives it back, waits, and takes it again -- which is what a full-screen program has to do
+		around any program that draws for itself. *)
+	PROCEDURE Edit;
+	VAR directory, path: ARRAY 256 OF CHAR; editor: ARRAY 128 OF CHAR;
+		arguments: Strings.StringArray; child: Processes.Process; code: SIGNED32;
+	BEGIN
+		IF ~Home(directory) THEN RETURN END;
+		COPY(directory, path); Strings.Append(path, "stations.tsv");
+		IF ~Processes.Environment("EDITOR", editor) OR (editor = "") THEN editor := "nano" END;
+		NEW(arguments, 2);
+		arguments[0] := Strings.NewString(editor);
+		arguments[1] := Strings.NewString(path);
+
+		Terminal.ShowCursor(TRUE); Terminal.AltScreen(FALSE); Terminal.Flush; Terminal.Close;
+		child := Processes.StartAttached(editor, arguments);
+		IF child # NIL THEN code := child.Wait(); child.Close END;
+		IF Terminal.Open() THEN END;
+		Terminal.AltScreen(TRUE); Terminal.ShowCursor(FALSE);
+
+		IF child = NIL THEN Say("no editor to edit it with"); RETURN END;
+		catalogue.Clear; genres := 0; stations := 0;
+		IF Read(path) THEN
+			genreText.Clear; genreText.Add("All");
+			FOR code := 0 TO genres-1 DO genreText.Add(genre[code]^) END;
+			genreFrame.caret := 0; Fill(-1);
+			Say("the catalogue was read again")
+		END
+	END Edit;
+
 	(* ---- what is on the screen ---- *)
 
 	(*	The station frame's name says what is playing; the keys are written over the other frame,
@@ -230,18 +326,24 @@ VAR
 	END Fit;
 
 	PROCEDURE Compose (): BOOLEAN;
-	VAR directory, path: ARRAY 256 OF CHAR;
+	VAR directory, path: ARRAY 256 OF CHAR; i: SIGNED32;
 	BEGIN
 		NEW(catalogue); NEW(output);
 		IF ~Home(directory) THEN RETURN FALSE END;
 		COPY(directory, path); Strings.Append(path, "stations.tsv");
 		IF ~Read(path) THEN RETURN FALSE END;
 
+		NEW(genreText); genreText.Add("All");
+		FOR i := 0 TO genres-1 DO genreText.Add(genre[i]^) END;
+
+		NEW(genreFrame, " Genres ", genreText); genreFrame.editable := FALSE;
 		NEW(list, " Stations ", catalogue); list.editable := FALSE;
-		NEW(log, " What it says -- Enter plays, s stops, p pauses, +/- volume, r random, Ctrl-Q leaves ",
+		NEW(log, " Enter plays, s stops, p pauses, +/- volume, r random, m writes M3U, e edits, Ctrl-Q leaves ",
 			output);
 		log.editable := FALSE;
-		NEW(screen); screen.Add(list); screen.Add(log);
+		NEW(screen); screen.sideBySide := TRUE;
+		screen.Add(genreFrame); screen.Add(list); screen.Add(log);
+		Fill(-1);
 		output.Add("mpv does the playing; everything else here is Active Oberon");
 		RETURN TRUE
 	END Compose;
@@ -278,14 +380,20 @@ VAR
 						& (e.char = ORD("q")) THEN
 					leave := TRUE
 				ELSIF (e.kind = Terminal.Key) & (e.key = Terminal.Enter) THEN
-					Play(list.caret)
+					IF screen.Focused() = genreFrame THEN
+						Fill(genreFrame.caret - 1)     (* the first line is All, which is -1 *)
+					ELSE
+						Play(Chosen(list.caret))
+					END
 				ELSIF e.kind = Terminal.Character THEN
 					CASE CHR(e.char) OF
 						  "s": Stop; Say("stopped")
 						| "p": Pause
 						| "+", "=": Volume(volume + 5)
 						| "-": Volume(volume - 5)
-						| "r": Play(dice.Integer() MOD stations)
+						| "m": Export
+						| "e": Edit
+						| "r": IF listed > 0 THEN Play(Chosen(dice.Integer() MOD listed)) END
 					ELSE
 					END
 				ELSE
@@ -301,5 +409,33 @@ VAR
 		Terminal.ShowCursor(TRUE); Terminal.AltScreen(FALSE); Terminal.Flush;
 		Terminal.Close
 	END Do;
+
+(**	`ob run Radio.Mod List` -- the catalogue as text, for a pipe or a look. Needs no terminal,
+	and is the one thing here that a full-screen program cannot be. *)
+PROCEDURE List* (context: Commands.Context);
+VAR directory, path: ARRAY 256 OF CHAR; i, width, n: SIGNED32;
+BEGIN
+	NEW(catalogue); stations := 0; genres := 0;
+	IF ~Home(directory) THEN
+		context.error.String("Radio: no place to look for a catalogue"); context.error.Ln; RETURN
+	END;
+	COPY(directory, path); Strings.Append(path, "stations.tsv");
+	IF ~Read(path) THEN
+		context.error.String("Radio: no catalogue at "); context.error.String(path);
+		context.error.Ln; RETURN
+	END;
+	width := 0;
+	FOR i := 0 TO stations-1 DO
+		n := SIGNED32(Strings.Length(station[i].genre^));
+		IF n > width THEN width := n END
+	END;
+	FOR i := 0 TO stations-1 DO
+		context.out.String(station[i].genre^);
+		n := width - SIGNED32(Strings.Length(station[i].genre^)) + 2;
+		WHILE n > 0 DO context.out.Char(" "); DEC(n) END;
+		context.out.String(station[i].name^); context.out.Ln
+	END;
+	context.out.Update
+END List;
 
 END Radio.
