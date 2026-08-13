@@ -63,6 +63,7 @@ VAR
 	paused: BOOLEAN;
 	rows, columns: SIGNED32;
 	dice: Random.Sequence;
+	status: ARRAY 200 OF CHAR;         (* mpv's position line, which is state and not a message *)
 
 	(* ---- the catalogue ---- *)
 
@@ -175,7 +176,7 @@ VAR
 			IF ~player.Finished(code) THEN player.Kill END;
 			player.Close; player := NIL
 		END;
-		playing := -1; paused := FALSE
+		playing := -1; paused := FALSE; status := ""
 	END Stop;
 
 	(* The station on that line of the list, or -1 where the list is empty. *)
@@ -205,7 +206,7 @@ VAR
 
 		player := Processes.Start("mpv", arguments);
 		IF player = NIL THEN Say("mpv is not on the PATH, and it is what plays"); RETURN END;
-		playing := which;
+		playing := which; status := "";
 		said := "playing: "; Strings.Append(said, station[which].name^); Say(said);
 		Attach;
 		Volume(volume)
@@ -230,6 +231,11 @@ VAR
 		END
 	END Pause;
 
+	(* mpv's own position line, which it rewrites rather than adds to. *)
+	PROCEDURE Status (CONST line: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN (line[0] = "A") & (line[1] = ":") & (line[2] = " ")
+	END Status;
+
 	(* Whatever mpv has said since last time -- the station's own titles come through here. *)
 	PROCEDURE Listen;
 	VAR line: ARRAY 300 OF CHAR; i: SIZE; ch: CHAR;
@@ -244,7 +250,12 @@ VAR
 				line[i] := ch; INC(i)
 			END;
 			line[i] := 0X;
-			IF line # "" THEN Say(line) END
+			IF line # "" THEN
+				(*	mpv rewrites its position line many times a second. It is not a message and
+					does not belong among them: it goes in the frame's name, where a thing that
+					is always true and always changing belongs. *)
+				IF Status(line) THEN COPY(line, status) ELSE Say(line) END
+			END
 		END
 	END Listen;
 
@@ -309,6 +320,12 @@ VAR
 	PROCEDURE Title;
 	VAR t: ARRAY 256 OF CHAR;
 	BEGIN
+		IF (playing >= 0) & (status # "") THEN
+			t := " "; Strings.Append(t, status); Strings.Append(t, " ")
+		ELSE
+			t := " Enter plays, s stops, p pauses, +/- volume, r random, m writes M3U, e edits, Ctrl-Q leaves "
+		END;
+		COPY(t, log.title);
 		t := " Stations ";
 		IF playing >= 0 THEN
 			Strings.Append(t, "-- "); Strings.Append(t, station[playing].name^);
@@ -341,8 +358,12 @@ VAR
 		NEW(log, " Enter plays, s stops, p pauses, +/- volume, r random, m writes M3U, e edits, Ctrl-Q leaves ",
 			output);
 		log.editable := FALSE;
-		NEW(screen); screen.sideBySide := TRUE;
-		screen.Add(genreFrame); screen.Add(list); screen.Add(log);
+		(*	Two tracks: the genres beside everything else, and in the wider one the stations over
+			what they say. Three equal columns would give the log a third of the width, and the
+			log is the part with sentences in it. *)
+		NEW(screen);
+		screen.NewTrack(1); screen.Add(genreFrame);
+		screen.NewTrack(3); screen.Add(list); screen.Add(log);
 		Fill(-1);
 		output.Add("mpv does the playing; everything else here is Active Oberon");
 		RETURN TRUE

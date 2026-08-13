@@ -246,22 +246,42 @@ TYPE
 
 	END Frame;
 
-	(**	A screen: the frames, side by side or one above the other, and which of them has the
-		caret. Tiled, as Oberon tiles viewers -- no frame is ever hidden behind another. *)
+	(**	A screen, as Oberon divides one: vertical tracks side by side, and in each track the frames
+		stacked one above the other. Tiled throughout -- no frame is ever hidden behind another,
+		which is the whole reason the model needs no window manager.
+
+		A screen with one frame in each of two tracks is two columns; a screen with two frames in
+		one track is two rows; and the arrangement most programs want -- a narrow list beside a
+		pair of frames -- is what neither of those alone could say. *)
 	Screen* = OBJECT
 	VAR
 		frame: ARRAY MaxFrames OF Frame;
+		inTrack: ARRAY MaxFrames OF SIGNED32;      (* which track each frame is in *)
+		share: ARRAY MaxFrames OF SIGNED32;        (* how wide each track is, in shares *)
 		count-: SIGNED32;
+		tracks-: SIGNED32;
 		focus-: SIGNED32;              (** which frame the keys go to *)
-		sideBySide*: BOOLEAN;          (** columns, rather than one above the other *)
 
 		PROCEDURE &InitScreen*;
-		BEGIN count := 0; focus := 0; sideBySide := FALSE
+		BEGIN count := 0; focus := 0; tracks := 0
 		END InitScreen;
 
+		(** Another column, this many shares of the width wide. Frames added next go in it. *)
+		PROCEDURE NewTrack* (width: SIGNED32);
+		BEGIN
+			IF tracks < MaxFrames THEN
+				IF width < 1 THEN width := 1 END;
+				share[tracks] := width; INC(tracks)
+			END
+		END NewTrack;
+
+		(** Add a frame to the track being filled; the first one starts a track of its own. *)
 		PROCEDURE Add* (f: Frame);
 		BEGIN
-			IF count < MaxFrames THEN frame[count] := f; INC(count) END
+			IF tracks = 0 THEN NewTrack(1) END;
+			IF count < MaxFrames THEN
+				frame[count] := f; inTrack[count] := tracks - 1; INC(count)
+			END
 		END Add;
 
 		PROCEDURE At* (i: SIGNED32): Frame;
@@ -279,29 +299,42 @@ TYPE
 			IF (i >= 0) & (i < count) THEN focus := i END
 		END Focus;
 
-		(** Divide a terminal of that size between the frames, in equal shares. *)
+		PROCEDURE InTrack (t: SIGNED32): SIGNED32;
+		VAR i, n: SIGNED32;
+		BEGIN
+			n := 0;
+			FOR i := 0 TO count-1 DO IF inTrack[i] = t THEN INC(n) END END;
+			RETURN n
+		END InTrack;
+
+		(**	Divide a terminal of that size between the tracks, and each track between its frames.
+			What does not divide evenly goes to the last, which is where a leftover column shows
+			least. *)
 		PROCEDURE Layout* (rows, columns: SIGNED32);
-		VAR i, share, rest, at: SIGNED32;
+		VAR t, i, shares, wide, left, high, top, here, done: SIGNED32;
 		BEGIN
 			IF count = 0 THEN RETURN END;
-			IF sideBySide THEN
-				share := columns DIV count; rest := columns - share * count; at := 1;
-				FOR i := 0 TO count-1 DO
-					IF i = count-1 THEN
-						frame[i].Place(1, at, rows, share + rest)
-					ELSE
-						frame[i].Place(1, at, rows, share); INC(at, share)
+			shares := 0;
+			FOR t := 0 TO tracks-1 DO INC(shares, share[t]) END;
+			IF shares = 0 THEN RETURN END;
+			left := 1;
+			FOR t := 0 TO tracks-1 DO
+				wide := columns * share[t] DIV shares;
+				IF t = tracks-1 THEN wide := columns - left + 1 END;
+				here := InTrack(t);
+				IF here > 0 THEN
+					top := 1; done := 0;
+					FOR i := 0 TO count-1 DO
+						IF inTrack[i] = t THEN
+							INC(done);
+							high := rows DIV here;
+							IF done = here THEN high := rows - top + 1 END;
+							frame[i].Place(top, left, high, wide);
+							INC(top, high)
+						END
 					END
-				END
-			ELSE
-				share := rows DIV count; rest := rows - share * count; at := 1;
-				FOR i := 0 TO count-1 DO
-					IF i = count-1 THEN
-						frame[i].Place(at, 1, share + rest, columns)
-					ELSE
-						frame[i].Place(at, 1, share, columns); INC(at, share)
-					END
-				END
+				END;
+				INC(left, wide)
 			END
 		END Layout;
 
