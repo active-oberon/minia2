@@ -38,6 +38,8 @@ hard error, checked by the layer-lint (below).
 | `std/calc` | 2 | draft | 9 |
 | `std/data` | 2 | draft | 17 |
 | `std/drivers` | 1 | draft | 10 |
+| `std/terminal` | 1 | draft | 3 |
+| `std/process` | 1 | draft | 2 |
 | `std/compiler` | 3 | draft | 91 |
 | `std/gui` | 3 | draft | ~40 core (of 137 WM* + 39 gfx; rest are apps) |
 
