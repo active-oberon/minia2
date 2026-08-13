@@ -64,6 +64,7 @@ VAR
 	rows, columns: SIGNED32;
 	dice: Random.Sequence;
 	status: ARRAY 200 OF CHAR;         (* mpv's position line, which is state and not a message *)
+	said: SIGNED32;                    (* how many lines the log had when it was last drawn *)
 
 	(* ---- the catalogue ---- *)
 
@@ -373,7 +374,7 @@ VAR
 
 	(* `ob run Radio.Mod` invokes the exported command Do. *)
 	PROCEDURE Do* (context: Commands.Context);
-	VAR e: Terminal.Event; leave, drew: BOOLEAN;
+	VAR e: Terminal.Event; leave, changed, onlyStatus: BOOLEAN; was: ARRAY 200 OF CHAR;
 	BEGIN
 		IF ~Terminal.Open() THEN
 			context.error.String("Radio: standard input is not a terminal"); context.error.Ln;
@@ -381,7 +382,7 @@ VAR
 		END;
 		socketPath := "/tmp/a2-radio-"; Strings.AppendInt(socketPath, Unix.getpid());
 		Strings.Append(socketPath, ".sock");
-		playing := -1; volume := 70; paused := FALSE;
+		playing := -1; volume := 70; paused := FALSE; said := 0;
 		NEW(dice); dice.InitSeed(SIGNED32(Kernel.GetTicks()));   (* a different station each run *)
 		IF ~Compose() THEN
 			Terminal.Close;
@@ -390,10 +391,13 @@ VAR
 		END;
 		Fit;
 		Terminal.AltScreen(TRUE); Terminal.ShowCursor(FALSE);
+		Title; screen.Refresh(Terminal.out); Terminal.Flush;
 		leave := FALSE;
 		REPEAT
-			Title; screen.Draw(Terminal.out); Terminal.Flush;
-			drew := FALSE;
+			(*	Draw when something has changed and not otherwise. Painting a screen twenty-five
+				times a second whether or not it differs is what makes a terminal program flicker,
+				and there is nothing to see in it either. *)
+			changed := FALSE; onlyStatus := FALSE;
 			IF Terminal.Pending() THEN
 				IF ~Terminal.Read(e) THEN
 					leave := TRUE
@@ -418,12 +422,29 @@ VAR
 					ELSE
 					END
 				ELSE
-					drew := screen.Handle(e)
+					IF screen.Handle(e) THEN END
 				END;
-				IF Terminal.Resized() THEN Fit END
+				changed := TRUE;
+				IF Terminal.Resized() THEN
+					Fit; Title; screen.Refresh(Terminal.out); Terminal.Flush; changed := FALSE
+				END
 			ELSE
+				COPY(status, was);
 				Listen;
-				IF ~drew THEN Objects.Sleep(Idle) END
+				onlyStatus := (output.count = said) & (was # status);
+				changed := onlyStatus OR (output.count # said);
+				IF ~changed THEN Objects.Sleep(Idle) END
+			END;
+			said := output.count;
+			IF changed & ~leave THEN
+				Title;
+				(*	mpv's position changes several times a second and lives in one frame's name.
+					Redrawing the other two for it would be work nobody asked for -- which is what
+					having frames is for. *)
+				IF onlyStatus THEN log.Draw(Terminal.out, screen.Focused() = log)
+				ELSE screen.Draw(Terminal.out)
+				END;
+				Terminal.Flush
 			END
 		UNTIL leave;
 		Stop;
