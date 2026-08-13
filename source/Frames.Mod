@@ -338,19 +338,32 @@ TYPE
 			END
 		END Layout;
 
+		(**	Draw the frames over what is already there. Nothing is cleared first: every frame
+			paints every cell it owns, borders and blanks included, so clearing would only mean
+			the screen spends a moment empty -- which is what flicker is. *)
 		PROCEDURE Draw* (w: Streams.Writer);
 		VAR i: SIGNED32;
 		BEGIN
-			TerminalCodes.Clear(w);
 			FOR i := 0 TO count-1 DO frame[i].Draw(w, i = focus) END
 		END Draw;
 
-		(**	Tab moves the caret to the next frame; everything else is the focused frame's, and
-			what it does not want comes back to the program. *)
+		(**	Clear first, then draw. For after a resize, where the frames no longer cover what the
+			old ones did, and once at the start. *)
+		PROCEDURE Refresh* (w: Streams.Writer);
+		BEGIN TerminalCodes.Clear(w); Draw(w)
+		END Refresh;
+
+		(**	Tab moves the caret to the next frame and Shift-Tab to the one before; everything else
+			is the focused frame's, and what it does not want comes back to the program. *)
 		PROCEDURE Handle* (CONST e: TerminalCodes.Event): BOOLEAN;
 		BEGIN
 			IF (e.kind = TerminalCodes.Key) & (e.key = TerminalCodes.Tab) & (count > 1) THEN
-				focus := (focus + 1) MOD count; RETURN TRUE
+				IF TerminalCodes.Shift IN e.modifiers THEN
+					focus := (focus + count - 1) MOD count
+				ELSE
+					focus := (focus + 1) MOD count
+				END;
+				RETURN TRUE
 			END;
 			IF Focused() = NIL THEN RETURN FALSE END;
 			RETURN Focused().Handle(e)

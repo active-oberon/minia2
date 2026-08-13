@@ -52,6 +52,14 @@ positive: the helpers these tests are written with
 		RETURN e
 	END Key;
 
+	(** A key with Shift held, which is how a terminal reports Shift-Tab. *)
+	PROCEDURE ShiftKey* (key: SIGNED32): TerminalCodes.Event;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		e := Key(key); e.modifiers := {TerminalCodes.Shift};
+		RETURN e
+	END ShiftKey;
+
 	(** A typed character. *)
 	PROCEDURE Char* (c: CHAR): TerminalCodes.Event;
 	VAR e: TerminalCodes.Event;
@@ -283,6 +291,23 @@ positive: the caret moves from frame to frame, and the keys with it
 		ASSERT(s.focus = 0)                        (* and round again *)
 	END Test.
 
+positive: Shift and Tab go back the way Tab came
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR a, b, c: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(a, "one", T.Numbered(2)); NEW(b, "two", T.Numbered(2)); NEW(c, "three", T.Numbered(2));
+		NEW(s); s.Add(a); s.Add(b); s.Add(c); s.Layout(24, 80);
+		ASSERT(s.focus = 0);
+		ASSERT(s.Handle(T.ShiftKey(TerminalCodes.Tab)));
+		ASSERT(s.focus = 2);                       (* back from the first is the last *)
+		ASSERT(s.Handle(T.ShiftKey(TerminalCodes.Tab)));
+		ASSERT(s.focus = 1);
+		ASSERT(s.Handle(T.Key(TerminalCodes.Tab)));
+		ASSERT(s.focus = 2)
+	END Test.
+
 positive: what a screen draws is its frames, their names and the lines that fit
 
 	MODULE Test;
@@ -291,7 +316,7 @@ positive: what a screen draws is its frames, their names and the lines that fit
 	BEGIN
 		NEW(a, "commands", T.Numbered(30)); NEW(b, "log", T.Numbered(3));
 		NEW(s); s.Add(a); s.Add(b); s.Layout(24, 80);
-		T.Restart; s.Draw(T.W);
+		T.Restart; s.Refresh(T.W);                 (* Refresh clears first; Draw does not *)
 		ASSERT(T.Shows("commands"));
 		ASSERT(T.Shows("log"));
 		ASSERT(T.Shows("line 0"));
