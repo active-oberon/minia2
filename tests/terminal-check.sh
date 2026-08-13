@@ -82,6 +82,27 @@ grep -q "?1006h" "$transcript" && grep -q "?1006l" "$transcript" \
 	&& ok "asked for the mouse and stopped asking" \
 	|| bad "mouse reporting was left on"
 
+echo "=== frames on that terminal, and a line that runs"
+# Ctrl-E runs the line under the caret, Ctrl-Q leaves. The keys are sent after a wait, and that
+# is not politeness: until the program has put the terminal into raw mode the line discipline is
+# still the one it inherited, which holds what is typed until a newline and eats Ctrl-Q and
+# Ctrl-S as flow control. Keys sent before then arrive late or not at all.
+cp "$root/docker/examples/Panels.Mod" "$work/"
+panels="$work/panels"
+{ sleep 3; printf '\005'; sleep 2; printf '\021'; } \
+	| ( cd "$work" && timeout 180 script -qec "$sdk/ob run Panels.Mod" /dev/null ) \
+	> "$panels" 2>&1 || bad "the frames program did not leave on Ctrl-Q"
+
+framed="$(tr -d '\r' < "$panels" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
+
+grep -q "Commands" <<<"$framed" && grep -q "Log" <<<"$framed" \
+	&& ok "drew both frames, each with its name" \
+	|| bad "the two frames are not in the transcript"
+
+grep -qE "[0-9]{2}\.[0-9]{2}\.[0-9]{4}" <<<"$framed" \
+	&& ok "ran the line under the caret and logged what it wrote" \
+	|| bad "System.Time did not run, or its answer did not reach the log"
+
 echo
 if [ "$fail" = 0 ]; then echo "terminal-check: OK"; else echo "terminal-check: FAILED"; fi
 exit "$fail"

@@ -1049,6 +1049,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	# so far -- a Windows console twin is what a TUI there waits for.
 	TerminalCodes.Mod
 	UNIX { Unix.Terminal.Mod }
+	Frames.Mod # tiled frames of text with a caret, and any line runnable -- Oberon's model
 END
 
 PACKAGE GuiApplicationsMini ARCHIVE "GuiApplicationsMini.zip" SOURCE "GuiApplicationsMiniSrc.zip" DESCRIPTION "Minimal GUI applications set"

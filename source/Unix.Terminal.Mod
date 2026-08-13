@@ -47,8 +47,11 @@ CONST
 
 	(*	tio.lflags: signals from keys, line at a time, echo, and the terminal's own line editing *)
 	ISIG = {0}; ICANON = {1}; ECHO = {3}; IEXTEN = {15};
-	(*	tio.iflags: flow control by Ctrl-S, return turned into newline, break as an interrupt *)
-	IXON = {9}; ICRNL = {8}; BRKINT = {1}; INPCK = {4}; ISTRIP = {5};
+	(*	tio.iflags: flow control by Ctrl-S and Ctrl-Q, return turned into newline, break as an
+		interrupt. The bits are Linux's: IXON is 0002000 octal, which is bit 10 -- bit 9 is
+		IUCLC, and clearing that instead leaves flow control on, so Ctrl-Q never reaches the
+		program at all. A demo that quits on Ctrl-Q is how that was noticed. *)
+	IXON = {10}; ICRNL = {8}; BRKINT = {1}; INPCK = {4}; ISTRIP = {5};
 	(*	tio.oflags: the terminal's own output processing, which would rewrite what is drawn *)
 	OPOST = {0};
 	VMIN = 6; VTIME = 5;               (* how little a read may return, and how long it waits *)
