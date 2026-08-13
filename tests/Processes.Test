@@ -1,0 +1,149 @@
+# Tests for source/Unix.Processes.Mod -- starting another program, and talking to it.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ProcessesTestShared;System.Load Test"
+#
+# The programs run here are the ones every Unix has and nobody has ever changed the behaviour
+# of: echo says what it was given, cat gives back what it was told, false fails, sleep waits.
+# Under an emulator the child is the host's own program, which is what makes these portable.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ProcessesTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Run a program and read what it said" *)
+
+	IMPORT Strings, Processes;
+
+	(** Run a program with its arguments, and give back what it wrote with its last newline off. *)
+	PROCEDURE Said* (CONST program, a, b, c: ARRAY OF CHAR; VAR code: SIGNED32;
+		VAR out: ARRAY OF CHAR): BOOLEAN;
+	VAR text: Strings.String; n: SIZE;
+	BEGIN
+		out := "";
+		IF ~Processes.Run(program, Processes.Arguments(program, a, b, c), text, code) THEN
+			RETURN FALSE
+		END;
+		IF text # NIL THEN
+			COPY(text^, out);
+			n := Strings.Length(out);
+			WHILE (n > 0) & ((out[n-1] = 0AX) OR (out[n-1] = 0DX)) DO DEC(n); out[n] := 0X END
+		END;
+		RETURN TRUE
+	END Said;
+
+	END ProcessesTestShared.
+
+positive: a program runs, and what it wrote comes back
+
+	MODULE Test;
+	IMPORT T := ProcessesTestShared;
+	VAR code: SIGNED32; out: ARRAY 256 OF CHAR;
+	BEGIN
+		ASSERT(T.Said("echo", "hello from a child", "", "", code, out));
+		ASSERT(out = "hello from a child");
+		ASSERT(code = 0)
+	END Test.
+
+positive: arguments arrive as arguments, not as one string
+
+	MODULE Test;
+	IMPORT T := ProcessesTestShared;
+	VAR code: SIGNED32; out: ARRAY 256 OF CHAR;
+	BEGIN
+		ASSERT(T.Said("echo", "one", "two", "three", code, out));
+		ASSERT(out = "one two three")
+	END Test.
+
+positive: how a program ended is what it says it was
+
+	MODULE Test;
+	IMPORT T := ProcessesTestShared;
+	VAR code: SIGNED32; out: ARRAY 64 OF CHAR;
+	BEGIN
+		ASSERT(T.Said("false", "", "", "", code, out));
+		ASSERT(code = 1);                          (* it ran, and it failed: two different things *)
+		ASSERT(T.Said("true", "", "", "", code, out));
+		ASSERT(code = 0);
+		ASSERT(T.Said("sh", "-c", "exit 7", "", code, out));
+		ASSERT(code = 7)
+	END Test.
+
+positive: a name that is not a program is refused, and nothing waits for it
+
+	MODULE Test;
+	IMPORT Processes, Strings;
+	VAR out: Strings.String; code: SIGNED32; started: BOOLEAN;
+	BEGIN
+		(*	Which way this is reported is the C library's choice: some say so at the start, and some
+			make the child and let it fail to become the program, which is an exit code of 127. Both
+			answers are fine; being told nothing, or waiting for ever, would not be. *)
+		started := Processes.Run("no-such-program-anywhere",
+			Processes.Arguments("no-such-program-anywhere", "", "", ""), out, code);
+		ASSERT(~started OR (code = 127))
+	END Test.
+
+positive: both directions: what is written to a program comes back from it
+
+	MODULE Test;
+	IMPORT Processes, Strings;
+	CONST Newline = 0AX;
+	VAR p: Processes.Process; out: Strings.String; code: SIGNED32; expected: ARRAY 32 OF CHAR;
+
+		PROCEDURE Append (VAR s: ARRAY OF CHAR; ch: CHAR);
+		VAR one: ARRAY 2 OF CHAR;
+		BEGIN one[0] := ch; one[1] := 0X; Strings.Append(s, one)
+		END Append;
+
+	BEGIN
+		p := Processes.Start("cat", Processes.Arguments("cat", "", "", ""));
+		ASSERT(p # NIL);
+		ASSERT(p.Waiting() = 0);                   (* it has not been given anything to say yet *)
+		p.WriteLine("through a pipe");             (* not Input.Ln: that writes a carriage return too *)
+		p.CloseInput;
+		out := p.ReadAll();
+		code := p.Wait();
+		p.Close;
+		ASSERT(out # NIL);
+		expected := "through a pipe"; Append(expected, Newline);
+		ASSERT(out^ = expected);
+		ASSERT(code = 0)
+	END Test.
+
+positive: a program that will not finish can be stopped
+
+	MODULE Test;
+	IMPORT Processes;
+	VAR p: Processes.Process; code: SIGNED32;
+	BEGIN
+		p := Processes.Start("sleep", Processes.Arguments("sleep", "300", "", ""));
+		ASSERT(p # NIL);
+		ASSERT(~p.Finished(code));                 (* it is still going, and asking does not wait *)
+		p.Kill;
+		ASSERT(p.Finished(code));
+		ASSERT(code = 128 + 9);                    (* killed, the way a shell reports it *)
+		p.Close
+	END Test.
+
+positive: two programs at once do not take each other's output
+
+	MODULE Test;
+	IMPORT Processes, Strings;
+	CONST Newline = 0AX;
+	VAR a, b: Processes.Process; first, second: Strings.String; code: SIGNED32; expected: ARRAY 32 OF CHAR;
+
+		PROCEDURE Append (VAR s: ARRAY OF CHAR; ch: CHAR);
+		VAR one: ARRAY 2 OF CHAR;
+		BEGIN one[0] := ch; one[1] := 0X; Strings.Append(s, one)
+		END Append;
+
+	BEGIN
+		a := Processes.Start("echo", Processes.Arguments("echo", "first", "", ""));
+		b := Processes.Start("echo", Processes.Arguments("echo", "second", "", ""));
+		ASSERT(a # NIL); ASSERT(b # NIL);
+		first := a.ReadAll(); second := b.ReadAll();
+		code := a.Wait(); ASSERT(code = 0);
+		code := b.Wait(); ASSERT(code = 0);
+		a.Close; b.Close;
+		expected := "first"; Append(expected, Newline); ASSERT(first^ = expected);
+		expected := "second"; Append(expected, Newline); ASSERT(second^ = expected)
+	END Test.

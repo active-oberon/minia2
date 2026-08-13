@@ -307,6 +307,7 @@ LSP.Mod
 TerminalCodes.Mod
 Unix.Terminal.Mod
 Frames.Mod
+Unix.Processes.Mod
 ColorModels.Mod
 OpenTypeInt.Mod
 OpenTypeScan.Mod

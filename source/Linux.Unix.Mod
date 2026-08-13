@@ -707,6 +707,14 @@ VAR
 	(*more restrictive than spawnp*)
 	posix_spawn- 	: PROCEDURE {C} (pid: ADDRESS; path: ADDRESS; file_actions: ADDRESS; attrp: ADDRESS; argv: ADDRESS ; envp: ADDRESS): SIGNED32;
 	waitpid-			: PROCEDURE {C} (pid: pid_t; status: ADDRESS; options: SIGNED32): pid_t;
+	(*	The child's side of a pipe is attached with file actions: what the spawned program is to do
+		to its own descriptors before it starts. Without them a child can only inherit ours, which
+		is enough to run a program and nothing at all to talk to one. *)
+	posix_spawn_file_actions_init-		: PROCEDURE {C} (actions: ADDRESS): SIGNED32;
+	posix_spawn_file_actions_destroy-	: PROCEDURE {C} (actions: ADDRESS): SIGNED32;
+	posix_spawn_file_actions_adddup2-	: PROCEDURE {C} (actions: ADDRESS; fd, newfd: SIGNED32): SIGNED32;
+	posix_spawn_file_actions_addclose-	: PROCEDURE {C} (actions: ADDRESS; fd: SIGNED32): SIGNED32;
+
 	pipe-				: PROCEDURE {C} (pipefd: ADDRESS): SIGNED32; (*pipefd is assumed to be a pointer to a C array of 2 elements, after pipe creation the array will contain file descriptors for the input and output end of the pipe. returns 0 on success, or -1 on fail*)
 	dup2-				: PROCEDURE {C} (oldfd,newfd: SIGNED32): SIGNED32; (*overwrites file descriptor newfd with a copy of oldfd. useful for redirecting pipes.*)
 	dup-				: PROCEDURE {C} (oldfd: SIGNED32): SIGNED32;
@@ -1526,6 +1534,10 @@ VAR
 		Dlsym( libp, "pthread_setaffinity_np", ADDRESSOF(pthread_setaffinity_np) );
 
 		Dlsym( libc, "posix_spawnp", ADDRESSOF(posix_spawnp) );
+		Dlsym( libc, "posix_spawn_file_actions_init", ADDRESSOF(posix_spawn_file_actions_init) );
+		Dlsym( libc, "posix_spawn_file_actions_destroy", ADDRESSOF(posix_spawn_file_actions_destroy) );
+		Dlsym( libc, "posix_spawn_file_actions_adddup2", ADDRESSOF(posix_spawn_file_actions_adddup2) );
+		Dlsym( libc, "posix_spawn_file_actions_addclose", ADDRESSOF(posix_spawn_file_actions_addclose) );
 		Dlsym( libc, "posix_spawn", ADDRESSOF(posix_spawn) );
 
 		Dlsym( libc, "waitpid", ADDRESSOF(waitpid) );
