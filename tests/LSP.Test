@@ -509,6 +509,17 @@ positive: the helpers these tests are written with
 		out[n] := 0X
 	END Quote;
 
+	(** The whole of a file, or NIL when it cannot be opened. *)
+	PROCEDURE ReadFile (CONST name: ARRAY OF CHAR): Strings.String;
+	VAR f: Files.File; r: Files.Reader; buf: Streams.Buffer; w: Streams.Writer; ch: CHAR;
+	BEGIN
+		f := Files.Old(name); IF f = NIL THEN RETURN NIL END;
+		Files.OpenReader(r, f, 0);
+		NEW(buf, 1024); w := buf.GetWriter();
+		LOOP ch := r.Get(); IF r.res # Streams.Ok THEN EXIT END; w.Char(ch) END;
+		w.Update; RETURN buf.GetString()
+	END ReadFile;
+
 	PROCEDURE WriteFile (CONST name, content: ARRAY OF CHAR);
 	VAR f: Files.File; w: Files.Writer;
 	BEGIN
@@ -543,7 +554,7 @@ positive: the helpers these tests are written with
 		WHILE name[i] # 0X DO IF name[i] = "/" THEN last := i END; INC(i) END;
 		IF last < 0 THEN RETURN END;
 		FOR i := 0 TO last DO dir[i] := name[i] END;
-		dir[last+1] := 0X
+		dir[last+1] := 0X                            (* with its trailing slash *)
 	END WorkDirectory;
 
 	(*	The fixtures go in a directory of their own, and only the search path is told about it.
@@ -551,16 +562,40 @@ positive: the helpers these tests are written with
 		and the working directory is somewhere else entirely -- a scratch directory there. A sweep
 		that looks beside the process instead of beside the open document finds nothing here, which
 		is what it did until 2026-08-12. *)
+	(*	Write the two fixtures into `where` and say whether they can be read back from there.
+		Written and read by the same names the server will use, because a name that writes and a
+		name that reads are not always the same thing here: the relative file system resolves a
+		bare name against the working directory and a search path against the search path. *)
+	PROCEDURE Place (CONST where: ARRAY OF CHAR): BOOLEAN;
+	VAR text: Text; name: ARRAY 320 OF CHAR;
+	BEGIN
+		COPY(where, name); Strings.Append(name, "LspLib.Mod"); Lib(text); WriteFile(name, text);
+		COPY(where, name); Strings.Append(name, "LspMain.Mod"); Main(text); WriteFile(name, text);
+		COPY(where, name); Strings.Append(name, "LspLib.Mod");
+		IF ReadFile(name) = NIL THEN RETURN FALSE END;
+		COPY(where, name); Strings.Append(name, "LspMain.Mod");
+		RETURN ReadFile(name) # NIL
+	END Place;
+
 	PROCEDURE Setup*;
-	VAR text: Text; name: ARRAY 320 OF CHAR; res: INTEGER;
+	VAR res: INTEGER; where: ARRAY 256 OF CHAR;
 	BEGIN
 		IF ready THEN RETURN END;
-		WorkDirectory(Dir); Strings.Append(Dir, Fixtures);
-		Files.CreateDirectory(Dir, res);
-		COPY("file://", LibUri); Strings.Append(LibUri, Dir); Strings.Append(LibUri, "/LspLib.Mod");
-		COPY("file://", MainUri); Strings.Append(MainUri, Dir); Strings.Append(MainUri, "/LspMain.Mod");
-		COPY(Dir, name); Strings.Append(name, "/LspLib.Mod"); Lib(text); WriteFile(name, text);
-		COPY(Dir, name); Strings.Append(name, "/LspMain.Mod"); Main(text); WriteFile(name, text);
+		(*	First choice: a directory of the fixtures' own, so that the sweep over a project has
+			somewhere to look that is not where the process stands. Where that cannot be made --
+			a case compiled for another architecture runs from a directory of the driver's making,
+			and CreateDirectory does not reach it -- the fixtures go beside the case itself, named
+			in full, which still tells the sweep a directory and still is not the process's. *)
+		WorkDirectory(Dir);
+		COPY(Dir, where); Strings.Append(where, Fixtures); Strings.Append(where, "/");
+		Files.CreateDirectory(where, res);
+		IF ~Place(where) THEN
+			COPY(Dir, where);                       (* the work directory itself, in full *)
+			ASSERT(Place(where), 100)               (* 100: the fixtures went nowhere readable *)
+		END;
+		COPY(where, Dir);
+		COPY("file://", LibUri); Strings.Append(LibUri, Dir); Strings.Append(LibUri, "LspLib.Mod");
+		COPY("file://", MainUri); Strings.Append(MainUri, Dir); Strings.Append(MainUri, "LspMain.Mod");
 		Command("Files.AddSearchPath", Dir);
 		ready := TRUE
 	END Setup;
