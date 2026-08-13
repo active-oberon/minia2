@@ -204,6 +204,7 @@ Terminal
 TerminalCodes
 Frames
 Processes
+LocalSockets
 Linker
 Loader
 Localization
