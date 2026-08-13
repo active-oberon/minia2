@@ -234,6 +234,26 @@ BEGIN
 	RETURN p
 END Start;
 
+(**	Start a program that takes the terminal over -- an editor, a pager -- rather than one that is
+	spoken to. It inherits this program's own input and output, so there is nothing to read and
+	nothing to write: what it does, it does to the screen. A full-screen program should give the
+	terminal back first (Terminal.Close) and take it again afterwards. *)
+PROCEDURE StartAttached* (CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): Process;
+VAR vector: POINTER TO ARRAY OF ADDRESS; i, count: SIZE; pid, error: SIGNED32; p: Process;
+BEGIN
+	count := 0;
+	IF arguments # NIL THEN count := LEN(arguments^) END;
+	NEW(vector, count + 1);
+	FOR i := 0 TO count-1 DO vector[i] := ADDRESSOF(arguments[i][0]) END;
+	vector[count] := 0;
+	pid := 0;
+	error := Unix.posix_spawnp(ADDRESSOF(pid), ADDRESSOF(program), 0, 0,
+		ADDRESSOF(vector[0]), Unix.environ);
+	IF error # 0 THEN RETURN NIL END;
+	NEW(p, pid, -1, -1);               (* no pipes: it has the terminal, not us *)
+	RETURN p
+END StartAttached;
+
 (**	The common case in one call: start a program, let it say everything it has to say, and wait
 	for it. FALSE when it could not be started at all; a program that ran and failed returns TRUE
 	with its exit code, because that is a thing it did and not a thing that went wrong here. *)
