@@ -204,6 +204,7 @@ KernelLog
 LPR
 LSP
 TerminalCodes
+Frames
 Linker
 Loader
 Localization

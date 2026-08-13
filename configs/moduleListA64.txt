@@ -306,6 +306,7 @@ JSON.Mod
 LSP.Mod
 TerminalCodes.Mod
 Unix.Terminal.Mod
+Frames.Mod
 ColorModels.Mod
 OpenTypeInt.Mod
 OpenTypeScan.Mod

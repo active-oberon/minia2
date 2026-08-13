@@ -1,0 +1,314 @@
+# Tests for source/Frames.Mod -- tiled frames of text, a caret, and lines that run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test FramesTestShared;System.Load Test"
+#
+# A frame draws into a Streams.Writer and is given events, so a screen can be laid out, typed
+# into and asked what it drew without a terminal anywhere. What a terminal is, and whether raw
+# mode works, is Terminal's and tests/terminal-check.sh's.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE FramesTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Type into a screen and read what it drew" *)
+
+	IMPORT Streams, Strings, Frames, TerminalCodes;
+
+	VAR
+		buf: Streams.Buffer;
+		W-: Streams.Writer;                (** where a screen under test draws *)
+
+	(** Draw afresh. *)
+	PROCEDURE Restart*;
+	BEGIN NEW(buf, 4096); W := buf.GetWriter()
+	END Restart;
+
+	(** Everything drawn since Restart, escape sequences and all. *)
+	PROCEDURE Drawn* (): Strings.String;
+	BEGIN W.Update; RETURN buf.GetString()
+	END Drawn;
+
+	(** Is that text somewhere in what was drawn? *)
+	PROCEDURE Shows* (CONST what: ARRAY OF CHAR): BOOLEAN;
+	VAR s: Strings.String; i, j, plen, tlen: SIZE;
+	BEGIN
+		s := Drawn(); IF s = NIL THEN RETURN FALSE END;
+		plen := Strings.Length(what); tlen := Strings.Length(s^);
+		i := 0;
+		WHILE i + plen <= tlen DO
+			j := 0; WHILE (j < plen) & (s[i+j] = what[j]) DO INC(j) END;
+			IF j = plen THEN RETURN TRUE END;
+			INC(i)
+		END;
+		RETURN FALSE
+	END Shows;
+
+	(** A key press, as a terminal would have reported it. *)
+	PROCEDURE Key* (key: SIGNED32): TerminalCodes.Event;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		e.kind := TerminalCodes.Key; e.key := key; e.modifiers := {};
+		e.char := 0; e.button := 0; e.x := 0; e.y := 0;
+		RETURN e
+	END Key;
+
+	(** A typed character. *)
+	PROCEDURE Char* (c: CHAR): TerminalCodes.Event;
+	VAR e: TerminalCodes.Event;
+	BEGIN
+		e.kind := TerminalCodes.Character; e.char := ORD(c); e.modifiers := {};
+		e.key := 0; e.button := 0; e.x := 0; e.y := 0;
+		RETURN e
+	END Char;
+
+	(** Type a whole string into whatever has the caret. *)
+	PROCEDURE Type* (s: Frames.Screen; CONST what: ARRAY OF CHAR);
+	VAR i: SIZE; ignore: BOOLEAN;
+	BEGIN
+		i := 0;
+		WHILE what[i] # 0X DO ignore := s.Handle(Char(what[i])); INC(i) END
+	END Type;
+
+	(** The line, as text, or "" when there is none. *)
+	PROCEDURE At* (t: Frames.Text; i: SIGNED32; VAR out: ARRAY OF CHAR);
+	VAR s: Strings.String;
+	BEGIN
+		s := t.Get(i); IF s = NIL THEN out := "" ELSE COPY(s^, out) END
+	END At;
+
+	(** A text of that many numbered lines, for the checks about scrolling. *)
+	PROCEDURE Numbered* (n: SIGNED32): Frames.Text;
+	VAR t: Frames.Text; i: SIGNED32; s: ARRAY 32 OF CHAR;
+	BEGIN
+		NEW(t);
+		FOR i := 0 TO n-1 DO s := "line "; Strings.AppendInt(s, i); t.Add(s) END;
+		RETURN t
+	END Numbered;
+
+	BEGIN
+		Restart
+	END FramesTestShared.
+
+positive: a text is a list of lines, and knows how to be one
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR t: Frames.Text; s: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(t);
+		ASSERT(t.count = 0);
+		ASSERT(t.Get(0) = NIL);
+		t.Add("one"); t.Add("three");
+		t.Insert(1, "two");
+		ASSERT(t.count = 3);
+		T.At(t, 0, s); ASSERT(s = "one");
+		T.At(t, 1, s); ASSERT(s = "two");
+		T.At(t, 2, s); ASSERT(s = "three");
+		t.Set(1, "second"); T.At(t, 1, s); ASSERT(s = "second");
+		t.Delete(0); ASSERT(t.count = 2); T.At(t, 0, s); ASSERT(s = "second");
+		t.Delete(7); ASSERT(t.count = 2);          (* out of range changes nothing *)
+		t.Clear; ASSERT(t.count = 0)
+	END Test.
+
+positive: more lines than it was made with
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR t: Frames.Text; i: SIGNED32; s: ARRAY 64 OF CHAR;
+	BEGIN
+		t := T.Numbered(500);
+		ASSERT(t.count = 500);
+		T.At(t, 0, s); ASSERT(s = "line 0");
+		T.At(t, 499, s); ASSERT(s = "line 499")
+	END Test.
+
+positive: text arriving in one piece is split where its newlines are
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, Strings;
+	VAR t: Frames.Text; s: ARRAY 64 OF CHAR; nl: ARRAY 2 OF CHAR;
+	BEGIN
+		NEW(t); nl[0] := 0AX; nl[1] := 0X;
+		s := "first"; Strings.Append(s, nl); Strings.Append(s, "second"); Strings.Append(s, nl);
+		t.AddText(s);
+		ASSERT(t.count = 2);
+		T.At(t, 0, s); ASSERT(s = "first");
+		T.At(t, 1, s); ASSERT(s = "second")
+	END Test.
+
+positive: the caret stays inside the text, and the text under it stays in view
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR f: Frames.Frame; ignore: BOOLEAN;
+	BEGIN
+		NEW(f, "twenty lines", T.Numbered(20));
+		f.Place(1, 1, 10, 40);                     (* eight lines fit inside the border *)
+		ASSERT(f.Room() = 8);
+		ignore := f.Handle(T.Key(TerminalCodes.Up));
+		ASSERT(f.caret = 0);                       (* it does not go above the first line *)
+		WHILE f.caret < 19 DO ignore := f.Handle(T.Key(TerminalCodes.Down)) END;
+		ignore := f.Handle(T.Key(TerminalCodes.Down));
+		ASSERT(f.caret = 19);                      (* nor below the last *)
+		ASSERT(f.top = 12);                        (* and the view followed it down *)
+		ignore := f.Handle(T.Key(TerminalCodes.PageUp));
+		ASSERT(f.caret = 11);
+		ASSERT(f.top <= f.caret)
+	END Test.
+
+positive: typing changes the line the caret is on
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR t: Frames.Text; f: Frames.Frame; s: Frames.Screen; line: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(t); t.Add("");
+		NEW(f, "typing", t); f.Place(1, 1, 6, 40);
+		NEW(s); s.Add(f);
+		T.Type(s, "System.Time");
+		T.At(t, 0, line); ASSERT(line = "System.Time");
+		ASSERT(f.column = 11)
+	END Test.
+
+positive: a line splits where the caret is, and joins again
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR t: Frames.Text; f: Frames.Frame; s: Frames.Screen; line: ARRAY 64 OF CHAR; ignore: BOOLEAN;
+	BEGIN
+		NEW(t); t.Add("");
+		NEW(f, "editing", t); f.Place(1, 1, 8, 40);
+		NEW(s); s.Add(f);
+		T.Type(s, "abcdef");
+		ignore := s.Handle(T.Key(TerminalCodes.Left)); ignore := s.Handle(T.Key(TerminalCodes.Left));
+		ignore := s.Handle(T.Key(TerminalCodes.Enter));
+		ASSERT(t.count = 2);
+		T.At(t, 0, line); ASSERT(line = "abcd");
+		T.At(t, 1, line); ASSERT(line = "ef");
+		ASSERT(f.caret = 1); ASSERT(f.column = 0);
+		ignore := s.Handle(T.Key(TerminalCodes.Backspace));   (* at the start of a line: join *)
+		ASSERT(t.count = 1);
+		T.At(t, 0, line); ASSERT(line = "abcdef");
+		ASSERT(f.column = 4);
+		ignore := s.Handle(T.Key(TerminalCodes.Backspace));
+		T.At(t, 0, line); ASSERT(line = "abcef");
+		ignore := s.Handle(T.Key(TerminalCodes.Delete));
+		T.At(t, 0, line); ASSERT(line = "abcf")
+	END Test.
+
+positive: a frame that is not for editing takes the caret but not the typing
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR t: Frames.Text; f: Frames.Frame; line: ARRAY 64 OF CHAR; ignore, used: BOOLEAN;
+	BEGIN
+		t := T.Numbered(5);
+		NEW(f, "a log", t); f.editable := FALSE; f.Place(1, 1, 8, 40);
+		used := f.Handle(T.Char("x"));
+		ASSERT(~used);
+		T.At(t, 0, line); ASSERT(line = "line 0");
+		used := f.Handle(T.Key(TerminalCodes.Down));
+		ASSERT(used); ASSERT(f.caret = 1);         (* looking about is still allowed *)
+		used := f.Handle(T.Key(TerminalCodes.Enter));
+		ASSERT(~used)
+	END Test.
+
+positive: a screen tiles what it holds, one above the other or side by side
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR a, b: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(a, "above", T.Numbered(3)); NEW(b, "below", T.Numbered(3));
+		NEW(s); s.Add(a); s.Add(b);
+		s.Layout(25, 80);
+		ASSERT(a.row = 1); ASSERT(a.height = 12); ASSERT(a.width = 80);
+		ASSERT(b.row = 13); ASSERT(b.height = 13);   (* the last one takes what is left over *)
+		s.sideBySide := TRUE; s.Layout(24, 81);
+		ASSERT(a.col = 1); ASSERT(a.width = 40); ASSERT(a.height = 24);
+		ASSERT(b.col = 41); ASSERT(b.width = 41)
+	END Test.
+
+positive: the caret moves from frame to frame, and the keys with it
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR a, b: Frames.Frame; s: Frames.Screen; ta, tb: Frames.Text; line: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(ta); ta.Add(""); NEW(tb); tb.Add("");
+		NEW(a, "first", ta); NEW(b, "second", tb);
+		NEW(s); s.Add(a); s.Add(b); s.Layout(24, 80);
+		ASSERT(s.focus = 0); ASSERT(s.Focused() = a);
+		T.Type(s, "one");
+		T.At(ta, 0, line); ASSERT(line = "one");
+		ASSERT(s.Handle(T.Key(TerminalCodes.Tab)));
+		ASSERT(s.focus = 1); ASSERT(s.Focused() = b);
+		T.Type(s, "two");
+		T.At(tb, 0, line); ASSERT(line = "two");
+		T.At(ta, 0, line); ASSERT(line = "one");
+		ASSERT(s.Handle(T.Key(TerminalCodes.Tab)));
+		ASSERT(s.focus = 0)                        (* and round again *)
+	END Test.
+
+positive: what a screen draws is its frames, their names and the lines that fit
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR a, b: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(a, "commands", T.Numbered(30)); NEW(b, "log", T.Numbered(3));
+		NEW(s); s.Add(a); s.Add(b); s.Layout(24, 80);
+		T.Restart; s.Draw(T.W);
+		ASSERT(T.Shows("commands"));
+		ASSERT(T.Shows("log"));
+		ASSERT(T.Shows("line 0"));
+		ASSERT(T.Shows("line 9"));                 (* ten lines fit in the upper frame *)
+		ASSERT(~T.Shows("line 10"));               (* and the eleventh does not *)
+		ASSERT(T.Shows("╭"));                      (* drawn with box characters *)
+		ASSERT(T.Shows("╯"))
+	END Test.
+
+positive: scrolling shows the far end of a text, and only that
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR f: Frames.Frame; s: Frames.Screen;
+	BEGIN
+		NEW(f, "long", T.Numbered(30));
+		NEW(s); s.Add(f); s.Layout(12, 40);
+		f.ToEnd;
+		T.Restart; s.Draw(T.W);
+		ASSERT(T.Shows("line 29"));
+		ASSERT(T.Shows("line 20"));
+		ASSERT(~T.Shows("line 19"));
+		ASSERT(~T.Shows("line 0 "))
+	END Test.
+
+positive: any line is a command, and what it writes comes back
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR log: Frames.Text; line: ARRAY 128 OF CHAR; i: SIGNED32; found: BOOLEAN;
+	BEGIN
+		NEW(log);
+		ASSERT(Frames.Execute("System.Show what a line says ~", log));
+		found := FALSE;
+		FOR i := 0 TO log.count-1 DO
+			T.At(log, i, line);
+			(* System.Show writes back what it was given, the tilde and the spacing and all *)
+			IF line = " what a line says ~" THEN found := TRUE END
+		END;
+		ASSERT(found)
+	END Test.
+
+positive: a line that names nothing says so instead of doing nothing
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, TerminalCodes;
+	VAR log: Frames.Text;
+	BEGIN
+		NEW(log);
+		ASSERT(~Frames.Execute("NoSuchModule.NoSuchCommand", log));
+		ASSERT(log.count > 0);                     (* the reason is in the log *)
+		ASSERT(Frames.Execute("   ", log))          (* an empty line runs nothing, and that is fine *)
+	END Test.

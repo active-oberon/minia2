@@ -7,7 +7,7 @@ and ETH's sit in one directory and cannot be told apart by looking.
 
 | | modules |
 | --- | ---: |
-| ours outright (in no vanilla tree) | 12 |
+| ours outright (in no vanilla tree) | 13 |
 | vanilla, changed by us | 33 |
 | vanilla, untouched | 719 |
 
@@ -20,6 +20,7 @@ and ETH's sit in one directory and cannot be told apart by looking.
 - `FoxA64Assembler.Mod`
 - `FoxA64Backend.Mod`
 - `FoxA64InstructionSet.Mod`
+- `Frames.Mod`
 - `JSON.Mod`
 - `LSP.Mod`
 - `TerminalCodes.Mod`
