@@ -1,0 +1,139 @@
+# Tests for source/Streams.Mod -- the reader and the writer everything else is built on.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test StreamsTestShared;System.Load Test"
+#
+# Not a survey of the module: the cases here are the behaviours that surprised somebody writing
+# against it, and each one cost time before it was written down. A reader that polls when asked
+# how much it has, a Peek that quietly forgives the end of a stream, a Ln that writes two
+# characters -- all three are what they are on purpose, and all three are worth pinning so that a
+# change is noticed by a test rather than by a program.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE StreamsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A receiver that says how it was called" *)
+
+	IMPORT Streams;
+
+	VAR
+		calls-: SIGNED32;                (** how many times the receiver was called *)
+		least-: SIZE;                    (** the smallest `min` it was ever asked for *)
+		left: SIGNED32;
+
+	(** A source of `left` letters that remembers how it was asked for them. *)
+	PROCEDURE Counted* (VAR buffer: ARRAY OF CHAR; offset, size, min: SIZE;
+		VAR length: SIZE; VAR result: INTEGER);
+	BEGIN
+		INC(calls);
+		IF min < least THEN least := min END;
+		IF left <= 0 THEN length := 0; result := Streams.EOF; RETURN END;
+		buffer[offset] := "x"; length := 1; DEC(left); result := Streams.Ok
+	END Counted;
+
+	PROCEDURE Restart* (letters: SIGNED32);
+	BEGIN calls := 0; least := 1000; left := letters
+	END Restart;
+
+	END StreamsTestShared.
+
+positive: asking a reader how much it has is a read, with min zero
+
+	MODULE Test;
+	IMPORT T := StreamsTestShared, Streams;
+	VAR r: Streams.Reader; n: SIZE;
+	BEGIN
+		(*	This is the one that cost the most: Available does not look at a buffer, it calls the
+			receiver -- with min = 0, which means "take what is there and do not wait". A receiver
+			that ignores min and blocks turns "is there anything?" into "wait until there is". *)
+		T.Restart(4);
+		NEW(r, T.Counted, 64);
+		ASSERT(T.calls = 0);
+		n := r.Available();
+		ASSERT(T.calls > 0);                       (* it read to answer *)
+		ASSERT(T.least = 0)                        (* and asked for nothing in particular *)
+	END Test.
+
+positive: Peek at the end says nothing is there, and lets the reader go on
+
+	MODULE Test;
+	IMPORT T := StreamsTestShared, Streams;
+	VAR r: Streams.Reader; ch: CHAR;
+	BEGIN
+		(*	Peek forgives the end: it turns EOF back into Ok and returns 0X, so a loop written as
+			"peek until something" spins for ever on a stream that has ended. Get is what tells the
+			truth. *)
+		T.Restart(1);
+		NEW(r, T.Counted, 64);
+		ch := r.Get(); ASSERT(ch = "x"); ASSERT(r.res = Streams.Ok);
+		ch := r.Peek();
+		ASSERT(ch = 0X);
+		ASSERT(r.res = Streams.Ok);                (* and not EOF, which is the surprise *)
+		ch := r.Get();
+		ASSERT(r.res # Streams.Ok)                 (* Get is where the end shows *)
+	END Test.
+
+positive: a line written by a writer is two characters, not one
+
+	MODULE Test;
+	IMPORT Streams, Strings;
+	VAR b: Streams.Buffer; w: Streams.Writer; s: Strings.String;
+	BEGIN
+		(*	Ln is carriage return and line feed, the Oberon way. A Unix program on the other end of
+			a pipe reads the carriage return as part of the line, which is why anything writing to
+			one writes 0AX itself. *)
+		NEW(b, 64); w := b.GetWriter();
+		w.String("line"); w.Ln; w.Update;
+		s := b.GetString();
+		ASSERT(Strings.Length(s^) = 6);
+		ASSERT(s[4] = 0DX);
+		ASSERT(s[5] = 0AX)
+	END Test.
+
+positive: a reader over a string reads it, and knows where it ends
+
+	MODULE Test;
+	IMPORT Streams;
+	VAR r: Streams.StringReader; line: ARRAY 32 OF CHAR; ch: CHAR; n: SIZE;
+	BEGIN
+		NEW(r, 32); r.Set("two words");
+		ASSERT(r.Available() = 9);
+		r.Token(line); ASSERT(line = "two");
+		r.SkipWhitespace;
+		r.Token(line); ASSERT(line = "words");
+		ch := r.Get();
+		ASSERT(r.res # Streams.Ok)
+	END Test.
+
+positive: a buffer grows past the size it was made with
+
+	MODULE Test;
+	IMPORT Streams, Strings;
+	VAR b: Streams.Buffer; w: Streams.Writer; s: Strings.String; i: SIGNED32;
+	BEGIN
+		NEW(b, 8);                                 (* eight bytes, and a thousand written *)
+		w := b.GetWriter();
+		FOR i := 1 TO 1000 DO w.Char("z") END;
+		w.Update;
+		s := b.GetString();
+		ASSERT(Strings.Length(s^) = 1000)
+	END Test.
+
+positive: numbers go out; a reader reads the whole ones, and there is no Float to read
+
+	MODULE Test;
+	IMPORT Streams, Strings;
+	VAR b: Streams.Buffer; w: Streams.Writer; r: Streams.StringReader; s: Strings.String;
+		i: SIGNED32; f: FLOAT64;
+	BEGIN
+		NEW(b, 64); w := b.GetWriter();
+		w.Int(-42, 0); w.Char(" "); w.Int(7, 4); w.Update;
+		s := b.GetString();
+		NEW(r, 64); r.Set(s^);
+		r.Int(i, FALSE); ASSERT(i = -42);
+		r.SkipWhitespace; r.Int(i, FALSE); ASSERT(i = 7);
+		(*	There is no Float on a reader: a writer can put one out and nothing here reads it
+			back. Whoever needs that goes through Strings, which is worth knowing before
+			looking for it. *)
+		ASSERT(f = 0)
+	END Test.

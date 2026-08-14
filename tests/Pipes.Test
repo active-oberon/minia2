@@ -1,0 +1,112 @@
+# Tests for source/Pipes.Mod -- a bounded buffer between two activities, and the decoupler
+# that turns a blocking receiver into one.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test PipesTestShared;System.Load Test"
+#
+# This module had no test of its own and a defect in it that cost a full core: the decoupler's
+# active body never looked at what its receiver said, so a source that had ended was read again
+# for ever and whoever waited on the other side waited for ever too. Both are here, and both are
+# the kind of case that does not fail when it is broken -- it never returns.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE PipesTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A source that ends, and one that does not" *)
+
+	IMPORT Streams, Pipes;
+
+	VAR
+		given-: SIGNED32;                (** how many times the receiver below was called *)
+
+	(**	A receiver with a letter for every call and an end after `stop` of them. It counts its
+		calls, because a receiver that is called again after saying it is done is the defect. *)
+	PROCEDURE Letters* (VAR buffer: ARRAY OF CHAR; offset, size, min: SIZE;
+		VAR length: SIZE; VAR result: INTEGER);
+	BEGIN
+		INC(given);
+		IF given > stop THEN length := 0; result := Streams.EOF; RETURN END;
+		buffer[offset] := CHR(ORD("a") + (given - 1) MOD 26);
+		length := 1; result := Streams.Ok
+	END Letters;
+
+	(** Start again, with a source that ends after that many letters. *)
+	PROCEDURE Restart* (letters: SIGNED32);
+	BEGIN given := 0; stop := letters
+	END Restart;
+
+	VAR stop: SIGNED32;
+
+	END PipesTestShared.
+
+positive: what is sent through a pipe is what is received
+
+	MODULE Test;
+	IMPORT Pipes, Streams;
+	VAR p: Pipes.Pipe; out, in: ARRAY 8 OF CHAR; length: SIZE; res: INTEGER;
+	BEGIN
+		NEW(p, 16);
+		out := "abcd";
+		p.Send(out, 0, 4, FALSE, res);
+		ASSERT(res = 0);
+		ASSERT(p.Available() = 4);
+		p.Receive(in, 0, 4, 4, length, res);
+		ASSERT(res = 0); ASSERT(length = 4);
+		in[4] := 0X;
+		ASSERT(in = "abcd");
+		ASSERT(p.Available() = 0)
+	END Test.
+
+positive: a closed pipe gives up what it holds, and then says it is closed
+
+	MODULE Test;
+	IMPORT Pipes;
+	VAR p: Pipes.Pipe; out, in: ARRAY 8 OF CHAR; length: SIZE; res: INTEGER;
+	BEGIN
+		NEW(p, 16);
+		out := "xy";
+		p.Send(out, 0, 2, FALSE, res);
+		p.Close;
+		p.Receive(in, 0, 2, 2, length, res);
+		ASSERT(length = 2); ASSERT(res = 0);
+		p.Receive(in, 0, 2, 1, length, res);
+		ASSERT(res # 0);                           (* and asking again does not wait for ever *)
+		ASSERT(length = 0)
+	END Test.
+
+positive: a decoupled receiver hands over everything its source had
+
+	MODULE Test;
+	IMPORT T := PipesTestShared, Pipes, Streams;
+	VAR d: Pipes.ReadDecoupler; r: Streams.Reader; i: SIGNED32; ch: CHAR;
+	BEGIN
+		T.Restart(10);
+		NEW(d, T.Letters);
+		NEW(r, d.Receive, 64);
+		FOR i := 0 TO 9 DO
+			ch := r.Get();
+			ASSERT(r.res = Streams.Ok);
+			ASSERT(ch = CHR(ORD("a") + i))
+		END
+	END Test.
+
+positive: when the source ends, the decoupler stops reading it and the reader is told
+
+	MODULE Test;
+	IMPORT T := PipesTestShared, Pipes, Streams, Objects;
+	VAR d: Pipes.ReadDecoupler; r: Streams.Reader; i: SIGNED32; ch: CHAR;
+	BEGIN
+		(*	The defect this replaces: the body never looked at `res`, so a source that had ended was
+			read again for ever at a full core, and this Get never returned. A broken module does not
+			fail this case -- it hangs in it, which is what it did to every program. *)
+		T.Restart(3);
+		NEW(d, T.Letters);
+		NEW(r, d.Receive, 64);
+		FOR i := 0 TO 2 DO ch := r.Get(); ASSERT(r.res = Streams.Ok) END;
+		ch := r.Get();
+		ASSERT(r.res # Streams.Ok);                (* the end reached the reader *)
+		Objects.Sleep(50);                         (* and nothing is still reading behind us *)
+		i := T.given;
+		Objects.Sleep(50);
+		ASSERT(T.given = i)                        (* the source was not asked again *)
+	END Test.
