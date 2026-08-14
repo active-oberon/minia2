@@ -1,0 +1,151 @@
+# Tests for std/text -- the text engine and the helpers around it.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Texts holds a text as pieces of UCS-32 characters, so the questions worth asking are the ones
+# where a character is not a byte: a Cyrillic letter counts as one character and takes two bytes,
+# and an emoji counts as one and takes four. Everything above goes through the same insert, delete
+# and search as ASCII does, and the searching is a Rabin-Karp over characters rather than bytes.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a text counts characters, not bytes
+
+	MODULE Test;
+	IMPORT Texts, TextUtilities;
+	VAR text: Texts.Text; s: ARRAY 256 OF CHAR; ucs: Texts.Char32; reader: Texts.TextReader;
+
+		(*	Every question about a text has to be asked under its read lock -- GetLength halts the
+			caller otherwise, and a write lock is not a read lock here. *)
+		PROCEDURE Length(text: Texts.Text): SIZE;
+		VAR length: SIZE;
+		BEGIN text.AcquireRead; length := text.GetLength(); text.ReleaseRead; RETURN length
+		END Length;
+
+	BEGIN
+		NEW(text);
+		ASSERT(Length(text) = 0);
+
+		text.AcquireWrite; text.InsertUTF8(0, "hello"); text.ReleaseWrite;
+		ASSERT(Length(text) = 5);
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "hello");
+
+		(* the Russian for "hello" is six letters and twelve bytes *)
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "привет"); text.ReleaseWrite;
+		ASSERT(Length(text) = 6);
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "привет");
+
+		(* and a character outside the basic plane is still one character *)
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "a😀b"); text.ReleaseWrite;
+		ASSERT(Length(text) = 3);
+		text.AcquireRead;
+		NEW(reader, text); reader.SetPosition(1); reader.ReadCh(ucs);
+		text.ReleaseRead;
+		ASSERT(ucs = 1F600H);                          (* the emoji itself, not a byte of it *)
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "a😀b")
+	END Test.
+
+positive: inserting and deleting in the middle of a text
+
+	MODULE Test;
+	IMPORT Texts, TextUtilities;
+	VAR text: Texts.Text; s: ARRAY 256 OF CHAR;
+
+		PROCEDURE Length(text: Texts.Text): SIZE;
+		VAR length: SIZE;
+		BEGIN text.AcquireRead; length := text.GetLength(); text.ReleaseRead; RETURN length
+		END Length;
+
+	BEGIN
+		NEW(text);
+		text.AcquireWrite;
+		text.InsertUTF8(0, "hello world");
+		text.InsertUTF8(5, " big");
+		text.ReleaseWrite;
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "hello big world");
+		ASSERT(Length(text) = 15);
+
+		text.AcquireWrite; text.Delete(5, 4); text.ReleaseWrite;
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "hello world");
+
+		(* deleting from the front and from the end *)
+		text.AcquireWrite; text.Delete(0, 6); text.ReleaseWrite;
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "world");
+		text.AcquireWrite; text.Delete(4, 1); text.ReleaseWrite;
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "worl");
+
+		(* and all of it *)
+		text.AcquireWrite; text.Delete(0, Length(text)); text.ReleaseWrite;
+		ASSERT(Length(text) = 0);
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "");
+
+		(* the same in a text where a character is two bytes, so an index is not an offset *)
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "абвгд"); text.Delete(1, 2); text.ReleaseWrite;
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "агд");
+
+		(* a piece of it, taken out by position and length *)
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "hello world"); text.ReleaseWrite;
+		TextUtilities.SubTextToStr(text, 6, 5, s);
+		ASSERT(s = "world");
+		TextUtilities.SubTextToStr(text, 0, 5, s);
+		ASSERT(s = "hello")
+	END Test.
+
+positive: searching a text for a pattern
+
+	MODULE Test;
+	IMPORT Texts, TextUtilities;
+	VAR text: Texts.Text; pattern: ARRAY 32 OF Texts.Char32; replacement: ARRAY 32 OF Texts.Char32;
+		s: ARRAY 256 OF CHAR; found, count: SIZE;
+
+		PROCEDURE Pattern(CONST from: ARRAY OF CHAR; VAR into: ARRAY OF Texts.Char32);
+		VAR i: SIZE;
+		BEGIN                                          (* ASCII only, so a byte is a character *)
+			i := 0;
+			WHILE from[i] # 0X DO into[i] := ORD(from[i]); INC(i) END;
+			into[i] := 0
+		END Pattern;
+
+	BEGIN
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "the quick brown fox"); text.ReleaseWrite;
+
+		text.AcquireRead;
+		Pattern("quick", pattern);
+		found := TextUtilities.Pos(pattern, 0, text);
+		ASSERT(found = 4);
+		Pattern("the", pattern);
+		ASSERT(TextUtilities.Pos(pattern, 0, text) = 0);
+		Pattern("fox", pattern);
+		ASSERT(TextUtilities.Pos(pattern, 0, text) = 16);
+		Pattern("cat", pattern);
+		ASSERT(TextUtilities.Pos(pattern, 0, text) < 0);   (* what is not there is not found *)
+		Pattern("the", pattern);
+		ASSERT(TextUtilities.Pos(pattern, 1, text) < 0);    (* looked for from where it was told *)
+		Pattern("QUICK", pattern);
+		ASSERT(TextUtilities.GenericPos(pattern, 0, text, TRUE, FALSE) = 4);   (* case ignored *)
+		ASSERT(TextUtilities.GenericPos(pattern, 0, text, FALSE, FALSE) < 0);
+		text.ReleaseRead;
+
+		(* and replaced, everywhere it occurs *)
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "one two one two one"); text.ReleaseWrite;
+		Pattern("one", pattern); Pattern("three", replacement);
+		TextUtilities.Replace(pattern, replacement, text, count);
+		ASSERT(count = 3);
+		TextUtilities.TextToStr(text, s);
+		ASSERT(s = "three two three two three")
+	END Test.

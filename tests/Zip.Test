@@ -1,0 +1,158 @@
+# Tests for std/archive -- the zip archive, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# An archive is worth exactly one thing: what goes in comes out. So each case writes files, puts
+# them in, takes them out again and compares byte for byte -- including a file of every one of the
+# 256 byte values, which is where a text-minded implementation loses data, and a long run of one
+# character, which is where the compression has something to do.
+#
+# The files are made in the directory the case runs in, under bare names, because that is the only
+# path that means the same thing on every target.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: what goes into an archive comes out of it
+
+	MODULE Test;
+	IMPORT Zip, Files;
+
+	CONST Long = 5000;
+
+	VAR archive: Zip.Archive; entry: Zip.Entry; res: INTEGER; count: SIGNED32;
+		small: ARRAY 32 OF CHAR; long: ARRAY Long OF CHAR; every: ARRAY 256 OF CHAR; i: SIZE;
+
+		PROCEDURE Make(CONST name: ARRAY OF CHAR; CONST content: ARRAY OF CHAR; length: SIZE);
+		VAR file: Files.File; writer: Files.Writer; i: SIZE;
+		BEGIN
+			file := Files.New(name);
+			ASSERT(file # NIL);
+			Files.OpenWriter(writer, file, 0);
+			FOR i := 0 TO length - 1 DO writer.Char(content[i]) END;
+			writer.Update;
+			Files.Register(file)
+		END Make;
+
+		PROCEDURE Add(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; rider: Files.Rider; res: INTEGER;
+		BEGIN
+			file := Files.Old(name);
+			ASSERT(file # NIL);
+			file.Set(rider, 0);
+			Zip.AddEntry(archive, name, rider, SIGNED32(file.Length()), Zip.DefaultCompression,
+				Zip.DefaultStrategy, res);
+			ASSERT(res = Zip.Ok)
+		END Add;
+
+		(* takes the entry out into a second file and compares it with the first, byte for byte *)
+		PROCEDURE Same(CONST name, extracted: ARRAY OF CHAR): BOOLEAN;
+		VAR entry: Zip.Entry; out, original: Files.File; rider: Files.Rider;
+			a, b: Files.Reader; res: INTEGER; i: SIZE; x, y: CHAR;
+		BEGIN
+			entry := Zip.GetEntry(archive, name, res);
+			IF (entry = NIL) OR (res # Zip.Ok) THEN RETURN FALSE END;
+			out := Files.New(extracted);
+			out.Set(rider, 0);
+			Zip.ExtractEntry(archive, entry, rider, res);
+			IF res # Zip.Ok THEN RETURN FALSE END;
+			Files.Register(out);
+			original := Files.Old(name);
+			IF (original = NIL) OR (out.Length() # original.Length()) THEN RETURN FALSE END;
+			Files.OpenReader(a, original, 0); Files.OpenReader(b, out, 0);
+			FOR i := 0 TO original.Length() - 1 DO
+				a.Char(x); b.Char(y);
+				IF x # y THEN RETURN FALSE END
+			END;
+			RETURN TRUE
+		END Same;
+
+	BEGIN
+		small := "hello, archive";
+		Make("small.txt", small, 14);
+		FOR i := 0 TO Long - 1 DO long[i] := "a" END;
+		Make("long.txt", long, Long);                 (* five thousand of one letter, to compress *)
+		FOR i := 0 TO 255 DO every[i] := CHR(i) END;
+		Make("every.bin", every, 256);                (* every byte there is, 0X included *)
+
+		archive := Zip.CreateArchive("test.zip", res);
+		ASSERT(res = Zip.Ok);
+		ASSERT(archive # NIL);
+		Add("small.txt"); Add("long.txt"); Add("every.bin");
+
+		(* all three are listed, in the order they went in *)
+		count := 0; entry := Zip.FirstEntry(archive);
+		WHILE entry # NIL DO INC(count); entry := Zip.NextEntry(entry) END;
+		ASSERT(count = 3);
+		entry := Zip.FirstEntry(archive);
+		ASSERT(entry.name = "small.txt");
+
+		(* the sizes are remembered, and the long one really was compressed *)
+		entry := Zip.GetEntry(archive, "long.txt", res);
+		ASSERT(res = Zip.Ok);
+		ASSERT(entry.uncompSize = Long);
+		ASSERT(entry.compSize < Long DIV 10);
+
+		(* and what was put in comes out unchanged *)
+		ASSERT(Same("small.txt", "small.out"));
+		ASSERT(Same("long.txt", "long.out"));
+		ASSERT(Same("every.bin", "every.out"));
+
+		(* something that is not in it is not found *)
+		entry := Zip.GetEntry(archive, "absent.txt", res);
+		ASSERT(entry = NIL);
+		ASSERT(res = Zip.EntryNotFound)
+	END Test.
+
+positive: an archive read again from the file is the archive that was written
+
+	MODULE Test;
+	IMPORT Zip, Files;
+
+	VAR archive: Zip.Archive; entry: Zip.Entry; res: INTEGER; count: SIGNED32;
+
+		PROCEDURE Make(CONST name, content: ARRAY OF CHAR);
+		VAR file: Files.File; writer: Files.Writer;
+		BEGIN
+			file := Files.New(name); ASSERT(file # NIL);
+			Files.OpenWriter(writer, file, 0);
+			writer.String(content); writer.Update;
+			Files.Register(file)
+		END Make;
+
+		PROCEDURE Add(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; rider: Files.Rider; res: INTEGER;
+		BEGIN
+			file := Files.Old(name); ASSERT(file # NIL);
+			file.Set(rider, 0);
+			Zip.AddEntry(archive, name, rider, SIGNED32(file.Length()), Zip.DefaultCompression,
+				Zip.DefaultStrategy, res);
+			ASSERT(res = Zip.Ok)
+		END Add;
+
+	BEGIN
+		Make("one.txt", "the first file");
+		Make("two.txt", "the second file");
+		archive := Zip.CreateArchive("second.zip", res);
+		ASSERT(res = Zip.Ok);
+		Add("one.txt"); Add("two.txt");
+		archive := NIL;                               (* forget it, and go back to the file *)
+
+		archive := Zip.OpenArchive("second.zip", res);
+		ASSERT(res = Zip.Ok);
+		ASSERT(archive # NIL);
+		count := 0; entry := Zip.FirstEntry(archive);
+		WHILE entry # NIL DO INC(count); entry := Zip.NextEntry(entry) END;
+		ASSERT(count = 2);
+		entry := Zip.GetEntry(archive, "two.txt", res);
+		ASSERT(res = Zip.Ok);
+		ASSERT(entry.uncompSize = 15);
+
+		(* a file that is not an archive is refused, and does not trap *)
+		Make("notazip.txt", "this is not a zip file at all");
+		archive := Zip.OpenArchive("notazip.txt", res);
+		ASSERT(res # Zip.Ok);
+
+		(* nor is one that is not there *)
+		archive := Zip.OpenArchive("nosuch.zip", res);
+		ASSERT(res # Zip.Ok)
+	END Test.
