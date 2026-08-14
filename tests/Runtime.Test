@@ -4,8 +4,9 @@
 #
 # Forty-two modules, of which the suites had reached six. What is asked here is the part with
 # answers that can be checked from outside the tree: the calendar, the check value every CRC-32
-# implementation in the world agrees on, a bit container read back the way it was written, and
-# the pool that is supposed to give one index per string.
+# implementation in the world agrees on, a bit container read back the way it was written, the
+# pool that is supposed to give one index per string, and the unsigned arithmetic that BIT
+# carries inside signed words.
 #
 # The dates come from the ISO calendar, which is what makes 1 January 2021 belong to week 53 of
 # 2020 and not to any week of 2021.
@@ -167,4 +168,57 @@ positive: one index per string, and the string back again
 		ASSERT(a = b);
 		StringPool.GetString(a, s);
 		ASSERT(s = "")
+	END Test.
+
+positive: bit manipulation, and the unsigned arithmetic it carries in signed words
+
+	MODULE Test;
+	IMPORT BIT;
+	VAR c: CHAR; s: SIGNED8; i16: SIGNED16; i32: SIGNED32;
+	BEGIN
+		(* the three bitwise operations, on each width they are offered in *)
+		ASSERT(BIT.CXOR(0FFX, 00FX) = 0F0X);
+		ASSERT(BIT.COR(0F0X, 00FX) = 0FFX);
+		ASSERT(BIT.CAND(0FFX, 00FX) = 00FX);
+		ASSERT(BIT.LXOR(0FF00H, 0FFH) = 0FFFFH);
+		ASSERT(BIT.LOR(0FF00H, 0FFH) = 0FFFFH);
+		ASSERT(BIT.LAND(0FF0FH, 0FFH) = 00FH);
+		ASSERT(BIT.IXOR(SIGNED16(0FF00H), 0FFH) = SIGNED16(0FFFFH));
+
+		(* shifted, rotated and swapped *)
+		ASSERT(BIT.LLSH(1, 4) = 16);
+		ASSERT(BIT.LLSH(16, -4) = 1);
+		ASSERT(BIT.LROT(1, 1) = 2);
+		ASSERT(BIT.LSWAP(012345678H) = 078563412H);
+		ASSERT(BIT.ISWAP(01234H) = 03412H);
+
+		(* single bits, tested, set and cleared *)
+		ASSERT(BIT.BIT(1, 0)); ASSERT(~BIT.BIT(1, 1)); ASSERT(BIT.BIT(SIGNED32(80000000H), 31));
+		ASSERT(BIT.CBIT(001X, 0)); ASSERT(~BIT.CBIT(001X, 1));
+		i32 := 0; BIT.LSETBIT(i32, 5); ASSERT(i32 = 32); BIT.LCLRBIT(i32, 5); ASSERT(i32 = 0);
+		c := 0X; BIT.CSETBIT(c, 7); ASSERT(c = 080X); BIT.CCLRBIT(c, 7); ASSERT(c = 0X);
+		s := 0; BIT.SSETBIT(s, 0); ASSERT(s = 1);
+		i16 := 0; BIT.ISETBIT(i16, 15); ASSERT(i16 = SIGNED16(08000H));
+
+		(* the point of the module: bytes and words holding numbers that have no sign, in types
+		   that do. 200 in a byte is -56 read as a number, and must still be the larger of the two *)
+		ASSERT(BIT.SLESS(100, SIGNED8(-56)));
+		ASSERT(~BIT.SLESS(SIGNED8(-56), 100));
+		ASSERT(BIT.SLESSEQ(SIGNED8(-56), SIGNED8(-56)));
+		ASSERT(BIT.ILESS(100, SIGNED16(-25536)));            (* 40000 in sixteen bits *)
+		ASSERT(~BIT.ILESS(SIGNED16(-25536), 100));
+		ASSERT(BIT.LLESS(100, -1));                          (* -1 is the largest of all *)
+		ASSERT(~BIT.LLESS(-1, 100));
+		ASSERT(BIT.LLESSEQ(-1, -1));
+
+		(* and divided as unsigned, which is where every one of the three used to be wrong *)
+		ASSERT(BIT.SDIV(SIGNED8(-56), 8) = 25);              (* 200 DIV 8 *)
+		ASSERT(BIT.SDIV(SIGNED8(-56), SIGNED8(-56)) = 1);    (* 200 DIV 200, which used to trap *)
+		ASSERT(BIT.SDIV(SIGNED8(-1), 5) = 51);               (* 255 DIV 5 *)
+		ASSERT(BIT.IDIV(SIGNED16(-25536), 4) = 10000);       (* 40000 DIV 4 *)
+		ASSERT(BIT.IDIV(SIGNED16(-1), SIGNED16(-1)) = 1);
+		ASSERT(BIT.LDIV(-1, 2) = 2147483647);                (* 4294967295 DIV 2 *)
+		ASSERT(BIT.LDIV(-1, 65535) = 65537);
+		ASSERT(BIT.LDIV(1000, -1) = 0);                      (* a small number over a huge one *)
+		ASSERT(BIT.LDIV(8, 2) = 4)
 	END Test.
