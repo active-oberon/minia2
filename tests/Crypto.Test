@@ -115,3 +115,95 @@ positive: HMAC-SHA256 of what RFC 4231 says
 		ASSERT(hex = "5BDCC146BF60754E6A042426089575C75A003F089D2739839DEC58B964EC3843")
 	END Test.
 
+
+positive: the block ciphers, each against the bytes its own test set names
+
+	MODULE Test;
+	IMPORT CryptoDES, CryptoDES3, CryptoBlowfish, CryptoCAST, CryptoIDEA, CryptoTwofish,
+		CryptoUtils, Ciphers := CryptoCiphers;
+
+	VAR cipher: Ciphers.Cipher; key, block, plain: ARRAY 32 OF CHAR; hex: ARRAY 80 OF CHAR;
+		i: SIGNED32;
+
+		(*	Encrypts the block, checks it against the vector, decrypts it and checks that what comes
+			back is what went in. A cipher that agrees with the world one way and not the other is
+			no better than one that agrees with nobody. *)
+		PROCEDURE Check(cipher: Ciphers.Cipher; CONST keyHex, plainHex, cipherHex: ARRAY OF CHAR;
+			keyBits, size: SIGNED32);
+		VAR i: SIGNED32;
+		BEGIN
+			CryptoUtils.Hex2Bin(keyHex, 0, key, 0, keyBits DIV 8);
+			CryptoUtils.Hex2Bin(plainHex, 0, plain, 0, size);
+			FOR i := 0 TO size - 1 DO block[i] := plain[i] END;
+			cipher.InitKey(key, keyBits);
+			cipher.Encrypt(block, 0, size);
+			CryptoUtils.Bin2Hex(block, 0, hex, 0, size);
+			hex[2 * size] := 0X;      (* Bin2Hex writes its nibbles and nothing else, by design:
+			                             it is made to write into the middle of a buffer, so the
+			                             end of the string is the caller's business *)
+			ASSERT(hex = cipherHex);
+			cipher.Decrypt(block, 0, size);
+			FOR i := 0 TO size - 1 DO ASSERT(block[i] = plain[i]) END
+		END Check;
+
+	BEGIN
+		(*	DES, the vector every book prints: "Now is t" under the key 0123456789ABCDEF. Checked
+			against another implementation before it was written down here, as were the three
+			below it. *)
+		Check(CryptoDES.NewCipher(), "0123456789ABCDEF", "4E6F772069732074", "3FA40E8A984D4815",
+			64, 8);
+
+		(* three keys the same is single DES done three times, which is single DES *)
+		Check(CryptoDES3.NewCipher(), "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+			"4E6F772069732074", "3FA40E8A984D4815", 192, 8);
+
+		(* Blowfish, from Schneier's own set: nothing under nothing, and everything under everything *)
+		Check(CryptoBlowfish.NewCipher(), "0000000000000000", "0000000000000000",
+			"4EF997456198DD78", 64, 8);
+		Check(CryptoBlowfish.NewCipher(), "FFFFFFFFFFFFFFFF", "FFFFFFFFFFFFFFFF",
+			"51866FD5B85ECB8A", 64, 8);
+
+		(* CAST-128, the vector in RFC 2144 *)
+		Check(CryptoCAST.NewCipher(), "0123456712345678234567893456789A", "0123456789ABCDEF",
+			"238B4FE5847E44B2", 128, 8);
+
+		(* IDEA and Twofish, from their published sets *)
+		Check(CryptoIDEA.NewCipher(), "00010002000300040005000600070008", "0000000100020003",
+			"11FBED2B01986DE5", 128, 8);
+		Check(CryptoTwofish.NewCipher(), "00000000000000000000000000000000",
+			"00000000000000000000000000000000", "9F589F5CF6122C32B6BFEC2F2AE8C35A", 128, 16);
+
+		(* and the same key twice gives the same bytes twice, which not every cipher object does *)
+		cipher := CryptoDES.NewCipher();
+		CryptoUtils.Hex2Bin("0123456789ABCDEF", 0, key, 0, 8);
+		CryptoUtils.Hex2Bin("4E6F772069732074", 0, block, 0, 8);
+		cipher.InitKey(key, 64); cipher.Encrypt(block, 0, 8);
+		CryptoUtils.Hex2Bin("4E6F772069732074", 0, block, 0, 8);
+		cipher.Encrypt(block, 0, 8);
+		CryptoUtils.Bin2Hex(block, 0, hex, 0, 8); hex[16] := 0X;
+		ASSERT(hex = "3FA40E8A984D4815");
+		i := 0; ASSERT(i = 0)
+	END Test.
+
+positive: ARC4 makes the keystream RFC 6229 prints
+
+	MODULE Test;
+	IMPORT CryptoARC4, CryptoUtils, Ciphers := CryptoCiphers;
+	VAR cipher: Ciphers.Cipher; key, block: ARRAY 32 OF CHAR; hex: ARRAY 80 OF CHAR; i: SIGNED32;
+	BEGIN
+		(*	A stream cipher applied to nothing is its keystream, and RFC 6229 prints the first
+			sixteen bytes of it for the key 0102030405. Checked against another implementation. *)
+		CryptoUtils.Hex2Bin("0102030405", 0, key, 0, 5);
+		FOR i := 0 TO 15 DO block[i] := 0X END;
+		cipher := CryptoARC4.NewCipher();
+		cipher.InitKey(key, 40);
+		cipher.Encrypt(block, 0, 16);
+		CryptoUtils.Bin2Hex(block, 0, hex, 0, 16); hex[32] := 0X;
+		ASSERT(hex = "B2396305F03DC027CCC3524A0A1118A8");
+
+		(* and applying it again with the same key gives back what one started with *)
+		cipher := CryptoARC4.NewCipher();
+		cipher.InitKey(key, 40);
+		cipher.Encrypt(block, 0, 16);
+		FOR i := 0 TO 15 DO ASSERT(block[i] = 0X) END
+	END Test.
