@@ -1,0 +1,183 @@
+# Tests for Strings -- the module almost every other one in the tree imports.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# What was already covered is the scanning of numbers out of text (StringConversions.Test). What
+# was not is everything else: searching, trimming, cutting, splitting and joining, the wildcards
+# that every file mask in the system goes through, and the conversions in both directions.
+#
+# The wildcard cases are checked against what a POSIX glob answers for the same pair, so they are
+# not this implementation grading its own homework.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: finding, counting and measuring
+
+	MODULE Test;
+	IMPORT Strings;
+	VAR s: ARRAY 64 OF CHAR;
+	BEGIN
+		COPY("hello world", s);
+		ASSERT(Strings.Length(s) = 11);
+		ASSERT(Strings.Length("") = 0);
+		ASSERT(Strings.Pos("world", s) = 6);
+		ASSERT(Strings.Pos("hello", s) = 0);
+		ASSERT(Strings.Pos("planet", s) = -1);       (* not there is -1, not 0 *)
+		ASSERT(Strings.Pos("", s) = 0);
+		ASSERT(Strings.Find(s, 0, "o") = 4);
+		ASSERT(Strings.Find(s, 5, "o") = 7);         (* looked for from where it was told *)
+		ASSERT(Strings.Find(s, 0, "z") = -1);
+		ASSERT(Strings.Count(s, "o") = 2);
+		ASSERT(Strings.Count(s, "l") = 3);
+		ASSERT(Strings.Count(s, "z") = 0);
+		ASSERT(Strings.ContainsChar(s, "w", FALSE));
+		ASSERT(~Strings.ContainsChar(s, "W", FALSE));
+		ASSERT(Strings.ContainsChar(s, "W", TRUE));  (* the same letter, if case is ignored *)
+		ASSERT(Strings.StartsWith2("hello", s));
+		ASSERT(~Strings.StartsWith2("world", s));
+		ASSERT(Strings.StartsWith("world", 6, s));   (* from an offset *)
+		ASSERT(Strings.EndsWith("world", s));
+		ASSERT(~Strings.EndsWith("hello", s))
+	END Test.
+
+positive: cutting, joining and trimming
+
+	MODULE Test;
+	IMPORT Strings;
+	VAR s, t: ARRAY 64 OF CHAR; parts: Strings.StringArray; joined, sub: Strings.String;
+	BEGIN
+		COPY("hello world", s);
+		Strings.Copy(s, 6, 5, t); ASSERT(t = "world");
+		Strings.Concat("hello", " there", t); ASSERT(t = "hello there");
+		COPY("hello", t); Strings.Append(t, " again"); ASSERT(t = "hello again");
+		COPY("count: ", t); Strings.AppendInt(t, -42); ASSERT(t = "count: -42");
+		COPY("hello world", t); Strings.Delete(t, 5, 6); ASSERT(t = "hello");
+		COPY("hello", t); Strings.Insert(" big", t, 5); ASSERT(t = "hello big");
+		COPY("hello world", t); Strings.Truncate(t, 5); ASSERT(t = "hello");
+
+		(* trimming, one side at a time and both *)
+		COPY("xxhixx", t); Strings.TrimLeft(t, "x"); ASSERT(t = "hixx");
+		COPY("xxhixx", t); Strings.TrimRight(t, "x"); ASSERT(t = "xxhi");
+		COPY("xxhixx", t); Strings.Trim(t, "x"); ASSERT(t = "hi");
+		COPY("   hi   ", t); Strings.TrimWS(t); ASSERT(t = "hi");
+		COPY("hi", t); Strings.Trim(t, "x"); ASSERT(t = "hi");     (* nothing to take off *)
+		COPY("xxx", t); Strings.Trim(t, "x"); ASSERT(t = "");      (* all of it comes off *)
+
+		(* split and join, which have to be each other's undoing *)
+		parts := Strings.Split("a:b:c", ":");
+		ASSERT(LEN(parts) = 3);
+		ASSERT(parts[0]^ = "a"); ASSERT(parts[1]^ = "b"); ASSERT(parts[2]^ = "c");
+		joined := Strings.Join(parts, 0, 2, ":");
+		ASSERT(joined^ = "a:b:c");
+		joined := Strings.Join(parts, 1, 2, "-");
+		ASSERT(joined^ = "b-c");                                    (* a part of the parts *)
+		parts := Strings.Split("nothing to split", ":");
+		ASSERT(LEN(parts) = 1); ASSERT(parts[0]^ = "nothing to split");
+		parts := Strings.Split("a::b", ":");
+		ASSERT(LEN(parts) = 3); ASSERT(parts[1]^ = "");             (* an empty piece is a piece *)
+
+		(* substrings and the file name conventions built on them *)
+		sub := Strings.Substring(0, 5, "hello world"); ASSERT(sub^ = "hello");
+		sub := Strings.Substring2(6, "hello world"); ASSERT(sub^ = "world");
+		Strings.GetExtension("Foo.Mod", s, t); ASSERT(s = "Foo"); ASSERT(t = "Mod");
+		Strings.GetExtension("Foo.Bar.Mod", s, t); ASSERT(s = "Foo.Bar"); ASSERT(t = "Mod");
+		Strings.GetExtension("Makefile", s, t); ASSERT(s = "Makefile"); ASSERT(t = "");
+
+		(* case, in place and into a new string *)
+		COPY("Hello", t); Strings.UpperCase(t); ASSERT(t = "HELLO");
+		COPY("Hello", t); Strings.LowerCase(t); ASSERT(t = "hello");
+		sub := Strings.UpperCaseInNew("Hello"); ASSERT(sub^ = "HELLO");
+		sub := Strings.LowerCaseInNew("Hello"); ASSERT(sub^ = "hello")
+	END Test.
+
+positive: wildcards, against what a glob answers for the same pair
+
+	MODULE Test;
+	IMPORT Strings;
+	BEGIN
+		ASSERT(Strings.Match("*.Mod", "Foo.Mod"));
+		ASSERT(~Strings.Match("*.Mod", "Foo.Mod.bak"));
+		ASSERT(Strings.Match("*.Mod", ".Mod"));
+		ASSERT(Strings.Match("Foo*", "Foo"));                (* the star may stand for nothing *)
+		ASSERT(Strings.Match("Foo*", "Foobar"));
+		ASSERT(Strings.Match("*", "x"));
+		ASSERT(Strings.Match("*", ""));
+		ASSERT(Strings.Match("**", "x"));
+		ASSERT(Strings.Match("a?c", "abc"));
+		ASSERT(~Strings.Match("a?c", "ac"));                 (* the question mark may not *)
+		ASSERT(~Strings.Match("a?c", "abbc"));
+		ASSERT(Strings.Match("?", "a"));
+		ASSERT(~Strings.Match("?", ""));
+		ASSERT(Strings.Match("*a*", "bab"));
+		ASSERT(~Strings.Match("*a*", "bbb"));
+		ASSERT(Strings.Match("*ab", "xxab"));
+		ASSERT(~Strings.Match("*ab", "xxabc"));
+		ASSERT(Strings.Match("ab*", "abxx"));
+		ASSERT(Strings.Match("*x*x*", "axxb"));              (* two stars over the same letter *)
+		ASSERT(Strings.Match("*x*y*", "axbyc"));
+		ASSERT(Strings.Match("*a*b", "xaybzb"));
+		ASSERT(Strings.Match("*.*", "a.b"));
+		ASSERT(~Strings.Match("*.*", "ab"));
+		ASSERT(Strings.Match("a*b*c", "abc"));
+		ASSERT(Strings.Match("a*b*c", "axxbyyc"));
+		ASSERT(~Strings.Match("a*b*c", "abcd"));
+		ASSERT(Strings.Match("*Mod", "Mod"));
+		ASSERT(Strings.Match("Fox*.Mod", "FoxA64Assembler.Mod"));
+		ASSERT(Strings.Match("*/*", "a/b"));
+		ASSERT(~Strings.Match("*.txt", "a.txt.txt") = FALSE) (* the last one wins, and it matches *)
+	END Test.
+
+positive: numbers, sets and truths, in both directions
+
+	MODULE Test;
+	IMPORT Strings;
+	VAR s: ARRAY 64 OF CHAR; i32: SIGNED32; i64: SIGNED64; f: FLOAT64; set: SET;
+		b: BOOLEAN; res: INTEGER;
+	BEGIN
+		Strings.IntToStr(0, s); ASSERT(s = "0");
+		Strings.IntToStr(-42, s); ASSERT(s = "-42");
+		Strings.IntToStr(2147483647, s); ASSERT(s = "2147483647");
+		Strings.IntToStr(-2147483648, s); ASSERT(s = "-2147483648");
+		Strings.StrToInt32("123", i32); ASSERT(i32 = 123);
+		Strings.StrToInt32("-123", i32); ASSERT(i32 = -123);
+		Strings.StrToInt64("9007199254740993", i64); ASSERT(i64 = 9007199254740993);
+
+		Strings.IntToHexStr(255, 4, s); ASSERT(s = "00FF");
+		Strings.IntToHexStr(0, 2, s); ASSERT(s = "00");
+		Strings.HexStrToInt("FF", i32, res); ASSERT(res = Strings.Ok); ASSERT(i32 = 255);
+		Strings.HexStrToInt("00FF", i32, res); ASSERT(i32 = 255);
+
+		(*	A number through text and back is the number it was. The first width pads on the left,
+			so what comes out here is "    3.2500" and the scanner has to step over the blanks. *)
+		Strings.FloatToStr(3.25, 10, 4, 0, s);
+		ASSERT(s = "    3.2500");
+		Strings.StrToFloat(s, f);
+		ASSERT(ABS(f - 3.25) < 1.0E-9);
+		Strings.FloatToStr(-0.5, 10, 4, 0, s);
+		Strings.StrToFloat(s, f);
+		ASSERT(ABS(f + 0.5) < 1.0E-9);
+
+		Strings.BoolToStr(TRUE, s); ASSERT(s = "True");
+		Strings.BoolToStr(FALSE, s); ASSERT(s = "False");
+		Strings.StrToBool("True", b); ASSERT(b);
+		Strings.StrToBool("False", b); ASSERT(~b);
+		Strings.StrToBool("TRUE", b); ASSERT(b);      (* anything starting with a T is true *)
+		Strings.StrToBool("", b); ASSERT(~b);
+
+		Strings.SetToStr({}, s); ASSERT(s = "{}");
+		Strings.SetToStr({0}, s); ASSERT(s = "{0}");
+		Strings.SetToStr({0, 1, 2}, s); ASSERT(s = "{0..2}");        (* a run is written as a run *)
+		Strings.StrToSet("{0..2}", set); ASSERT(set = {0, 1, 2});
+		Strings.StrToSet("{}", set); ASSERT(set = {});
+		Strings.StrToSet("{1, 5}", set); ASSERT(set = {1, 5});
+
+		(* and the letters they are made of, each handing back the digit it stands for *)
+		ASSERT(Strings.IsDigit("7", 10, i32) & (i32 = 7));
+		ASSERT(~Strings.IsDigit("a", 10, i32));
+		ASSERT(Strings.IsDigit("a", 16, i32) & (i32 = 10));   (* a letter is a digit in base 16 *)
+		ASSERT(Strings.IsDecimal("0", i32) & (i32 = 0));
+		ASSERT(~Strings.IsDecimal("F", i32));
+		ASSERT(Strings.IsHexadecimal("F", i32) & (i32 = 15));
+		ASSERT(~Strings.IsHexadecimal("G", i32));
+		ASSERT(Strings.IsPrintable("a")); ASSERT(~Strings.IsPrintable(01X))
+	END Test.
