@@ -7,7 +7,7 @@ and ETH's sit in one directory and cannot be told apart by looking.
 
 | | modules |
 | --- | ---: |
-| ours outright (in no vanilla tree) | 15 |
+| ours outright (in no vanilla tree) | 16 |
 | vanilla, changed by us | 33 |
 | vanilla, untouched | 719 |
 
@@ -15,6 +15,7 @@ and ETH's sit in one directory and cannot be told apart by looking.
 
 - `AndroidDisplay.Mod`
 - `AndroidInput.Mod`
+- `Channels.Mod`
 - `DependencyWalker.Mod`
 - `DisplayDemo.Mod`
 - `FoxA64Assembler.Mod`

@@ -1,0 +1,178 @@
+# Tests for source/Channels.Mod -- a queue that waits.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ChannelsTestShared;System.Load Test"
+#
+# What a channel has to be right about is not the queue -- that is a ring and an index -- but the
+# waiting: a reader must not be left waiting when the channel is closed, a writer must not be let
+# past a full channel, and nothing may be lost or reordered between two activities. Those are the
+# cases here, and the ones with two activities in them are the point.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ChannelsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Two activities, and what passes between them" *)
+
+	IMPORT Ints := Channels(SIGNED32);
+
+	TYPE
+		(** Puts the numbers 1..count in, then closes -- or stops early if told to. *)
+		Writer* = OBJECT
+		VAR channel: Ints.Channel; count, written-: SIGNED32; done-: BOOLEAN;
+
+			PROCEDURE &InitWriter* (where: Ints.Channel; howMany: SIGNED32);
+			BEGIN channel := where; count := howMany; written := 0; done := FALSE
+			END InitWriter;
+
+			PROCEDURE Wait*;                    (** wait for it to have finished *)
+			BEGIN {EXCLUSIVE} AWAIT(done)
+			END Wait;
+
+			PROCEDURE Finished;
+			BEGIN {EXCLUSIVE} done := TRUE
+			END Finished;
+
+		BEGIN {ACTIVE}
+			WHILE (written < count) & channel.Put(written + 1) DO INC(written) END;
+			Finished
+		END Writer;
+
+		(** Takes everything there is, and remembers whether it came in order. *)
+		Reader* = OBJECT
+		VAR channel: Ints.Channel; read-, last: SIGNED32; ordered-, done-: BOOLEAN;
+
+			PROCEDURE &InitReader* (where: Ints.Channel);
+			BEGIN channel := where; read := 0; last := 0; ordered := TRUE; done := FALSE
+			END InitReader;
+
+			PROCEDURE Wait*;
+			BEGIN {EXCLUSIVE} AWAIT(done)
+			END Wait;
+
+			PROCEDURE Finished;
+			BEGIN {EXCLUSIVE} done := TRUE
+			END Finished;
+
+		BEGIN {ACTIVE}
+			WHILE channel.Get(value) DO
+				INC(read);
+				IF value # last + 1 THEN ordered := FALSE END;
+				last := value
+			END;
+			Finished
+		END Reader;
+
+	VAR value: SIGNED32;
+
+	END ChannelsTestShared.
+
+positive: what goes in comes out, in that order
+
+	MODULE Test;
+	IMPORT Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; i, got: SIGNED32;
+	BEGIN
+		NEW(c);
+		ASSERT(c.Waiting() = 0);
+		FOR i := 1 TO 5 DO ASSERT(c.Put(i)) END;
+		ASSERT(c.Waiting() = 5);
+		FOR i := 1 TO 5 DO
+			ASSERT(c.Get(got));
+			ASSERT(got = i)
+		END;
+		ASSERT(c.Waiting() = 0)
+	END Test.
+
+positive: a closed channel gives up what it has, and then says so
+
+	MODULE Test;
+	IMPORT Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; got: SIGNED32;
+	BEGIN
+		NEW(c);
+		ASSERT(c.Put(1)); ASSERT(c.Put(2));
+		c.Close;
+		ASSERT(~c.Put(3));                         (* nothing more goes in *)
+		ASSERT(c.Get(got) & (got = 1));            (* what was already in still comes out *)
+		ASSERT(c.Get(got) & (got = 2));
+		ASSERT(~c.Get(got));                       (* and then it is done, without waiting *)
+		ASSERT(~c.Get(got))
+	END Test.
+
+positive: a reader waiting on an empty channel is told when it closes
+
+	MODULE Test;
+	IMPORT T := ChannelsTestShared, Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; reader: T.Reader;
+	BEGIN
+		(*	This is the case the whole module exists for: an activity waiting for something that
+			never comes must be woken when the source ends, or the program never stops. *)
+		NEW(c);
+		NEW(reader, c);
+		c.Close;
+		reader.Wait;                               (* if closing did not wake it, this never returns *)
+		ASSERT(reader.read = 0)
+	END Test.
+
+positive: a thousand numbers cross between two activities, all of them and in order
+
+	MODULE Test;
+	IMPORT T := ChannelsTestShared, Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; writer: T.Writer; reader: T.Reader;
+	BEGIN
+		NEW(c);
+		NEW(writer, c, 1000);
+		NEW(reader, c);
+		writer.Wait;                               (* it has put all thousand in *)
+		c.Close;                                   (* which is what tells the reader to stop *)
+		reader.Wait;
+		ASSERT(writer.written = 1000);
+		ASSERT(reader.read = 1000);                (* nothing lost -- the channel holds 64 *)
+		ASSERT(reader.ordered)                     (* and nothing overtook anything *)
+	END Test.
+
+positive: a writer is made to wait rather than lose what it had
+
+	MODULE Test;
+	IMPORT T := ChannelsTestShared, Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; writer: T.Writer; got, i: SIGNED32;
+	BEGIN
+		NEW(c);
+		NEW(writer, c, Ints.Room + 10);            (* ten more than it holds *)
+		FOR i := 1 TO Ints.Room DO
+			ASSERT(c.Get(got));                      (* each one taken lets one more in *)
+			ASSERT(got = i)
+		END;
+		FOR i := Ints.Room + 1 TO Ints.Room + 10 DO
+			ASSERT(c.Get(got));
+			ASSERT(got = i)
+		END;
+		writer.Wait;
+		ASSERT(writer.written = Ints.Room + 10)
+	END Test.
+
+positive: closing while a writer is waiting lets it go
+
+	MODULE Test;
+	IMPORT T := ChannelsTestShared, Ints := Channels(SIGNED32);
+	VAR c: Ints.Channel; writer: T.Writer;
+	BEGIN
+		NEW(c);
+		NEW(writer, c, 100000);                    (* far more than it holds: it will be waiting *)
+		c.Close;
+		writer.Wait;                               (* if closing did not wake it, this never returns *)
+		ASSERT(writer.written < 100000)
+	END Test.
+
+positive: a channel carries whatever type it was made for
+
+	MODULE Test;
+	IMPORT Lines := Channels(Strings.String), Strings;
+	VAR c: Lines.Channel; s: Strings.String;
+	BEGIN
+		NEW(c);
+		ASSERT(c.Put(Strings.NewString("first")));
+		ASSERT(c.Put(Strings.NewString("second")));
+		ASSERT(c.Get(s) & (s^ = "first"));
+		ASSERT(c.Get(s) & (s^ = "second"))
+	END Test.
