@@ -1,0 +1,117 @@
+# Tests for the parts of source/Unix.Machine.Mod a program can reach.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test MachineTestShared;System.Load Test"
+#
+# Three routines, all of them written per architecture and two of them in assembly this project
+# wrote during the AArch64 port. Byte order is one instruction and every protocol depends on it.
+# The atomics are what a lock is built out of, and the only honest way to check one is to have two
+# activities use it at once: a read-modify-write that is not atomic loses updates, and loses them
+# quietly.
+#
+# AtomicExcl is not among them, and not by choice: it stands behind `#IF I386 OR AM64` in
+# Unix.Machine.Mod -- AMD64 spelled without its D -- so it is compiled on 32-bit x86 alone and
+# nothing in the tree can call it. Nothing does, which is why the typo has survived.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE MachineTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Two activities clearing bits of one word" *)
+
+	IMPORT Machine;
+
+	TYPE
+		(** Adds one to the shared counter, once for every number from `first` to `last`. *)
+		Clearer* = OBJECT
+		VAR first, last: SIGNED32; done-: BOOLEAN;
+
+			PROCEDURE &InitClearer* (from, to: SIGNED32);
+			BEGIN first := from; last := to; done := FALSE
+			END InitClearer;
+
+			PROCEDURE Wait*;
+			BEGIN {EXCLUSIVE} AWAIT(done)
+			END Wait;
+
+			PROCEDURE Finished;
+			BEGIN {EXCLUSIVE} done := TRUE
+			END Finished;
+
+		BEGIN {ACTIVE}
+			FOR bit := first TO last DO Machine.AtomicInc(shared) END;
+			Finished
+		END Clearer;
+
+	VAR
+		shared*: SIGNED32;               (** the counter both of them add to *)
+		bit: SIGNED32;
+
+	PROCEDURE Fill*;
+	BEGIN shared := 0
+	END Fill;
+
+	END MachineTestShared.
+
+positive: swapping the bytes of a number twice gives it back
+
+	MODULE Test;
+	IMPORT Machine;
+	VAR i, n: SIGNED32;
+	BEGIN
+		ASSERT(Machine.ChangeByteOrder(01020304H) = 04030201H);
+		ASSERT(Machine.ChangeByteOrder(0) = 0);
+		ASSERT(Machine.ChangeByteOrder(0FFH) = SIGNED32(0FF000000H));
+		FOR i := 0 TO 30 DO
+			n := ASH(1, i);
+			ASSERT(Machine.ChangeByteOrder(Machine.ChangeByteOrder(n)) = n)
+		END
+	END Test.
+
+positive: adding one, and swapping a value for another, atomically
+
+	MODULE Test;
+	IMPORT Machine;
+	VAR n, was: SIGNED32;
+	BEGIN
+		n := 0;
+		Machine.AtomicInc(n); ASSERT(n = 1);
+		Machine.AtomicAdd(n, 41); ASSERT(n = 42);
+		Machine.AtomicAdd(n, -42); ASSERT(n = 0);
+		n := 7;
+		was := Machine.AtomicCAS(n, 7, 9);
+		ASSERT(was = 7); ASSERT(n = 9);        (* it was what was expected, so it changed *)
+		was := Machine.AtomicCAS(n, 7, 11);
+		ASSERT(was = 9); ASSERT(n = 9)         (* it was not, so it did not *)
+	END Test.
+
+positive: two activities adding to one counter lose nothing
+
+	MODULE Test;
+	IMPORT T := MachineTestShared;
+	VAR lower, upper: T.Clearer;
+	BEGIN
+		(*	The point of the word "atomic". Two activities adding to one counter a thousand times
+			each: a read-modify-write that is not atomic reads a value, has it changed underneath,
+			and writes back what it remembered -- and the other one's additions are gone. Nothing
+			says so; the total is simply short. *)
+		T.Fill;
+		NEW(lower, 1, 1000);
+		NEW(upper, 1, 1000);
+		lower.Wait; upper.Wait;
+		ASSERT(T.shared = 2000)
+	END Test.
+
+positive: a number is read out of a string, decimal or hexadecimal
+
+	MODULE Test;
+	IMPORT Machine;
+	VAR i: SIZE;
+	BEGIN
+		i := 0; ASSERT(Machine.StrToInt(i, "42") = 42);
+		i := 0; ASSERT(Machine.StrToInt(i, "-7") = -7);
+		i := 0; ASSERT(Machine.StrToInt(i, "0") = 0);
+		i := 0; ASSERT(Machine.StrToInt(i, "1FH") = 31);       (* the H makes it hexadecimal *)
+		i := 0; ASSERT(Machine.StrToInt(i, "ff") = 255);       (* and so does a letter in it *)
+		i := 0; ASSERT(Machine.StrToInt(i, "12x") = 12);       (* it stops where the digits do *)
+		ASSERT(i = 2)                                          (* and says where that was *)
+	END Test.

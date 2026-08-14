@@ -49,3 +49,16 @@ Shortreal.Execution.Test	positive: test scalar SHORTREAL operators
 # implementation would hide it.
 MathFunctions.Test	positive: a logarithm and an exponent undo each other
 
+# --- atomics under an emulator ------------------------------------------------------
+# Two activities adding one to the same counter a thousand times each come to 2000 on
+# x86-64 and to about 1270 here: a third of the additions are lost. The AArch64 code is
+# a textbook ldaxr/stlxr retry loop and is atomic by construction on a processor, so the
+# likely answer is that qemu-user does not honour the exclusive monitor between threads
+# -- but "likely" is not "checked", and this entry says which of the two it is only when
+# somebody runs this case on the real machine. There is one: the suites have run on a
+# Snapdragon before (see the AArch64 notes), and this file should be revisited then.
+# Until then the case stays here rather than being weakened to pass: an atomic operation
+# that loses a third of its updates is either a defect or a broken measurement, and both
+# are worth keeping in front of us.
+MachineFunctions.Test	positive: two activities adding to one counter lose nothing
+
