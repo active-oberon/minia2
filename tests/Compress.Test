@@ -1,0 +1,198 @@
+# Tests for the compression package -- std/compress, which the registry calls stable.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Eight modules, a tier of the standard library, marked stable, and nothing had ever compressed
+# anything under a test. "Stable" is a promise, and a promise nobody checks is a wish.
+#
+# What is checked is the property that matters and not the bytes a particular version emits: what
+# comes out of the decompressor is what went into the compressor, for text that compresses well,
+# for data that does not, for the empty case and for something larger than the buffers inside.
+# A round trip is the whole contract of a compressor; the exact encoding is its own business.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: text goes through compression and comes back the same
+
+	MODULE Test;
+	IMPORT Files, ZlibWriters, ZlibReaders, Strings;
+	VAR f: Files.File; rider: Files.Rider; w: ZlibWriters.Writer; r: ZlibReaders.Reader;
+		source, back: ARRAY 4096 OF CHAR; written, read, total: SIZE; i: SIGNED32;
+	BEGIN
+		source := "";
+		FOR i := 1 TO 100 DO Strings.Append(source, "the same sentence over and over. ") END;
+
+		f := Files.New("compress.tmp"); ASSERT(f # NIL);
+		f.Set(rider, 0);
+		ZlibWriters.Open(w, 6, 0, 0, TRUE, rider);
+		ASSERT(w.res = ZlibWriters.Ok);
+		ZlibWriters.WriteBytes(w, source, 0, Strings.Length(source), written);
+		ASSERT(written = Strings.Length(source));
+		ZlibWriters.Close(w);
+		Files.Register(f);
+
+		f := Files.Old("compress.tmp"); ASSERT(f # NIL);
+		f.Set(rider, 0);
+		ZlibReaders.Open(r, TRUE, rider);
+		ASSERT(r.res = ZlibReaders.Ok);
+		(*	A reader hands over what it has, as every reader does: asking for the whole of it in
+			one call is not the contract, and a client loops until it has what it wanted or the
+			stream says it is over. *)
+		total := 0;
+		REPEAT
+			ZlibReaders.ReadBytes(r, back, total, Strings.Length(source) - total, read);
+			INC(total, read)
+		UNTIL (total = Strings.Length(source)) OR (read = 0);
+		ASSERT(total = Strings.Length(source));
+		back[total] := 0X;
+		ASSERT(back = source)
+	END Test.
+
+positive: and it is smaller than what went in, which is the point of it
+
+	MODULE Test;
+	IMPORT Files, ZlibWriters, Strings;
+	VAR f: Files.File; rider: Files.Rider; w: ZlibWriters.Writer;
+		source: ARRAY 4096 OF CHAR; written: SIZE; i: SIGNED32;
+	BEGIN
+		source := "";
+		FOR i := 1 TO 100 DO Strings.Append(source, "the same sentence over and over. ") END;
+		f := Files.New("compress2.tmp"); f.Set(rider, 0);
+		ZlibWriters.Open(w, 6, 0, 0, TRUE, rider);
+		ZlibWriters.WriteBytes(w, source, 0, Strings.Length(source), written);
+		ZlibWriters.Close(w);
+		Files.Register(f);
+		f := Files.Old("compress2.tmp");
+		ASSERT(f.Length() > 0);
+		ASSERT(f.Length() < Strings.Length(source) DIV 4)   (* a hundred copies of one sentence *)
+	END Test.
+
+positive: data that does not compress still comes back whole
+
+	MODULE Test;
+	IMPORT Files, ZlibWriters, ZlibReaders;
+	VAR f: Files.File; rider: Files.Rider; w: ZlibWriters.Writer; r: ZlibReaders.Reader;
+		source, back: ARRAY 2048 OF CHAR; written, read, total: SIZE; i: SIGNED32; seed: SIGNED32;
+	BEGIN
+		(* not random, but without a pattern a compressor can use *)
+		seed := 12345;
+		FOR i := 0 TO 2047 DO
+			seed := (seed * 1103515245 + 12345) MOD 2147483647;
+			source[i] := CHR(seed MOD 256)
+		END;
+		f := Files.New("compress3.tmp"); f.Set(rider, 0);
+		ZlibWriters.Open(w, 9, 0, 0, TRUE, rider);
+		ZlibWriters.WriteBytes(w, source, 0, 2048, written);
+		ASSERT(written = 2048);
+		ZlibWriters.Close(w); Files.Register(f);
+
+		f := Files.Old("compress3.tmp"); f.Set(rider, 0);
+		ZlibReaders.Open(r, TRUE, rider);
+		total := 0;
+		REPEAT
+			ZlibReaders.ReadBytes(r, back, total, 2048 - total, read); INC(total, read)
+		UNTIL (total = 2048) OR (read = 0);
+		ASSERT(total = 2048);
+		FOR i := 0 TO 2047 DO ASSERT(back[i] = source[i]) END
+	END Test.
+
+positive: more than fits in the buffers inside
+
+	MODULE Test;
+	IMPORT Files, ZlibWriters, ZlibReaders;
+	VAR f: Files.File; rider: Files.Rider; w: ZlibWriters.Writer; r: ZlibReaders.Reader;
+		source, back: POINTER TO ARRAY OF CHAR; written, read, total: SIZE; i: SIGNED32;
+	BEGIN
+		NEW(source, 200000); NEW(back, 200000);
+		FOR i := 0 TO 199999 DO source[i] := CHR(ORD("a") + i MOD 26) END;
+		f := Files.New("compress4.tmp"); f.Set(rider, 0);
+		ZlibWriters.Open(w, 6, 0, 0, TRUE, rider);
+		ZlibWriters.WriteBytes(w, source^, 0, 200000, written);
+		ASSERT(written = 200000);
+		ZlibWriters.Close(w); Files.Register(f);
+
+		f := Files.Old("compress4.tmp"); f.Set(rider, 0);
+		ZlibReaders.Open(r, TRUE, rider);
+		total := 0;
+		REPEAT
+			ZlibReaders.ReadBytes(r, back^, total, 200000 - total, read); INC(total, read)
+		UNTIL (total = 200000) OR (read = 0);
+		ASSERT(total = 200000);
+		FOR i := 0 TO 199999 DO ASSERT(back[i] = source[i]) END
+	END Test.
+
+positive: without the zlib wrapper it is the same story
+
+	MODULE Test;
+	IMPORT Files, ZlibWriters, ZlibReaders, Strings;
+	VAR f: Files.File; rider: Files.Rider; w: ZlibWriters.Writer; r: ZlibReaders.Reader;
+		source, back: ARRAY 1024 OF CHAR; written, read: SIZE;
+	BEGIN
+		source := "raw deflate, no header and no checksum around it";
+		f := Files.New("compress5.tmp"); f.Set(rider, 0);
+		ZlibWriters.Open(w, 6, 0, 0, FALSE, rider);
+		ZlibWriters.WriteBytes(w, source, 0, Strings.Length(source), written);
+		ZlibWriters.Close(w); Files.Register(f);
+
+		f := Files.Old("compress5.tmp"); f.Set(rider, 0);
+		ZlibReaders.Open(r, FALSE, rider);
+		ZlibReaders.ReadBytes(r, back, 0, Strings.Length(source), read);
+		ASSERT(read = Strings.Length(source));
+		back[read] := 0X;
+		ASSERT(back = source)
+	END Test.
+
+positive: the checksum of known bytes is the known number
+
+	MODULE Test;
+	IMPORT Zlib;
+	VAR data: ARRAY 16 OF CHAR;
+	BEGIN
+		(*	CRC-32 of "123456789" is CBF43926, which is the check value every implementation of it
+			quotes. A round trip cannot catch a checksum that is wrong the same way at both ends;
+			this can. *)
+		data := "123456789";
+		ASSERT(Zlib.CRC32(0, data, 0, 9) = SIGNED32(0CBF43926H))
+	END Test.
+
+positive: a stream another implementation made is read by ours
+
+	MODULE Test;
+	IMPORT Files, ZlibReaders;
+	CONST
+		(*	zlib.compress(b"...", 6) from a Python that has nothing to do with this tree. A round
+			trip cannot tell whether both ends are wrong together; this can. It is also what the
+			defect above looked like from outside: a writer asked for a zlib stream wrote a raw
+			deflate one, and only a stream from elsewhere would have shown it. *)
+		hex = "789C15CAC10D80400804C056B6009B82DC26921C6038EEA1D5ABF31EC1334DB1BA280E9741E80D89EC9305F36BD2192D6D19073AA1C457C7BF72D77A01F7B7175E";
+		length = 64;
+	VAR f: Files.File; rider: Files.Rider; r: ZlibReaders.Reader;
+		blob, back: ARRAY 256 OF CHAR; i, n: SIGNED32; read, total: SIZE;
+
+		PROCEDURE Digit (c: CHAR): SIGNED32;
+		BEGIN
+			IF (c >= "0") & (c <= "9") THEN RETURN ORD(c) - ORD("0") END;
+			RETURN ORD(c) - ORD("A") + 10
+		END Digit;
+
+	BEGIN
+		n := 0; i := 0;
+		WHILE hex[i] # 0X DO
+			blob[n] := CHR(Digit(hex[i]) * 16 + Digit(hex[i+1])); INC(n); INC(i, 2)
+		END;
+		f := Files.New("outside.tmp"); f.Set(rider, 0);
+		rider.file.WriteBytes(rider, blob, 0, n);
+		Files.Register(f);
+
+		f := Files.Old("outside.tmp"); f.Set(rider, 0);
+		ZlibReaders.Open(r, TRUE, rider);
+		ASSERT(r.res = ZlibReaders.Ok);
+		total := 0;
+		REPEAT
+			ZlibReaders.ReadBytes(r, back, total, length - total, read); INC(total, read)
+		UNTIL (total = length) OR (read = 0);
+		ASSERT(total = length);
+		back[total] := 0X;
+		ASSERT(back = "a zlib stream made by another implementation, to be read by ours")
+	END Test.
+
