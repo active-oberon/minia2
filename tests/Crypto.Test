@@ -1,0 +1,117 @@
+# Tests for the ciphers and digests of std/crypto that had no known answers.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The package is thirty modules and the registry calls it stable. SHA-1 and SHA-256 were checked
+# against published values already; MD5, SHA-3, AES and Base64 were not checked against anything.
+#
+# For cryptography a round trip is worth nothing: a cipher that decrypts what it encrypted, and a
+# digest that agrees with itself, can both be wrong in a way that makes them useless -- the whole
+# purpose is to agree with everybody else's. So every case here is a known answer, from the
+# standard that defines it: FIPS-197 for AES, RFC 1321 for MD5, the NIST values for SHA-3,
+# RFC 4648 for Base64.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: MD5 of what RFC 1321 says
+
+	MODULE Test;
+	IMPORT CryptoMD5, CryptoUtils;
+	VAR h: CryptoMD5.Hash; digest: ARRAY 32 OF CHAR; hex: ARRAY 64 OF CHAR; data: ARRAY 8 OF CHAR;
+	BEGIN
+		NEW(h); h.Initialize;
+		data := ""; h.Update(data, 0, 0);
+		h.GetHash(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 16);
+		ASSERT(hex = "D41D8CD98F00B204E9800998ECF8427E");
+
+		NEW(h); h.Initialize;
+		data := "abc"; h.Update(data, 0, 3);
+		h.GetHash(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 16);
+		ASSERT(hex = "900150983CD24FB0D6963F7D28E17F72")
+	END Test.
+
+positive: SHA-3 of what NIST says
+
+	MODULE Test;
+	IMPORT CryptoSHA3, CryptoUtils, Hashes := CryptoHashes;
+	VAR h: Hashes.Hash; digest: ARRAY 64 OF CHAR; hex: ARRAY 128 OF CHAR; data: ARRAY 8 OF CHAR;
+	BEGIN
+		h := CryptoSHA3.NewHash(); h.SetNameAndSize("SHA3-256", 32); h.Initialize;
+		data := ""; h.Update(data, 0, 0);
+		h.GetHash(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 32);
+		ASSERT(hex = "A7FFC6F8BF1ED76651C14756A061D662F580FF4DE43B49FA82D80A4B80F8434A");
+
+		h := CryptoSHA3.NewHash(); h.SetNameAndSize("SHA3-256", 32); h.Initialize;
+		data := "abc"; h.Update(data, 0, 3);
+		h.GetHash(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 32);
+		ASSERT(hex = "3A985DA74FE225B2045C172D6BD390BD855F086E3E9D525B46BFE24511431532")
+	END Test.
+
+positive: AES encrypts the block FIPS-197 encrypts, to the same bytes
+
+	MODULE Test;
+	IMPORT CryptoAES, CryptoUtils, Ciphers := CryptoCiphers;
+	VAR cipher: Ciphers.Cipher; key, block: ARRAY 32 OF CHAR; hex: ARRAY 64 OF CHAR; i: SIGNED32;
+	BEGIN
+		(*	FIPS-197, appendix C.1: key 000102...0F, plaintext 00112233445566778899AABBCCDDEEFF,
+			ciphertext 69C4E0D86A7B0430D8CDB78070B4C55A. Every implementation in the world agrees on
+			these sixteen bytes, which is the only thing that makes a cipher useful. *)
+		FOR i := 0 TO 15 DO key[i] := CHR(i) END;
+		FOR i := 0 TO 15 DO block[i] := CHR(i * 17) END;
+		cipher := CryptoAES.NewCipher();
+		cipher.InitKey(key, 128);
+		cipher.Encrypt(block, 0, 16);
+		CryptoUtils.Bin2Hex(block, 0, hex, 0, 16);
+		ASSERT(hex = "69C4E0D86A7B0430D8CDB78070B4C55A");
+		cipher.Decrypt(block, 0, 16);
+		FOR i := 0 TO 15 DO ASSERT(block[i] = CHR(i * 17)) END
+	END Test.
+
+positive: Base64 of what RFC 4648 says, padding and all
+
+	MODULE Test;
+	IMPORT CryptoBase64;
+	VAR out: ARRAY 64 OF CHAR; back: ARRAY 64 OF CHAR; len: SIGNED32;
+	BEGIN
+		CryptoBase64.Encode("Oberon", 6, out);
+		ASSERT(out = "T2Jlcm9u");
+		CryptoBase64.Encode("a", 1, out);
+		ASSERT(out = "YQ==");                       (* one byte, two pad characters *)
+		CryptoBase64.Encode("ab", 2, out);
+		ASSERT(out = "YWI=");
+		len := CryptoBase64.Decode("T2Jlcm9u", back);
+		back[len] := 0X;
+		ASSERT(back = "Oberon");
+		ASSERT(len = 6)
+	END Test.
+
+positive: HMAC-SHA256 of what RFC 4231 says
+
+	MODULE Test;
+	IMPORT CryptoHMAC, CryptoUtils;
+	VAR mac: CryptoHMAC.HMac; key, data: ARRAY 64 OF CHAR;
+		digest: ARRAY 64 OF CHAR; hex: ARRAY 128 OF CHAR; i: SIGNED32;
+	BEGIN
+		(*	RFC 4231, case 1: a key of twenty 0BH bytes over "Hi There". Everything that
+			authenticates a message on a network stands on this agreeing with everyone else. *)
+		FOR i := 0 TO 19 DO key[i] := 0BX END;
+		NEW(mac, "CryptoSHA256");
+		mac.Initialize(key, 20);
+		data := "Hi There"; mac.Update(data, 0, 8);
+		mac.GetMac(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 32);
+		ASSERT(hex = "B0344C61D8DB38535CA8AFCEAF0BF12B881DC200C9833DA726E9376C2E32CFF7");
+
+		(* case 2: a short key, and a longer message *)
+		NEW(mac, "CryptoSHA256");
+		key := "Jefe"; mac.Initialize(key, 4);
+		data := "what do ya want for nothing?"; mac.Update(data, 0, 28);
+		mac.GetMac(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 32);
+		ASSERT(hex = "5BDCC146BF60754E6A042426089575C75A003F089D2739839DEC58B964EC3843")
+	END Test.
+
