@@ -120,7 +120,11 @@ TYPE
 		BEGIN
 			entry := entries; prev := NIL;
 			WHILE (entry # NIL) & (entry.position <= position) DO prev := entry; entry := entry.next END;
-			IF (entry = NIL) OR (entry.type # type) OR (entry.position # position) OR (entry.message # message) THEN
+			(*	The same message reported twice for the same place is one message. This asked `entry`,
+			which the loop above has just left standing beyond the position looked for, so its
+			position never matched and every repetition was counted again; `prev` is the entry that
+			an identical one would be. *)
+		IF (prev = NIL) OR (prev.type # type) OR (prev.position # position) OR (prev.message # message) THEN
 				INC(nofMessages); INC (counter);
 				entry := NewEntry (type, source, position, message, entry);
 				IF prev = NIL THEN entries := entry ELSE prev.next := entry END

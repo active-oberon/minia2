@@ -1,0 +1,92 @@
+# Tests for Diagnostics and Commands -- how the system reports and how it names what to run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Diagnostics is the list every error in the compiler passes through, and Commands.Split is what
+# turns the text a user types into a module and a procedure. Neither had a test.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: errors are counted, kept in the order of the source, and printed
+
+	MODULE Test;
+	IMPORT Diagnostics, Streams, Strings;
+	VAR d: Diagnostics.DiagnosticsList; entries: Diagnostics.EntryArray;
+		w: Streams.StringWriter; s: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(d);
+		ASSERT(d.nofErrors = 0); ASSERT(d.nofWarnings = 0); ASSERT(d.nofMessages = 0);
+
+		(* given out of order, and kept in the order of the file *)
+		d.Error("Test.Mod", 300, "third");
+		d.Error("Test.Mod", 100, "first");
+		d.Warning("Test.Mod", 200, "second");
+		ASSERT(d.nofErrors = 2);
+		ASSERT(d.nofWarnings = 1);
+		ASSERT(d.nofMessages = 3);
+		entries := d.GetEntries();
+		ASSERT(LEN(entries) = 3);
+		ASSERT(entries[0].position = 100); ASSERT(entries[0].message = "first");
+		ASSERT(entries[1].position = 200); ASSERT(entries[1].message = "second");
+		ASSERT(entries[2].position = 300); ASSERT(entries[2].message = "third");
+		ASSERT(entries[1].type = Diagnostics.TypeWarning);
+
+		(* the same message at the same place twice is one message, not two *)
+		d.Error("Test.Mod", 100, "first");
+		ASSERT(d.nofErrors = 2);
+		(* a different message at the same place is another one *)
+		d.Error("Test.Mod", 100, "and another");
+		ASSERT(d.nofErrors = 3);
+
+		(* what it writes out, and the mask that chooses what is written *)
+		NEW(w, LEN(s));
+		d.ToStream(w, {Diagnostics.TypeWarning});
+		w.Get(s);
+		ASSERT(Strings.Pos("second", s) >= 0);
+		ASSERT(Strings.Pos("first", s) < 0);      (* the errors were not asked for *)
+		NEW(w, LEN(s));
+		d.ToStream(w, {Diagnostics.TypeError, Diagnostics.TypeWarning});
+		w.Get(s);
+		ASSERT(Strings.Pos("first", s) >= 0);
+		ASSERT(Strings.Pos("second", s) >= 0);
+
+		(* and it can be emptied *)
+		d.Reset;
+		ASSERT(d.nofErrors = 0); ASSERT(d.nofMessages = 0);
+		ASSERT(d.GetEntries() = NIL)
+	END Test.
+
+positive: a command is a module name and a procedure name
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+	VAR module, procedure: Modules.Name; res: INTEGER; msg: ARRAY 128 OF CHAR;
+	BEGIN
+		Commands.Split("Modules.Free", module, procedure, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(module = "Modules"); ASSERT(procedure = "Free");
+		ASSERT(msg = "");
+
+		(* a module by itself is loaded and nothing is called in it *)
+		Commands.Split("System.", module, procedure, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(module = "System"); ASSERT(procedure = "");
+
+		(* without the dot there is no command *)
+		Commands.Split("System", module, procedure, res, msg);
+		ASSERT(res # Commands.Ok);
+		ASSERT(msg # "");
+
+		(* nor in an empty string *)
+		Commands.Split("", module, procedure, res, msg);
+		ASSERT(res # Commands.Ok);
+
+		(*	A name that cannot fit is refused rather than cut. Modules.Name holds 96 characters, so
+			this one is past the end by a little; the message says the dot is missing rather than
+			that the name is too long, because the loop stops one short of the limit and the
+			"Module name too long" branch is never the one taken. *)
+		Commands.Split("ThisModuleNameIsFarTooLongToBeAModuleNameInThisSystemAndMustBeRefusedBecauseItDoesNotFitAtAllAnywhere.Go",
+			module, procedure, res, msg);
+		ASSERT(res # Commands.Ok);
+		ASSERT(msg # "")
+	END Test.
