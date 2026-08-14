@@ -560,8 +560,12 @@ loop:
 END AtomicAdd;
 
 
-#IF I386 OR AM64 THEN
-(** Atomic EXCL. *)
+(**	Atomic EXCL.
+
+	The guard around this procedure used to read `#IF I386 OR AM64` -- AMD64 without its D, which
+	no platform defines -- so it existed on 32-bit x86 alone and on every other machine the name
+	was simply not there. Nothing in the tree calls it, which is why that survived; a caller would
+	have been told "undeclared identifier" and would have gone looking in the wrong place. *)
 PROCEDURE AtomicExcl* (VAR s: SET; bit: SIGNED32);
 CODE
 #IF I386 THEN
@@ -574,11 +578,22 @@ CODE
 	MOV RBX, [RBP + s]
 	LOCK
 	BTR [RBX], EAX
+#ELSIF ARM64 THEN
+	(*	A64 has no bit-test-and-reset: the mask is built and the word is rewritten under a
+		load-exclusive, which is what the other atomics here do as well. *)
+	ldr x0, [fp, #s]			; the address of the set
+	ldr w3, [fp, #bit]
+	mov w4, #1
+	lsl w4, w4, w3				; the bit to take out
+loop:
+	ldaxr w1, [x0]
+	bic w1, w1, w4
+	stlxr w2, w1, [x0]
+	cbnz w2, loop
 #ELSE
 	unimplemented
 #END
 END AtomicExcl;
-#END
 
 (** Atomic test-and-set. Set x = TRUE and return old value of x. *)
 PROCEDURE -AtomicTestSet*(VAR x: BOOLEAN): BOOLEAN;
