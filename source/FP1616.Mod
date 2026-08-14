@@ -1,7 +1,7 @@
 MODULE FP1616;	(** AUTHOR "PL"; PURPOSE "FixPoint 16.16 Module"; *)
 
 CONST
-	FIXPOINT = 65536;						(* 2^8 *)
+	FIXPOINT = 65536;						(* 2^16 *)
 
 TYPE
 (* converts a 16.16 fixpoint integer to float *)
@@ -13,8 +13,12 @@ END FixpToFloat;
 (* converts a float into a 16.16 fixpoint integer *)
 PROCEDURE FloatToFixp*(x: FLOAT32): SIGNED32;
 BEGIN
-	IF x > FIXPOINT THEN RETURN FIXPOINT;
-	ELSIF x < -FIXPOINT THEN RETURN -FIXPOINT
+	(*	What does not fit has to come back as the largest that does. This used to compare the
+		number in whole units and answer in fixed-point ones, so anything above 65536 came back as
+		FIXPOINT itself -- which is not a huge number but exactly one. The largest a signed 32-bit
+		word holds in 16.16 is a shade under 32768. *)
+	IF x >= 32768.0 THEN RETURN MAX(SIGNED32);
+	ELSIF x < -32768.0 THEN RETURN MIN(SIGNED32)
 	ELSE RETURN ENTIER(x * (FIXPOINT));
 	END;
 END FloatToFixp;
