@@ -281,19 +281,40 @@ MODULE BIT;	(** portable *)	(* tk 12.2.96 *)
 
 
 	(** unsigned division: x DIV y *)
+	(*	Only the dividend used to be widened to its unsigned value, so any divisor from 128 up was
+		still the negative number it looks like signed -- and DIV by a negative divisor is a
+		division error, which took the process down rather than returning a wrong answer. *)
 	PROCEDURE SDIV*(x, y: SHORTCARD): SHORTCARD;
-	BEGIN RETURN SHORT(SHORT(S.VAL(SIGNED32, S.VAL(SET32, LONG(LONG(x))) * SET32(0FFH)) DIV y))
+		VAR q: SIGNED32;
+	BEGIN
+		q := S.VAL(SIGNED32, S.VAL(SET32, LONG(LONG(x))) * SET32(0FFH))
+			DIV S.VAL(SIGNED32, S.VAL(SET32, LONG(LONG(y))) * SET32(0FFH));
+		IF q > 127 THEN DEC(q, 256) END;   (* back into the byte it is carried in *)
+		RETURN SHORT(SHORT(q))
 	END SDIV;
 
+	(*	The same, and one more: the dividend was widened and then narrowed straight back by SHORT
+		before the division, which threw the widening away. *)
 	PROCEDURE IDIV*(x, y: CARDINAL): CARDINAL;
-	BEGIN RETURN SHORT(S.VAL(SIGNED32, S.VAL(SET32, LONG(x)) * SET32(0FFFFH))) DIV y;
+		VAR q: SIGNED32;
+	BEGIN
+		q := S.VAL(SIGNED32, S.VAL(SET32, LONG(x)) * SET32(0FFFFH))
+			DIV S.VAL(SIGNED32, S.VAL(SET32, LONG(y)) * SET32(0FFFFH));
+		IF q > 32767 THEN DEC(q, 65536) END;
+		RETURN SHORT(q)
 	END IDIV;
 
 	PROCEDURE LDIV*(x, y: LONGCARD): LONGCARD;
 		CONST m = 4.294967296D9;
 		VAR x0, y0: FLOAT64;
-	BEGIN IF x < 0 THEN x0 := m - x ELSE x0 := x END;
-		IF y < 0 THEN y0 := m - y ELSE y0 := y END;
+	(*	Two things were wrong here. A negative signed number stands for m + x unsigned, not m - x:
+		-1 is 4294967295 and used to be read as 4294967297. And the constant may not meet the
+		integer directly -- a real literal takes the type its range needs and not the one its
+		precision needs, so m in `m + x` is a 32-bit float, which has no 4294967295 in it. It is
+		put into a 64-bit variable first, and the sum is then computed where it fits. *)
+	BEGIN x0 := m; y0 := m;
+		IF x < 0 THEN x0 := x0 + x ELSE x0 := x END;
+		IF y < 0 THEN y0 := y0 + y ELSE y0 := y END;
 		RETURN ENTIER(x0 / y0)
 	END LDIV;
 
