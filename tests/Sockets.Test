@@ -1,0 +1,171 @@
+# Tests for std/net -- addresses, and a connection over the loopback.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# What Network.Test already covers is the byte order and the buffers. What was not covered is the
+# part with a kernel behind it: an address written as text and read back, and two ends of a real
+# TCP connection to 127.0.0.1 passing bytes both ways -- one of them an activity, because a server
+# that accepts and a client that connects cannot be the same one.
+#
+# Only the loopback is used, so nothing here needs a network to be reachable; a machine without a
+# loopback is a machine that cannot run the system either.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: an address written as text and read back
+
+	MODULE Test;
+	IMPORT IP;
+	VAR adr: IP.Adr; s: ARRAY 64 OF CHAR;
+	BEGIN
+		adr := IP.StrToAdr("127.0.0.1");
+		ASSERT(~IP.IsNilAdr(adr));
+		IP.AdrToStr(adr, s);
+		ASSERT(s = "127.0.0.1");
+
+		adr := IP.StrToAdr("192.168.1.42");
+		IP.AdrToStr(adr, s);
+		ASSERT(s = "192.168.1.42");
+
+		adr := IP.StrToAdr("255.255.255.255");
+		IP.AdrToStr(adr, s);
+		ASSERT(s = "255.255.255.255");
+
+		(* the same address twice is the same address, and two are not *)
+		ASSERT(IP.AdrsEqual(IP.StrToAdr("10.0.0.1"), IP.StrToAdr("10.0.0.1")));
+		ASSERT(~IP.AdrsEqual(IP.StrToAdr("10.0.0.1"), IP.StrToAdr("10.0.0.2")));
+
+		(* nothing is nothing *)
+		ASSERT(IP.IsNilAdr(IP.NilAdr));
+		ASSERT(IP.IsNilAdr(IP.StrToAdr("0.0.0.0")));
+
+		(* what is not an address does not become one *)
+		ASSERT(IP.IsNilAdr(IP.StrToAdr("not an address")));
+		ASSERT(IP.IsNilAdr(IP.StrToAdr("")))
+	END Test.
+
+positive: two ends of a connection over the loopback
+
+	MODULE Test;
+	IMPORT TCP, IP;
+
+	CONST FirstPort = 47653; Tries = 20;
+
+	TYPE
+		(*	The server has to be waiting while the client connects, so it is an activity. What it
+			does is fixed: take one connection, read a line, send it back with a word added. *)
+		Server = OBJECT
+		VAR listener, session: TCP.Connection; res: INTEGER; length: SIZE;
+			buffer: ARRAY 64 OF CHAR; ready-, served-: BOOLEAN; port-: SIGNED32;
+
+			(*	A port used a moment ago is still spoken for, so the one to listen on is whichever
+				of a score of them is free rather than a number written here. *)
+			PROCEDURE &Start;
+			VAR try: SIGNED32;
+			BEGIN
+				try := 0;
+				REPEAT
+					port := FirstPort + try;
+					NEW(listener);
+					listener.Open(port, IP.NilAdr, TCP.NilPort, res);
+					INC(try)
+				UNTIL (res = TCP.Ok) OR (try = Tries);
+				ready := res = TCP.Ok
+			END Start;
+
+			PROCEDURE AwaitServed;
+			BEGIN {EXCLUSIVE} AWAIT(served)
+			END AwaitServed;
+
+			PROCEDURE Done;
+			BEGIN {EXCLUSIVE} served := TRUE
+			END Done;
+
+		BEGIN {ACTIVE}
+			IF ready THEN
+				listener.Accept(session, res);
+				IF res = TCP.Ok THEN
+					session.Receive(buffer, 0, LEN(buffer), 1, length, res);
+					IF res = TCP.Ok THEN
+						session.Send("re: ", 0, 4, FALSE, res);
+						session.Send(buffer, 0, length, TRUE, res)
+					END;
+					session.Close
+				END;
+				listener.Close
+			END;
+			Done
+		END Server;
+
+	VAR server: Server; client: TCP.Connection; res: INTEGER; length: SIZE;
+		answer: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(server);
+		ASSERT(server.ready);                      (* the port was free and the socket opened *)
+
+		NEW(client);
+		client.Open(TCP.NilPort, IP.StrToAdr("127.0.0.1"), server.port, res);
+		ASSERT(res = TCP.Ok);
+		client.Send("hello", 0, 5, TRUE, res);
+		ASSERT(res = TCP.Ok);
+
+		client.Receive(answer, 0, LEN(answer) - 1, 9, length, res);
+		ASSERT(res = TCP.Ok);
+		ASSERT(length = 9);
+		answer[length] := 0X;
+		ASSERT(answer = "re: hello");              (* what came back is what was sent, answered *)
+
+		client.Close;
+		server.AwaitServed
+	END Test.
+
+positive: a datagram to the loopback and back
+
+	MODULE Test;
+	IMPORT UDP, IP;
+
+	CONST FirstPort = 47700; Tries = 20;
+
+	VAR here, there: UDP.Socket; res: INTEGER; length: SIZE; from: IP.Adr; fport: UNSIGNED32;
+		buffer: ARRAY 64 OF CHAR; loopback: IP.Adr; Here, There, try: SIGNED32;
+	BEGIN
+		loopback := IP.StrToAdr("127.0.0.1");
+		(* whichever pair of them is free, for the same reason as in the case above *)
+		try := 0;
+		REPEAT Here := FirstPort + 2 * try; NEW(here, Here, res); INC(try)
+		UNTIL (res = UDP.Ok) OR (try = Tries);
+		ASSERT(res = UDP.Ok);
+		try := 0;
+		REPEAT There := FirstPort + 2 * try + 1; NEW(there, There, res); INC(try)
+		UNTIL (res = UDP.Ok) OR (try = Tries);
+		ASSERT(res = UDP.Ok);
+
+		here.Send(loopback, There, "ping", 0, 4, res);
+		ASSERT(res = UDP.Ok);
+		there.Receive(buffer, 0, LEN(buffer), 2000, from, fport, length, res);
+		ASSERT(res = UDP.Ok);
+		ASSERT(length = 4);
+		buffer[length] := 0X;
+		ASSERT(buffer = "ping");
+		ASSERT(fport = Here);                      (* it says where it came from *)
+		ASSERT(IP.AdrsEqual(from, loopback));
+
+		(* and the other way, to show the first was not luck *)
+		there.Send(loopback, Here, "pong", 0, 4, res);
+		ASSERT(res = UDP.Ok);
+		here.Receive(buffer, 0, LEN(buffer), 2000, from, fport, length, res);
+		ASSERT(res = UDP.Ok);
+		buffer[length] := 0X;
+		ASSERT(buffer = "pong");
+		ASSERT(fport = There);
+
+		(* nothing sent, and the wait ends by itself rather than hanging *)
+		here.Receive(buffer, 0, LEN(buffer), 200, from, fport, length, res);
+		ASSERT(res = UDP.Timeout);
+
+		here.Close; there.Close;
+
+		(* a closed socket says so instead of trying *)
+		here.Send(loopback, There, "gone", 0, 4, res);
+		ASSERT(res # UDP.Ok)
+	END Test.
