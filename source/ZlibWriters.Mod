@@ -57,7 +57,12 @@ BEGIN
 	IF flush IN {NoFlush, SyncFlush, FullFlush} THEN
 		w.flush := flush;
 		w.wrapper := wrapper;
-		ZlibDeflate.Open(w.s, level, strategy, FALSE);
+		(*	The argument, not FALSE. It was FALSE here, so a writer asked for a zlib stream wrote
+			a raw deflate one instead: no header, no checksum, and the field above set to TRUE as
+			if there were. Nothing in the tree noticed, because what wrote it read it back the
+			same way -- the reader passes the flag on, honestly, and so refused what this wrote.
+			Anything outside sees raw deflate where a zlib stream was promised. *)
+		ZlibDeflate.Open(w.s, level, strategy, wrapper);
 		IF w.s.res = Ok THEN
 			NEW(w.out); ZlibBuffers.Init(w.s.out, w.out^, 0, BufSize, BufSize);
 			w.crc32 := Zlib.CRC32(0, w.out^, -1, -1);
