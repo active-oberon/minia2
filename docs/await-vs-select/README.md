@@ -2,8 +2,10 @@
 
 The plan for this SDK says the language's trump is `AWAIT`, and names a way to check it: write a
 program where three things happen at once, write the same program in a language with channels,
-and compare. This is that measurement. It did not come out the way the plan expected, which is
-the reason to write it down rather than the reason not to.
+and compare. This is that measurement. It was made three times: the first answer said Go wins by
+twenty-eight lines, the second was worse still, and the third came out even -- and what changed
+between them was not the argument but what was in the library. All three are below, because the
+wrong answers are the useful part.
 
 ## What is compared
 
@@ -20,8 +22,9 @@ Compared is **the plumbing alone**: the queue between the sources and the loop, 
 readers. Not the catalogue, not the drawing, not the control socket — those are the same work in
 both languages and would only pad both sides.
 
-- Active Oberon: `docker/examples/Radio.Mod`, the `Events`, `Keyboard`, `Player` and `Clock`
-  objects.
+- Active Oberon: `docker/examples/Radio.Mod` -- the `Arrival` record and the `Keyboard`, `Player`
+  and `Clock` objects -- and `source/Channels.Mod`, which is counted separately because it is
+  library and is written once.
 - Go: `radio.go` in this directory, the section marked *the plumbing*.
 
 Both are standard library only and Linux only. The Go program plays a station from the same
@@ -58,12 +61,12 @@ lines and not a hundred.
 
 ## Where the difference actually is
 
-**Go gets a bounded queue for free.** `make(chan event, 32)` is one line and does what 34 lines
-of `Events` do by hand: a ring, two counters, and two waits so that a source which runs ahead is
-made to wait rather than losing what it had. That is not a language difference, it is a library
-one — A2 has no such queue, and writing one that carries any type is what parametric modules are
-for. With such a module in the library, `Events` would be a dozen lines and the two sides would
-be about equal.
+**What Go has is a channel, not a container.** `make(chan event, 32)` is a queue, the waiting at
+both ends, back-pressure and closing, in one word. A2 had the container already -- Yaroslav
+Romanchenko's `GenericCollections`, parametric, in `std/data` -- and using it made the program
+*longer*, because a container asks for a comparator that a queue never calls. The waiting is what
+was missing, and it is what `Channels(TYPE T)` is: forty-five lines, one AWAIT at each end, no
+condition variable to signal and no wakeup to get wrong.
 
 **Go pays for cancellation, and Active Oberon does not.** Every goroutine here carries a context
 and every hand-over is a `select` with a `case <-ctx.Done()` beside it — twelve lines that exist
