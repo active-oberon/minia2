@@ -1,0 +1,132 @@
+# Tests for std/numerics -- the package the registry calls stable and nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Ten modules of numerical analysis by Alan Freed: a cube root, the error function, the gamma
+# function, rationals, complex numbers. Marked stable, and no test had ever asked one of them for
+# a value.
+#
+# The numbers here come from outside -- erf(1) and gamma(1/2) are quoted in every table of
+# special functions -- and from identities, which is what a special function is really pinned by:
+# gamma(n+1) = n gamma(n), erf(-x) = -erf(x), the cube of a cube root.
+#
+# NbrRe.Real is FLOAT32 in this tree, so the tolerances are what single precision owes -- about
+# seven digits -- and not more.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a cube root is a number whose cube it is
+
+	MODULE Test;
+	IMPORT MathCbrt, NbrRe;
+	VAR x, r: NbrRe.Real; i: SIGNED32;
+	BEGIN
+		ASSERT(MathCbrt.Fn(0.0) = 0.0);
+		ASSERT(NbrRe.Abs(MathCbrt.Fn(27.0) - 3.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathCbrt.Fn(-8.0) + 2.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathCbrt.Fn(1000.0) - 10.0) < 1.0E-4);
+		FOR i := 1 TO 50 DO
+			x := i;
+			r := MathCbrt.Fn(x);
+			ASSERT(NbrRe.Abs(r * r * r - x) < 1.0E-3)   (* single precision, cubed *)
+		END
+	END Test.
+
+positive: the error function against the table, and against its own symmetry
+
+	MODULE Test;
+	IMPORT MathErf, NbrRe;
+	VAR x: NbrRe.Real; i: SIGNED32;
+	BEGIN
+		ASSERT(MathErf.Fn(0.0) = 0.0);
+		(* erf(1) = 0.842700792949715, in every table of special functions *)
+		ASSERT(NbrRe.Abs(MathErf.Fn(1.0) - 0.8427008) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathErf.Fn(0.5) - 0.5204999) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathErf.Fn(2.0) - 0.9953223) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathErf.Fn(3.0) - 0.9999779) < 1.0E-5);
+		FOR i := 1 TO 20 DO
+			x := i / 10.0;
+			ASSERT(NbrRe.Abs(MathErf.Fn(-x) + MathErf.Fn(x)) < 1.0E-5)   (* it is odd *)
+		END
+	END Test.
+
+positive: the gamma function on the whole numbers is the factorial
+
+	MODULE Test;
+	IMPORT MathGamma, NbrRe;
+	VAR g: NbrRe.Real;
+	BEGIN
+		ASSERT(NbrRe.Abs(MathGamma.Fn(1.0) - 1.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathGamma.Fn(2.0) - 1.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathGamma.Fn(3.0) - 2.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(MathGamma.Fn(5.0) - 24.0) < 1.0E-4);
+		ASSERT(NbrRe.Abs(MathGamma.Fn(7.0) - 720.0) < 1.0E-2);
+		(* gamma(1/2) = sqrt(pi) = 1.7724538509055159, the value that is not a factorial *)
+		g := MathGamma.Fn(0.5);
+		ASSERT(NbrRe.Abs(g - 1.7724539) < 1.0E-5);
+		(* and the identity that defines it: gamma(x+1) = x gamma(x) *)
+		ASSERT(NbrRe.Abs(MathGamma.Fn(4.5) - 3.5 * MathGamma.Fn(3.5)) < 1.0E-3)
+	END Test.
+
+positive: a rational is kept in its lowest terms, and adds as one
+
+	MODULE Test;
+	IMPORT NbrRat;
+	VAR a, b, c: NbrRat.Rational;
+	BEGIN
+		NbrRat.Set(1, 2, a); NbrRat.Set(1, 3, b);
+		c := a + b;                                   (* a half and a third *)
+		ASSERT(NbrRat.Numer(c) = 5);
+		ASSERT(NbrRat.Denom(c) = 6);                  (* in lowest terms, not 5/6 by luck *)
+		NbrRat.Set(6, 8, c);
+		ASSERT(NbrRat.Numer(c) = 3);
+		ASSERT(NbrRat.Denom(c) = 4);                  (* reduced when it is made *)
+		c := a - a;
+		ASSERT(NbrRat.Numer(c) = 0);
+		NbrRat.Set(2, 3, a); NbrRat.Set(3, 2, b);
+		c := a * b;
+		ASSERT(NbrRat.Numer(c) = 1);
+		ASSERT(NbrRat.Denom(c) = 1);                  (* two thirds times three halves is one *)
+		NbrRat.Set(-4, -6, c);
+		ASSERT(NbrRat.Numer(c) = 2);
+		ASSERT(NbrRat.Denom(c) = 3);                  (* two minus signs are none *)
+		NbrRat.Set(7, 2, c);
+		ASSERT(NbrRat.Floor(c) = 3);
+		ASSERT(NbrRat.Ceiling(c) = 4);
+		ASSERT(NbrRat.Sign(c) = 1);
+		NbrRat.Set(-7, 2, c);
+		ASSERT(NbrRat.Floor(c) = -4);                 (* down, not toward zero *)
+		ASSERT(NbrRat.Sign(c) = -1);
+		ASSERT(NbrRat.Numer(NbrRat.Abs(c)) = 7)
+	END Test.
+
+positive: complex numbers, where the answer is known by hand
+
+	MODULE Test;
+	IMPORT NbrCplx, NbrRe;
+	VAR z, w: NbrCplx.Complex; r, a: NbrRe.Real;
+	BEGIN
+		NbrCplx.Set(1.0, 1.0, z);
+		w := z * z;                                   (* (1 + i)^2 = 2i *)
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w)) < 1.0E-6);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w) - 2.0) < 1.0E-6);
+		NbrCplx.Set(0.0, 1.0, z);
+		w := z * z;                                   (* i squared is minus one *)
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) + 1.0) < 1.0E-6);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-6);
+		NbrCplx.Set(3.0, 4.0, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Abs(z) - 5.0) < 1.0E-5);   (* the triangle everybody knows *)
+		w := z / z;
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 1.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-5);
+		w := z * ~z;                     (* z times its conjugate is |z| squared *)
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 25.0) < 1.0E-3);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-4);
+		NbrCplx.SetPolar(2.0, 0.0, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(z) - 2.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(z)) < 1.0E-5);
+		NbrCplx.Set(0.0, 3.0, z);
+		NbrCplx.GetPolar(z, r, a);                    (* straight up: modulus 3, argument pi/2 *)
+		ASSERT(NbrRe.Abs(r - 3.0) < 1.0E-5);
+		ASSERT(NbrRe.Abs(a - 1.5707963) < 1.0E-5)
+	END Test.

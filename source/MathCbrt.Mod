@@ -21,6 +21,10 @@ VAR
 	VAR isNeg: BOOLEAN;
 		i, exponent, mod: NbrInt.Integer;  cbrtRadix, cubeRoot, mantissa, ratFn, update: NbrRe.Real;
 	BEGIN
+		(*	Zero has no mantissa to scale and no sign to take from one: the estimate below starts at
+			P[0]/Q[0], negated because 0 > 0 is false, and Newton on x = 0 only multiplies it by 2/3
+			each time -- after the three iterations it is still -0.084 rather than 0. *)
+		IF x = 0 THEN RETURN 0 END;
 		IF NbrRe.Radix = 2 THEN cbrtRadix := cbrt2
 		ELSIF NbrRe.Radix = 4 THEN cbrtRadix := cbrt2 * cbrt2
 		ELSIF NbrRe.Radix = 8 THEN cbrtRadix := 2

@@ -70,6 +70,10 @@ TYPE
 	PROCEDURE Fn*( x: NbrRe.Real ): NbrRe.Real;
 	VAR erf: NbrRe.Real;  p: ErfP;  q: ErfQ;
 	BEGIN
+		(*	The continued fraction below leaves a residue at zero rather than returning it, so
+			erf(0) came back as a tiny positive number: too small to matter in a sum, but enough
+			that erf(0) = 0 and erf(-x) = -erf(x) at x = 0 were both false. *)
+		IF x = 0 THEN RETURN 0 END;
 		IF NbrRe.Abs( x ) > 0.1 THEN erf := 1 - Erfc( x )
 		ELSE
 			NEW( p );  NEW( q );
