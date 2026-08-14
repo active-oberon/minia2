@@ -31,12 +31,30 @@ an editor in it.
 
 ## The numbers
 
+Three times, because the first two answers were wrong in ways worth keeping.
+
 | | lines of plumbing |
 |---|---:|
 | Go — `event`, `keyboard`, `mpvLines`, `resizes` | **51** |
-| Active Oberon — `Events`, `Keyboard`, `Player`, `Clock` | **79** |
+| Active Oberon, a ring written by hand | 79 |
+| Active Oberon, on `GenericCollections` (Romanchenko's parametric containers) | 84 |
+| **Active Oberon, on `Channels(TYPE T)`** | **57** + 45 in the library, once |
 
-Go is shorter here, and pretending otherwise would be worth nothing.
+The first answer said Go wins by twenty-eight lines. The second, reached by using the generic
+container that was in the tree all along, was *worse*: the container saved the ring arithmetic and
+charged six lines for a comparator that a queue never calls -- a parametric module takes its
+constraint as a parameter, and one has to be passed even where nothing is compared.
+
+The third is the one that means something. What Go has is not a queue, it is a **channel**: a
+queue, the waiting on both ends, back-pressure, and closing, in one thing. Written as a
+parametric module of our own -- `source/Channels.Mod`, forty-five lines, all of the waiting being
+one AWAIT at each end -- the program's own plumbing comes to fifty-seven lines against Go's
+fifty-one.
+
+That is parity, and the difference in where it lives: in Go the channel is in the language, and
+here it is forty-five lines of library anybody can read. The language earns that by AWAIT: there
+is no condition variable to signal and no wakeup to get wrong, which is why a channel is forty-five
+lines and not a hundred.
 
 ## Where the difference actually is
 
@@ -67,11 +85,13 @@ fine.
 
 ## What to do about it
 
-1. A queue that carries any type, in the library, as a parametric module. It is the missing
-   piece, it is the language's other trump, and it would make this comparison a fair one rather
-   than a comparison of what happens to be written already.
-2. Then measure again, honestly, including the twelve lines of cancellation Go pays and the
-   nothing that Active Oberon pays.
+1. ~~A queue that carries any type~~ -- done, and it was the wrong thing: `source/Channels.Mod`,
+   a channel rather than a queue, is what closed the gap.
+2. Two traps found on the way, both worth knowing before writing another parametric module: it
+   must be in the library as a symbol file before anything can instantiate it -- a module sitting
+   beside the program cannot be -- and a container asks for its comparator even when nothing will
+   ever be compared.
+3. What is still Go's: SIGWINCH as a channel. Everything else in this comparison is now even.
 
 ## Running them
 

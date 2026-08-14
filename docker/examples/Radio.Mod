@@ -37,7 +37,10 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 *)
 
 IMPORT Files, Streams, Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
-	Random, Kernel;
+	Random, Kernel,
+	(*	One parametric module, instantiated for the kind of thing this program hands about: the
+		waiting is written once, in the library, and named here. *)
+	Arrivals := Channels(Arrival);
 
 CONST
 	MaxStations = 512;
@@ -45,79 +48,43 @@ CONST
 	Watch = 400;                       (* milliseconds between looks at the window's size *)
 
 	(** what Events.Next handed over *)
-	AKey = 0; ALine = 1; AResize = 2; AnEnd = 3;
+	AKey = 0; ALine = 1; AResize = 2;
 
 TYPE
+	(** What one of the three sources has to say. *)
+	Arrival* = RECORD
+		kind*: SIGNED32;               (** AKey, ALine, AResize *)
+		key*: Terminal.Event;
+		said*: Strings.String;
+	END;
+
 	Station = RECORD
 		genre, name, url: Strings.String;
 	END;
 
-	(**	The one place the three sources meet. Each puts what it has and goes back to its own
-		waiting; the program takes the next thing there is, and waits when there is none. The
-		AWAIT in Next is the whole of the program's waiting -- there is no other. *)
-	Events = OBJECT
-	VAR
-		key: ARRAY Waiting OF Terminal.Event; keyIn, keyOut: SIGNED32;
-		line: ARRAY Waiting OF Strings.String; lineIn, lineOut: SIGNED32;
-		resized, ended: BOOLEAN;
-
-		PROCEDURE &InitEvents*;
-		BEGIN keyIn := 0; keyOut := 0; lineIn := 0; lineOut := 0; resized := FALSE; ended := FALSE
-		END InitEvents;
-
-		PROCEDURE PutKey* (CONST e: Terminal.Event);
-		BEGIN {EXCLUSIVE}
-			AWAIT((keyIn - keyOut < Waiting) OR ended);
-			key[keyIn MOD Waiting] := e; INC(keyIn)
-		END PutKey;
-
-		PROCEDURE PutLine* (CONST said: ARRAY OF CHAR);
-		BEGIN {EXCLUSIVE}
-			AWAIT((lineIn - lineOut < Waiting) OR ended);
-			line[lineIn MOD Waiting] := Strings.NewString(said); INC(lineIn)
-		END PutLine;
-
-		PROCEDURE PutResize*;
-		BEGIN {EXCLUSIVE} resized := TRUE
-		END PutResize;
-
-		PROCEDURE Ended*;
-		BEGIN {EXCLUSIVE} ended := TRUE
-		END Ended;
-
-		(** The next thing that happened, waiting for it. *)
-		PROCEDURE Next* (VAR e: Terminal.Event; VAR said: Strings.String): SIGNED32;
-		BEGIN {EXCLUSIVE}
-			AWAIT((keyIn # keyOut) OR (lineIn # lineOut) OR resized OR ended);
-			IF keyIn # keyOut THEN e := key[keyOut MOD Waiting]; INC(keyOut); RETURN AKey END;
-			IF lineIn # lineOut THEN said := line[lineOut MOD Waiting]; INC(lineOut); RETURN ALine END;
-			IF resized THEN resized := FALSE; RETURN AResize END;
-			RETURN AnEnd
-		END Next;
-
-	END Events;
-
 	(** What was typed, handed over as it is typed. Ends when the terminal does. *)
 	Keyboard = OBJECT
-	VAR events: Events; event: Terminal.Event;
+	VAR arriving: Arrivals.Channel; what: Arrival;
 
-		PROCEDURE &InitKeyboard* (where: Events);
-		BEGIN events := where
+		PROCEDURE &InitKeyboard* (where: Arrivals.Channel);
+		BEGIN arriving := where
 		END InitKeyboard;
 
 	BEGIN {ACTIVE}
-		WHILE Terminal.Read(event) DO events.PutKey(event) END;
-		events.Ended
+		what.kind := AKey;
+		WHILE Terminal.Read(what.key) & arriving.Put(what) DO END;
+		arriving.Close                 (* the terminal ended, and so does the program *)
 	END Keyboard;
 
 	(**	What mpv says, line by line. Reading a child waits on a pipe rather than in a system
 		call, so this object waits and the rest of the program does not. It ends by itself when
 		the child does, which is all that stopping a station amounts to: nothing to cancel. *)
 	Player = OBJECT
-	VAR events: Events; player: Processes.Process; said: ARRAY 300 OF CHAR; n: SIZE; ch: CHAR;
+	VAR arriving: Arrivals.Channel; player: Processes.Process; what: Arrival;
+		said: ARRAY 300 OF CHAR; n: SIZE; ch: CHAR;
 
-		PROCEDURE &InitPlayer* (where: Events; which: Processes.Process);
-		BEGIN events := where; player := which
+		PROCEDURE &InitPlayer* (where: Arrivals.Channel; which: Processes.Process);
+		BEGIN arriving := where; player := which
 		END InitPlayer;
 
 	BEGIN {ACTIVE}
@@ -131,7 +98,10 @@ TYPE
 			END;
 			said[n] := 0X;
 			IF player.Output.res # Streams.Ok THEN EXIT END;
-			IF said # "" THEN events.PutLine(said) END
+			IF said # "" THEN
+				what.kind := ALine; what.said := Strings.NewString(said);
+				IF ~arriving.Put(what) THEN EXIT END
+			END
 		END
 	END Player;
 
@@ -139,10 +109,10 @@ TYPE
 		must be asked rather than waited for: a size does not announce itself, and the signal that
 		would is worth less than what a handler in the wrong place costs. *)
 	Clock = OBJECT
-	VAR events: Events; stop: BOOLEAN;
+	VAR arriving: Arrivals.Channel; what: Arrival; stop: BOOLEAN;
 
-		PROCEDURE &InitClock* (where: Events);
-		BEGIN events := where; stop := FALSE
+		PROCEDURE &InitClock* (where: Arrivals.Channel);
+		BEGIN arriving := where; stop := FALSE
 		END InitClock;
 
 		PROCEDURE Stop*;
@@ -150,9 +120,10 @@ TYPE
 		END Stop;
 
 	BEGIN {ACTIVE}
+		what.kind := AResize;
 		WHILE ~stop DO
 			Objects.Sleep(Watch);
-			IF ~stop & Terminal.Resized() THEN events.PutResize END
+			IF ~stop & Terminal.Resized() & ~arriving.Put(what) THEN stop := TRUE END
 		END
 	END Clock;
 
@@ -176,7 +147,7 @@ VAR
 	paused: BOOLEAN;
 	rows, columns: SIGNED32;
 	dice: Random.Sequence;
-	events: Events;                    (* where the three sources hand over what they have *)
+	arriving: Arrivals.Channel;        (* where the three sources hand over what they have *)
 	keyboard: Keyboard;
 	listener: Player;
 	clock: Clock;
@@ -324,7 +295,7 @@ VAR
 		player := Processes.Start("mpv", arguments);
 		IF player = NIL THEN Say("mpv is not on the PATH, and it is what plays"); RETURN END;
 		playing := which; status := "";
-		NEW(listener, events, player);     (* it ends by itself when the child does *)
+		NEW(listener, arriving, player);   (* it ends by itself when the child does *)
 		said := "playing: "; Strings.Append(said, station[which].name^); Say(said);
 		Attach;
 		Volume(volume)
@@ -479,7 +450,7 @@ VAR
 
 	(* `ob run Radio.Mod` invokes the exported command Do. *)
 	PROCEDURE Do* (context: Commands.Context);
-	VAR e: Terminal.Event; leave: BOOLEAN; said: Strings.String; what: SIGNED32;
+	VAR e: Terminal.Event; leave: BOOLEAN; said: Strings.String; arrival: Arrival;
 	BEGIN
 		IF ~Terminal.Open() THEN
 			context.error.String("Radio: standard input is not a terminal"); context.error.Ln;
@@ -497,13 +468,13 @@ VAR
 		Fit;
 		Terminal.AltScreen(TRUE); Terminal.ShowCursor(FALSE);
 		Title; screen.Refresh(Terminal.out); Terminal.Flush;
-		NEW(events); NEW(keyboard, events); NEW(clock, events);
+		NEW(arriving); NEW(keyboard, arriving); NEW(clock, arriving);
 		leave := FALSE;
 		REPEAT
-			what := events.Next(e, said);
-			CASE what OF
-				  AnEnd: leave := TRUE
-				| AResize: Fit; Title; screen.Refresh(Terminal.out); Terminal.Flush
+			IF ~arriving.Get(arrival) THEN leave := TRUE ELSE
+			e := arrival.key; said := arrival.said;
+			CASE arrival.kind OF
+				  AResize: Fit; Title; screen.Refresh(Terminal.out); Terminal.Flush
 				| ALine:
 					(*	mpv rewrites its position line many times a second: that is state, not a
 						message, and it goes in the frame's name rather than among what was said. *)
@@ -538,9 +509,9 @@ VAR
 						Draw(FALSE)
 					END
 			ELSE
-			END
+			END END
 		UNTIL leave;
-		clock.Stop;
+		clock.Stop; arriving.Close;
 		Stop;
 		Terminal.ShowCursor(TRUE); Terminal.AltScreen(FALSE); Terminal.Flush;
 		Terminal.Close

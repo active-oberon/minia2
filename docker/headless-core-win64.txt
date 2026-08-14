@@ -204,6 +204,7 @@ KernelLog
 LPR
 LSP
 TerminalCodes
+Channels
 Frames
 Linker
 Loader
