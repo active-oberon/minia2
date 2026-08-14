@@ -39,7 +39,8 @@ build="$(absolute "${args[0]:-$root/target/Linux64}")"
 version="${A2_SDK_VERSION:-$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)}"
 [ -n "$out" ] || out="$root/target/bundle"
 out="$(absolute "$out")"
-name="minia2-sdk-$version-linux-amd64"
+flavour="linux-amd64"                    # what this script builds; the other two are built elsewhere
+name="minia2-sdk-$version-$flavour"
 
 runtime="$build/oberon"
 if [ ! -x "$runtime" ]; then
@@ -181,6 +182,19 @@ if [ "$tar" = 1 ]; then
 	# --transform: unpack into a named directory rather than over the cwd
 	tar czf "$tarball" -C "$(dirname "$out")" --transform "s|^$(basename "$out")|$name|" \
 		"$(basename "$out")"
+	# The ones from before. A tarball is twenty-three megabytes and one is made per build, so a
+	# fortnight of work leaves a third of a gigabyte of tarballs nobody will ever unpack again.
+	# Only this flavour's are touched -- the Windows and AArch64 tarballs are made elsewhere and
+	# are not this run's to remove. KEEP_TARBALLS=1 keeps them all, for comparing two builds.
+	if [ -z "$KEEP_TARBALLS" ]; then
+		removed=0
+		for old in "$(dirname "$out")"/minia2-sdk-*-"$flavour".tar.gz; do
+			[ -f "$old" ] || continue
+			[ "$old" = "$tarball" ] && continue
+			rm -f "$old"; removed=$((removed + 1))
+		done
+		[ "$removed" = 0 ] || echo "removed $removed earlier $flavour tarball(s); KEEP_TARBALLS=1 keeps them"
+	fi
 	echo "tarball: $tarball ($(du -sh "$tarball" | cut -f1))"
 	echo
 	echo "to use:  tar xzf $(basename "$tarball") && cd $name && ./run.sh --quick"
