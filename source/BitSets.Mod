@@ -91,7 +91,9 @@ TYPE BitSet* = OBJECT
 		ASSERT (startPos >= 0); ASSERT (startPos+bits <= size);
 		IF (bits = 8) & (startPos MOD 8 =0) THEN
 			adr := ADDRESS OF data[0] + startPos DIV 8;
-			value := SYSTEM.GET8(adr)
+			(*	GET8 reads a signed byte, so this shortcut used to answer -56 where the loop
+				below answers 200: the same eight bits, read two ways, disagreed above 127. *)
+			value := SYSTEM.GET8(adr) MOD 100H
 		ELSE
 			INC (startPos, bits); value := 0;
 			WHILE bits > 0 DO

@@ -1,0 +1,170 @@
+# Tests for std/runtime -- the sealed package everything else stands on.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Forty-two modules, of which the suites had reached six. What is asked here is the part with
+# answers that can be checked from outside the tree: the calendar, the check value every CRC-32
+# implementation in the world agrees on, a bit container read back the way it was written, and
+# the pool that is supposed to give one index per string.
+#
+# The dates come from the ISO calendar, which is what makes 1 January 2021 belong to week 53 of
+# 2020 and not to any week of 2021.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the calendar, in the places where it is not obvious
+
+	MODULE Test;
+	IMPORT Dates;
+	VAR dt, other: Dates.DateTime; y, w, d, days, hours, minutes, seconds: SIGNED32;
+
+		PROCEDURE Day(year, month, day: SIGNED32): Dates.DateTime;
+		VAR dt: Dates.DateTime;
+		BEGIN
+			dt.year := year; dt.month := month; dt.day := day;
+			dt.hour := 0; dt.minute := 0; dt.second := 0;
+			RETURN dt
+		END Day;
+
+		PROCEDURE Week(year, month, day, expYear, expWeek, expDay: SIGNED32);
+		VAR y, w, d: SIGNED32;
+		BEGIN
+			Dates.WeekDate(Day(year, month, day), y, w, d);
+			ASSERT(y = expYear); ASSERT(w = expWeek); ASSERT(d = expDay)
+		END Week;
+
+	BEGIN
+		(* the four rules of a leap year, including the one that only fires every four centuries *)
+		ASSERT(Dates.LeapYear(2016)); ASSERT(~Dates.LeapYear(2017));
+		ASSERT(~Dates.LeapYear(1900)); ASSERT(Dates.LeapYear(2000));
+		ASSERT(Dates.NofDays(2016, 2) = 29); ASSERT(Dates.NofDays(1900, 2) = 28);
+		ASSERT(Dates.NofDays(2026, 1) = 31); ASSERT(Dates.NofDays(2026, 4) = 30);
+
+		(* the ISO week, where the year of the week is not always the year of the day *)
+		Week(2021, 1, 1, 2020, 53, 5);       (* a Friday belonging to the year before *)
+		Week(2019, 12, 30, 2020, 1, 1);      (* and a Monday belonging to the year after *)
+		Week(2026, 1, 1, 2026, 1, 4);
+		Week(2000, 1, 1, 1999, 52, 6);
+		Week(2026, 8, 14, 2026, 33, 5);
+
+		(* arithmetic across the ends of things *)
+		dt := Day(2026, 12, 31); Dates.AddDays(dt, 1);
+		ASSERT(dt.year = 2027); ASSERT(dt.month = 1); ASSERT(dt.day = 1);
+		dt := Day(2016, 2, 28); Dates.AddDays(dt, 1);
+		ASSERT(dt.month = 2); ASSERT(dt.day = 29);          (* the day that only exists sometimes *)
+		dt := Day(2026, 3, 1); Dates.AddDays(dt, -1);
+		ASSERT(dt.month = 2); ASSERT(dt.day = 28);
+		dt := Day(2026, 1, 31); Dates.AddMonths(dt, 1);
+		ASSERT(dt.month = 2); ASSERT(dt.day <= 28);         (* February has no 31st to land on *)
+
+		(* two moments, compared and subtracted *)
+		dt := Day(2026, 5, 1); other := Day(2026, 5, 2);
+		ASSERT(Dates.CompareDateTime(dt, other) < 0);
+		ASSERT(Dates.CompareDateTime(other, dt) > 0);
+		ASSERT(Dates.CompareDateTime(dt, dt) = 0);
+		dt.hour := 10; other := dt; Dates.AddDays(other, 2); other.hour := 12;
+		Dates.TimeDifference(dt, other, days, hours, minutes, seconds);
+		ASSERT(days = 2); ASSERT(hours = 2); ASSERT(minutes = 0); ASSERT(seconds = 0);
+
+		(* what is a date and what is not *)
+		ASSERT(Dates.ValidDateTime(Day(2016, 2, 29)));
+		ASSERT(~Dates.ValidDateTime(Day(2017, 2, 29)));
+		ASSERT(~Dates.ValidDateTime(Day(2026, 13, 1)));
+		ASSERT(~Dates.ValidDateTime(Day(2026, 4, 31)));
+
+		(* and the packed Oberon form it can be carried in *)
+		dt := Day(2026, 8, 14); dt.hour := 13; dt.minute := 45; dt.second := 7;
+		Dates.DateTimeToOberon(dt, y, w);
+		other := Dates.OberonToDateTime(y, w);
+		ASSERT(Dates.Equal(dt, other));
+		d := 0                                              (* d is only here to be assigned *)
+	END Test.
+
+positive: CRC-32, against the value every implementation agrees on
+
+	MODULE Test;
+	IMPORT CRC, Streams;
+	VAR c, d: CRC.CRC32; s: CRC.CRC32Stream; i: SIGNED32;
+		CONST check = SIGNED32(0CBF43926H);   (* CRC-32 of "123456789", quoted in every catalogue *)
+	BEGIN
+		NEW(c);
+		FOR i := 0 TO 8 DO c.Char(CHR(ORD("1") + i)) END;
+		ASSERT(c.Get() = check);
+
+		(* the same bytes through the stream, which is the interface files use *)
+		NEW(s); s.String("123456789");
+		ASSERT(s.GetCRC() = check);
+
+		(* a CRC of nothing is the initial value inverted, i.e. zero *)
+		NEW(d);
+		ASSERT(d.Get() = 0);
+
+		(* and it depends on order, or it would not be a checksum *)
+		NEW(c); c.Char("a"); c.Char("b");
+		NEW(d); d.Char("b"); d.Char("a");
+		ASSERT(c.Get() # d.Get());
+
+		(* a stream reset is a fresh stream *)
+		NEW(s); s.String("nonsense"); s.Update; s.Reset; s.String("123456789");
+		ASSERT(s.GetCRC() = check)
+	END Test.
+
+positive: a bit container gives back what was put in it
+
+	MODULE Test;
+	IMPORT BitSets;
+	VAR b, c: BitSets.BitSet; i: SIZE;
+	BEGIN
+		NEW(b, 100);
+		ASSERT(b.GetSize() = 100);
+		FOR i := 0 TO 99 DO ASSERT(~b.GetBit(i)) END;      (* a new one is empty *)
+		b.SetBit(0, TRUE); b.SetBit(63, TRUE); b.SetBit(64, TRUE); b.SetBit(99, TRUE);
+		ASSERT(b.GetBit(0)); ASSERT(b.GetBit(63)); ASSERT(b.GetBit(64)); ASSERT(b.GetBit(99));
+		ASSERT(~b.GetBit(1)); ASSERT(~b.GetBit(62)); ASSERT(~b.GetBit(65));
+		b.SetBit(63, FALSE);
+		ASSERT(~b.GetBit(63)); ASSERT(b.GetBit(64));       (* neighbours are not disturbed *)
+
+		(* whole numbers, written and read at a byte boundary and off one *)
+		b.Zero;
+		b.SetBits(0, 8, 200); ASSERT(b.GetBits(0, 8) = 200);
+		b.SetBits(8, 8, 255); ASSERT(b.GetBits(8, 8) = 255);
+		b.SetBits(3, 8, 200); ASSERT(b.GetBits(3, 8) = 200);
+		b.SetBits(16, 16, 65535); ASSERT(b.GetBits(16, 16) = 65535);
+		b.Zero; ASSERT(b.GetBits(0, 8) = 0);
+
+		(* copied across the word boundary, which is where a copy goes wrong *)
+		NEW(c, 100); b.Zero;
+		FOR i := 60 TO 70 DO b.SetBit(i, TRUE) END;
+		BitSets.CopyBits(b, 60, c, 60, 11);
+		FOR i := 60 TO 70 DO ASSERT(c.GetBit(i)) END;
+		ASSERT(~c.GetBit(59)); ASSERT(~c.GetBit(71));
+
+		(* and it keeps what it had when it grows *)
+		b.Zero; b.SetBit(99, TRUE);
+		b.Resize(200);
+		ASSERT(b.GetSize() = 200); ASSERT(b.GetBit(99)); ASSERT(~b.GetBit(199))
+	END Test.
+
+positive: one index per string, and the string back again
+
+	MODULE Test;
+	IMPORT StringPool;
+	VAR a, b, c: StringPool.Index; s: ARRAY 64 OF CHAR;
+	BEGIN
+		StringPool.GetIndex("Modules", a);
+		StringPool.GetIndex("Modules", b);
+		ASSERT(a = b);                                     (* the same string is the same index *)
+		StringPool.GetIndex("Heaps", c);
+		ASSERT(a # c);
+		StringPool.GetString(a, s);
+		ASSERT(s = "Modules");                             (* and it comes back unchanged *)
+		StringPool.GetString(c, s);
+		ASSERT(s = "Heaps");
+		ASSERT(StringPool.CompareString(a, a) = 0);
+		ASSERT(StringPool.CompareString(a, c) # 0);
+		(* the empty string is a string like any other *)
+		StringPool.GetIndex("", a); StringPool.GetIndex("", b);
+		ASSERT(a = b);
+		StringPool.GetString(a, s);
+		ASSERT(s = "")
+	END Test.
