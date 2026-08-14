@@ -1,0 +1,189 @@
+# Tests for Locks -- the high-level locks of std/runtime, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# A lock is only worth testing with something to lock out, so these cases start activities and let
+# them collide. What each case proves is a property that cannot hold by accident:
+#
+#  - counting under a plain lock comes out exact although every increment is a read, a yield and a
+#    write, which without the lock loses counts every time;
+#  - a recursive lock lets its owner back in and only lets go at the outermost release;
+#  - readers of a reader/writer lock are inside at the same time -- the case waits for all four to
+#    be inside before any leaves, so it can only finish if the lock really admits them together;
+#  - a writer keeps everyone else out.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: counting under a lock loses nothing
+
+	MODULE Test;
+	IMPORT Locks, Objects;
+
+	CONST Workers = 4; Rounds = 250;
+
+	TYPE
+		Barrier = OBJECT
+		VAR left: SIGNED32;
+			PROCEDURE &Init(n: SIGNED32); BEGIN left := n END Init;
+			PROCEDURE Done; BEGIN {EXCLUSIVE} DEC(left) END Done;
+			PROCEDURE Wait; BEGIN {EXCLUSIVE} AWAIT(left = 0) END Wait;
+		END Barrier;
+
+		Counter = OBJECT
+		VAR value: SIGNED32;
+			PROCEDURE Bump(lock: Locks.Lock);
+			VAR seen: SIGNED32;
+			BEGIN
+				lock.Acquire;
+				(*	Deliberately not atomic: read, step aside, write back. Whoever holds the lock
+					must be alone here, or the count comes out short. *)
+				seen := value; Objects.Yield; value := seen + 1;
+				lock.Release
+			END Bump;
+		END Counter;
+
+		Worker = OBJECT
+		VAR lock: Locks.Lock; counter: Counter; barrier: Barrier;
+			PROCEDURE &Start(lock: Locks.Lock; counter: Counter; barrier: Barrier);
+			BEGIN SELF.lock := lock; SELF.counter := counter; SELF.barrier := barrier
+			END Start;
+		BEGIN {ACTIVE}
+			BEGIN
+				VAR i: SIGNED32;
+				FOR i := 1 TO Rounds DO counter.Bump(lock) END
+			END;
+			barrier.Done
+		END Worker;
+
+	VAR lock: Locks.Lock; counter: Counter; barrier: Barrier; worker: Worker; i: SIGNED32;
+	BEGIN
+		NEW(lock); NEW(counter); NEW(barrier, Workers);
+		FOR i := 1 TO Workers DO NEW(worker, lock, counter, barrier) END;
+		barrier.Wait;
+		ASSERT(counter.value = Workers * Rounds);
+		(* and the lock is free afterwards, so this activity can take it *)
+		lock.Acquire;
+		ASSERT(lock.HasLock());
+		lock.Release;
+		ASSERT(~lock.HasLock())
+	END Test.
+
+positive: a recursive lock lets its owner back in
+
+	MODULE Test;
+	IMPORT Locks;
+	VAR lock: Locks.RecursiveLock;
+
+		PROCEDURE Inner;
+		BEGIN
+			lock.Acquire;                        (* already held by Outer, and taken again *)
+			ASSERT(lock.HasLock());
+			lock.Release
+		END Inner;
+
+		PROCEDURE Outer;
+		BEGIN
+			lock.Acquire;
+			Inner;
+			ASSERT(lock.HasLock());              (* the inner release did not let go *)
+			lock.Release
+		END Outer;
+
+	BEGIN
+		NEW(lock);
+		ASSERT(~lock.HasLock());
+		Outer;
+		ASSERT(~lock.HasLock());                 (* the outermost release did *)
+		(* four deep, to show it counts rather than remembers a flag *)
+		lock.Acquire; lock.Acquire; lock.Acquire; lock.Acquire;
+		ASSERT(lock.HasLock());
+		lock.Release; lock.Release; lock.Release;
+		ASSERT(lock.HasLock());
+		lock.Release;
+		ASSERT(~lock.HasLock())
+	END Test.
+
+positive: readers of a reader/writer lock are inside together
+
+	MODULE Test;
+	IMPORT Locks;
+
+	CONST Readers = 4;
+
+	TYPE
+		Gate = OBJECT
+		VAR inside, left: SIGNED32;
+			PROCEDURE Enter; BEGIN {EXCLUSIVE} INC(inside) END Enter;
+			(*	Nobody leaves before everybody is in. If the lock let readers in one at a time,
+				this would never come back -- which is the point of asking it this way. *)
+			PROCEDURE AwaitAll; BEGIN {EXCLUSIVE} AWAIT(inside = Readers) END AwaitAll;
+			PROCEDURE Done; BEGIN {EXCLUSIVE} INC(left) END Done;
+			PROCEDURE AwaitDone; BEGIN {EXCLUSIVE} AWAIT(left = Readers) END AwaitDone;
+		END Gate;
+
+		Reader = OBJECT
+		VAR lock: Locks.RWLock; gate: Gate;
+			PROCEDURE &Start(lock: Locks.RWLock; gate: Gate);
+			BEGIN SELF.lock := lock; SELF.gate := gate
+			END Start;
+		BEGIN {ACTIVE}
+			lock.AcquireRead;
+			gate.Enter;
+			gate.AwaitAll;
+			lock.ReleaseRead;
+			gate.Done
+		END Reader;
+
+	VAR lock: Locks.RWLock; gate: Gate; reader: Reader; i: SIGNED32;
+	BEGIN
+		NEW(lock); NEW(gate);
+		FOR i := 1 TO Readers DO NEW(reader, lock, gate) END;
+		gate.AwaitDone;
+		ASSERT(gate.inside = Readers);
+		(* with all of them gone, a writer can have it *)
+		lock.AcquireWrite;
+		ASSERT(lock.HasWriteLock());
+		ASSERT(lock.GetWLockLevel() = 1);
+		lock.AcquireWrite;                       (* a writer may take its own lock again *)
+		ASSERT(lock.GetWLockLevel() = 2);
+		lock.ReleaseWrite;
+		ASSERT(lock.HasWriteLock());
+		lock.ReleaseWrite;
+		ASSERT(~lock.HasWriteLock())
+	END Test.
+
+positive: a writer keeps the readers out
+
+	MODULE Test;
+	IMPORT Locks, Kernel;
+
+	TYPE
+		Flag = OBJECT
+		VAR raised: BOOLEAN;
+			PROCEDURE Raise; BEGIN {EXCLUSIVE} raised := TRUE END Raise;
+			PROCEDURE Await; BEGIN {EXCLUSIVE} AWAIT(raised) END Await;
+			PROCEDURE Raised(): BOOLEAN; BEGIN {EXCLUSIVE} RETURN raised END Raised;
+		END Flag;
+
+		Reader = OBJECT
+		VAR lock: Locks.RWLock; flag: Flag;
+			PROCEDURE &Start(lock: Locks.RWLock; flag: Flag);
+			BEGIN SELF.lock := lock; SELF.flag := flag
+			END Start;
+		BEGIN {ACTIVE}
+			lock.AcquireRead;                    (* waits while the writer holds it *)
+			flag.Raise;
+			lock.ReleaseRead
+		END Reader;
+
+	VAR lock: Locks.RWLock; flag: Flag; reader: Reader; timer: Kernel.Timer;
+	BEGIN
+		NEW(lock); NEW(flag); NEW(timer);
+		lock.AcquireWrite;
+		NEW(reader, lock, flag);
+		timer.Sleep(300);
+		ASSERT(~flag.Raised());                  (* a third of a second, and it is still outside *)
+		lock.ReleaseWrite;
+		flag.Await;                              (* and now it gets in *)
+		ASSERT(flag.Raised())
+	END Test.
