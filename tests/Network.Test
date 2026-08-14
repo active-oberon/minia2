@@ -1,0 +1,110 @@
+# Tests for the byte-level routines of source/Network.Mod.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Put4, Put2, Get4 and Get2 are one instruction each and written per architecture -- there is a
+# branch for I386, one for AMD64, one for ARM, and one for AArch64 that this project wrote during
+# the port. Every packet the system sends or receives goes through them, and nothing checked
+# them: a wrong store or a wrong sign on a new architecture would corrupt every header and show
+# up as "the network does not work".
+#
+# The cases are about layout, not about numbers being equal to themselves: a packet is bytes at
+# offsets, so the bytes are what is checked, and the round trip on top of them.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: four bytes go in and come back, at every offset
+
+	MODULE Test;
+	IMPORT Network;
+	VAR buf: ARRAY 32 OF CHAR; i: SIZE;
+	BEGIN
+		FOR i := 0 TO 8 DO
+			Network.Put4(buf, i, 12345678);
+			ASSERT(Network.Get4(buf, i) = 12345678)
+		END;
+		FOR i := 0 TO 8 DO
+			Network.Put4(buf, i, 0);
+			ASSERT(Network.Get4(buf, i) = 0)
+		END
+	END Test.
+
+positive: and two bytes likewise
+
+	MODULE Test;
+	IMPORT Network;
+	VAR buf: ARRAY 32 OF CHAR; i: SIZE;
+	BEGIN
+		FOR i := 0 TO 8 DO
+			Network.Put2(buf, i, 4660);            (* 1234H *)
+			ASSERT(Network.Get2(buf, i) = 4660)
+		END;
+		Network.Put2(buf, 0, 65535);
+		ASSERT(Network.Get2(buf, 0) = 65535)     (* and the top bit is not a sign here *)
+	END Test.
+
+positive: what is written is the bytes a packet would carry
+
+	MODULE Test;
+	IMPORT Network;
+	VAR buf: ARRAY 16 OF CHAR;
+	BEGIN
+		(*	Host order, which on both architectures this runs on is little endian. This is the case
+			that says where each byte lands, and it is what a wrong store on a new architecture would
+			break -- the round trip above can pass while the layout is wrong. *)
+		buf[4] := 0X; buf[5] := 0X; buf[6] := 0X; buf[7] := 0X;
+		Network.Put4(buf, 0, 04030201H);
+		ASSERT(ORD(buf[0]) = 1);
+		ASSERT(ORD(buf[1]) = 2);
+		ASSERT(ORD(buf[2]) = 3);
+		ASSERT(ORD(buf[3]) = 4);
+		ASSERT(ORD(buf[4]) = 0);                 (* and nothing beyond the four *)
+		Network.Put2(buf, 8, 0201H);
+		ASSERT(ORD(buf[8]) = 1);
+		ASSERT(ORD(buf[9]) = 2)
+	END Test.
+
+positive: bytes that were put there by hand are read as one number
+
+	MODULE Test;
+	IMPORT Network;
+	VAR buf: ARRAY 16 OF CHAR;
+	BEGIN
+		buf[0] := 0FFX; buf[1] := 0X; buf[2] := 0X; buf[3] := 0X;
+		ASSERT(Network.Get4(buf, 0) = 255);
+		ASSERT(Network.Get2(buf, 0) = 255);
+		buf[0] := 0X; buf[1] := 1X;
+		ASSERT(Network.Get2(buf, 0) = 256);
+		buf[0] := 0X; buf[1] := 0X; buf[2] := 0X; buf[3] := 080X;
+		ASSERT(Network.Get4(buf, 0) = MIN(SIGNED32))   (* the top bit is a sign in Get4 *)
+	END Test.
+
+positive: a copy is what was copied, from and to any offset
+
+	MODULE Test;
+	IMPORT Network;
+	VAR from, to: ARRAY 32 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 31 DO from[i] := CHR(i); to[i] := 0X END;
+		Network.Copy(from, to, 0, 0, 8);
+		FOR i := 0 TO 7 DO ASSERT(to[i] = CHR(i)) END;
+		ASSERT(to[8] = 0X);
+		Network.Copy(from, to, 4, 16, 5);
+		FOR i := 0 TO 4 DO ASSERT(to[16 + i] = CHR(4 + i)) END;
+		Network.Copy(from, to, 0, 24, 0);        (* nothing is a legal amount to copy *)
+		ASSERT(to[24] = 0X)
+	END Test.
+
+positive: two pieces of a buffer are equal, or are not
+
+	MODULE Test;
+	IMPORT Network;
+	VAR a, b: ARRAY 16 OF CHAR;
+	BEGIN
+		a := "hello"; b := "hello";
+		ASSERT(Network.Equal(a, b, 0, 0, 5));
+		ASSERT(Network.Equal(a, b, 0, 0, 0));    (* nothing is equal to nothing *)
+		b[3] := "X";
+		ASSERT(~Network.Equal(a, b, 0, 0, 5));
+		ASSERT(Network.Equal(a, b, 0, 0, 3))     (* up to where they differ *)
+	END Test.
