@@ -1,0 +1,315 @@
+# Tests for std/data -- the containers, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# A stack, a queue and a balanced tree, from the same hand as the special functions of std/numerics
+# where three defects were found at zero. What is asked of each is the property that makes it that
+# container and not another one: last in comes out first, first in comes out first, and a tree that
+# calls itself balanced stays within the height an AVL tree is allowed.
+#
+# The keys come through Data's own word-to-key mapping, which is the only way to make one from
+# outside the module -- so the round trip through it is tested first.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a key made from a word is the word again
+
+	MODULE Test;
+	IMPORT Data;
+	VAR key, other: Data.Key; word: Data.Word; datum, second: Data.Datum;
+	BEGIN
+		Data.WordToKey("hello", key);
+		Data.KeyToWord(key, word);
+		ASSERT(word = "hello");
+		Data.WordToKey("", key); Data.KeyToWord(key, word);
+		ASSERT(word = "");
+		Data.WordToKey("0123456789", key); Data.KeyToWord(key, word);
+		ASSERT(word = "0123456789");                 (* ten characters, which is the most it holds *)
+		Data.WordToKey("A b.c", key); Data.KeyToWord(key, word);
+		ASSERT(word = "A b.c");                      (* a space and a dot are letters here *)
+
+		(* a key is set once and then it is that datum's own *)
+		NEW(datum);
+		Data.WordToKey("first", key); datum.SetKey(key);
+		Data.WordToKey("second", other); datum.SetKey(other);
+		datum.GetKey(key); Data.KeyToWord(key, word);
+		ASSERT(word = "first");
+
+		(* and data compare by their keys *)
+		NEW(second);
+		Data.WordToKey("zzz", other); second.SetKey(other);
+		ASSERT(datum < second);
+		ASSERT(second > datum);
+		ASSERT(datum # second)
+	END Test.
+
+positive: last onto the stack is first off it
+
+	MODULE Test;
+	IMPORT DataStacks;
+
+	TYPE Item = OBJECT VAR n: SIGNED32; PROCEDURE &Set*(n: SIGNED32); BEGIN SELF.n := n END Set END Item;
+
+	VAR stack: DataStacks.Stack; item: Item; obj: OBJECT; i: SIGNED32;
+	BEGIN
+		NEW(stack);
+		ASSERT(stack.len = 0);
+		stack.Pop(obj);
+		ASSERT(obj = NIL);                           (* nothing on it, and nothing comes off *)
+
+		FOR i := 1 TO 5 DO NEW(item, i); stack.Push(item) END;
+		ASSERT(stack.len = 5);
+		FOR i := 5 TO 1 BY -1 DO
+			stack.Pop(obj);
+			ASSERT(obj # NIL);
+			ASSERT(obj(Item).n = i)                  (* in the reverse of the order they went on *)
+		END;
+		ASSERT(stack.len = 0);
+		stack.Pop(obj); ASSERT(obj = NIL);
+
+		(* nothing is not something: pushing NIL leaves the stack as it was *)
+		stack.Push(NIL);
+		ASSERT(stack.len = 0)
+	END Test.
+
+positive: first into the queue is first out of it
+
+	MODULE Test;
+	IMPORT DataQueues;
+
+	TYPE Item = OBJECT VAR n: SIGNED32; PROCEDURE &Set*(n: SIGNED32); BEGIN SELF.n := n END Set END Item;
+
+	VAR queue: DataQueues.Queue; item: Item; obj: OBJECT; i: SIGNED32;
+	BEGIN
+		NEW(queue);
+		ASSERT(queue.len = 0);
+		queue.Pop(obj);
+		ASSERT(obj = NIL);
+
+		FOR i := 1 TO 5 DO NEW(item, i); queue.Push(item) END;
+		ASSERT(queue.len = 5);
+		FOR i := 1 TO 5 DO
+			queue.Pop(obj);
+			ASSERT(obj # NIL);
+			ASSERT(obj(Item).n = i)                  (* in the order they went in *)
+		END;
+		ASSERT(queue.len = 0);
+		queue.Pop(obj); ASSERT(obj = NIL);
+
+		(* one in, one out, over and over, which is where a queue loses its ends *)
+		FOR i := 1 TO 20 DO
+			NEW(item, i); queue.Push(item);
+			queue.Pop(obj);
+			ASSERT(obj(Item).n = i);
+			ASSERT(queue.len = 0)
+		END
+	END Test.
+
+positive: a tree that says it balances stays within the height of one
+
+	MODULE Test;
+	IMPORT DataTrees, Data;
+
+	CONST Count = 100;
+
+	VAR tree: DataTrees.Tree; datum, found: Data.Datum; key: Data.Key; word: Data.Word;
+		i, height: SIGNED32; ok: BOOLEAN;
+
+		PROCEDURE Word(i: SIGNED32; VAR w: Data.Word);
+		BEGIN                                        (* key000 .. key099, so that order is order *)
+			w := "key000";
+			w[5] := CHR(ORD("0") + i MOD 10);
+			w[4] := CHR(ORD("0") + (i DIV 10) MOD 10);
+			w[3] := CHR(ORD("0") + (i DIV 100) MOD 10);
+			w[6] := 0X
+		END Word;
+
+		(*	The rider can go down and not up, so a walk in order is not on offer. What is, is the
+			left spine and the right spine: in a search tree the leftmost node is the smallest key
+			of all and the rightmost is the largest, which is false in any tree that put a key on
+			the wrong side. *)
+		PROCEDURE Smallest(VAR w: Data.Word);
+		VAR here: Data.Datum; k: Data.Key;
+		BEGIN
+			tree.rider.Home;
+			WHILE ~tree.rider.eotl DO tree.rider.Left END;
+			here := tree.rider.Inspect(); here.GetKey(k); Data.KeyToWord(k, w)
+		END Smallest;
+
+		PROCEDURE Largest(VAR w: Data.Word);
+		VAR here: Data.Datum; k: Data.Key;
+		BEGIN
+			tree.rider.Home;
+			WHILE ~tree.rider.eotr DO tree.rider.Right END;
+			here := tree.rider.Inspect(); here.GetKey(k); Data.KeyToWord(k, w)
+		END Largest;
+
+	BEGIN
+		NEW(tree);
+		ASSERT(tree.Height() = 0);                   (* an empty tree has no levels *)
+
+		(*	Inserted in ascending order, which is the order that turns a tree that does not balance
+			into a list a hundred long. *)
+		FOR i := 0 TO Count - 1 DO
+			Word(i, word); Data.WordToKey(word, key);
+			NEW(datum); datum.SetKey(key);
+			tree.Insert(datum, ok);
+			ASSERT(ok)
+		END;
+
+		(*	An AVL tree of a hundred keys is at most 1.44 log2(101), about ten levels deep, and at
+			least log2 of them. A tree that did not balance would be a hundred deep. *)
+		height := tree.Height();
+		ASSERT(height >= 7);
+		ASSERT(height <= 11);
+
+		Smallest(word); ASSERT(word = "key000");
+		Largest(word); ASSERT(word = "key099");
+
+		(* every one of them is findable, and nothing else is *)
+		FOR i := 0 TO Count - 1 DO
+			Word(i, word); Data.WordToKey(word, key);
+			found := tree.rider.Retrieve(key);
+			ASSERT(found # NIL);
+			found.GetKey(key); Data.KeyToWord(key, word);
+			ASSERT(word # "")                        (* what comes back is the datum, not an empty one *)
+		END;
+		Data.WordToKey("nothere", key);
+		ASSERT(tree.rider.Retrieve(key) = NIL);
+
+		(* the same key twice is refused *)
+		Word(0, word); Data.WordToKey(word, key);
+		NEW(datum); datum.SetKey(key);
+		tree.Insert(datum, ok);
+		ASSERT(~ok);
+
+		(* taking half of them out leaves the other half, still balanced and still in shape *)
+		FOR i := 0 TO Count - 1 BY 2 DO
+			Word(i, word); Data.WordToKey(word, key);
+			tree.Delete(key, ok);
+			ASSERT(ok)
+		END;
+		FOR i := 0 TO Count - 1 BY 2 DO
+			Word(i, word); Data.WordToKey(word, key);
+			ASSERT(tree.rider.Retrieve(key) = NIL)
+		END;
+		FOR i := 1 TO Count - 1 BY 2 DO
+			Word(i, word); Data.WordToKey(word, key);
+			ASSERT(tree.rider.Retrieve(key) # NIL)
+		END;
+		ASSERT(tree.Height() <= 10);
+		Smallest(word); ASSERT(word = "key001");
+		Largest(word); ASSERT(word = "key099");
+
+		(* and a key that is not there is not deleted either *)
+		Data.WordToKey("nothere", key);
+		tree.Delete(key, ok);
+		ASSERT(~ok)
+	END Test.
+
+positive: a sorted list keeps its order however the data arrive
+
+	MODULE Test;
+	IMPORT DataLists, Data;
+
+	VAR list: DataLists.List; datum, held: Data.Datum; key: Data.Key; word: Data.Word;
+		i: SIGNED32; ok: BOOLEAN; previous: Data.Word;
+
+		PROCEDURE Add(CONST w: ARRAY OF CHAR; VAR ok: BOOLEAN);
+		VAR key: Data.Key; datum: Data.Datum; word: Data.Word;
+		BEGIN
+			COPY(w, word); Data.WordToKey(word, key);
+			NEW(datum); datum.SetKey(key);
+			list.Insert(datum, ok)
+		END Add;
+
+	BEGIN
+		NEW(list);
+		ASSERT(list.len = 0);
+
+		(* out of order on the way in, in order on the way out *)
+		Add("delta", ok); ASSERT(ok);
+		Add("alpha", ok); ASSERT(ok);
+		Add("charlie", ok); ASSERT(ok);
+		Add("bravo", ok); ASSERT(ok);
+		ASSERT(list.len = 4);
+		Add("bravo", ok); ASSERT(~ok);               (* and the same one only once *)
+		ASSERT(list.len = 4);
+
+		list.rider.Home;
+		previous := "";
+		FOR i := 1 TO 4 DO
+			held := list.rider.Inspect();
+			ASSERT(held # NIL);
+			held.GetKey(key); Data.KeyToWord(key, word);
+			ASSERT(word > previous);
+			COPY(word, previous);
+			IF i < 4 THEN list.rider.Next END
+		END;
+		ASSERT(previous = "delta");                  (* the last one is the largest *)
+
+		(* and backwards from where it stands *)
+		FOR i := 1 TO 3 DO list.rider.Previous END;
+		held := list.rider.Inspect();
+		held.GetKey(key); Data.KeyToWord(key, word);
+		ASSERT(word = "alpha");
+
+		(* found by key, and gone when deleted *)
+		Data.WordToKey("charlie", key);
+		ASSERT(list.rider.Retrieve(key) # NIL);
+		list.Delete(key, ok); ASSERT(ok);
+		ASSERT(list.len = 3);
+		ASSERT(list.rider.Retrieve(key) = NIL);
+		list.Delete(key, ok); ASSERT(~ok);           (* twice is once *)
+
+		(* the ends are still the ends *)
+		list.rider.Home;
+		held := list.rider.Inspect(); held.GetKey(key); Data.KeyToWord(key, word);
+		ASSERT(word = "alpha");
+		WHILE ~list.rider.eol DO list.rider.Next END;
+		held := list.rider.Inspect(); held.GetKey(key); Data.KeyToWord(key, word);
+		ASSERT(word = "delta");
+		datum := NIL
+	END Test.
+
+positive: a generic sort puts a shuffled array in order
+
+	MODULE Test;
+	IMPORT GenericSort;
+
+	TYPE Item = OBJECT VAR n: SIGNED32; PROCEDURE &Set*(n: SIGNED32); BEGIN SELF.n := n END Set END Item;
+
+	VAR array: GenericSort.GenericArray; item: Item; i, value: SIGNED32;
+
+		PROCEDURE Before(a, b: ANY): BOOLEAN;
+		BEGIN RETURN a(Item).n < b(Item).n
+		END Before;
+
+	BEGIN
+		(* a hundred numbers in an order that is neither sorted nor reversed *)
+		NEW(array, 100);
+		FOR i := 0 TO 99 DO
+			NEW(item, (i * 37) MOD 100);             (* 37 is prime to 100, so every number appears once *)
+			array[i] := item
+		END;
+		GenericSort.QuickSort(array, Before);
+		FOR i := 0 TO 99 DO ASSERT(array[i](Item).n = i) END;
+
+		(* already sorted, and sorted again, is the same array -- where a naive quicksort is worst *)
+		GenericSort.QuickSort(array, Before);
+		FOR i := 0 TO 99 DO ASSERT(array[i](Item).n = i) END;
+
+		(* all the same, which is the other place it goes wrong *)
+		NEW(array, 50);
+		FOR i := 0 TO 49 DO NEW(item, 7); array[i] := item END;
+		GenericSort.QuickSort(array, Before);
+		FOR i := 0 TO 49 DO ASSERT(array[i](Item).n = 7) END;
+
+		(* one, and none *)
+		NEW(array, 1); NEW(item, 42); array[0] := item;
+		GenericSort.QuickSort(array, Before);
+		ASSERT(array[0](Item).n = 42);
+		NEW(array, 0);
+		GenericSort.QuickSort(array, Before);
+		value := 0; ASSERT(value = 0)
+	END Test.

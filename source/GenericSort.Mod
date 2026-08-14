@@ -6,7 +6,10 @@ TYPE
 
 PROCEDURE QuickSort*(VAR genArray: GenericArray; compFunc: GenericCompareFunct);
 BEGIN
-	QuickSortRec(genArray, compFunc, 0, LEN(genArray)-1)
+	(*	An empty array used to be sorted as the range 0 to -1, and the pivot of that range is
+		genArray[-1] -- DIV rounds down -- so sorting a result that happened to be empty took the
+		process down. Nothing to do below two elements; the recursion never asks for less. *)
+	IF LEN(genArray) > 1 THEN QuickSortRec(genArray, compFunc, 0, LEN(genArray)-1) END
 END QuickSort;
 
 PROCEDURE QuickSortRec(VAR genArray: GenericArray; comp: GenericCompareFunct; lo, hi: SIZE);
