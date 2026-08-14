@@ -220,6 +220,10 @@ PROCEDURE AddYears*(VAR dt : DateTime; years : SIGNED32);
 BEGIN
 	ASSERT(ValidDateTime(dt));
 	dt.year := dt.year + years;
+	(*	The 29th of February is not a day in most years. Landing on one used to fail the assertion
+		below and halt the caller, although both the date and the number of years given were
+		perfectly valid; the last day of the month is what the rest of the world answers here. *)
+	IF dt.day > NofDays(dt.year, dt.month) THEN dt.day := NofDays(dt.year, dt.month) END;
 	ASSERT(ValidDateTime(dt));
 END AddYears;
 
@@ -237,6 +241,9 @@ BEGIN
 		dt.month := dt.month + 12;
 		DEC(years);
 	END;
+	(*	Same as in AddYears, and reached from the 31st of any month with a shorter one after it.
+		Clamped before the years are added, because AddYears asserts on what it is given. *)
+	IF dt.day > NofDays(dt.year, dt.month) THEN dt.day := NofDays(dt.year, dt.month) END;
 	IF (years # 0) THEN AddYears(dt, years); END;
 	ASSERT(ValidDateTime(dt));
 END AddMonths;
