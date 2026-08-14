@@ -37,3 +37,15 @@ JPEG.Execution.Test	positive: test RGB to I420 2x2x8x8 block conversion used for
 # (FEAT_FP16), so a Shortreal for it is writable; there is none, and until there is, the
 # one case of this suite has nothing to import.
 Shortreal.Execution.Test	positive: test scalar SHORTREAL operators
+
+# --- the fallback logarithm ---------------------------------------------------------
+# On x86 `ln` is one FYL2X instruction; everywhere else it is the series and the mantissa
+# decomposition below it in Math64.Mod, and that is what AArch64 compiles. Measured against
+# known values: ln(2) is 1.9E-9 out, ln(50) 9.5E-9, ln(1E6) 4.4E-7 -- growing with the
+# argument, where double precision should give 1E-16. `exp` is exact to 1E-12 on the same
+# machine, so this is the logarithm alone, and anything built on it inherits the error.
+# The case below checks exp(ln(x)) = x to 1E-9 and therefore fails here. It is left failing
+# on purpose: the number is what a math library owes, and lowering the test to fit the
+# implementation would hide it.
+MathFunctions.Test	positive: a logarithm and an exponent undo each other
+

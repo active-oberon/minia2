@@ -638,8 +638,15 @@ END arccos;
 	BEGIN
 		IF (y = 1) OR (y = -1) THEN
 			RETURN y * pi / 4
-		ELSIF (y > 1) OR (y < -1) THEN
+		ELSIF y > 1 THEN
 			RETURN pi / 2 - arctan(1 / y)
+		ELSIF y < -1 THEN
+			(*	The same identity, and it has a sign: arctan(y) = -pi/2 - arctan(1/y) below -1.
+				With pi/2 there the answer came out a whole pi too high, which arctan2 then added
+				another pi to -- angles of 5.4 radians out of a function whose range is pi. It
+				showed only where this branch is compiled at all: on x86 the two lines above are
+				an FPATAN instruction, and everywhere else they are this. *)
+			RETURN -pi / 2 - arctan(1 / y)
 		ELSE
 			(* atan(y) = sum_k (-1)^(k) y^{2 k + 1} / (2 k + 1), |y| < 1 *)
 			prev := pi / 2;
