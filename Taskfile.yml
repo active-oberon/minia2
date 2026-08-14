@@ -856,6 +856,36 @@ tasks:
         docker run --rm -v "$d:/work" -e A2_RESULTS=/work/results \
           --entrypoint bash {{.IMAGE}}:{{.TAG}} /opt/a2sdk/run.sh --quick
 
+  update:
+    desc: Bring this machine's SDK up to the tree -- build, bundle, install (A64=1 adds AArch64)
+    # What "the SDK" means here is three things in a row, and forgetting one is the usual way to
+    # spend an hour on a defect that was fixed already: the tree is compiled (target/<host>/bin),
+    # the bundle is assembled from it (target/bundle, which is what ./ob runs), and the bundle is
+    # installed (~/.local/share/a2sdk, which is what plain `ob` runs). The AArch64 objects are a
+    # fourth and are built only on request: they are minutes, and only `ob build -t a64` and the
+    # A64 suites read them.
+    cmds:
+      - task: "{{.HOST}}"
+      - task: bundle
+      - |
+        set -eo pipefail
+        case "$(uname -m)" in
+          x86_64) flavour=linux-amd64 ;;
+          aarch64|arm64) flavour=linux-arm64 ;;
+          *) echo "[SKIP] no tarball flavour for $(uname -m); the bundle in {{.BUILD_DIR}}/bundle is current"; exit 0 ;;
+        esac
+        tarball="$(ls -t {{.BUILD_DIR}}/minia2-sdk-*-$flavour.tar.gz 2>/dev/null | head -1)"
+        [ -n "$tarball" ] || { echo "no tarball to install -- did task bundle run?" >&2; exit 1; }
+        sh {{.CURRENT_DIR}}/sdk/install.sh --tarball "$tarball"
+      - |
+        set -eo pipefail
+        if [ -n "$A64" ]; then
+          echo "== the AArch64 objects as well"
+          task a64-stdlib
+        else
+          echo "(AArch64 objects left as they were -- A64=1 task update builds them too)"
+        fi
+
   bundle:
     desc: Assemble the SDK as a tarball that needs no Docker (target/bundle + .tar.gz)
     cmds:
