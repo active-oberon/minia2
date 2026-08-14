@@ -106,6 +106,11 @@ VAR
 	VAR abs: Real;
 	BEGIN
 		abs := Abs( x );
+		(*	Zero has no mantissa to normalise, and the loop below multiplies it by the radix for
+			ever looking for one: nothing calling this with zero ever came back. Exponent and
+			MantissaExponent below both guard against it -- the guard was written twice and
+			forgotten here. The cube root of zero is what found it. *)
+		IF abs = 0 THEN RETURN 0 END;
 		WHILE abs >= Radix DO abs := abs / Radix END;
 		WHILE abs < 1 DO abs := Radix * abs END;
 		RETURN Sign( x ) * abs
