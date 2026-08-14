@@ -1,0 +1,135 @@
+# Tests for source/Math32.Mod and source/Math64.Mod -- the scalar functions.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Two per-architecture things are checked here, and they are the reason the file exists.
+#
+# One: a square root has to be exact where the answer is exact. On AArch64 it was not -- the
+# fallback computed exp(0.5 * ln(x)), which is near the root and not equal to it, so hypot(3, 4)
+# came out as something other than 5 and every distance built on it inherited the error. That is
+# invisible on x86-64, where the same source takes the hardware instruction, and shows only when
+# these cases are compiled for another architecture and run there: `ob test -t a64`.
+#
+# Two: identities. A function checked against a constant only says what somebody typed; a
+# function checked against its own inverse, or against another function of the same value, says
+# something about arithmetic.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a square root is exact where the answer is
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	BEGIN
+		ASSERT(Math.sqrt(0.0) = 0.0);
+		ASSERT(Math.sqrt(1.0) = 1.0);
+		ASSERT(Math.sqrt(4.0) = 2.0);
+		ASSERT(Math.sqrt(9.0) = 3.0);
+		ASSERT(Math.sqrt(144.0) = 12.0);
+		ASSERT(Math.sqrt(1000000.0) = 1000.0);
+		ASSERT(Math.sqrt(0.25) = 0.5)
+	END Test.
+
+positive: and so is one in single precision
+
+	MODULE Test;
+	IMPORT Math := Math32;
+	BEGIN
+		ASSERT(Math.sqrt(0.0) = 0.0);
+		ASSERT(Math.sqrt(1.0) = 1.0);
+		ASSERT(Math.sqrt(4.0) = 2.0);
+		ASSERT(Math.sqrt(9.0) = 3.0);
+		ASSERT(Math.sqrt(144.0) = 12.0)
+	END Test.
+
+positive: hypot of three and four is five, and not nearly five
+
+	MODULE Test;
+	IMPORT M64 := Math64, M32 := Math32;
+	BEGIN
+		(*	The number this file was written for. An inexact square root made it 4.999999... and
+			nothing complained: Mat64, a distance, a graphics routine all took it and went on. *)
+		ASSERT(M64.hypot(3.0, 4.0) = 5.0);
+		ASSERT(M64.hypot(5.0, 12.0) = 13.0);
+		ASSERT(M64.hypot(0.0, 7.0) = 7.0);
+		ASSERT(M32.hypot(3.0, 4.0) = 5.0);
+		ASSERT(M32.hypot(8.0, 15.0) = 17.0)
+	END Test.
+
+positive: a root and a square undo each other
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR i: SIGNED32; x, root: FLOAT64;
+	BEGIN
+		FOR i := 1 TO 100 DO
+			x := i * i;
+			root := Math.sqrt(x);
+			ASSERT(root = i);                        (* exact, for every whole square up to ten thousand *)
+			ASSERT(root * root = x)
+		END
+	END Test.
+
+positive: a logarithm and an exponent undo each other
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR i: SIGNED32; x, back: FLOAT64;
+	BEGIN
+		FOR i := 1 TO 50 DO
+			x := i;
+			back := Math.exp(Math.ln(x));
+			ASSERT(ABS(back - x) < 1.0E-9)
+		END;
+		ASSERT(Math.ln(1.0) = 0.0);
+		ASSERT(ABS(Math.exp(0.0) - 1.0) < 1.0E-15)
+	END Test.
+
+positive: what a circle says about sine and cosine
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR i: SIGNED32; a, s, c: FLOAT64;
+	BEGIN
+		FOR i := 0 TO 36 DO
+			a := i * 10.0 * Math.pi / 180.0;
+			s := Math.sin(a); c := Math.cos(a);
+			ASSERT(ABS(s * s + c * c - 1.0) < 1.0E-12);
+			ASSERT(ABS(Math.arctan2(s, c)) <= Math.pi)
+		END;
+		ASSERT(Math.sin(0.0) = 0.0);
+		ASSERT(Math.cos(0.0) = 1.0)
+	END Test.
+
+positive: the pieces a number is taken apart into add up to it
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR whole, fraction: FLOAT64;
+	BEGIN
+		ASSERT(Math.floor(2.7) = 2.0);
+		ASSERT(Math.ceil(2.1) = 3.0);
+		ASSERT(Math.floor(-2.1) = -3.0);
+		ASSERT(Math.ceil(-2.7) = -2.0);
+		ASSERT(Math.trunc(-2.7) = -2.0);
+		fraction := Math.modf(2.75, whole);
+		ASSERT(whole = 2.0);
+		ASSERT(fraction = 0.75);
+		ASSERT(whole + fraction = 2.75)
+	END Test.
+
+positive: the numbers that are not numbers
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR nan, inf: FLOAT64;
+	BEGIN
+		nan := Math.NaN(); inf := Math.Inf();
+		ASSERT(Math.isnan(nan));
+		ASSERT(~Math.isnan(inf));
+		ASSERT(Math.isinf(inf));
+		ASSERT(~Math.isfinite(inf));
+		ASSERT(Math.isfinite(1.0));
+		ASSERT(Math.iszero(0.0));
+		ASSERT(~(nan = nan))                       (* which is what makes it not a number *)
+	END Test.
