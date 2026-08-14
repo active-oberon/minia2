@@ -10,10 +10,15 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 	LocalSockets -- its control socket, which is a socket named by a path and takes one JSON
 	command per line.
 
-	What the loop shows is worth reading, because it is the thing the plan says the language is
-	for: three sources of events -- the keyboard, a child's output, and time -- and no state
-	machine anywhere. Ask each what it has, do that, draw. In a language without active objects
-	this is where select and callbacks would go.
+	The loop is what this program is for showing. Three things happen without asking each other's
+	permission -- somebody types, mpv says something, the window is resized -- and each is an
+	active object of its own that hands what it has to one place. The program then waits in a
+	single AWAIT and does what arrived. There is no polling, no timer to tune, no state machine,
+	and nothing to cancel: an object whose source has ended simply ends.
+
+	That is the comparison the plan asks for, and the honest form of it is the plumbing alone --
+	the three objects and the queue between them -- against the goroutines, channels, select and
+	context another language spends on the same three sources.
 
 	    ob run examples/Radio.Mod
 
@@ -35,13 +40,121 @@ IMPORT Files, Streams, Strings, Commands, Terminal, Frames, Processes, LocalSock
 	Random, Kernel;
 
 CONST
-	Idle = 40;                         (* milliseconds to wait when nothing at all has happened *)
 	MaxStations = 512;
+	Waiting = 32;                      (* how much may pile up before a source waits its turn *)
+	Watch = 400;                       (* milliseconds between looks at the window's size *)
+
+	(** what Events.Next handed over *)
+	AKey = 0; ALine = 1; AResize = 2; AnEnd = 3;
 
 TYPE
 	Station = RECORD
 		genre, name, url: Strings.String;
 	END;
+
+	(**	The one place the three sources meet. Each puts what it has and goes back to its own
+		waiting; the program takes the next thing there is, and waits when there is none. The
+		AWAIT in Next is the whole of the program's waiting -- there is no other. *)
+	Events = OBJECT
+	VAR
+		key: ARRAY Waiting OF Terminal.Event; keyIn, keyOut: SIGNED32;
+		line: ARRAY Waiting OF Strings.String; lineIn, lineOut: SIGNED32;
+		resized, ended: BOOLEAN;
+
+		PROCEDURE &InitEvents*;
+		BEGIN keyIn := 0; keyOut := 0; lineIn := 0; lineOut := 0; resized := FALSE; ended := FALSE
+		END InitEvents;
+
+		PROCEDURE PutKey* (CONST e: Terminal.Event);
+		BEGIN {EXCLUSIVE}
+			AWAIT((keyIn - keyOut < Waiting) OR ended);
+			key[keyIn MOD Waiting] := e; INC(keyIn)
+		END PutKey;
+
+		PROCEDURE PutLine* (CONST said: ARRAY OF CHAR);
+		BEGIN {EXCLUSIVE}
+			AWAIT((lineIn - lineOut < Waiting) OR ended);
+			line[lineIn MOD Waiting] := Strings.NewString(said); INC(lineIn)
+		END PutLine;
+
+		PROCEDURE PutResize*;
+		BEGIN {EXCLUSIVE} resized := TRUE
+		END PutResize;
+
+		PROCEDURE Ended*;
+		BEGIN {EXCLUSIVE} ended := TRUE
+		END Ended;
+
+		(** The next thing that happened, waiting for it. *)
+		PROCEDURE Next* (VAR e: Terminal.Event; VAR said: Strings.String): SIGNED32;
+		BEGIN {EXCLUSIVE}
+			AWAIT((keyIn # keyOut) OR (lineIn # lineOut) OR resized OR ended);
+			IF keyIn # keyOut THEN e := key[keyOut MOD Waiting]; INC(keyOut); RETURN AKey END;
+			IF lineIn # lineOut THEN said := line[lineOut MOD Waiting]; INC(lineOut); RETURN ALine END;
+			IF resized THEN resized := FALSE; RETURN AResize END;
+			RETURN AnEnd
+		END Next;
+
+	END Events;
+
+	(** What was typed, handed over as it is typed. Ends when the terminal does. *)
+	Keyboard = OBJECT
+	VAR events: Events; event: Terminal.Event;
+
+		PROCEDURE &InitKeyboard* (where: Events);
+		BEGIN events := where
+		END InitKeyboard;
+
+	BEGIN {ACTIVE}
+		WHILE Terminal.Read(event) DO events.PutKey(event) END;
+		events.Ended
+	END Keyboard;
+
+	(**	What mpv says, line by line. Reading a child waits on a pipe rather than in a system
+		call, so this object waits and the rest of the program does not. It ends by itself when
+		the child does, which is all that stopping a station amounts to: nothing to cancel. *)
+	Player = OBJECT
+	VAR events: Events; player: Processes.Process; said: ARRAY 300 OF CHAR; n: SIZE; ch: CHAR;
+
+		PROCEDURE &InitPlayer* (where: Events; which: Processes.Process);
+		BEGIN events := where; player := which
+		END InitPlayer;
+
+	BEGIN {ACTIVE}
+		LOOP
+			n := 0;
+			LOOP
+				ch := player.Output.Get();
+				IF player.Output.res # Streams.Ok THEN EXIT END;
+				IF (ch = 0AX) OR (ch = 0DX) OR (n = LEN(said)-1) THEN EXIT END;
+				said[n] := ch; INC(n)
+			END;
+			said[n] := 0X;
+			IF player.Output.res # Streams.Ok THEN EXIT END;
+			IF said # "" THEN events.PutLine(said) END
+		END
+	END Player;
+
+	(**	The window's size, looked at now and then. It is the third source, and the only one that
+		must be asked rather than waited for: a size does not announce itself, and the signal that
+		would is worth less than what a handler in the wrong place costs. *)
+	Clock = OBJECT
+	VAR events: Events; stop: BOOLEAN;
+
+		PROCEDURE &InitClock* (where: Events);
+		BEGIN events := where; stop := FALSE
+		END InitClock;
+
+		PROCEDURE Stop*;
+		BEGIN {EXCLUSIVE} stop := TRUE
+		END Stop;
+
+	BEGIN {ACTIVE}
+		WHILE ~stop DO
+			Objects.Sleep(Watch);
+			IF ~stop & Terminal.Resized() THEN events.PutResize END
+		END
+	END Clock;
 
 VAR
 	station: ARRAY MaxStations OF Station;
@@ -63,8 +176,11 @@ VAR
 	paused: BOOLEAN;
 	rows, columns: SIGNED32;
 	dice: Random.Sequence;
+	events: Events;                    (* where the three sources hand over what they have *)
+	keyboard: Keyboard;
+	listener: Player;
+	clock: Clock;
 	status: ARRAY 200 OF CHAR;         (* mpv's position line, which is state and not a message *)
-	said: SIGNED32;                    (* how many lines the log had when it was last drawn *)
 
 	(* ---- the catalogue ---- *)
 
@@ -208,6 +324,7 @@ VAR
 		player := Processes.Start("mpv", arguments);
 		IF player = NIL THEN Say("mpv is not on the PATH, and it is what plays"); RETURN END;
 		playing := which; status := "";
+		NEW(listener, events, player);     (* it ends by itself when the child does *)
 		said := "playing: "; Strings.Append(said, station[which].name^); Say(said);
 		Attach;
 		Volume(volume)
@@ -237,28 +354,16 @@ VAR
 	BEGIN RETURN (line[0] = "A") & (line[1] = ":") & (line[2] = " ")
 	END Status;
 
-	(* Whatever mpv has said since last time -- the station's own titles come through here. *)
-	PROCEDURE Listen;
-	VAR line: ARRAY 300 OF CHAR; i: SIZE; ch: CHAR;
+	(*	The screen, and only as much of it as changed: mpv's position lives in one frame's name, and
+		redrawing the other two for it would be work nobody asked for. *)
+	PROCEDURE Draw (onlyStatus: BOOLEAN);
 	BEGIN
-		IF player = NIL THEN RETURN END;
-		WHILE player.Waiting() > 0 DO
-			i := 0;
-			LOOP
-				IF player.Waiting() <= 0 THEN EXIT END;
-				ch := player.Output.Get();
-				IF (ch = 0AX) OR (ch = 0DX) OR (i = LEN(line)-1) THEN EXIT END;
-				line[i] := ch; INC(i)
-			END;
-			line[i] := 0X;
-			IF line # "" THEN
-				(*	mpv rewrites its position line many times a second. It is not a message and
-					does not belong among them: it goes in the frame's name, where a thing that
-					is always true and always changing belongs. *)
-				IF Status(line) THEN COPY(line, status) ELSE Say(line) END
-			END
-		END
-	END Listen;
+		Title;
+		IF onlyStatus THEN log.Draw(Terminal.out, screen.Focused() = log)
+		ELSE screen.Draw(Terminal.out)
+		END;
+		Terminal.Flush
+	END Draw;
 
 	(*	The catalogue as a playlist, in the form every player reads. What is written is what is
 		shown, so a narrowed list writes one genre's worth -- which is the same rule as playing. *)
@@ -374,7 +479,7 @@ VAR
 
 	(* `ob run Radio.Mod` invokes the exported command Do. *)
 	PROCEDURE Do* (context: Commands.Context);
-	VAR e: Terminal.Event; leave, changed, onlyStatus: BOOLEAN; was: ARRAY 200 OF CHAR;
+	VAR e: Terminal.Event; leave: BOOLEAN; said: Strings.String; what: SIGNED32;
 	BEGIN
 		IF ~Terminal.Open() THEN
 			context.error.String("Radio: standard input is not a terminal"); context.error.Ln;
@@ -382,7 +487,7 @@ VAR
 		END;
 		socketPath := "/tmp/a2-radio-"; Strings.AppendInt(socketPath, Unix.getpid());
 		Strings.Append(socketPath, ".sock");
-		playing := -1; volume := 70; paused := FALSE; said := 0;
+		playing := -1; volume := 70; paused := FALSE;
 		NEW(dice); dice.InitSeed(SIGNED32(Kernel.GetTicks()));   (* a different station each run *)
 		IF ~Compose() THEN
 			Terminal.Close;
@@ -392,61 +497,50 @@ VAR
 		Fit;
 		Terminal.AltScreen(TRUE); Terminal.ShowCursor(FALSE);
 		Title; screen.Refresh(Terminal.out); Terminal.Flush;
+		NEW(events); NEW(keyboard, events); NEW(clock, events);
 		leave := FALSE;
 		REPEAT
-			(*	Draw when something has changed and not otherwise. Painting a screen twenty-five
-				times a second whether or not it differs is what makes a terminal program flicker,
-				and there is nothing to see in it either. *)
-			changed := FALSE; onlyStatus := FALSE;
-			IF Terminal.Pending() THEN
-				IF ~Terminal.Read(e) THEN
-					leave := TRUE
-				ELSIF (e.kind = Terminal.Character) & (e.modifiers = {Terminal.Ctrl})
-						& (e.char = ORD("q")) THEN
-					leave := TRUE
-				ELSIF (e.kind = Terminal.Key) & (e.key = Terminal.Enter) THEN
-					IF screen.Focused() = genreFrame THEN
-						Fill(genreFrame.caret - 1)     (* the first line is All, which is -1 *)
-					ELSE
-						Play(Chosen(list.caret))
+			what := events.Next(e, said);
+			CASE what OF
+				  AnEnd: leave := TRUE
+				| AResize: Fit; Title; screen.Refresh(Terminal.out); Terminal.Flush
+				| ALine:
+					(*	mpv rewrites its position line many times a second: that is state, not a
+						message, and it goes in the frame's name rather than among what was said. *)
+					IF Status(said^) THEN COPY(said^, status); Draw(TRUE)
+					ELSE Say(said^); Draw(FALSE)
 					END
-				ELSIF e.kind = Terminal.Character THEN
-					CASE CHR(e.char) OF
-						  "s": Stop; Say("stopped")
-						| "p": Pause
-						| "+", "=": Volume(volume + 5)
-						| "-": Volume(volume - 5)
-						| "m": Export
-						| "e": Edit
-						| "r": IF listed > 0 THEN Play(Chosen(dice.Integer() MOD listed)) END
+				| AKey:
+					IF (e.kind = Terminal.Character) & (e.modifiers = {Terminal.Ctrl})
+							& (e.char = ORD("q")) THEN
+						leave := TRUE
+					ELSIF (e.kind = Terminal.Key) & (e.key = Terminal.Enter) THEN
+						IF screen.Focused() = genreFrame THEN
+							Fill(genreFrame.caret - 1)     (* the first line is All, which is -1 *)
+						ELSE
+							Play(Chosen(list.caret))
+						END;
+						Draw(FALSE)
+					ELSIF e.kind = Terminal.Character THEN
+						CASE CHR(e.char) OF
+							  "s": Stop; Say("stopped")
+							| "p", " ": Pause          (* the hand reaches for the space bar *)
+							| "+", "=": Volume(volume + 5)
+							| "-": Volume(volume - 5)
+							| "m": Export
+							| "e": Edit
+							| "r": IF listed > 0 THEN Play(Chosen(dice.Integer() MOD listed)) END
+						ELSE
+						END;
+						Draw(FALSE)
 					ELSE
+						IF screen.Handle(e) THEN END;
+						Draw(FALSE)
 					END
-				ELSE
-					IF screen.Handle(e) THEN END
-				END;
-				changed := TRUE;
-				IF Terminal.Resized() THEN
-					Fit; Title; screen.Refresh(Terminal.out); Terminal.Flush; changed := FALSE
-				END
 			ELSE
-				COPY(status, was);
-				Listen;
-				onlyStatus := (output.count = said) & (was # status);
-				changed := onlyStatus OR (output.count # said);
-				IF ~changed THEN Objects.Sleep(Idle) END
-			END;
-			said := output.count;
-			IF changed & ~leave THEN
-				Title;
-				(*	mpv's position changes several times a second and lives in one frame's name.
-					Redrawing the other two for it would be work nobody asked for -- which is what
-					having frames is for. *)
-				IF onlyStatus THEN log.Draw(Terminal.out, screen.Focused() = log)
-				ELSE screen.Draw(Terminal.out)
-				END;
-				Terminal.Flush
 			END
 		UNTIL leave;
+		clock.Stop;
 		Stop;
 		Terminal.ShowCursor(TRUE); Terminal.AltScreen(FALSE); Terminal.Flush;
 		Terminal.Close

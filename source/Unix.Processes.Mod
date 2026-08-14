@@ -19,7 +19,7 @@ MODULE Processes;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Start another program
 	Unix only, and honestly so: what a process is differs enough on Windows that a twin belongs
 	beside this one rather than inside it. *)
 
-IMPORT SYSTEM, Streams, Strings, Unix, Machine;
+IMPORT SYSTEM, Streams, Strings, Pipes, Unix, Machine;
 
 CONST
 	FIONREAD = 541BH;                  (* how many bytes are waiting, without reading them *)
@@ -38,14 +38,21 @@ TYPE
 		Output-: Streams.Reader;       (** what it writes *)
 		Input-: Streams.Writer;        (** what it reads *)
 		fromChild, toChild: SIGNED32;  (* our ends of the two pipes *)
+		reader: Pipes.ReadDecoupler;
 		done: BOOLEAN;
 		code: SIGNED32;
 
+		(*	Reading goes through a decoupler, which is a thread of its own feeding a pipe, and the
+			same thing StdIO does with standard input. Without it a read is a system call made by
+			whichever activity asked, and a quiet child stops that activity where it stands --
+			which is the one thing an active object reading a child must not do. With it, waiting
+			for a child is waiting on a pipe, which in this language is an AWAIT and yields. *)
 		PROCEDURE &Init* (child, readFrom, writeTo: SIGNED32);
 		BEGIN
 			pid := child; fromChild := readFrom; toChild := writeTo;
 			done := FALSE; code := 0;
-			NEW(Output, ReceiveFrom, 4096);
+			NEW(reader, ReceiveFrom);
+			NEW(Output, reader.Receive, 4096);
 			NEW(Input, SendTo, 4096)
 		END Init;
 
