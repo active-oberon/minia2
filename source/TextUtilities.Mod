@@ -2687,7 +2687,10 @@ BEGIN
 	byLen := UCS32StrLength(by);
 	text.AcquireWrite;
 	pos := Pos(string, 0, text);
-	WHILE (pos > 0) DO
+	(*	Pos answers -1 for "not in the text" and 0 for "at the very beginning", and this used to
+		stop on both: a text whose first characters were the ones looked for had nothing replaced
+		anywhere in it, and the count came back zero. *)
+	WHILE (pos >= 0) DO
 		INC(nofReplacements);
 		text.Delete(pos, stringLen);
 		text.InsertUCS32(pos, by);

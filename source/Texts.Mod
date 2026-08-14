@@ -264,6 +264,12 @@ TYPE
 			NEW(SELF.buffer, length);
 			i := 0; idx := 0;
 			WHILE (i < length) & UTF8Strings.DecodeChar(buffer, idx, SELF.buffer[i]) DO INC(i); END;
+			(*	SetBuf above ends with the same line and this one did not, so every piece made from
+				UTF-8 came out with a length of zero: InsertUTF8 decoded the characters, inserted
+				the piece, added its zero length to the text and left the text empty without
+				saying anything. What was decoded is i, which is length unless the text broke off
+				in the middle of a character. *)
+			len := i
 		END SetBufAsUTF8;
 
 		(** Return a copy of the piece, prev/next pointers nil and pos 0 *)
