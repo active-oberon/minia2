@@ -203,6 +203,7 @@ LSP
 Terminal
 TerminalCodes
 Frames
+Channels
 Processes
 LocalSockets
 Linker

@@ -1047,6 +1047,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	# full-screen terminal programs: what a terminal sends and understands, and, one module
 	# up, the terminal as a device. Only the second is platform work, and only Unix has it
 	# so far -- a Windows console twin is what a TUI there waits for.
+	Channels.Mod # a queue that waits: what one activity hands to another
 	TerminalCodes.Mod
 	UNIX { Unix.Terminal.Mod }
 	Frames.Mod # tiled frames of text with a caret, and any line runnable -- Oberon's model
