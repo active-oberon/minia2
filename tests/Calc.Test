@@ -1,0 +1,171 @@
+# Tests for std/calc -- derivatives and integrals, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# These are the numerical-analysis routines of the same suite as std/numerics, where three defects
+# were found at zero. They are pinned by the calculus a reader already knows: the derivative of the
+# square is twice the number, the integral of the sine over half a turn is two, and the derivative
+# of anything constant is nothing.
+#
+# NbrRe.Real is FLOAT32 here, and a derivative taken by differencing loses about half the digits it
+# starts with, so the tolerances are what single precision leaves and not what the formula deserves.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a first derivative, taken three ways
+
+	MODULE Test;
+	IMPORT CalcD1, NbrRe, MathRe;
+
+		PROCEDURE Square(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x
+		END Square;
+
+		PROCEDURE Cube(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x * x
+		END Cube;
+
+		PROCEDURE Constant(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 7
+		END Constant;
+
+		PROCEDURE Line(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 3 * x - 1
+		END Line;
+
+		PROCEDURE Sine(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN MathRe.Sin(x)
+		END Sine;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		(*	d(x^2)/dx = 2x, the same from either side and from both. One-sided differencing carries
+			an error of the order of the step itself, where the central one cancels it, so the two
+			sides are held to a hundredth of what they answer and the middle to a millionth. *)
+		ASSERT(Near(CalcD1.Solve(Square, 3.0, CalcD1.Central), 6.0, 1.0E-3));
+		ASSERT(Near(CalcD1.Solve(Square, 3.0, CalcD1.Forward), 6.0, 1.0E-1));
+		ASSERT(Near(CalcD1.Solve(Square, 3.0, CalcD1.Backward), 6.0, 1.0E-1));
+		ASSERT(Near(CalcD1.Solve(Square, -2.0, CalcD1.Central), -4.0, 1.0E-3));
+
+		(* d(x^3)/dx = 3x^2 *)
+		ASSERT(Near(CalcD1.Solve(Cube, 2.0, CalcD1.Central), 12.0, 1.0E-1));
+
+		(*	A line has the slope it is written with, everywhere. At zero the step size has nothing
+			to scale itself against and falls back to its floor, which is why the answer there is
+			the coarser of the two. *)
+		ASSERT(Near(CalcD1.Solve(Line, 0.0, CalcD1.Central), 3.0, 5.0E-2));
+		ASSERT(Near(CalcD1.Solve(Line, 100.0, CalcD1.Central), 3.0, 1.0E-3));
+
+		(* and something that does not change does not change: zero, at zero and away from it *)
+		ASSERT(Near(CalcD1.Solve(Constant, 0.0, CalcD1.Central), 0.0, 1.0E-4));
+		ASSERT(Near(CalcD1.Solve(Constant, 5.0, CalcD1.Central), 0.0, 1.0E-4));
+
+		(* d(sin x)/dx = cos x, checked where the cosine is one, nothing and minus one *)
+		ASSERT(Near(CalcD1.Solve(Sine, 0.0, CalcD1.Central), 1.0, 1.0E-3));
+		ASSERT(Near(CalcD1.Solve(Sine, NbrRe.Pi / 2, CalcD1.Central), 0.0, 1.0E-3));
+		ASSERT(Near(CalcD1.Solve(Sine, NbrRe.Pi, CalcD1.Central), -1.0, 1.0E-3));
+
+		(* the square at zero, where the step size has nothing to scale itself against *)
+		ASSERT(Near(CalcD1.Solve(Square, 0.0, CalcD1.Central), 0.0, 1.0E-4))
+	END Test.
+
+positive: a second derivative
+
+	MODULE Test;
+	IMPORT CalcD2, NbrRe, MathRe;
+
+		PROCEDURE Square(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x
+		END Square;
+
+		PROCEDURE Sine(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN MathRe.Sin(x)
+		END Sine;
+
+		PROCEDURE Line(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 3 * x - 1
+		END Line;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		(* d2(x^2)/dx2 = 2, wherever it is asked *)
+		ASSERT(Near(CalcD2.Solve(Square, 1.0, CalcD2.Central), 2.0, 1.0E-1));
+		ASSERT(Near(CalcD2.Solve(Square, 10.0, CalcD2.Central), 2.0, 1.0E-1));
+
+		(* a line does not curve *)
+		ASSERT(Near(CalcD2.Solve(Line, 2.0, CalcD2.Central), 0.0, 1.0E-2));
+
+		(* d2(sin x)/dx2 = -sin x *)
+		ASSERT(Near(CalcD2.Solve(Sine, NbrRe.Pi / 2, CalcD2.Central), -1.0, 1.0E-2));
+		ASSERT(Near(CalcD2.Solve(Sine, 0.0, CalcD2.Central), 0.0, 1.0E-2))
+	END Test.
+
+positive: an integral, against the area everybody knows
+
+	MODULE Test;
+	IMPORT CalcGauss, NbrRe, NbrInt, MathRe;
+
+	VAR error: NbrRe.Real; res: NbrInt.Integer; area: NbrRe.Real;
+
+		PROCEDURE Square(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x
+		END Square;
+
+		PROCEDURE One(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 1
+		END One;
+
+		PROCEDURE Sine(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN MathRe.Sin(x)
+		END Sine;
+
+		PROCEDURE Exp(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN MathRe.Exp(x)
+		END Exp;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		(* the area under a flat roof is its width *)
+		area := CalcGauss.Solve(One, 0.0, 2.0, CalcGauss.Medium, error, res);
+		ASSERT(res = CalcGauss.OKay);
+		ASSERT(Near(area, 2.0, 1.0E-4));
+
+		(* the integral of x squared from nought to one is a third *)
+		area := CalcGauss.Solve(Square, 0.0, 1.0, CalcGauss.Medium, error, res);
+		ASSERT(res = CalcGauss.OKay);
+		ASSERT(Near(area, 1.0 / 3.0, 1.0E-4));
+		ASSERT(error >= 0);
+
+		(*	The sine over half a turn is two, and over a whole turn is nothing. The second one is
+			answered exactly and reported as a roundoff error, and rightly: the tolerance the
+			integrator works to is relative to the answer, and no relative tolerance can be met
+			by nought. *)
+		area := CalcGauss.Solve(Sine, 0.0, NbrRe.Pi, CalcGauss.Medium, error, res);
+		ASSERT(res = CalcGauss.OKay);
+		ASSERT(Near(area, 2.0, 1.0E-4));
+		area := CalcGauss.Solve(Sine, 0.0, 2 * NbrRe.Pi, CalcGauss.Medium, error, res);
+		ASSERT((res = CalcGauss.OKay) OR (res = CalcGauss.RoundoffError));
+		ASSERT(Near(area, 0.0, 1.0E-4));
+
+		(* e to the x from nought to one is e minus one *)
+		area := CalcGauss.Solve(Exp, 0.0, 1.0, CalcGauss.Fine, error, res);
+		ASSERT(res = CalcGauss.OKay);
+		ASSERT(Near(area, 1.7182818, 1.0E-4));
+
+		(* an interval of no width has no area *)
+		area := CalcGauss.Solve(Square, 1.0, 1.0, CalcGauss.Medium, error, res);
+		ASSERT(Near(area, 0.0, 1.0E-6));
+
+		(* and turning the interval round turns the sign round *)
+		area := CalcGauss.Solve(Square, 1.0, 0.0, CalcGauss.Medium, error, res);
+		ASSERT(Near(area, -1.0 / 3.0, 1.0E-4))
+	END Test.

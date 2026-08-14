@@ -1,0 +1,158 @@
+# Tests for std/web -- the XML scanner and parser, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The parser is what reads every configuration file the system has, so what is asked of it is what
+# a configuration file contains: elements inside elements, attributes with the quoting mixed,
+# entities, comments, empty elements, and text that has to survive intact. The malformed documents
+# have to be refused rather than half-read, and none of them may take the process down.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a document is elements, attributes and text
+
+	MODULE Test;
+	IMPORT XML, XMLScanner, XMLParser, XMLObjects, Streams, Strings;
+
+	VAR document: XML.Document; root, found: XML.Element; value: Strings.String;
+		errors: SIGNED32;
+
+		PROCEDURE Note(pos, line, row: Streams.Position; CONST msg: ARRAY OF CHAR);
+		BEGIN INC(errors)
+		END Note;
+
+		PROCEDURE Parse(CONST text: ARRAY OF CHAR): XML.Document;
+		VAR reader: Streams.StringReader; scanner: XMLScanner.Scanner; parser: XMLParser.Parser;
+		BEGIN
+			errors := 0;
+			NEW(reader, LEN(text)); reader.Set(text);
+			NEW(scanner, reader); scanner.reportError := Note;
+			NEW(parser, scanner); parser.reportError := Note;
+			RETURN parser.Parse()
+		END Parse;
+
+		(* the first child element of the given name, or NIL *)
+		PROCEDURE Child(of: XML.Element; CONST name: ARRAY OF CHAR): XML.Element;
+		VAR enumerator: XMLObjects.Enumerator; item: ANY; this: Strings.String;
+		BEGIN
+			enumerator := of.GetContents();
+			WHILE enumerator.HasMoreElements() DO
+				item := enumerator.GetNext();
+				IF item IS XML.Element THEN
+					this := item(XML.Element).GetName();
+					IF (this # NIL) & (this^ = name) THEN RETURN item(XML.Element) END
+				END
+			END;
+			RETURN NIL
+		END Child;
+
+	BEGIN
+		(*	Attributes in single quotes, written in an Oberon string in double ones -- and the
+			other way round below, because a double quote cannot be put inside a double-quoted
+			Oberon string at all. *)
+		document := Parse("<config><name>minia2</name><version major='2' minor='7' /></config>");
+		ASSERT(errors = 0);
+		ASSERT(document # NIL);
+		root := document.GetRoot();
+		ASSERT(root # NIL);
+		value := root.GetName();
+		ASSERT(value^ = "config");
+
+		(* an element with text in it *)
+		found := Child(root, "name");
+		ASSERT(found # NIL);
+
+		(* attributes, in single quotes and in double *)
+		found := Child(root, "version");
+		ASSERT(found # NIL);
+		value := found.GetAttributeValue("major");
+		ASSERT(value # NIL);
+		ASSERT(value^ = "2");
+		value := found.GetAttributeValue("minor");
+		ASSERT(value # NIL);
+		ASSERT(value^ = "7");
+		ASSERT(found.GetAttributeValue("absent") = NIL);
+
+		(* the same document with the quoting the other way about *)
+		document := Parse('<config><version major="2" minor="7"/></config>');
+		ASSERT(errors = 0);
+		root := document.GetRoot();
+		found := Child(root, "version");
+		ASSERT(found # NIL);
+		value := found.GetAttributeValue("major"); ASSERT(value^ = "2");
+		value := found.GetAttributeValue("minor"); ASSERT(value^ = "7");
+
+		(* elements inside elements, three deep, and a comment that is not one of them *)
+		document := Parse("<a><!-- nothing --><b><c/></b></a>");
+		ASSERT(errors = 0);
+		root := document.GetRoot();
+		value := root.GetName(); ASSERT(value^ = "a");
+		found := Child(root, "b");
+		ASSERT(found # NIL);
+		ASSERT(Child(found, "c") # NIL);
+		ASSERT(Child(root, "c") = NIL);              (* a grandchild is not a child *)
+
+		(* a document with nothing but a root *)
+		document := Parse("<empty/>");
+		ASSERT(errors = 0);
+		root := document.GetRoot();
+		value := root.GetName();
+		ASSERT(value^ = "empty");
+
+		(* and one with a declaration in front of it *)
+		document := Parse("<?xml version='1.0' encoding='UTF-8'?><root a='b'/>");
+		ASSERT(errors = 0);
+		root := document.GetRoot();
+		value := root.GetName(); ASSERT(value^ = "root");
+		value := root.GetAttributeValue("a"); ASSERT(value^ = "b")
+	END Test.
+
+positive: what is not a document is refused, and refused without a trap
+
+	MODULE Test;
+	IMPORT XML, XMLScanner, XMLParser, Streams;
+
+	VAR document: XML.Document; errors: SIGNED32;
+
+		PROCEDURE Note(pos, line, row: Streams.Position; CONST msg: ARRAY OF CHAR);
+		BEGIN INC(errors)
+		END Note;
+
+		PROCEDURE Parse(CONST text: ARRAY OF CHAR): XML.Document;
+		VAR reader: Streams.StringReader; scanner: XMLScanner.Scanner; parser: XMLParser.Parser;
+		BEGIN
+			errors := 0;
+			NEW(reader, LEN(text)); reader.Set(text);
+			NEW(scanner, reader); scanner.reportError := Note;
+			NEW(parser, scanner); parser.reportError := Note;
+			RETURN parser.Parse()
+		END Parse;
+
+	BEGIN
+		document := Parse("<a><b></a></b>");             (* crossed, not nested *)
+		ASSERT(errors > 0);
+
+		document := Parse("<a>");                        (* opened and never closed *)
+		ASSERT(errors > 0);
+
+		document := Parse("</a>");                       (* closed and never opened *)
+		ASSERT(errors > 0);
+
+		document := Parse("<a attr=noquotes/>");         (* an attribute has to be quoted *)
+		ASSERT(errors > 0);
+
+		document := Parse("<a attr='unterminated/>");
+		ASSERT(errors > 0);
+
+		document := Parse("not markup at all");
+		ASSERT(errors > 0);
+
+		document := Parse("");                           (* and nothing at all *)
+		ASSERT(errors > 0);
+
+		(* the parser is usable again after each of them *)
+		document := Parse("<good/>");
+		ASSERT(errors = 0);
+		ASSERT(document # NIL);
+		ASSERT(document.GetRoot() # NIL)
+	END Test.
