@@ -22,9 +22,12 @@ VAR
 		IF (num > NbrInt64.MinNbr) & (num # 0) THEN
 			absNum := NbrInt64.Abs( num );  absDenom := NbrInt64.Abs( denom );
 			IF absNum > absDenom THEN current := absNum;  next := absDenom ELSE current := absDenom;  next := absNum END;
-			REPEAT  (* The Euclidean algorithm. *)
+			(* WHILE, not REPEAT: with a zero argument the first remainder was taken MOD zero, so the
+				greatest common divisor of n and 0 -- which is n -- killed the process instead. That is
+				how multiplying a rational by the integer 0 raised a division error. *)
+			WHILE next # 0 DO  (* The Euclidean algorithm. *)
 				prev := current;  current := next;  next := prev MOD current
-			UNTIL next = 0;
+			END;
 			cd := current
 		ELSE cd := 1
 		END
@@ -33,6 +36,9 @@ VAR
 	PROCEDURE Simplify( VAR x: Rational );
 	VAR cd, n, d: NbrInt64.Integer;
 	BEGIN
+		(* Every way of making a rational ends here, so a denominator of zero is caught where it is
+			made and named, rather than as a division error inside the Euclidean algorithm. *)
+		ASSERT( x.d # 0 );
 		n := x.n;  d := x.d;
 		IF n # 0 THEN
 			IF (d < 0) & (d > NbrInt64.MinNbr) & (n > NbrInt64.MinNbr) THEN n := -n;  d := -d END;
@@ -94,7 +100,9 @@ VAR
 		IF a < b THEN RETURN TRUE
 		ELSIF a > b THEN RETURN FALSE
 		ELSE
-			IF (l.n MOD l.d) < (r.n MOD r.d) THEN RETURN TRUE ELSE RETURN FALSE END
+			(* Same whole part, so the fractions decide -- and they are over different denominators.
+				Comparing the two remainders as they stand said a third was not less than a half. *)
+			IF (l.n MOD l.d) * r.d < (r.n MOD r.d) * l.d THEN RETURN TRUE ELSE RETURN FALSE END
 		END
 	END "<";
 
@@ -110,7 +118,9 @@ VAR
 		IF l < b THEN RETURN TRUE
 		ELSIF l > b THEN RETURN FALSE
 		ELSE
-			IF (r.n MOD r.d > 0) & (r.n > 0) THEN RETURN TRUE ELSE RETURN FALSE END
+			(* The whole parts agree, so l is below r exactly when r has a fraction left over. The
+				extra test for a positive numerator made -2 < -3/2 come out false. *)
+			IF r.n MOD r.d > 0 THEN RETURN TRUE ELSE RETURN FALSE END
 		END
 	END "<";
 
@@ -121,7 +131,8 @@ VAR
 		IF a > b THEN RETURN TRUE
 		ELSIF a < b THEN RETURN FALSE
 		ELSE
-			IF (l.n MOD l.d) > (r.n MOD r.d) THEN RETURN TRUE ELSE RETURN FALSE END
+			(* See "<": the remainders are over different denominators and have to be brought together. *)
+			IF (l.n MOD l.d) * r.d > (r.n MOD r.d) * l.d THEN RETURN TRUE ELSE RETURN FALSE END
 		END
 	END ">";
 
@@ -364,7 +375,10 @@ VAR
 	PROCEDURE Ceiling*( x: Rational ): NbrInt64.Integer;
 	VAR int: NbrInt64.Integer;
 	BEGIN
-		int := Int( x );  NbrInt64.Inc( int );  RETURN int
+		int := Int( x );
+		(* A whole number is its own ceiling: stepping up unconditionally made Ceiling(2/1) = 3. *)
+		IF x.n MOD x.d # 0 THEN NbrInt64.Inc( int ) END;
+		RETURN int
 	END Ceiling;
 
 	PROCEDURE Set*( numerator, denominator: NbrInt64.Integer;  VAR x: Rational );
