@@ -1785,6 +1785,157 @@ VAR
 		RETURN res
 	END Formatting;
 
+	(* ---- folding ranges ---- *)
+
+	(*	textDocument/foldingRange, worked out from the token stream and not from the syntax tree.
+		Two reasons. One: in an editor the file is half-written most of the time, and every other
+		method here goes through the parser -- folding would disappear exactly while you type.
+		Two: the tree does not know where anything ends. A symbol's position is the position of
+		its name token (see Range above), so folding by tree would mean adding end positions to
+		FoxParser and FoxSyntaxTree, which are ETH's.
+
+		Oberon is strictly nested and almost everything closes with END, so one stack of opening
+		lines is enough. The three things that are not that simple:
+		  - PROCEDURE opens a block when a name follows it, and opens nothing when it is a
+		    procedure TYPE (a parenthesis or a colon follows) or a forward declaration (^);
+		  - OBJECT is a type of its own (VAR x: OBJECT), and then closes nothing;
+		  - REPEAT closes with UNTIL, not with END;
+		and #if/#end of conditional compilation, whose keywords are ordinary tokens after a '#'. *)
+	PROCEDURE FoldingRanges (text: Strings.String): JSON.Value;
+	CONST MaxDepth = 256;
+	VAR srcR: Streams.StringReader; diag: Diagnostics.DiagnosticsList;
+		scanner: FoxScanner.Scanner; token: FoxScanner.Token;
+		stack: ARRAY MaxDepth OF SIGNED32;
+		(* whether the entry is a declaration still waiting for its BEGIN -- see Body below *)
+		absorbs: ARRAY MaxDepth OF BOOLEAN;
+		depth: SIGNED32;
+		res: JSON.Array; line, i, endLine: SIGNED32;
+		pendingProc, pendingObj, inImport, afterHash: BOOLEAN;
+		pendingLine, importLine, parens, braces: SIGNED32;
+
+		PROCEDURE Emit (startLine, endLine: SIGNED32; CONST kind: ARRAY OF CHAR);
+		VAR o: JSON.Object;
+		BEGIN
+			IF endLine > startLine THEN
+				o := JSON.NewObject();
+				o.Set("startLine", JSON.NewNumber(startLine));
+				o.Set("endLine", JSON.NewNumber(endLine));
+				IF kind # "" THEN o.Set("kind", JSON.NewString(kind)) END;
+				res.Add(o)
+			END
+		END Emit;
+
+		(* depth is counted past the array so that Push and Pop stay paired on very deep nesting *)
+		PROCEDURE Push (l: SIGNED32; absorb: BOOLEAN);
+		BEGIN
+			IF depth < MaxDepth THEN stack[depth] := l; absorbs[depth] := absorb END;
+			INC(depth)
+		END Push;
+
+		(*	A procedure and its body share one END: `PROCEDURE P; BEGIN ... END P`. So the BEGIN
+			of a declaration opens nothing -- it is absorbed by the declaration that is already
+			open. A BEGIN that is a block of its own, inside a statement sequence, is not. *)
+		PROCEDURE Body (l: SIGNED32);
+		BEGIN
+			IF (depth > 0) & (depth <= MaxDepth) & absorbs[depth-1] THEN absorbs[depth-1] := FALSE
+			ELSE Push(l, FALSE)
+			END
+		END Body;
+
+		PROCEDURE Pop (l: SIGNED32);
+		BEGIN
+			IF depth > 0 THEN
+				DEC(depth);
+				IF depth < MaxDepth THEN Emit(stack[depth], l, "") END
+			END
+		END Pop;
+
+		(* a PROCEDURE or an OBJECT held back until the token after it says which it was *)
+		PROCEDURE Settle (symbol: SIGNED32);
+		BEGIN
+			IF pendingProc THEN
+				IF symbol = FoxScanner.LeftBrace THEN INC(braces)
+				ELSIF symbol = FoxScanner.RightBrace THEN DEC(braces)
+				ELSIF braces > 0 THEN (* inside the flags, keep waiting *)
+				ELSIF symbol = FoxScanner.And THEN (* the & of a constructor, keep waiting *)
+				ELSIF symbol = FoxScanner.Arrow THEN pendingProc := FALSE   (* forward declaration *)
+				ELSIF (symbol = FoxScanner.Identifier) OR (symbol = FoxScanner.String) THEN
+					pendingProc := FALSE; Push(pendingLine, TRUE)
+				ELSE pendingProc := FALSE                                    (* a procedure type *)
+				END
+			ELSIF pendingObj THEN
+				pendingObj := FALSE;
+				IF (symbol # FoxScanner.Semicolon) & (symbol # FoxScanner.RightParenthesis)
+					& (symbol # FoxScanner.Comma) & (symbol # FoxScanner.RightBracket)
+					& (symbol # FoxScanner.Bar) & (symbol # FoxScanner.Of)
+					& (symbol # FoxScanner.Becomes) & (symbol # FoxScanner.Equal) THEN
+					Push(pendingLine, TRUE)
+				END
+			END
+		END Settle;
+
+	BEGIN
+		IF text = NIL THEN RETURN NIL END;
+		NEW(diag); Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		res := JSON.NewArray(); depth := 0; braces := 0; parens := 0;
+		pendingProc := FALSE; pendingObj := FALSE; inImport := FALSE; afterHash := FALSE;
+		importLine := 0; pendingLine := 0;
+		LOOP
+			(* the scanner reports its own errors by returning FALSE; folding is wanted anyway *)
+			IF ~scanner.GetNextToken(token) THEN scanner.ResetError END;
+			IF token.symbol = FoxScanner.EndOfText THEN EXIT END;
+			line := SIGNED32(token.position.line) - 1;
+			IF line < 0 THEN line := 0 END;
+
+			Settle(token.symbol);
+
+			IF token.symbol = FoxScanner.Comment THEN
+				(* the token carries the comment; its last line is this one plus the line feeds in it *)
+				endLine := line; i := 0;
+				WHILE (token.string # NIL) & (i < SIGNED32(token.stringLength)) DO
+					IF token.string[i] = LF THEN INC(endLine) END;
+					INC(i)
+				END;
+				Emit(line, endLine, "comment")
+			ELSIF afterHash THEN
+				(* #if / #elsif / #else / #end: keywords, but not this language's blocks *)
+			ELSE
+				CASE token.symbol OF
+				  FoxScanner.Procedure, FoxScanner.Operator:
+					pendingProc := TRUE; pendingLine := line; braces := 0
+				| FoxScanner.Object:
+					pendingObj := TRUE; pendingLine := line
+				| FoxScanner.Module, FoxScanner.CellNet, FoxScanner.Cell, FoxScanner.Definition,
+				  FoxScanner.Record:
+					Push(line, TRUE)
+				| FoxScanner.Enum, FoxScanner.If, FoxScanner.Case, FoxScanner.While,
+				  FoxScanner.For, FoxScanner.Loop, FoxScanner.With, FoxScanner.Code,
+				  FoxScanner.Repeat:
+					Push(line, FALSE)
+				| FoxScanner.Begin:
+					Body(line)
+				| FoxScanner.End, FoxScanner.Until:
+					Pop(line)
+				| FoxScanner.Import:
+					inImport := TRUE; importLine := line; parens := 0
+				| FoxScanner.LeftParenthesis:
+					IF inImport THEN INC(parens) END
+				| FoxScanner.RightParenthesis:
+					IF inImport THEN DEC(parens) END
+				| FoxScanner.Semicolon:
+					IF inImport & (parens <= 0) THEN
+						inImport := FALSE; Emit(importLine, line, "imports")
+					END
+				ELSE
+				END
+			END;
+
+			afterHash := token.symbol = FoxScanner.Unequal
+		END;
+		RETURN res
+	END FoldingRanges;
+
 	(* ---- code actions ---- *)
 
 	PROCEDURE IndexOf (text: Strings.String; CONST pat: ARRAY OF CHAR; from: SIZE): SIZE;
@@ -1962,6 +2113,7 @@ VAR
 						caps.Set("renameProvider", JSON.NewBool(TRUE));
 						caps.Set("documentFormattingProvider", JSON.NewBool(TRUE));
 						caps.Set("codeActionProvider", JSON.NewBool(TRUE));
+						caps.Set("foldingRangeProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -2091,6 +2243,14 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := Formatting(doc.text) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/foldingRange" THEN
+						td := AsObject(params.Get("textDocument"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := FoldingRanges(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/codeAction" THEN

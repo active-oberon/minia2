@@ -604,6 +604,7 @@ positive: initialize announces every provider, with the triggers and the token l
 		ASSERT(T.True(T.Field(caps, "renameProvider")));
 		ASSERT(T.True(T.Field(caps, "documentFormattingProvider")));
 		ASSERT(T.True(T.Field(caps, "codeActionProvider")));
+		ASSERT(T.True(T.Field(caps, "foldingRangeProvider")));
 		ASSERT(T.Number(T.Field(caps, "textDocumentSync")) = 1);
 		ASSERT(T.Is(T.Item(T.Field2(caps, "completionProvider", "triggerCharacters"), 0), "."));
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
@@ -953,4 +954,129 @@ positive: input the server has to survive: a message that is not JSON, and a met
 		ASSERT(s.Answer(id) # NIL);        (* the session outlived the message it could not read *)
 		ASSERT(T.IsNull(s.Answer(unknown)));  (* answered with null, so no editor waits for ever *)
 		ASSERT(s.Answers() = 3)            (* initialize, that one, shutdown -- and no notification *)
+	END Test.
+
+positive: folding ranges for the module, the record and each procedure
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; r: JSON.Value;
+
+	(*	A range is looked up by the line it starts on, not by its place in the array: the order
+		ranges come back in is the order they close, and nothing in the protocol promises it. *)
+	PROCEDURE EndOf (r: JSON.Value; startLine: SIGNED32): SIGNED32;
+	VAR i: SIGNED32; it: JSON.Value;
+	BEGIN
+		FOR i := 0 TO T.Count(r) - 1 DO
+			it := T.Item(r, i);
+			IF T.Number(T.Field(it, "startLine")) = startLine THEN
+				RETURN T.Number(T.Field(it, "endLine"))
+			END
+		END;
+		RETURN -1
+	END EndOf;
+
+	BEGIN
+		T.Project(s, lib, main);
+		T.Doc(T.LibUri, p);
+		id := s.Request("textDocument/foldingRange", p);
+		s.Run(FALSE);
+		r := s.Answer(id);
+		ASSERT(T.Count(r) = 4);
+		ASSERT(EndOf(r, 0) = 18);       (* the module, header to final END *)
+		ASSERT(EndOf(r, 3) = 5);        (* the record *)
+		(*	A procedure and its body share one END, so the fold is the whole procedure and there
+			is no second one starting at the BEGIN. *)
+		ASSERT(EndOf(r, 7) = 10);
+		ASSERT(EndOf(r, 8) = -1);
+		ASSERT(EndOf(r, 12) = 16)
+	END Test.
+
+positive: folding tells a procedure type from a procedure, and finds comments and imports
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON, Strings;
+
+	CONST Uri = "file://Folding.Mod";
+
+	VAR s: T.Session; lib, main, text, p: T.Text; id: SIGNED32; r: JSON.Value;
+
+	PROCEDURE Ln (VAR s: ARRAY OF CHAR; CONST t: ARRAY OF CHAR);
+	VAR one: ARRAY 2 OF CHAR;
+	BEGIN
+		Strings.Append(s, t); one[0] := 0AX; one[1] := 0X; Strings.Append(s, one)
+	END Ln;
+
+	PROCEDURE EndOf (r: JSON.Value; startLine: SIGNED32): SIGNED32;
+	VAR i: SIGNED32; it: JSON.Value;
+	BEGIN
+		FOR i := 0 TO T.Count(r) - 1 DO
+			it := T.Item(r, i);
+			IF T.Number(T.Field(it, "startLine")) = startLine THEN
+				RETURN T.Number(T.Field(it, "endLine"))
+			END
+		END;
+		RETURN -1
+	END EndOf;
+
+	PROCEDURE KindOf (r: JSON.Value; startLine: SIGNED32): JSON.Value;
+	VAR i: SIGNED32; it: JSON.Value;
+	BEGIN
+		FOR i := 0 TO T.Count(r) - 1 DO
+			it := T.Item(r, i);
+			IF T.Number(T.Field(it, "startLine")) = startLine THEN RETURN T.Field(it, "kind") END
+		END;
+		RETURN NIL
+	END KindOf;
+
+	BEGIN
+		text := "";
+		Ln(text, "MODULE Folding;");                          (* 0 *)
+		Ln(text, "");                                         (* 1 *)
+		Ln(text, "IMPORT");                                   (* 2 *)
+		Ln(text, "	Streams,");                               (* 3 *)
+		Ln(text, "	Files;");                                 (* 4 *)
+		Ln(text, "");                                         (* 5 *)
+		Ln(text, "(* a comment");                             (* 6 *)
+		Ln(text, "	that runs over");                         (* 7 *)
+		Ln(text, "	three lines *)");                         (* 8 *)
+		Ln(text, "");                                         (* 9 *)
+		Ln(text, "TYPE");                                     (* 10 *)
+		Ln(text, "	Mapper = PROCEDURE (x: SIGNED32): SIGNED32;");   (* 11 *)
+		Ln(text, "	Holder = OBJECT");                        (* 12 *)
+		Ln(text, "	VAR any: OBJECT;");                       (* 13 *)
+		Ln(text, "");                                         (* 14 *)
+		Ln(text, "		PROCEDURE Do;");                        (* 15 *)
+		Ln(text, "		BEGIN");                                (* 16 *)
+		Ln(text, "			REPEAT");                             (* 17 *)
+		Ln(text, "				any := NIL");                       (* 18 *)
+		Ln(text, "			UNTIL any = NIL");                    (* 19 *)
+		Ln(text, "		END Do;");                              (* 20 *)
+		Ln(text, "");                                         (* 21 *)
+		Ln(text, "	END Holder;");                            (* 22 *)
+		Ln(text, "");                                         (* 23 *)
+		Ln(text, "END Folding.");                             (* 24 *)
+
+		T.Project(s, lib, main);
+		s.Open(Uri, text);
+		T.Doc(Uri, p);
+		id := s.Request("textDocument/foldingRange", p);
+		s.Run(FALSE);
+		r := s.Answer(id);
+
+		ASSERT(EndOf(r, 0) = 24);                (* the module *)
+		ASSERT(T.Is(KindOf(r, 2), "imports"));   (* the import list, to the semicolon that ends it *)
+		ASSERT(EndOf(r, 2) = 4);
+		ASSERT(T.Is(KindOf(r, 6), "comment"));   (* a comment over three lines *)
+		ASSERT(EndOf(r, 6) = 8);
+		ASSERT(EndOf(r, 12) = 22);               (* the object *)
+		ASSERT(EndOf(r, 15) = 20);               (* the procedure inside it *)
+		ASSERT(EndOf(r, 17) = 19);               (* REPEAT closes with UNTIL, not with END *)
+
+		(*	The two that open nothing: a procedure TYPE is not a procedure, and OBJECT used as a
+			type of its own has no END to look for. Either mistake would unbalance everything
+			after it, so these are the cases that keep the rest honest. *)
+		ASSERT(EndOf(r, 11) = -1);
+		ASSERT(EndOf(r, 13) = -1);
+		ASSERT(T.Count(r) = 6)
 	END Test.
