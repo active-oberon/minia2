@@ -8685,3 +8685,56 @@ positive: mixed integer and float arguments through the C and WINAPI conventions
 		ASSERT(CMixed(n, x, n + 2, x + 1.75, n + 4, x + 3.625) = 12.875, 1159);
 		ASSERT(WMixed(n, x, n + 2, x + 2.0) = 7.0, 1160);
 	END Test.
+
+# A 64-bit immediate is written into the instruction as 32 bits where it fits, and the processor
+# sign-extends what it finds. Values from MAX(SIGNED32)+1 to MAX(UNSIGNED32) do fit in 32 bits and
+# do not survive the extension: 0FFFFFFFFH arrives as -1. The backend guarded against that only
+# when the type called itself unsigned, so every signed 64-bit immediate in that range was wrong.
+# It surfaced as arithmetic, because a modulus by a power of two is compiled into an AND with the
+# mask, and for 2^32 that mask is exactly 0FFFFFFFFH -- so x MOD 100000000H returned x.
+
+positive: a 64-bit immediate above MAX(SIGNED32) is not a sign-extended 32-bit one
+
+	MODULE Test;
+	VAR x, d: SIGNED64;  u: UNSIGNED64;
+	BEGIN
+		(* the mask that does not survive the extension, reached through MOD *)
+		x := 4294967296;
+		ASSERT(x MOD 100000000H = 0, 1161);
+		ASSERT(x DIV 100000000H = 1, 1162);
+		x := -1;
+		ASSERT(x MOD 100000000H = 4294967295, 1163);   (* a modulus by a positive number is never negative *)
+		x := -5;
+		ASSERT(x MOD 100000000H = 4294967291, 1164);
+		x := 123456789012345;
+		ASSERT(x MOD 100000000H = 2249056121, 1165);
+		ASSERT(x DIV 100000000H = 28744, 1166);
+		ASSERT(x MOD 200000000H = 2249056121, 1167);
+		ASSERT(x MOD 80000000H = 101572473, 1168);     (* 2^31: the mask still fits signed, and always worked *)
+
+		(* the same divisor arrived at through a variable, which takes the general path and was right *)
+		d := 100000000H;
+		x := 123456789012345;
+		ASSERT(x MOD d = 2249056121, 1169);
+		ASSERT(x DIV d = 28744, 1170);
+
+		(* and the immediate on its own, in the operations that carry one *)
+		x := 4294967295;
+		ASSERT(x = 4294967295, 1171);
+		ASSERT(x > 0, 1172);
+		ASSERT(x > 2147483647, 1173);
+		d := 4294967295;
+		ASSERT(x = d, 1174);
+		x := 0;  INC(x, 4294967295);
+		ASSERT(x = 4294967295, 1175);
+		x := 4294967295;  DEC(x, 4294967295);
+		ASSERT(x = 0, 1176);
+		x := 8589934590;
+		ASSERT(x - 4294967295 = 4294967295, 1177);
+
+		(* the unsigned side of the same range, which the guard already covered *)
+		u := 4294967295;
+		ASSERT(u = 4294967295, 1178);
+		ASSERT(u > 2147483647, 1179);
+		ASSERT(u MOD 100000000H = 4294967295, 1180);
+	END Test.
