@@ -929,8 +929,15 @@ TYPE
 
 				IF virtual.symbol.name # "" THEN size := SHORT(type.sizeInBits DIV 8);
 				ELSIF forbidden16Bit & IsImm16(value) & ~(IsImm8(value)) THEN size := Assembler.bits32;
-				ELSIF (type.sizeInBits = 64) & (type.form = IntermediateCode.UnsignedInteger) & (value > MAX(SIGNED32)) THEN
-					size := 8; (* don't use negative signed 32-bit value  to encode 64-bit unsigned value! *)
+				ELSIF (type.sizeInBits = 64) & (value > MAX(SIGNED32)) THEN
+					(*	A 32-bit immediate is sign-extended into a 64-bit operand, so a value above
+						MAX(SIGNED32) cannot be written that way at all -- what arrives is a negative
+						number. That is a property of the operand width, not of what the type calls
+						itself: the test used to ask for an unsigned type, and every signed 64-bit
+						immediate in that range was encoded wrong. It showed as x MOD 100000000H
+						returning x, because the compiler turns a modulus by a power of two into an
+						AND with the mask, and the mask 0FFFFFFFFH sign-extended to all ones. *)
+					size := 8;
 				ELSE size := 0
 				END;
 				Assembler.InitImm(physical,size ,value);
