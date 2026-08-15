@@ -8,8 +8,8 @@ and ETH's sit in one directory and cannot be told apart by looking.
 | | modules |
 | --- | ---: |
 | ours outright (in no vanilla tree) | 16 |
-| vanilla, changed by us | 49 |
-| vanilla, untouched | 703 |
+| vanilla, changed by us | 50 |
+| vanilla, untouched | 702 |
 
 ## Ours outright
 
@@ -45,6 +45,7 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `Diagnostics.Mod`
 - `FoxAMDBackend.Mod`
 - `FoxAssembler.Mod`
+- `FoxBasic.Mod`
 - `FoxIntermediateBackend.Mod`
 - `FoxInterpreterSymbols.Mod`
 - `FoxScanner.Mod`

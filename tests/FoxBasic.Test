@@ -1,0 +1,362 @@
+# Tests for FoxBasic -- the list, the three hash tables and the segmented name the whole
+# compiler is built on.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# std/compiler is the largest package in the registry, 91 modules, and the two Oberon suites
+# already drive it end to end: 5450 compilations and 696 executions. What they cannot do is ask
+# a container what it does when it is empty, or asked for something that is not there -- the
+# compiler only ever uses these the way the compiler uses them. Ten defects were sitting in that
+# gap, three of which end the process and two of which are procedures that never returned their
+# result at all.
+#
+# The list and the tables hold ANY, so the cases need objects to put in them; a pointer to a
+# record with a number in it is enough, and the number makes the sort case readable.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a list, and what it does at both ends of itself
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	TYPE Item = POINTER TO RECORD n: SIGNED32 END;
+
+	VAR list: Basic.List; a, b, c: Item; i: SIZE;
+
+	PROCEDURE NewItem(n: SIGNED32): Item;
+	VAR x: Item;
+	BEGIN NEW(x); x.n := n; RETURN x
+	END NewItem;
+
+	BEGIN
+		a := NewItem(1); b := NewItem(2); c := NewItem(3);
+
+		NEW(list, 4);
+		ASSERT(list.Length() = 0);
+		ASSERT(list.IndexOf(a) = -1);              (* not there, and said so rather than found *)
+		ASSERT(~list.Contains(a));
+
+		list.Add(a); list.Add(b); list.Add(c);
+		ASSERT(list.Length() = 3);
+		ASSERT(list.Get(0) = a); ASSERT(list.Get(2) = c);
+		ASSERT(list.IndexOf(b) = 1);
+		ASSERT(list.Contains(b));
+
+		list.Set(1, c); ASSERT(list.Get(1) = c);
+		list.Set(1, b);
+
+		list.Remove(b);
+		ASSERT(list.Length() = 2);
+		ASSERT(list.Get(0) = a); ASSERT(list.Get(1) = c);
+		list.Remove(b);                            (* already gone: a second remove changes nothing *)
+		ASSERT(list.Length() = 2);
+
+		(*	Insert takes 0 .. count, count being an append. Beyond that there is nothing to
+			insert before, and the element used to be written past the end of the list: the
+			length grew by one and IndexOf did not know the object that had just been put in. *)
+		NEW(list, 4);
+		list.Add(a);
+		list.Insert(0, b);
+		ASSERT(list.Get(0) = b); ASSERT(list.Get(1) = a); ASSERT(list.Length() = 2);
+		list.Insert(2, c);                         (* at count: an append *)
+		ASSERT(list.Get(2) = c); ASSERT(list.Length() = 3);
+		ASSERT(list.IndexOf(c) = 2);
+
+		(*	Prepend carries the same check as Add and had it written the other way round, so
+			what Add accepted twice brought Prepend down with a failed assertion. *)
+		NEW(list, 4);
+		list.Add(a); list.Add(a);                  (* the duplicate check is a debugging aid, and off *)
+		ASSERT(list.Length() = 2);
+		NEW(list, 4);
+		list.Add(a); list.Prepend(a);
+		ASSERT(list.Length() = 2);
+		ASSERT(list.Get(0) = a);
+
+		(* Growing past the size it was made with, and being cleared back to nothing. *)
+		NEW(list, 2);
+		list.multipleAllowed := TRUE;
+		FOR i := 1 TO 100 DO list.Add(NewItem(SIGNED32(i))) END;
+		ASSERT(list.Length() = 100);
+		ASSERT(list.Get(99)(Item).n = 100);
+		list.Clear;
+		ASSERT(list.Length() = 0);
+		ASSERT(list.IndexOf(a) = -1);
+
+		(* GrowAndSet reaches past the end on purpose, and the length follows it. *)
+		NEW(list, 2);
+		list.GrowAndSet(10, a);
+		ASSERT(list.Length() = 11);
+		ASSERT(list.Get(10) = a);
+		ASSERT(list.Get(0) = NIL)
+	END Test.
+
+positive: a list sorts, including when there is nothing to sort
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	TYPE Item = POINTER TO RECORD n: SIGNED32 END;
+
+	VAR list: Basic.List; i: SIZE; prev: SIGNED32;
+
+	PROCEDURE NewItem(n: SIGNED32): Item;
+	VAR x: Item;
+	BEGIN NEW(x); x.n := n; RETURN x
+	END NewItem;
+
+	PROCEDURE Before(x, y: ANY): BOOLEAN;
+	BEGIN RETURN x(Item).n < y(Item).n
+	END Before;
+
+	BEGIN
+		(*	An empty list has to survive being sorted: this one guards on the count, where the
+			QuickSort of GenericSort did not and took the process with it. *)
+		NEW(list, 4);
+		list.Sort(Before);
+		ASSERT(list.Length() = 0);
+
+		list.Add(NewItem(1));
+		list.Sort(Before);
+		ASSERT(list.Length() = 1);
+
+		NEW(list, 4);
+		list.multipleAllowed := TRUE;
+		list.Add(NewItem(5)); list.Add(NewItem(1)); list.Add(NewItem(9));
+		list.Add(NewItem(3)); list.Add(NewItem(7)); list.Add(NewItem(1));
+		list.Sort(Before);
+		ASSERT(list.Length() = 6);
+		prev := MIN(SIGNED32);
+		FOR i := 0 TO list.Length() - 1 DO
+			ASSERT(list.Get(i)(Item).n >= prev);
+			prev := list.Get(i)(Item).n
+		END;
+		ASSERT(list.Get(0)(Item).n = 1);
+		ASSERT(list.Get(5)(Item).n = 9)
+	END Test.
+
+positive: a hash table, and what it holds after it has been emptied
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	TYPE Item = POINTER TO RECORD n: SIGNED32 END;
+
+	VAR h: Basic.HashTable; hi: Basic.HashTableInt; a, b: Item; i: SIGNED32; item: Item;
+
+	PROCEDURE NewItem(n: SIGNED32): Item;
+	VAR x: Item;
+	BEGIN NEW(x); x.n := n; RETURN x
+	END NewItem;
+
+	BEGIN
+		a := NewItem(1); b := NewItem(2);
+
+		NEW(h, 8);
+		ASSERT(h.Length() = 0);
+		ASSERT(~h.Has(a));
+		ASSERT(h.Get(a) = NIL);                    (* absent, and no pretence otherwise *)
+
+		h.Put(a, b); h.Put(b, a);
+		ASSERT(h.Length() = 2);
+		ASSERT(h.Has(a)); ASSERT(h.Has(b));
+		ASSERT(h.Get(a) = b); ASSERT(h.Get(b) = a);
+
+		h.Put(a, a);                               (* the same key again is a replacement *)
+		ASSERT(h.Length() = 2);
+		ASSERT(h.Get(a) = a);
+
+		(*	Clear counted for nothing: it emptied the slots and left used where it was, so
+			Length lied afterwards and Put met ASSERT(used < size) on an empty table. *)
+		h.Clear;
+		ASSERT(h.Length() = 0);
+		ASSERT(~h.Has(a));
+		ASSERT(h.Get(a) = NIL);
+		h.Put(a, b);                               (* and it takes entries again *)
+		ASSERT(h.Length() = 1);
+		ASSERT(h.Get(a) = b);
+
+		(* More entries than it was made room for: it grows, and keeps what it had. *)
+		NEW(h, 4);
+		FOR i := 1 TO 200 DO h.Put(NewItem(i), NewItem(-i)) END;
+		ASSERT(h.Length() = 200);
+
+		(* The table keyed by integers answers the same questions. *)
+		NEW(hi, 8);
+		ASSERT(hi.Length() = 0);
+		ASSERT(~hi.Has(1));
+		hi.Put(1, a); hi.Put(2, b);
+		ASSERT(hi.Length() = 2);
+		ASSERT(hi.Has(1)); ASSERT(hi.Get(1) = a); ASSERT(hi.Get(2) = b);
+		ASSERT(~hi.Has(3));
+
+		(*	Its Clear emptied the keys only, so the value of a slot emptied a moment ago was
+			still there to be found by the next key that hashed to it. *)
+		hi.Clear;
+		ASSERT(hi.Length() = 0);
+		ASSERT(~hi.Has(1));
+		ASSERT(hi.Get(1) = NIL);
+		ASSERT(hi.GetInt(1) = 0);
+
+		hi.PutInt(5, 42);
+		ASSERT(hi.GetInt(5) = 42);
+		ASSERT(hi.Has(5));
+
+		NEW(hi, 4);
+		FOR i := 1 TO 200 DO hi.Put(i, NewItem(i)) END;
+		ASSERT(hi.Length() = 200);
+		item := hi.Get(137)(Item);
+		ASSERT(item.n = 137);
+
+		(*	0 is what the table writes into an empty slot, so it is not a key it can hold, and
+			Put says so. Nothing may read Has(0) as an answer about a stored value. *)
+		NEW(hi, 8);
+		ASSERT(hi.Length() = 0)
+	END Test.
+
+positive: a table keyed by the names the compiler gives its sections
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	TYPE Item = POINTER TO RECORD n: SIGNED32 END;
+
+	VAR h: Basic.HashTableSegmentedName; a, b: Item; n1, n2, n3: Basic.SegmentedName;
+
+	BEGIN
+		NEW(a); NEW(b);
+		Basic.ToSegmentedName("Modules.Module.Body", n1);
+		Basic.ToSegmentedName("Modules.Module.Init", n2);
+		Basic.ToSegmentedName("Heaps.NewRec", n3);
+
+		NEW(h, 8);
+		ASSERT(h.Length() = 0);
+		ASSERT(~h.Has(n1));
+
+		h.Put(n1, a); h.Put(n2, b);
+		ASSERT(h.Length() = 2);
+		ASSERT(h.Has(n1)); ASSERT(h.Has(n2)); ASSERT(~h.Has(n3));
+		ASSERT(h.Get(n1) = a); ASSERT(h.Get(n2) = b);
+
+		(* same defect as the other two: the count and the values outlived the Clear *)
+		h.Clear;
+		ASSERT(h.Length() = 0);
+		ASSERT(~h.Has(n1));
+		ASSERT(h.Get(n1) = NIL);
+		h.Put(n1, b);
+		ASSERT(h.Length() = 1);
+		ASSERT(h.Get(n1) = b)
+	END Test.
+
+positive: a segmented name, taken apart and put together again
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	VAR name, other: Basic.SegmentedName; s: ARRAY 256 OF CHAR;
+
+	BEGIN
+		Basic.ToSegmentedName("A.B.C", name);
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "A.B.C");                       (* the round trip, which is the whole contract *)
+
+		Basic.ToSegmentedName("Modules", name);
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "Modules");
+
+		Basic.ToSegmentedName("A.B.C", name);
+		ASSERT(Basic.SegmentedNameEndsWith(name, "C"));
+		ASSERT(~Basic.SegmentedNameEndsWith(name, "B"));
+		ASSERT(Basic.SegmentedNameEndsWith(name, ""));
+
+		Basic.RemoveSuffix(name);
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "A.B");
+		Basic.RemoveSuffix(name);
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "A");
+
+		Basic.ToSegmentedName("A.B.C", name);
+		Basic.GetSuffix(name, s);
+		ASSERT(s = "C");
+
+		(* A name is a prefix of itself, and of anything that continues it. *)
+		Basic.ToSegmentedName("A.B", name);
+		Basic.ToSegmentedName("A.B.C", other);
+		ASSERT(Basic.IsPrefix(name, other));
+		ASSERT(Basic.IsPrefix(name, name));
+		ASSERT(~Basic.IsPrefix(other, name));
+		Basic.ToSegmentedName("A.X", other);
+		ASSERT(~Basic.IsPrefix(name, other));
+
+		(*	Appending to an empty name reached for the segment before the first one and took the
+			process down with an index out of range. There is nothing to append to, so what is
+			appended is the name. *)
+		Basic.InitSegmentedName(name);
+		Basic.AppendToSegmentedName(name, "X");
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "X");
+
+		(* and appending as it is used: to the last segment, and as a new one *)
+		Basic.ToSegmentedName("A.B", name);
+		Basic.AppendToSegmentedName(name, "C");
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "A.BC");
+		Basic.ToSegmentedName("A.B", name);
+		Basic.AppendToSegmentedName(name, ".C");
+		Basic.SegmentedNameToString(name, s);
+		ASSERT(s = "A.B.C")
+	END Test.
+
+positive: the small helpers everything else in the compiler leans on
+
+	MODULE Test;
+	IMPORT Basic := FoxBasic;
+
+	VAR s, t: ARRAY 64 OF CHAR; off: SIZE; m: Basic.MessageString;
+
+	BEGIN
+		Basic.Concat(s, "pre", "name", "suf"); ASSERT(s = "prenamesuf");
+		Basic.Concat(s, "", "name", ""); ASSERT(s = "name");
+		Basic.Concat(s, "", "", ""); ASSERT(s = "");
+
+		Basic.Lowercase("MiXeD.Case_1", s); ASSERT(s = "mixed.case_1");
+		Basic.Uppercase("MiXeD.Case_1", s); ASSERT(s = "MIXED.CASE_1");
+		Basic.Lowercase("", s); ASSERT(s = "");
+		Basic.Uppercase("", s); ASSERT(s = "");
+
+		COPY("n=", t); Basic.AppendNumber(t, -42); ASSERT(t = "n=-42");
+		COPY("n=", t); Basic.AppendNumber(t, 0); ASSERT(t = "n=0");
+
+		(* Align rounds up to a positive alignment and down to a negative one. *)
+		off := 5; Basic.Align(off, 4); ASSERT(off = 8);
+		off := 8; Basic.Align(off, 4); ASSERT(off = 8);
+		off := 0; Basic.Align(off, 4); ASSERT(off = 0);
+		off := 1; Basic.Align(off, 8); ASSERT(off = 8);
+		off := 5; Basic.Align(off, -4); ASSERT(off = 4);
+		off := 5; Basic.Align(off, 0); ASSERT(off = 5);     (* no alignment asked for, none applied *)
+
+		(*	The integer objects are handed out one per value and the same one every time. 0 was
+			the exception: it is what the table underneath writes into an empty slot, so the
+			table said it had it and gave back the NIL it found there. *)
+		ASSERT(Basic.GetIntegerObj(0) # NIL);
+		ASSERT(Basic.GetIntegerObj(0) = Basic.GetIntegerObj(0));
+		ASSERT(Basic.GetIntegerObj(7) # NIL);
+		ASSERT(Basic.GetIntegerObj(7) = Basic.GetIntegerObj(7));
+		ASSERT(Basic.GetIntegerObj(0) # Basic.GetIntegerObj(7));
+		ASSERT(Basic.GetIntegerObj(-1) # NIL);
+		ASSERT(Basic.GetIntegerObj(-1) # Basic.GetIntegerObj(1));
+
+		(*	The message builders substitute %0 and %1. Two of the four built the message and then
+			fell off the end of the procedure without returning it. *)
+		m := Basic.MessageS("module %0 not found", "Heaps");
+		ASSERT(m = "module Heaps not found");
+		m := Basic.MessageSS("%0 imports %1", "Heaps", "Machine");
+		ASSERT(m = "Heaps imports Machine");
+		m := Basic.MessageI("%0 errors", 3);
+		ASSERT(m = "3 errors");
+		m := Basic.MessageSI("%0 has %1 errors", "Heaps", 2);
+		ASSERT(m = "Heaps has 2 errors");
+		m := Basic.MessageS("nothing to put in", "x");
+		ASSERT(m = "nothing to put in")
+	END Test.

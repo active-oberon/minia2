@@ -106,7 +106,10 @@ TYPE
 		VAR i: SIZE;
 		BEGIN
 			IF ~nilAllowed THEN ASSERT( x # NIL ) END;
-			IF ~multipleAllowed THEN ASSERT( debug OR ~Contains( x ) ) END;   (* already contained *)
+			(*	~debug, as in Add and Insert: the containment check is a debugging aid and costs a
+				pass over the list. Written the other way round it ran always, so an object Add
+				accepted twice brought Prepend down with a failed assertion. *)
+			IF ~multipleAllowed THEN ASSERT( ~debug OR ~Contains( x ) ) END;   (* already contained *)
 			IF count = LEN( list ) THEN Grow END;
 
 			FOR i := count-1  TO 0 BY - 1 DO
@@ -138,10 +141,12 @@ TYPE
 
 		PROCEDURE RemoveByIndex*( i: SIZE );
 		BEGIN
-			IF i < count THEN
-				WHILE (i < count - 1) DO list[i] := list[i + 1];  INC( i ) END;
-				DEC( count );  list[count] := NIL
-			END
+			(*	Get, Set and ReplaceByIndex say HALT(101) to an index outside the list; this one
+				let a negative index through to shift the array from list[-1] and died of an index
+				out of range instead, and passed over one too large in silence. *)
+			IF (i < 0) OR (i >= count) THEN HALT( 101 ) END;
+			WHILE (i < count - 1) DO list[i] := list[i + 1];  INC( i ) END;
+			DEC( count );  list[count] := NIL
 		END RemoveByIndex;
 
 		PROCEDURE Insert*( i: SIZE; x: ANY );
@@ -149,6 +154,10 @@ TYPE
 		BEGIN
 			IF ~nilAllowed THEN ASSERT( x # NIL ) END;
 			IF ~multipleAllowed THEN ASSERT( ~debug OR ~Contains( x ) ) END;   (* already contained *)
+			(*	i = count appends; beyond that there is nothing to insert before, and the element
+				used to be written past the end of the list, where nothing can find it again --
+				the list grew by one and IndexOf did not know the object. *)
+			IF (i < 0) OR (i > count) THEN HALT( 101 ) END;
 
 			IF count = LEN( list ) THEN Grow END; INC( count );
 
@@ -305,6 +314,9 @@ TYPE
 		VAR i: SIZE;
 		BEGIN
 			FOR i := 0 TO size - 1 DO table[i].key := NIL; table[i].value := NIL; table[i].valueInt := 0 END;
+			(*	used counts what is in the table, and the table is now empty. Left as it was,
+				Length lied after a Clear and Put met ASSERT(used < size) on an empty table. *)
+			used := 0
 		END Clear;
 
 		(* Interface for integer values *)
@@ -441,7 +453,10 @@ TYPE
 		PROCEDURE Clear*;
 		VAR i: SIZE;
 		BEGIN
-			FOR i := 0 TO size - 1 DO table[i].key := 0; END;
+			(*	The values go with the keys: clearing the key alone left Get returning what the
+				emptied slot used to hold. And used counts what is in the table -- see HashTable. *)
+			FOR i := 0 TO size - 1 DO table[i].key := 0; table[i].value := NIL; table[i].valueInt := 0 END;
+			used := 0
 		END Clear;
 
 		(* Interface for integer values *)
@@ -565,7 +580,9 @@ TYPE
 		PROCEDURE Clear*;
 		VAR i: SIZE;
 		BEGIN
-			FOR i := 0 TO size - 1 DO table[i].key[0] := -1; END;
+			(* the value goes with the key, and used counts what is in the table -- see HashTable *)
+			FOR i := 0 TO size - 1 DO table[i].key[0] := -1; table[i].value := NIL END;
+			used := 0
 		END Clear;
 
 		(* Internals *)
@@ -1074,6 +1091,13 @@ VAR
 			string[j] := 0X;
 			name[i] := StringPool.GetIndex1(string);
 			IF i<LEN(name)-1 THEN name[i+1] := -1 END;
+		ELSIF i = 0 THEN
+			(*	An empty name has no last segment to append to, and name[i-1] read before the
+				start of the array: the process died of an index out of range. What is being
+				appended becomes the first segment instead. *)
+			COPY(this, string);
+			name[0] := StringPool.GetIndex1(string);
+			IF LEN(name) > 1 THEN name[1] := -1 END;
 		ELSE
 			StringPool.GetString(name[i-1], string);
 			Strings.Append(string, this);
@@ -1239,13 +1263,18 @@ VAR
 	END Uppercase;
 
 	PROCEDURE GetIntegerObj*(value: SIGNED32):ANY;
-	VAR obj: IntegerObject;
+	VAR obj: IntegerObject; key: SIZE;
 	BEGIN
-		IF integerObjects.Has(value) THEN
-			RETURN integerObjects.Get(value);
+		(*	HashTableInt keeps 0 for "this slot is empty" and Put asserts against it, so the value
+			0 cannot be its own key: Has(0) was true of every empty table and GetIntegerObj(0)
+			handed back the NIL it found there, alone among all the integers. An odd key is never
+			0 and never collides with the key of another value. *)
+		key := 2 * SIZE(value) + 1;
+		IF integerObjects.Has(key) THEN
+			RETURN integerObjects.Get(key);
 		END;
 		NEW(obj);
-		integerObjects.Put(value, obj);
+		integerObjects.Put(key, obj);
 		RETURN obj;
 	END GetIntegerObj;
 
@@ -1396,6 +1425,8 @@ VAR
 		COPY(format, message);
 		Strings.IntToStr(i0,number);
 		Replace(message,"%0",number);
+		(* the RETURN was missing: the message was built and then not handed back *)
+		RETURN message
 	END MessageI;
 
 	PROCEDURE MessageSI*(CONST format: ARRAY OF CHAR; CONST s0: ARRAY OF CHAR; i1: SIGNED32): MessageString;
@@ -1405,6 +1436,8 @@ VAR
 		Replace(message,"%0",s0);
 		Strings.IntToStr(i1,number);
 		Replace(message,"%1",number);
+		(* as in MessageI: built, and not handed back *)
+		RETURN message
 	END MessageSI;
 
 		(*
