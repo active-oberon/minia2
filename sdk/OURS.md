@@ -8,8 +8,8 @@ and ETH's sit in one directory and cannot be told apart by looking.
 | | modules |
 | --- | ---: |
 | ours outright (in no vanilla tree) | 16 |
-| vanilla, changed by us | 33 |
-| vanilla, untouched | 719 |
+| vanilla, changed by us | 49 |
+| vanilla, untouched | 703 |
 
 ## Ours outright
 
@@ -37,30 +37,45 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 
 - `AMD64.FoxArrayBaseOptimized.Mod`
 - `AMD64.Reals.Mod`
+- `BIT.Mod`
+- `BitSets.Mod`
 - `Compiler.Mod`
 - `DataErrors.Mod`
+- `Dates.Mod`
+- `Diagnostics.Mod`
 - `FoxAMDBackend.Mod`
 - `FoxAssembler.Mod`
 - `FoxIntermediateBackend.Mod`
 - `FoxInterpreterSymbols.Mod`
 - `FoxScanner.Mod`
 - `FoxSemanticChecker.Mod`
+- `FP1616.Mod`
 - `GenericLinker.Mod`
+- `GenericSort.Mod`
 - `Linker.Mod`
 - `Linux.Glue.Mod`
 - `Linux.Unix.Mod`
 - `Loader.Mod`
 - `Math32.Mod`
 - `Math64.Mod`
+- `MathCbrt.Mod`
+- `MathErf.Mod`
+- `NbrInt64.Mod`
+- `NbrRat.Mod`
+- `NbrRe32.Mod`
+- `NbrRe64.Mod`
 - `Network.Mod`
 - `Pipes.Mod`
 - `Raster.Mod`
 - `Reflection.Mod`
 - `Streams.Mod`
+- `Texts.Mod`
+- `TextUtilities.Mod`
 - `Unix.IP.Mod`
 - `Unix.Machine.Mod`
 - `Unix.Objects.Mod`
 - `Unix.PrecisionTimer.Mod`
+- `Unix.Sockets.Mod`
 - `Unix.StdIO.Mod`
 - `Unix.Traps.Mod`
 - `UTF8Strings.Mod`
@@ -68,3 +83,4 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `Windows.Display.Mod`
 - `Windows.Kernel32.Mod`
 - `Windows.WinTrace.Mod`
+- `ZlibWriters.Mod`
