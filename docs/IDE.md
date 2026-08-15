@@ -109,6 +109,7 @@ diagnostics, hover, completion, etc.
 | **Rename** | Renames a module-level symbol (type, procedure, module variable, constant) and every use across the project, as one edit. (Locals / members declined for now.) |
 | **Formatting** | Reprints the module in Fox's canonical style, preserving the IMPORT list and comments. Only syntactically-valid files. |
 | **Code actions** | *Import &lt;M&gt;* quickfix for an undeclared module qualifier; *Comment / Uncomment* the selection. |
+| **Folding** | Modules, procedures, records and objects, statement blocks, `REPEAT`/`UNTIL`, the `IMPORT` list and multi-line comments. Worked out from the tokens, so it keeps working while the file does not parse. |
 
 ---
 
