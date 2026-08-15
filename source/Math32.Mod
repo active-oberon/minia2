@@ -445,8 +445,13 @@ BEGIN
 	END;
 	RETURN RESULT;
 #ELSE
+	(*	The sine is odd, so a negative argument is answered through the positive one. Folding it
+		up into range by adding 2*pi instead loses it: the sum is rounded to the precision of
+		2*pi, and for a small argument that rounding is the whole of the answer -- sin(-1E-5)
+		came back as -2.6E-6 in single precision. This path is what every target without a
+		hardware sine uses, AArch64 among them. *)
+	IF x < 0 THEN RETURN -sin(-x) END;
 	WHILE x >= 2 * pi DO x := x - 2*pi END;
-	WHILE x < 0 DO x := x + 2*pi END;
 
 	VAR res := x, xk := x, k := INTEGER(1);
 	VAR prev: Value;
@@ -483,8 +488,9 @@ BEGIN
 	END;
 	RETURN RESULT;
 #ELSE
+	(* The cosine is even, so the sign goes before the reduction rather than through it: see sin. *)
+	IF x < 0 THEN x := -x END;
 	WHILE x >= 2 * pi DO x := x - 2*pi END;
-	WHILE x < 0 DO x := x + 2*pi END;
 
 	VAR res := Value(1.0), xk := Value(1.0), k := INTEGER(1);
 	VAR prev: Value;

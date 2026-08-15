@@ -133,3 +133,54 @@ positive: the numbers that are not numbers
 		ASSERT(Math.iszero(0.0));
 		ASSERT(~(nan = nan))                       (* which is what makes it not a number *)
 	END Test.
+
+positive: a small negative angle, which the range reduction used to swallow
+
+	MODULE Test;
+	IMPORT Math := Math32;
+	VAR x, s: FLOAT32; i: SIGNED32;
+	BEGIN
+		(*	Where there is no hardware sine -- AArch64 -- the argument is folded into [0, 2pi) by
+			adding 2pi to anything negative. The sum is rounded to the precision of 2pi, and for a
+			small argument that rounding is the whole answer: sin(-1E-5) came back as -2.6E-6 and
+			cos(-1E-5) as 0.9999968. Near zero the sine is its own argument, which is what these
+			cases hold it to, and the sine is odd, which is what the fix rests on. *)
+		ASSERT(Math.sin(0.0) = 0.0);
+		ASSERT(ABS(Math.sin(-0.00001) + 0.00001) < 1.0E-9);
+		ASSERT(ABS(Math.sin(-0.001) + 0.001) < 1.0E-8);
+		ASSERT(ABS(Math.cos(-0.00001) - 1.0) < 1.0E-6);
+		ASSERT(ABS(Math.cos(-0.001) - 1.0) < 1.0E-6);
+		ASSERT(ABS(Math.tan(-0.00001) + 0.00001) < 1.0E-9);
+
+		(* odd and even, over the range where the two halves are computed by different paths *)
+		FOR i := 1 TO 60 DO
+			x := i / 10.0;
+			ASSERT(ABS(Math.sin(-x) + Math.sin(x)) < 1.0E-5);
+			ASSERT(ABS(Math.cos(-x) - Math.cos(x)) < 1.0E-5)
+		END;
+
+		(* and the values that are known by hand, from the negative side *)
+		s := Math.sin(-1.5707963);
+		ASSERT(ABS(s + 1.0) < 1.0E-5);
+		ASSERT(ABS(Math.cos(-3.1415927) + 1.0) < 1.0E-5);
+		ASSERT(ABS(Math.sin(-3.1415927)) < 1.0E-5)
+	END Test.
+
+positive: the same small negative angle in double precision
+
+	MODULE Test;
+	IMPORT Math := Math64;
+	VAR x: FLOAT64; i: SIGNED32;
+	BEGIN
+		(*	Double precision carries the small argument through the old reduction far enough to
+			hide the defect at 1E-5, and loses it in the same way further down. *)
+		ASSERT(Math.sin(0.0) = 0.0);
+		ASSERT(ABS(Math.sin(-0.00001) + 0.00001) < 1.0E-15);
+		ASSERT(ABS(Math.sin(-1.0E-12) + 1.0E-12) < 1.0E-20);
+		ASSERT(ABS(Math.cos(-1.0E-12) - 1.0) < 1.0E-12);
+		FOR i := 1 TO 60 DO
+			x := i / 10.0;
+			ASSERT(ABS(Math.sin(-x) + Math.sin(x)) < 1.0E-12);
+			ASSERT(ABS(Math.cos(-x) - Math.cos(x)) < 1.0E-12)
+		END
+	END Test.
