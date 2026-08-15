@@ -8738,3 +8738,80 @@ positive: a 64-bit immediate above MAX(SIGNED32) is not a sign-extended 32-bit o
 		ASSERT(u > 2147483647, 1179);
 		ASSERT(u MOD 100000000H = 4294967295, 1180);
 	END Test.
+
+# A template module is written to its symbol file before it is checked -- that text is the module,
+# and it is parsed again at every instantiation. The flags of a procedure type are set by the
+# checker, so they were not there to be written, and {DELEGATE} was dropped on the way through: the
+# instantiated module saw a plain procedure type and refused the bound method that belongs in it.
+# The printer now passes the modifiers through as they were written when no flag is resolved yet.
+
+positive: a delegate declared in a template module survives instantiation
+
+	MODULE A(TYPE T);
+	TYPE
+		Mapper* = PROCEDURE {DELEGATE} (x: T): T;
+		Plain* = PROCEDURE (x: T): T;
+
+		Holder* = OBJECT
+		VAR factor: T;
+
+			PROCEDURE &Init*(f: T);
+			BEGIN factor := f
+			END Init;
+
+			PROCEDURE Times(x: T): T;
+			BEGIN RETURN x * factor
+			END Times;
+
+			(* the delegate is bound and returned inside the template itself *)
+			PROCEDURE Own*(): Mapper;
+			BEGIN RETURN Times
+			END Own;
+
+		END Holder;
+
+	PROCEDURE Twice*(x: T): T;
+	BEGIN RETURN x + x
+	END Twice;
+
+	PROCEDURE PlainOne*(): Plain;
+	BEGIN RETURN Twice
+	END PlainOne;
+
+	END A.
+
+	MODULE Test;
+	IMPORT G := A(SIGNED32);
+
+	TYPE
+		(* and here it is bound on the other side of the instantiation *)
+		Scaler = OBJECT
+		VAR factor: SIGNED32;
+
+			PROCEDURE &Init(f: SIGNED32);
+			BEGIN factor := f
+			END Init;
+
+			PROCEDURE Times(x: SIGNED32): SIGNED32;
+			BEGIN RETURN x * factor
+			END Times;
+
+			PROCEDURE Mapper(): G.Mapper;
+			BEGIN RETURN Times
+			END Mapper;
+
+		END Scaler;
+
+	VAR h: G.Holder; s: Scaler; f: G.Mapper; p: G.Plain;
+	BEGIN
+		NEW(h, 7);
+		f := h.Own();
+		ASSERT(f(6) = 42, 1181);                   (* the captured factor came through *)
+
+		NEW(s, 3);
+		f := s.Mapper();
+		ASSERT(f(6) = 18, 1182);
+
+		p := G.PlainOne();                         (* a plain procedure type over the same boundary *)
+		ASSERT(p(6) = 12, 1183);
+	END Test.

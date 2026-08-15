@@ -435,7 +435,15 @@ TYPE
 				Flag(Global.NamePlatformCC,first)
 			END;
 			IF x.stackAlignment > 1 THEN Value(Global.NameStackAligned,x.stackAlignment,first) END;
-			IF ~first THEN w.String("}") END;
+			IF ~first THEN w.String("}")
+			ELSIF (mode >= SourceCode) & (x.modifiers # NIL) THEN
+				(*	Every flag above is set by the checker, and a template module is written to its
+					symbol file before it is checked -- that text is the module, and it is parsed
+					again at each instantiation. Without this the modifiers were dropped on the way
+					through: {DELEGATE} came back as a plain procedure type, and a bound method
+					assigned to it was rejected as incompatible inside the instantiated module. *)
+				Modifiers(x.modifiers)
+			END;
 
 			IF (x.modifiers # NIL) & info THEN
 				BeginComment;
