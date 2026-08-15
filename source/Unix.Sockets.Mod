@@ -217,11 +217,17 @@ VAR
 	PROCEDURE Recv*( s: INTEGER; VAR buf: ARRAY OF CHAR; pos: SIZE; VAR len: SIZE; flags: INTEGER ): BOOLEAN;
 	VAR res: SIZE; err: INTEGER;
 	BEGIN
+		err := 0;
 		REPEAT
 			res := recv( s, ADDRESSOF( buf[pos] ), len, flags );
 			IF res < 0 THEN  err := Unix.errno()  END
 		UNTIL (res >= 0) OR (err # Unix.EINTR);
-		IF err >= 0 THEN
+		(*	The question is whether the call succeeded, which is what res says. Asking err instead
+			read a local that is assigned only when the call fails, so the answer for a failed
+			call was whatever the stack slot held -- and when that read as success, the caller
+			was handed res = -1 as a length, which TCP.Receive takes for "closed by peer".
+			RecvFrom and AwaitPacket below ask res, as this now does. *)
+		IF res >= 0 THEN
 			len:= res;  RETURN TRUE
 		ELSE
 			Unix.Perror( "Sockets.Recv" );

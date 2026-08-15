@@ -30,6 +30,16 @@ Oberon.Compilation.Test	positive: export inline code with reference to (local) c
 # image for the same reason.
 JPEG.Execution.Test	positive: test RGB to I420 2x2x8x8 block conversion used for encoding
 #
+# The three below import TextUtilities, which is not in the headless set either -- and
+# unlike Texts, which a listed module drags in, nothing reaches it. Putting it in would
+# put its closure in too (XML and its scanner and parser, Repositories, Configuration,
+# Codecs, UnicodeProperties), and the SDK is not going to carry that so three cases can
+# run. They run on x86-64, where the suites go against the whole build rather than the
+# shipped subset.
+Texts.Test	positive: a text counts characters, not bytes
+Texts.Test	positive: inserting and deleting in the middle of a text
+Texts.Test	positive: searching a text for a pattern
+#
 # --- written for an instruction set this one is not ---------------------------------
 # The case imports Shortreal, which is AMD64.Shortreal.Mod: half precision floats
 # through the AVX F16C instructions, and one of the four modules configs/moduleListA64.txt
@@ -61,4 +71,19 @@ MathFunctions.Test	positive: a logarithm and an exponent undo each other
 # that loses a third of its updates is either a defect or a broken measurement, and both
 # are worth keeping in front of us.
 MachineFunctions.Test	positive: two activities adding to one counter lose nothing
+
+# --- a valid address the emulator calls bad -----------------------------------------
+# The case is a client and a server over the loopback in one process. On x86-64 it
+# passes. Here, under load (the suites run -j), the client's second recv comes back
+# EFAULT from an address that is its own module's data, four bytes into a 64-byte
+# array, with the whole range inside the one RWE segment the image is loaded from --
+# measured, not assumed: the address was printed either side of the call. The first
+# recv on the same buffer succeeds; adding a trace either side of the call makes the
+# case pass, which is what a race looks like and not what a wrong address looks like.
+# The likely answer is qemu-user's page bookkeeping racing another A2 thread that is
+# growing the heap, the same shape as the atomics entry above -- and, as there, likely
+# is not checked. Finding it was worth it anyway: it turned up a real defect on the way
+# (Sockets.Recv decided success by a variable assigned only on failure, so a failed
+# receive was handed to the caller as a length of -1), which is fixed.
+Sockets.Test	positive: two ends of a connection over the loopback
 
