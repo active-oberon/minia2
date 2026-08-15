@@ -72,16 +72,19 @@ alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # for the interact
 
 Editor-manager-agnostic (works with NVChad / LazyVim / plain config): three standard
 Neovim runtime files. They live in the dotfiles repo
-(`github.com/andrqxa-tools/dotfiles`, branch `ide-setup`, under
+(`github.com/andrqxa-tools/dotfiles`, branch `master`, under
 `Editors/NeoVim/NvChad/`) — copy them into `~/.config/nvim/`:
 
 - `ftdetect/oberon.lua` — treat `*.Mod` as filetype `oberon`:
   ```lua
   vim.filetype.add({ extension = { Mod = "oberon" } })
   ```
-- `after/ftplugin/oberon.lua` — starts the LSP client (`docker … minia2-sdk lsp --live`),
-  mounts the file's directory at `/work`, wires the buffer-local keymaps, and turns on
-  inline diagnostics. Honours `$A2_STDLIB_SRC` and `$A2_SYMS` (see §5).
+- `after/ftplugin/oberon.lua` — starts the LSP client, wires the buffer-local keymaps,
+  turns on inline diagnostics and turns on **folding** when the server offers it.
+  It prefers the tarball SDK — `$A2_OB`, else `ob` on `PATH` — and falls back to
+  `docker … minia2-sdk lsp --live`, mounting the file's directory at `/work`. Prefer the
+  tarball: an image built yesterday does not have what the server learnt today.
+  Honours `$A2_STDLIB_SRC` and `$A2_SYMS` (see §5).
 - `syntax/oberon.vim` — syntax highlighting (keywords/types/builtins; `END` is coloured
   by what it closes).
 
@@ -129,6 +132,8 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | *(auto)* | Completion (nvim-cmp); manual trigger `<C-Space>` |
 | `:lua vim.lsp.buf.signature_help()` | Signature help (bind a key if you like) |
 | `[d` / `]d`, `<leader>e` | Diagnostics navigation / float (NVChad defaults) |
+| `za`, `zc`, `zo`, `zR`, `zM` | Folding (vim's own keys; ranges come from the server) |
+| `:ObFoldImports`, `:ObFoldComments` | Close every fold of that kind |
 
 Completion, diagnostics and semantic-token colouring apply automatically — nothing to press.
 
