@@ -1,0 +1,334 @@
+# Tests for the number tower of std/math -- the four integer widths, the rationals, the generator.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# std/math is tier 1 and marked stable. Math32/Math64 had tests; NbrInt8/16/32/64, NbrRat and
+# Random had none, and the registry said stable of them all the same. That is the same shape as
+# std/numerics and std/runtime before them, and it paid the same way: six defects, two of which
+# ended the process rather than returning a wrong answer.
+#
+# The values here are either known by hand (a third is less than a half) or are round trips --
+# a number written out and read back, stored to a file and loaded again. A round trip is what
+# catches a conversion that loses a bit, which is exactly what NbrInt64.Load did with every
+# negative number since it was written.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the four integer widths, and what each one says about itself
+
+	MODULE Test;
+	IMPORT NbrInt, NbrInt8, NbrInt16, NbrInt32, NbrInt64;
+	VAR i8: NbrInt8.Integer; i16: NbrInt16.Integer; i32: NbrInt32.Integer;
+	BEGIN
+		ASSERT(NbrInt8.MinNbr = MIN(SIGNED8)); ASSERT(NbrInt8.MaxNbr = MAX(SIGNED8));
+		ASSERT(NbrInt16.MinNbr = MIN(SIGNED16)); ASSERT(NbrInt16.MaxNbr = MAX(SIGNED16));
+		ASSERT(NbrInt32.MinNbr = MIN(SIGNED32)); ASSERT(NbrInt32.MaxNbr = MAX(SIGNED32));
+		ASSERT(NbrInt64.MinNbr = MIN(SIGNED64)); ASSERT(NbrInt64.MaxNbr = MAX(SIGNED64));
+		ASSERT(NbrInt.MinNbr = MIN(SIGNED32));   (* NbrInt is the width the platform calls an integer *)
+
+		(*	Odd. NbrInt64.Odd returned Odd(a) -- itself, not the predeclared ODD -- and so never
+			returned at all: it filled the stack and took the process down with a segmentation
+			violation. Nothing in the tree called it, which is how it survived. *)
+		ASSERT(NbrInt64.Odd(3)); ASSERT(~NbrInt64.Odd(4));
+		ASSERT(NbrInt64.Odd(-3)); ASSERT(~NbrInt64.Odd(0));
+		ASSERT(NbrInt32.Odd(3)); ASSERT(~NbrInt32.Odd(4)); ASSERT(NbrInt32.Odd(-3));
+		ASSERT(NbrInt16.Odd(3)); ASSERT(~NbrInt16.Odd(4));
+		ASSERT(NbrInt8.Odd(3)); ASSERT(~NbrInt8.Odd(4));
+
+		(* Sign and Abs. Abs(MinNbr) = MinNbr is the documented answer: -MinNbr is out of range. *)
+		ASSERT(NbrInt32.Sign(-5) = -1); ASSERT(NbrInt32.Sign(0) = 0); ASSERT(NbrInt32.Sign(5) = 1);
+		ASSERT(NbrInt64.Sign(-5) = -1); ASSERT(NbrInt64.Sign(0) = 0); ASSERT(NbrInt64.Sign(5) = 1);
+		ASSERT(NbrInt32.Abs(-5) = 5); ASSERT(NbrInt32.Abs(5) = 5); ASSERT(NbrInt32.Abs(0) = 0);
+		ASSERT(NbrInt32.Abs(NbrInt32.MinNbr) = NbrInt32.MinNbr);
+		ASSERT(NbrInt8.Abs(NbrInt8.MinNbr) = NbrInt8.MinNbr);
+
+		ASSERT(NbrInt32.Max(-5, 5) = 5); ASSERT(NbrInt32.Min(-5, 5) = -5);
+		ASSERT(NbrInt32.Max(7, 7) = 7); ASSERT(NbrInt32.Min(7, 7) = 7);
+
+		(*	Inc and Dec saturate in the three narrow widths: at the end of the range they stay
+			where they are rather than wrapping round to the other end. *)
+		i8 := NbrInt8.MaxNbr; NbrInt8.Inc(i8); ASSERT(i8 = NbrInt8.MaxNbr);
+		i8 := NbrInt8.MinNbr; NbrInt8.Dec(i8); ASSERT(i8 = NbrInt8.MinNbr);
+		i16 := NbrInt16.MaxNbr; NbrInt16.Inc(i16); ASSERT(i16 = NbrInt16.MaxNbr);
+		i16 := NbrInt16.MinNbr; NbrInt16.Dec(i16); ASSERT(i16 = NbrInt16.MinNbr);
+		i32 := NbrInt32.MaxNbr; NbrInt32.Inc(i32); ASSERT(i32 = NbrInt32.MaxNbr);
+		i32 := NbrInt32.MinNbr; NbrInt32.Dec(i32); ASSERT(i32 = NbrInt32.MinNbr);
+		i32 := 5; NbrInt32.Inc(i32); ASSERT(i32 = 6); NbrInt32.Dec(i32); ASSERT(i32 = 5);
+
+		(* Widening and narrowing between neighbouring widths. *)
+		ASSERT(NbrInt16.Long(-128) = -128);
+		ASSERT(NbrInt32.Long(-32768) = -32768);
+		ASSERT(NbrInt64.Long(NbrInt32.MinNbr) = MIN(SIGNED32));
+		ASSERT(NbrInt32.IsInt16(32767)); ASSERT(~NbrInt32.IsInt16(32768));
+		ASSERT(NbrInt32.IsInt16(-32768)); ASSERT(~NbrInt32.IsInt16(-32769));
+		ASSERT(NbrInt16.IsInt8(127)); ASSERT(~NbrInt16.IsInt8(128));
+		ASSERT(NbrInt64.IsInt32(NbrInt32.MaxNbr)); ASSERT(~NbrInt64.IsInt32(NbrInt64.Long(NbrInt32.MaxNbr) + 1));
+		ASSERT(NbrInt32.Short(32767) = 32767); ASSERT(NbrInt64.Short(-5) = -5)
+	END Test.
+
+positive: a whole number written out, and read back in
+
+	MODULE Test;
+	IMPORT NbrInt8, NbrInt16, NbrInt32, NbrInt64;
+	VAR s: ARRAY 32 OF CHAR; i8: NbrInt8.Integer; i16: NbrInt16.Integer;
+		i32: NbrInt32.Integer; i64: NbrInt64.Integer;
+	BEGIN
+		(*	The written form groups the digits in threes, which is why reading has to skip commas
+			and why the round trip is the thing worth checking rather than either half alone. *)
+		NbrInt32.IntToString(0, s); ASSERT(s = "0");
+		NbrInt32.IntToString(7, s); ASSERT(s = "7");
+		NbrInt32.IntToString(-7, s); ASSERT(s = "-7");
+		NbrInt32.IntToString(1000, s); ASSERT(s = "1,000");
+		NbrInt32.IntToString(-1234567, s); ASSERT(s = "-1,234,567");
+		NbrInt32.IntToString(NbrInt32.MaxNbr, s); ASSERT(s = "2,147,483,647");
+		NbrInt32.IntToString(NbrInt32.MinNbr, s); ASSERT(s = "-2,147,483,648");
+
+		NbrInt8.IntToString(0, s); ASSERT(s = "0");
+		NbrInt8.IntToString(127, s); ASSERT(s = "127");
+		NbrInt8.IntToString(-128, s); ASSERT(s = "-128");
+		NbrInt16.IntToString(-32768, s); ASSERT(s = "-32,768");
+		NbrInt16.IntToString(32767, s); ASSERT(s = "32,767");
+		NbrInt64.IntToString(NbrInt64.MaxNbr, s); ASSERT(s = "9,223,372,036,854,775,807");
+		NbrInt64.IntToString(NbrInt64.MinNbr, s); ASSERT(s = "-9,223,372,036,854,775,808");
+
+		NbrInt32.StringToInt("0", i32); ASSERT(i32 = 0);
+		NbrInt32.StringToInt("-1,234,567", i32); ASSERT(i32 = -1234567);
+		NbrInt32.StringToInt("   42", i32); ASSERT(i32 = 42);            (* leading blanks are passed over *)
+		NbrInt32.StringToInt("2,147,483,647", i32); ASSERT(i32 = NbrInt32.MaxNbr);
+		NbrInt8.StringToInt("-128", i8); ASSERT(i8 = -128);
+		NbrInt16.StringToInt("-32,768", i16); ASSERT(i16 = -32768);
+		NbrInt64.StringToInt("9,223,372,036,854,775,807", i64); ASSERT(i64 = NbrInt64.MaxNbr);
+
+		(* And the round trip itself, over the values where the two halves have to agree. *)
+		NbrInt32.IntToString(-1000000, s); NbrInt32.StringToInt(s, i32); ASSERT(i32 = -1000000);
+		NbrInt64.IntToString(-1000000000000, s); NbrInt64.StringToInt(s, i64); ASSERT(i64 = -1000000000000)
+	END Test.
+
+positive: what a file remembers of a whole number
+
+	MODULE Test;
+	IMPORT Files, NbrInt32, NbrInt64;
+
+	VAR f: Files.File; back64: NbrInt64.Integer; back32: NbrInt32.Integer;
+
+	PROCEDURE Trip64(v: NbrInt64.Integer): NbrInt64.Integer;
+	VAR w: Files.Writer; r: Files.Reader; out: NbrInt64.Integer;
+	BEGIN
+		f := Files.New("nbr64.tmp"); ASSERT(f # NIL);
+		Files.OpenWriter(w, f, 0); NbrInt64.Store(w, v); w.Update;
+		(*	Registered, not left as it was made: an unregistered new file keeps the temporary
+			name Files gave it and stays behind in whatever directory the case ran in. *)
+		Files.Register(f);
+		Files.OpenReader(r, f, 0); NbrInt64.Load(r, out);
+		RETURN out
+	END Trip64;
+
+	PROCEDURE Trip32(v: NbrInt32.Integer): NbrInt32.Integer;
+	VAR w: Files.Writer; r: Files.Reader; out: NbrInt32.Integer;
+	BEGIN
+		f := Files.New("nbr32.tmp"); ASSERT(f # NIL);
+		Files.OpenWriter(w, f, 0); NbrInt32.Store(w, v); w.Update;
+		(*	Registered, not left as it was made: an unregistered new file keeps the temporary
+			name Files gave it and stays behind in whatever directory the case ran in. *)
+		Files.Register(f);
+		Files.OpenReader(r, f, 0); NbrInt32.Load(r, out);
+		RETURN out
+	END Trip32;
+
+	BEGIN
+		(*	NbrInt64.Store writes the two halves as they stand; Load added the low half back as a
+			signed number, so every value whose low 32 bits had the top bit set came back short by
+			2^32. -1 loaded as -4294967297. Store was right all along -- it is Load that had to
+			read the low half as the unsigned word it is. *)
+		ASSERT(Trip64(0) = 0);
+		ASSERT(Trip64(1) = 1);
+		ASSERT(Trip64(-1) = -1);
+		ASSERT(Trip64(-2) = -2);
+		ASSERT(Trip64(1000000) = 1000000);
+		ASSERT(Trip64(-1000000) = -1000000);
+		ASSERT(Trip64(4294967295) = 4294967295);        (* the whole low word set, nothing above it *)
+		ASSERT(Trip64(4294967296) = 4294967296);
+		ASSERT(Trip64(-4294967296) = -4294967296);
+		ASSERT(Trip64(-4294967297) = -4294967297);
+		ASSERT(Trip64(NbrInt64.MaxNbr) = NbrInt64.MaxNbr);
+		ASSERT(Trip64(NbrInt64.MinNbr) = NbrInt64.MinNbr);
+		back64 := Trip64(123456789012345); ASSERT(back64 = 123456789012345);
+
+		(*	The narrower three pick the shortest form that holds the value and tag it, so the
+			round trip has to cross each of those boundaries. *)
+		ASSERT(Trip32(0) = 0);
+		ASSERT(Trip32(127) = 127); ASSERT(Trip32(128) = 128);
+		ASSERT(Trip32(-128) = -128); ASSERT(Trip32(-129) = -129);
+		ASSERT(Trip32(32767) = 32767); ASSERT(Trip32(32768) = 32768);
+		ASSERT(Trip32(-32768) = -32768); ASSERT(Trip32(-32769) = -32769);
+		ASSERT(Trip32(NbrInt32.MaxNbr) = NbrInt32.MaxNbr);
+		back32 := Trip32(NbrInt32.MinNbr); ASSERT(back32 = NbrInt32.MinNbr)
+	END Test.
+
+positive: a rational knows which of two it is
+
+	MODULE Test;
+	IMPORT NbrRat;
+	VAR a, b: NbrRat.Rational;
+	BEGIN
+		(*	The comparison took the whole parts first and, when those agreed, compared the two
+			remainders as they stood -- over different denominators. A third and a half both leave
+			a remainder of 1, so a third was not less than a half, and was not greater either. *)
+		NbrRat.Set(1, 3, a); NbrRat.Set(1, 2, b);
+		ASSERT(a < b); ASSERT(~(b < a));
+		ASSERT(b > a); ASSERT(~(a > b));
+		ASSERT(a <= b); ASSERT(b >= a);
+		ASSERT(a # b); ASSERT(~(a = b));
+
+		NbrRat.Set(5, 3, a); NbrRat.Set(3, 2, b);       (* 1 2/3 against 1 1/2: the whole parts agree *)
+		ASSERT(b < a); ASSERT(a > b);
+
+		NbrRat.Set(1, 2, a); NbrRat.Set(2, 4, b);       (* the same number, written twice *)
+		ASSERT(a = b); ASSERT(a <= b); ASSERT(a >= b);
+		ASSERT(~(a < b)); ASSERT(~(a > b));
+
+		(*	Below zero. The whole part is taken downwards, so -3/2 has whole part -2 and a
+			remainder of a half. An extra test for a positive numerator said -2 was not less
+			than -3/2. *)
+		NbrRat.Set(-3, 2, a);
+		ASSERT(-2 < a); ASSERT(a > -2);
+		ASSERT(a < -1); ASSERT(-1 > a);
+		NbrRat.Set(-1, 3, a); NbrRat.Set(-1, 2, b);
+		ASSERT(b < a); ASSERT(a > b);                   (* minus a half is below minus a third *)
+
+		(* Against a whole number, which has its own operators. *)
+		NbrRat.Set(7, 2, a);
+		ASSERT(a > 3); ASSERT(a < 4); ASSERT(~(a > 4)); ASSERT(~(a < 3));
+		ASSERT(3 < a); ASSERT(4 > a);
+		NbrRat.Set(4, 1, a);
+		ASSERT(a = 4); ASSERT(a <= 4); ASSERT(a >= 4); ASSERT(~(a < 4)); ASSERT(~(a > 4));
+		ASSERT(4 = a); ASSERT(~(4 < a)); ASSERT(~(4 > a));
+
+		(* Min and Max rest on the comparison, so they were wrong wherever it was. *)
+		NbrRat.Set(1, 3, a); NbrRat.Set(1, 2, b);
+		ASSERT(NbrRat.Denom(NbrRat.Min(a, b)) = 3);
+		ASSERT(NbrRat.Denom(NbrRat.Max(a, b)) = 2)
+	END Test.
+
+positive: a rational at the whole numbers
+
+	MODULE Test;
+	IMPORT NbrRat;
+	VAR c: NbrRat.Rational;
+	BEGIN
+		(*	Ceiling stepped up from the floor every time, so a whole number came back one too
+			large: the ceiling of 2 was 3. It only steps up when there is a fraction to step over. *)
+		NbrRat.Set(2, 1, c);
+		ASSERT(NbrRat.Floor(c) = 2); ASSERT(NbrRat.Ceiling(c) = 2); ASSERT(NbrRat.Round(c) = 2);
+		NbrRat.Set(4, 2, c);                            (* the same 2, reduced when it was made *)
+		ASSERT(NbrRat.Denom(c) = 1); ASSERT(NbrRat.Ceiling(c) = 2);
+		NbrRat.Set(0, 5, c);
+		ASSERT(NbrRat.Numer(c) = 0); ASSERT(NbrRat.Denom(c) = 1);
+		ASSERT(NbrRat.Floor(c) = 0); ASSERT(NbrRat.Ceiling(c) = 0); ASSERT(NbrRat.Sign(c) = 0);
+		NbrRat.Set(-5, 1, c);
+		ASSERT(NbrRat.Floor(c) = -5); ASSERT(NbrRat.Ceiling(c) = -5); ASSERT(NbrRat.Round(c) = -5);
+
+		NbrRat.Set(7, 2, c);
+		ASSERT(NbrRat.Floor(c) = 3); ASSERT(NbrRat.Ceiling(c) = 4); ASSERT(NbrRat.Round(c) = 4);
+		NbrRat.Set(-7, 2, c);
+		ASSERT(NbrRat.Floor(c) = -4); ASSERT(NbrRat.Ceiling(c) = -3); ASSERT(NbrRat.Round(c) = -4);
+		NbrRat.Set(5, 4, c);
+		ASSERT(NbrRat.Floor(c) = 1); ASSERT(NbrRat.Ceiling(c) = 2); ASSERT(NbrRat.Round(c) = 1);
+		NbrRat.Set(-5, 4, c);
+		ASSERT(NbrRat.Floor(c) = -2); ASSERT(NbrRat.Ceiling(c) = -1); ASSERT(NbrRat.Round(c) = -1);
+
+		(* Frac and Int put the number back together again. *)
+		NbrRat.Set(7, 2, c);
+		ASSERT(NbrRat.Numer(NbrRat.Frac(c)) = 1); ASSERT(NbrRat.Denom(NbrRat.Frac(c)) = 2);
+		ASSERT(NbrRat.Int(c) = 3)
+	END Test.
+
+positive: zero as a factor, where the greatest common divisor met it
+
+	MODULE Test;
+	IMPORT NbrRat;
+	VAR a, c: NbrRat.Rational;
+	BEGIN
+		(*	Multiplying a rational by the whole number 0 asked for the greatest common divisor of
+			the denominator and 0. The Euclidean algorithm was written as a REPEAT, so it took the
+			first remainder before testing anything -- a division by zero, and the process was
+			gone. Written as a WHILE it answers what it should: the divisor of n and 0 is n. *)
+		NbrRat.Set(1, 2, a);
+		c := a * 0;
+		ASSERT(c = 0); ASSERT(NbrRat.Numer(c) = 0); ASSERT(NbrRat.Denom(c) = 1);
+		c := 0 * a;
+		ASSERT(c = 0); ASSERT(NbrRat.Denom(c) = 1);
+		NbrRat.Set(-3, 4, a);
+		c := a * 0;
+		ASSERT(c = 0); ASSERT(NbrRat.Sign(c) = 0);
+
+		(* And the neighbours of that case, which were never in doubt. *)
+		NbrRat.Set(1, 2, a);
+		c := a * 1; ASSERT(c = a);
+		c := a + 0; ASSERT(c = a);
+		c := a - 0; ASSERT(c = a);
+		c := a * 2; ASSERT(c = 1);
+		c := a / 1; ASSERT(c = a);
+		c := a - a; ASSERT(c = 0);
+		c := a + a; ASSERT(c = 1);
+		c := 1 - a; ASSERT(NbrRat.Numer(c) = 1); ASSERT(NbrRat.Denom(c) = 2);
+		c := 1 / a; ASSERT(c = 2);
+		c := -a; ASSERT(NbrRat.Numer(c) = -1); ASSERT(NbrRat.Denom(c) = 2)
+	END Test.
+
+positive: the generator, which has to repeat itself and stay in its range
+
+	MODULE Test;
+	IMPORT Random;
+	VAR g, h: Random.Generator; s: Random.Sequence;
+		i, v, d: SIGNED32; u, x: FLOAT32; differ: BOOLEAN;
+	BEGIN
+		NEW(g); NEW(h);
+		(*	The same seed has to give the same sequence -- that is the whole contract of a
+			pseudo-random generator, and nothing had ever asked for it twice. *)
+		g.InitSeed(12345); h.InitSeed(12345);
+		FOR i := 1 TO 500 DO ASSERT(g.Integer() = h.Integer()) END;
+
+		(* A different seed has to give a different one. *)
+		g.InitSeed(1); h.InitSeed(2); differ := FALSE;
+		FOR i := 1 TO 50 DO IF g.Integer() # h.Integer() THEN differ := TRUE END END;
+		ASSERT(differ);
+
+		(*	Integer never returns a negative number: the buffer starts from a generator whose
+			values have the top bit clear and exclusive-or keeps it clear. Uniform and Dice both
+			rest on that, so it is worth saying out loud. *)
+		g.InitSeed(7);
+		FOR i := 1 TO 2000 DO
+			v := g.Integer();
+			ASSERT(v >= 0)
+		END;
+
+		g.InitSeed(7);
+		FOR i := 1 TO 2000 DO
+			u := g.Uniform();
+			ASSERT(u >= 0.0); ASSERT(u <= 1.0)
+		END;
+
+		g.InitSeed(7);
+		FOR i := 1 TO 2000 DO
+			d := g.Dice(6);
+			ASSERT(d >= 0); ASSERT(d < 6)
+		END;
+		FOR i := 1 TO 20 DO ASSERT(g.Dice(1) = 0) END;
+
+		(*	The normal deviate is built by rejection, so it has to terminate and stay finite.
+			Ten standard deviations is not a distribution test -- it is a test that the loop
+			returned something that is a number. *)
+		FOR i := 1 TO 200 DO
+			x := g.Gaussian();
+			ASSERT(x > -10.0); ASSERT(x < 10.0)
+		END;
+
+		(* The protected wrapper answers the same questions through a lock. *)
+		NEW(s); s.InitSeed(3);
+		FOR i := 1 TO 100 DO
+			ASSERT(s.Integer() >= 0);
+			ASSERT(s.Dice(4) < 4);
+			u := s.Uniform(); ASSERT(u >= 0.0); ASSERT(u <= 1.0)
+		END
+	END Test.

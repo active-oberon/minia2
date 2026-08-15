@@ -32,7 +32,7 @@ CONST
 
 	PROCEDURE Odd*( a: Integer ): BOOLEAN;
 	BEGIN
-		RETURN Odd(a);
+		RETURN ODD(a);   (* Odd(a) named this procedure, not the predeclared ODD: it recursed until the stack ended *)
 	END Odd;
 
 	PROCEDURE Long*( i: NbrInt32.Integer ): Integer;
@@ -128,7 +128,10 @@ CONST
 	VAR low, hi: NbrInt32.Integer
 	BEGIN
 		NbrInt32.Load( R, low );  NbrInt32.Load( R, hi );
-		x := low + 100000000H * hi;
+		(* Store writes the low 32 bits as they stand, so they come back with a sign that is not
+			theirs: adding them signed lost 2^32 for every value whose low word has bit 31 set. *)
+		x := 100000000H * hi + Long( low );
+		IF low < 0 THEN x := x + 100000000H END;
 	END Load;
 
 	PROCEDURE Store*( W: Streams.Writer;  x: Integer );
