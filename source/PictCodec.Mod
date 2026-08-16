@@ -142,12 +142,9 @@ TYPE
 		VAR
 			palette: Raster.Palette; fmt: Raster.Format; mode: Raster.Mode;
 			pix: POINTER TO ARRAY OF CHAR;
-			buf: ARRAY 129 OF CHAR;
-			i, y, a, b, wth: SIZE;
-			depth, j: SIGNED16;
-			h: CHAR;
-			help := FALSE, done := FALSE;
-			count: SIGNED8;
+			i, y, b, wth: SIZE;
+			depth: SIGNED16;
+			done := FALSE;
 		BEGIN
 			res := -1;
 			Raster.InitMode(mode, Raster.srcCopy);
@@ -175,54 +172,48 @@ TYPE
 			END;
 
 			out.RawInt16(depth);
+			(* the format carries 2^depth entries whatever the palette holds. A palette of fewer --
+			   which is every indexed image that is not 256 colours, because InitPaletteFormat gives
+			   all of them 8 bits per pixel -- used to be read past its end and take the process
+			   down; the entries there is nothing for are black. *)
 			i := 0;
 			WHILE i < ASH(1, depth) DO
-				out.Char((palette.col[i, R]));
-				out.Char((palette.col[i, G]));
-				out.Char((palette.col[i, B]));
+				IF i < palette.used THEN
+					out.Char((palette.col[i, R]));
+					out.Char((palette.col[i, G]));
+					out.Char((palette.col[i, B]))
+				ELSE
+					out.Char(0X); out.Char(0X); out.Char(0X)
+				END;
 				INC(i)
 			END;
 
-			NEW(pix, img.bpr);
+			(* A row is as long as the rows of what is written, not as long as the rows of what was
+			   given: the pixels below have been converted to `depth` bits each, and the decoder
+			   reads exactly that many bytes back. Taking img.bpr instead encoded the source stride
+			   -- 24 bytes of a true-colour row where 7 were written -- and every picture that was
+			   not already indexed came back scrambled. *)
+			wth := (img.width * depth + 7) DIV 8;
+			NEW(pix, wth);
 			y := 0;
 			WHILE y < img.height DO
 				Raster.GetPixels(img, 0, y, img.width, fmt, pix^, 0, mode);
-				wth := img.bpr;
-				IF wth # 0 THEN
-					a := 0; b := 1;
-					j := 1; count := 0;
-					buf[1] := pix[0];
-					WHILE b < wth DO
-						h := pix[b];
-						help := (h = buf[j]) & (j = 1);
-						IF (b - a < 127) & ((count = 0) OR help OR ((h # buf[j]) & (j > 1))) THEN
-							IF h # buf[j] THEN
-								INC(count); INC(j);
-								buf[j] := h;
-							ELSE
-								DEC(count)
-							END
-						ELSE
-							IF (buf[j] = h) & ((b - a) # 127) THEN
-								DEC(count);
-								out.Char(CHR(count + 1));
-								out.Char(buf[1])
-							ELSE
-								out.Char(CHR(count + 1));
-								out.Bytes(buf, 1, j)
-							END;
-							j := 1; count := 0; buf[1] := h; a := b
-						END;
-						INC(b)
-					END;
-
-					IF count >= 0 THEN
-						out.Char(CHR(count + 1));
-						out.Bytes(buf, 1, j)
+				b := 0;
+				WHILE b < wth DO
+					(* how far the byte at b repeats, at most 128 *)
+					i := 1;
+					WHILE (b + i < wth) & (i < 128) & (pix[b + i] = pix[b]) DO INC(i) END;
+					IF i > 1 THEN
+						out.Char(CHR(257 - i)); out.Char(pix[b])
 					ELSE
-						out.Char(CHR(257 + count));
-						out.Char(buf[1])
-					END
+						(* otherwise a literal run, at most 128, ending where a repeat begins *)
+						WHILE (b + i < wth) & (i < 128)
+								& ~((b + i + 1 < wth) & (pix[b + i] = pix[b + i + 1])) DO
+							INC(i)
+						END;
+						out.Char(CHR(i - 1)); out.Bytes(pix^, b, i)
+					END;
+					INC(b, i)
 				END;
 				INC(y)
 			END;
