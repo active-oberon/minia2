@@ -445,6 +445,16 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		END;
 		used := reservedcols;
 		traverse(root);
+		(* A picture of one colour gives a palette of one, and a reverse lookup over one colour is
+		   not a lookup: CLUTs.Init refuses a size below two and takes the process down with it.
+		   Anything that quantises a flat image reaches this -- the GIF encoder does it for every
+		   image it writes. The colour written twice is a palette of two that answers every match
+		   with that colour. *)
+		IF used < 2 THEN
+			IF used = 0 THEN pix := Zero; pix[a] := 0FFX ELSE pix := pal.col[0] END;
+			IF LEN(pal.col) < 2 THEN NEW(pal.col, 2) END;
+			pal.col[0] := pix; pal.col[1] := pix; pal.used := 2; used := 2
+		END;
 		InitPalette(pal, used, bits)
 	END ComputePalette;
 
