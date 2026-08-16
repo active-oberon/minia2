@@ -2,10 +2,13 @@
   "name": "std/terminal",
   "tier": 1,
   "context": "A2",
+  "headless": true,
   "status": "draft",
   "description": "Full-screen terminal programs: what a terminal sends and understands, the terminal as a device, and Oberon's model of a screen drawn into it -- tiled frames of text with a caret, and any line runnable as a command.",
   "provides": [
-    "TerminalCodes", "Terminal", "Frames"
+    "TerminalCodes",
+    "Terminal",
+    "Frames"
   ],
   "requires": {
     "std/runtime": "*",

@@ -111,6 +111,11 @@ jobs:
             grep -E '^\s+[A-Za-z0-9_.]+\.Mod.*error:' "$RUNNER_TEMP/stage2.log"
             exit 1
           fi
+      - name: The shipped module lists still say what the registry says
+        # docker/headless-core*.txt are derived from packages/std, not hand-kept. This fails if a
+        # package gained or lost a module, if a module's imports started reaching the window
+        # system, or if something in the payload is claimed by no package at all.
+        run: task registry
       - name: Test (all tests/ suites via ob test)
         # `task test` only drives the two Oberon.Compilation/Execution suites; this runs
         # every tests/*.Test file through `ob test`. Cases in tests/a2test-expected.txt are

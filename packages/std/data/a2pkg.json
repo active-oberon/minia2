@@ -2,12 +2,34 @@
   "name": "std/data",
   "tier": 2,
   "context": "A2",
+  "headless": true,
   "status": "draft",
   "description": "Data structures and persistence: generic collections/sort, lists/queues/stacks/trees, the Models/Repositories/Types object framework, CSV, persistent objects, versioning.",
   "provides": [
-    "Data", "DataIO", "DataLists", "DataQueues", "DataStacks", "DataTrees",
-    "GenericCollections", "GenericSort", "Models", "Repositories", "Types",
-    "PersistentObjects", "Versioning", "Attributes", "CSV", "SQL", "UndoManager"
+    "Data",
+    "DataIO",
+    "DataLists",
+    "DataQueues",
+    "DataStacks",
+    "DataTrees",
+    "GenericCollections",
+    "GenericSort",
+    "Models",
+    "Repositories",
+    "Types",
+    "PersistentObjects",
+    "Versioning",
+    "Attributes",
+    "CSV",
+    "SQL",
+    "UndoManager",
+    "ODBC"
+  ],
+  "graphical": [
+    "Models",
+    "Repositories",
+    "Types",
+    "UndoManager"
   ],
   "requires": {
     "std/runtime": "*",
@@ -16,7 +38,8 @@
     "std/web": "*"
   },
   "residual": [
-    "Hosts the high-fan-in HUBS pulled out of the misc pile (Repositories fan-in 15, Models 8, Types 6) — they fan out to XML (std/web) and text, so they are correctly mid-tier, not std/base.",
+    "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
+    "Hosts the high-fan-in HUBS pulled out of the misc pile (Repositories fan-in 15, Models 8, Types 6) \u2014 they fan out to XML (std/web) and text, so they are correctly mid-tier, not std/base.",
     "OPEN: a data member reaches std/compiler (likely PersistentObjects via reflection/fingerprints). Confirm and either accept the edge or isolate it before stable.",
     "SQL here is the interface; watch for Bohdan's native SQL engine (Pager/BTree/SQLScan/SQLParse) as a future std/sql package."
   ]
