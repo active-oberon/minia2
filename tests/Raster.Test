@@ -1,0 +1,788 @@
+# Tests for std/gui -- Raster, the plate the whole graphics stack stands on, which nothing had run.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Raster is the bottom of the A2 graphics stack: every window, every glyph and every image codec
+# goes through its pixels, its formats and its transfer modes. It is also SYSTEM code -- addresses,
+# bit offsets and hand-written packing -- so what it does is decided by arithmetic that no compiler
+# checks. All of it works on images in memory, so none of this needs a display.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a pixel keeps the colour that was put in it
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR pix: Raster.Pixel; red, green, blue, alpha: Raster.Color;
+
+	BEGIN
+		Raster.SetRGB(pix, 10H, 20H, 30H);
+		ASSERT(pix[Raster.r] = 10X); ASSERT(pix[Raster.g] = 20X); ASSERT(pix[Raster.b] = 30X);
+		ASSERT(pix[Raster.a] = 0FFX);
+		Raster.GetRGBA(pix, red, green, blue, alpha);
+		ASSERT(red = 10H); ASSERT(green = 20H); ASSERT(blue = 30H); ASSERT(alpha = 0FFH);
+
+		(* alpha is pre-multiplied into the colour and taken out again on the way back *)
+		Raster.SetRGBA(pix, 255, 255, 255, 128);
+		ASSERT(pix[Raster.a] = 80X);
+		ASSERT(pix[Raster.r] = 80X);
+		Raster.GetRGBA(pix, red, green, blue, alpha);
+		ASSERT(alpha = 128); ASSERT(red = 255); ASSERT(green = 255); ASSERT(blue = 255);
+
+		(* fully transparent: the colour is gone, and what comes back says so rather than dividing by zero *)
+		Raster.SetRGBA(pix, 10H, 20H, 30H, 0);
+		Raster.GetRGBA(pix, red, green, blue, alpha);
+		ASSERT(alpha = 0);
+		ASSERT(red = 255); ASSERT(green = 255); ASSERT(blue = 255)
+	END Test.
+
+positive: a created image has the size, the stride and the empty pixels it was asked for
+
+	MODULE Test;
+	IMPORT Raster, SYSTEM;
+
+	VAR img: Raster.Image; i: SIZE; sum: SIGNED32; byte: CHAR;
+
+	BEGIN
+		NEW(img);
+
+		(* four bytes a pixel, no padding needed *)
+		Raster.Create(img, 5, 3, Raster.BGRA8888);
+		ASSERT(img.width = 5); ASSERT(img.height = 3);
+		ASSERT(img.bpr = 20);
+		ASSERT(img.adr # 0);
+
+		(* three bytes a pixel, but the format asks rows to start on a multiple of four *)
+		Raster.Create(img, 5, 3, Raster.BGR888);
+		ASSERT(img.bpr = 16);
+
+		(* one bit a pixel: nine pixels are two bytes *)
+		Raster.Create(img, 9, 2, Raster.A1);
+		ASSERT(img.bpr = 2);
+
+		(* and the pixels of a fresh image are all zero *)
+		Raster.Create(img, 7, 4, Raster.BGRA8888);
+		sum := 0;
+		FOR i := 0 TO img.height * img.bpr - 1 DO
+			SYSTEM.GET(img.adr + i, byte); INC(sum, ORD(byte))
+		END;
+		ASSERT(sum = 0)
+	END Test.
+
+positive: what Put wrote into an image is what Get reads out of it
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img: Raster.Image; mode: Raster.Mode; in, out: Raster.Pixel; x, y: SIZE;
+
+	BEGIN
+		NEW(img); Raster.Create(img, 4, 3, Raster.BGRA8888);
+		Raster.InitMode(mode, Raster.srcCopy);
+
+		(* every pixel gets a colour of its own, so a mixed-up address arithmetic shows *)
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 3 DO
+				Raster.SetRGB(in, 10H + 10H*SIGNED32(x), 20H + 10H*SIGNED32(y), 30H);
+				Raster.Put(img, x, y, in, mode)
+			END
+		END;
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 3 DO
+				Raster.Get(img, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(10H + 10H*x));
+				ASSERT(out[Raster.g] = CHR(20H + 10H*y));
+				ASSERT(out[Raster.b] = 30X);
+				ASSERT(out[Raster.a] = 0FFX)
+			END
+		END;
+
+		(* a Put outside the image is dropped, not a trap and not a write somewhere else *)
+		Raster.SetRGB(in, 0FFH, 0FFH, 0FFH);
+		Raster.Put(img, -1, 0, in, mode);
+		Raster.Put(img, 4, 0, in, mode);
+		Raster.Put(img, 0, -1, in, mode);
+		Raster.Put(img, 0, 3, in, mode);
+		Raster.Get(img, 0, 0, out, mode);
+		ASSERT(out[Raster.r] = 10X)
+	END Test.
+
+positive: a fill covers its rectangle and stops at the edge of it
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Filled(x, y: SIZE): BOOLEAN;
+		VAR out: Raster.Pixel;
+		BEGIN
+			Raster.Get(img, x, y, out, mode);
+			RETURN out[Raster.r] = 0FFX
+		END Filled;
+
+	BEGIN
+		NEW(img); Raster.Create(img, 6, 5, Raster.BGRA8888);
+		Raster.InitMode(mode, Raster.srcCopy);
+		Raster.SetRGB(pix, 0FFH, 0, 0);
+		Raster.Fill(img, 1, 1, 4, 3, pix, mode);         (* x in 1..3, y in 1..2 *)
+
+		FOR y := 0 TO 4 DO
+			FOR x := 0 TO 5 DO
+				IF (x >= 1) & (x < 4) & (y >= 1) & (y < 3) THEN
+					ASSERT(Filled(x, y))
+				ELSE
+					ASSERT(~Filled(x, y))
+				END
+			END
+		END;
+
+		(* the whole image, and then nothing of it again *)
+		Raster.Fill(img, 0, 0, 6, 5, pix, mode);
+		ASSERT(Filled(0, 0)); ASSERT(Filled(5, 4));
+		Raster.Clear(img);
+		FOR y := 0 TO 4 DO
+			FOR x := 0 TO 5 DO ASSERT(~Filled(x, y)) END
+		END;
+		Raster.Get(img, 3, 3, out, mode);
+		ASSERT(out[Raster.a] = 0X)
+	END Test.
+
+positive: a fill in the 16-bit format takes the same road as the general one
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img, wide: Raster.Image; copy, mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+	BEGIN
+		(* srcCopy into bgr565 has a shortcut of its own in Fill; it must agree with what Get says *)
+		NEW(img); Raster.Create(img, 5, 4, Raster.BGR565);
+		Raster.InitMode(mode, Raster.srcCopy);
+		Raster.SetRGB(pix, 0F8H, 0FCH, 0F8H);            (* exactly representable in 5-6-5 *)
+		Raster.Fill(img, 1, 1, 4, 3, pix, mode);
+
+		(* what comes back is the middle of the bucket the colour fell into, not the bucket's floor:
+		   the top of a five-bit channel reads 252 and its bottom reads 4. *)
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 4 DO
+				Raster.Get(img, x, y, out, mode);
+				IF (x >= 1) & (x < 4) & (y >= 1) & (y < 3) THEN
+					ASSERT(out[Raster.r] = CHR(0F8H + 4)); ASSERT(out[Raster.g] = CHR(0FCH + 2));
+					ASSERT(out[Raster.b] = CHR(0F8H + 4))
+				ELSE
+					ASSERT(out[Raster.r] = 4X); ASSERT(out[Raster.g] = 2X); ASSERT(out[Raster.b] = 4X)
+				END;
+				ASSERT(out[Raster.a] = 0FFX)                (* a format without alpha is opaque *)
+			END
+		END;
+
+		(* one bit a pixel, where a fill has to reach inside a byte *)
+		NEW(wide); Raster.Create(wide, 11, 2, Raster.A1);
+		Raster.InitMode(copy, Raster.srcCopy);
+		pix[Raster.a] := 0FFX;
+		Raster.Fill(wide, 3, 0, 9, 2, pix, copy);
+		FOR y := 0 TO 1 DO
+			FOR x := 0 TO 10 DO
+				Raster.Get(wide, x, y, out, copy);
+				IF (x >= 3) & (x < 9) THEN ASSERT(out[Raster.a] = 0FFX) ELSE ASSERT(out[Raster.a] = 0X) END
+			END
+		END
+	END Test.
+
+positive: a copy moves the rectangle it was given, and an overlapping one does not eat itself
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR src, dst: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Paint(img: Raster.Image);
+		VAR x, y: SIZE; pix: Raster.Pixel;
+		BEGIN
+			FOR y := 0 TO img.height - 1 DO
+				FOR x := 0 TO img.width - 1 DO
+					Raster.SetRGB(pix, 10H*SIGNED32(x) + 1, 10H*SIGNED32(y) + 1, 0);
+					Raster.Put(img, x, y, pix, mode)
+				END
+			END
+		END Paint;
+
+		PROCEDURE Red(img: Raster.Image; x, y: SIZE): SIGNED32;
+		VAR out: Raster.Pixel;
+		BEGIN
+			Raster.Get(img, x, y, out, mode);
+			RETURN ORD(out[Raster.r])
+		END Red;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(src); Raster.Create(src, 6, 5, Raster.BGRA8888); Paint(src);
+		NEW(dst); Raster.Create(dst, 6, 5, Raster.BGRA8888);
+
+		Raster.Copy(src, dst, 1, 1, 4, 4, 2, 0, mode);   (* 3x3 from (1,1) landing at (2,0) *)
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 2 DO
+				ASSERT(Red(dst, 2 + x, y) = 10H*(1 + x) + 1)
+			END
+		END;
+		ASSERT(Red(dst, 0, 0) = 0);                       (* and nothing outside it *)
+		ASSERT(Red(dst, 5, 4) = 0);
+
+		(* the same image, moved up: the source rows must be read before they are overwritten *)
+		Paint(src);
+		Raster.Copy(src, src, 0, 0, 6, 3, 0, 2, mode);
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 5 DO ASSERT(Red(src, x, 2 + y) = 10H*x + 1) END
+		END;
+
+		(* and down *)
+		Paint(src);
+		Raster.Copy(src, src, 0, 2, 6, 5, 0, 0, mode);
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 5 DO ASSERT(Red(src, x, y) = 10H*x + 1) END
+		END;
+
+		(* and sideways within one row, which is the overlapping-span branch *)
+		Paint(src);
+		Raster.Copy(src, src, 0, 0, 4, 5, 2, 0, mode);
+		FOR y := 0 TO 4 DO
+			FOR x := 0 TO 3 DO ASSERT(Red(src, 2 + x, y) = 10H*x + 1) END
+		END;
+		out[Raster.a] := 0X
+	END Test.
+
+positive: pixels handed out and taken back in another format keep what that format can hold
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img, back: Raster.Image; mode, conv: Raster.Mode; pix, out: Raster.Pixel;
+		buf: ARRAY 64 OF CHAR; x: SIZE;
+
+	BEGIN
+		NEW(img); Raster.Create(img, 4, 1, Raster.BGRA8888);
+		Raster.InitMode(mode, Raster.srcCopy);
+		Raster.InitMode(conv, Raster.srcCopy);
+		FOR x := 0 TO 3 DO
+			Raster.SetRGB(pix, 40H*SIGNED32(x), 80H, 0C0H);
+			Raster.Put(img, x, 0, pix, mode)
+		END;
+
+		(* out into 24-bit, which drops nothing of an opaque colour *)
+		Raster.GetPixels(img, 0, 0, 4, Raster.BGR888, buf, 0, conv);
+		NEW(back); Raster.Create(back, 4, 1, Raster.BGRA8888);
+		Raster.PutPixels(back, 0, 0, 4, Raster.BGR888, buf, 0, conv);
+		FOR x := 0 TO 3 DO
+			Raster.Get(back, x, 0, out, mode);
+			ASSERT(out[Raster.r] = CHR(40H*x)); ASSERT(out[Raster.g] = 80X); ASSERT(out[Raster.b] = 0C0X);
+			ASSERT(out[Raster.a] = 0FFX)
+		END;
+
+		(* and into 16-bit, which keeps the top five or six bits and says so *)
+		Raster.GetPixels(img, 0, 0, 4, Raster.BGR565, buf, 0, conv);
+		Raster.Clear(back);
+		Raster.PutPixels(back, 0, 0, 4, Raster.BGR565, buf, 0, conv);
+		FOR x := 0 TO 3 DO
+			Raster.Get(back, x, 0, out, mode);
+			ASSERT(ORD(out[Raster.r]) DIV 8 = 40H*x DIV 8);
+			ASSERT(ORD(out[Raster.g]) DIV 4 = 80H DIV 4);
+			ASSERT(ORD(out[Raster.b]) DIV 8 = 0C0H DIV 8)
+		END
+	END Test.
+
+positive: the compositing operations do what their names say
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR src, dst: Raster.Pixel;
+
+		PROCEDURE Blend(op: SIGNED32; sr, sg, sb, sa, dr, dg, db, da: SIGNED32);
+		BEGIN
+			src[Raster.r] := CHR(sr); src[Raster.g] := CHR(sg); src[Raster.b] := CHR(sb); src[Raster.a] := CHR(sa);
+			dst[Raster.r] := CHR(dr); dst[Raster.g] := CHR(dg); dst[Raster.b] := CHR(db); dst[Raster.a] := CHR(da);
+			Raster.Blend(op, src, dst)
+		END Blend;
+
+	BEGIN
+		Blend(Raster.srcCopy, 10H, 20H, 30H, 0FFH, 1, 2, 3, 4);
+		ASSERT(dst[Raster.r] = 10X); ASSERT(dst[Raster.a] = 0FFX);
+
+		Blend(Raster.dstCopy, 10H, 20H, 30H, 0FFH, 1, 2, 3, 4);
+		ASSERT(dst[Raster.r] = 1X); ASSERT(dst[Raster.a] = 4X);
+
+		Blend(Raster.clear, 10H, 20H, 30H, 0FFH, 1, 2, 3, 4);
+		ASSERT(dst[Raster.r] = 0X); ASSERT(dst[Raster.g] = 0X);
+		ASSERT(dst[Raster.b] = 0X); ASSERT(dst[Raster.a] = 0X);
+
+		(* an opaque source over anything is the source *)
+		Blend(Raster.srcOverDst, 10H, 20H, 30H, 0FFH, 0FFH, 0FFH, 0FFH, 0FFH);
+		ASSERT(dst[Raster.r] = 10X); ASSERT(dst[Raster.a] = 0FFX);
+
+		(* a transparent source over anything leaves it alone *)
+		Blend(Raster.srcOverDst, 0, 0, 0, 0, 40H, 50H, 60H, 0FFH);
+		ASSERT(dst[Raster.r] = 40X); ASSERT(dst[Raster.g] = 50X);
+		ASSERT(dst[Raster.b] = 60X); ASSERT(dst[Raster.a] = 0FFX);
+
+		(* half and half: the destination keeps what the source alpha leaves of it *)
+		Blend(Raster.srcOverDst, 40H, 40H, 40H, 80H, 40H, 40H, 40H, 0FFH);
+		ASSERT(ORD(dst[Raster.r]) = 40H + (255-128)*40H DIV 255);
+		ASSERT(dst[Raster.a] = 0FFX);
+
+		(* source inside destination, destination inside source *)
+		Blend(Raster.srcInDst, 80H, 80H, 80H, 0FFH, 0, 0, 0, 80H);
+		ASSERT(ORD(dst[Raster.r]) = 128*80H DIV 255);
+		Blend(Raster.dstInSrc, 0, 0, 0, 80H, 80H, 80H, 80H, 0FFH);
+		ASSERT(ORD(dst[Raster.r]) = 128*80H DIV 255);
+
+		(* what is left of the destination where the source is not *)
+		Blend(Raster.dstWithoutSrc, 0, 0, 0, 0FFH, 80H, 80H, 80H, 0FFH);
+		ASSERT(dst[Raster.r] = 0X);
+		Blend(Raster.dstWithoutSrc, 0, 0, 0, 0, 80H, 80H, 80H, 0FFH);
+		ASSERT(dst[Raster.r] = 80X)
+	END Test.
+
+positive: darkening, fading and making opaque move the components they are named for
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel;
+
+		PROCEDURE Paint(red, green, blue, alpha: SIGNED32);
+		VAR pix: Raster.Pixel;
+		BEGIN
+			pix[Raster.r] := CHR(red); pix[Raster.g] := CHR(green);
+			pix[Raster.b] := CHR(blue); pix[Raster.a] := CHR(alpha);
+			Raster.Fill(img, 0, 0, img.width, img.height, pix, mode)
+		END Paint;
+
+	BEGIN
+		NEW(img); Raster.Create(img, 3, 2, Raster.BGRA8888);
+		Raster.InitMode(mode, Raster.srcCopy);
+
+		(* darken: colour down, coverage untouched *)
+		Paint(0FFH, 80H, 40H, 0FFH);
+		Raster.Darken(img, 0.5);
+		Raster.Get(img, 1, 1, out, mode);
+		ASSERT(out[Raster.r] = 80X); ASSERT(out[Raster.g] = 40X); ASSERT(out[Raster.b] = 20X);
+		ASSERT(out[Raster.a] = 0FFX);
+
+		(* darkening by one changes nothing at all *)
+		Paint(0FFH, 80H, 40H, 0FFH);
+		Raster.Darken(img, 1.0);
+		Raster.Get(img, 1, 1, out, mode);
+		ASSERT(out[Raster.r] = 0FFX); ASSERT(out[Raster.g] = 80X); ASSERT(out[Raster.b] = 40X);
+
+		(* fade takes the alpha down with the colour *)
+		Paint(0FFH, 0FFH, 0FFH, 0FFH);
+		Raster.Fade(img, 0.5);
+		Raster.Get(img, 0, 0, out, mode);
+		ASSERT(out[Raster.a] # 0FFX);
+		ASSERT(out[Raster.r] = out[Raster.a]);
+
+		(* fading to nothing is clearing *)
+		Paint(0FFH, 0FFH, 0FFH, 0FFH);
+		Raster.Fade(img, 0.0);
+		Raster.Get(img, 2, 1, out, mode);
+		ASSERT(out[Raster.a] = 0X); ASSERT(out[Raster.r] = 0X);
+
+		(* opaque moves the alpha and leaves the colour where it was *)
+		Paint(80H, 80H, 80H, 0FFH);
+		Raster.Opaque(img, 0.5);
+		Raster.Get(img, 0, 1, out, mode);
+		ASSERT(out[Raster.r] = 80X);
+		ASSERT(out[Raster.a] # 0FFX);
+		pix[Raster.a] := 0X
+	END Test.
+
+positive: adding two images adds their components and stops at the top
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR one, two, sum: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Paint(img: Raster.Image; red, green, blue, alpha: SIGNED32);
+		VAR pix: Raster.Pixel;
+		BEGIN
+			pix[Raster.r] := CHR(red); pix[Raster.g] := CHR(green);
+			pix[Raster.b] := CHR(blue); pix[Raster.a] := CHR(alpha);
+			Raster.Fill(img, 0, 0, img.width, img.height, pix, mode)
+		END Paint;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(one); Raster.Create(one, 3, 2, Raster.BGRA8888);
+		NEW(two); Raster.Create(two, 3, 2, Raster.BGRA8888);
+		NEW(sum); Raster.Create(sum, 3, 2, Raster.BGRA8888);
+
+		Paint(one, 10H, 20H, 30H, 40H);
+		Paint(two, 1, 2, 3, 4);
+		Raster.Add(one, two, sum);
+		FOR y := 0 TO 1 DO
+			FOR x := 0 TO 2 DO
+				Raster.Get(sum, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(11H)); ASSERT(out[Raster.g] = CHR(22H));
+				ASSERT(out[Raster.b] = CHR(33H)); ASSERT(out[Raster.a] = CHR(44H))
+			END
+		END;
+
+		(* and a sum over 255 stays at 255 rather than wrapping round *)
+		Paint(one, 0F0H, 0F0H, 0F0H, 0F0H);
+		Paint(two, 0F0H, 0F0H, 0F0H, 0F0H);
+		Raster.Add(one, two, sum);
+		Raster.Get(sum, 2, 1, out, mode);
+		ASSERT(out[Raster.r] = 0FFX); ASSERT(out[Raster.a] = 0FFX);
+		pix[Raster.a] := 0X
+	END Test.
+
+positive: an image written to a file is the image that is read back
+
+	MODULE Test;
+	IMPORT Raster, Files, Streams;
+
+	VAR img, back: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Paint(img: Raster.Image);
+		VAR x, y: SIZE; pix: Raster.Pixel;
+		BEGIN
+			FOR y := 0 TO img.height - 1 DO
+				FOR x := 0 TO img.width - 1 DO
+					Raster.SetRGB(pix, 20H*SIGNED32(x) + 1, 30H*SIGNED32(y) + 2, 7);
+					Raster.Put(img, x, y, pix, mode)
+				END
+			END
+		END Paint;
+
+		PROCEDURE Roundtrip(CONST name: ARRAY OF CHAR; fmt: Raster.Format);
+		VAR file: Files.File; fw: Files.Writer; fr: Files.Reader; w: Streams.Writer; r: Streams.Reader;
+		BEGIN
+			NEW(img); Raster.Create(img, 5, 3, fmt); Paint(img);
+			file := Files.New(name); ASSERT(file # NIL);
+			Files.OpenWriter(fw, file, 0); w := fw;
+			Raster.Write(w, img);
+			w.Update; Files.Register(file);
+
+			file := Files.Old(name); ASSERT(file # NIL);
+			Files.OpenReader(fr, file, 0); r := fr;
+			NEW(back); Raster.Read(r, back);
+			ASSERT(back.width = img.width); ASSERT(back.height = img.height);
+			ASSERT(back.fmt.code = img.fmt.code)
+		END Roundtrip;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		Roundtrip("raster32.img", Raster.BGRA8888);
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 4 DO
+				Raster.Get(back, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(20H*x + 1));
+				ASSERT(out[Raster.g] = CHR(30H*y + 2));
+				ASSERT(out[Raster.b] = 7X)
+			END
+		END;
+
+		(* a format whose rows are padded, which is where a stride is written down wrong *)
+		Roundtrip("raster24.img", Raster.BGR888);
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 4 DO
+				Raster.Get(back, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(20H*x + 1));
+				ASSERT(out[Raster.g] = CHR(30H*y + 2))
+			END
+		END;
+		pix[Raster.a] := 0X
+	END Test.
+
+positive: a sub-image shares the pixels of the image it was cut from
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR base, part: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(base); Raster.Create(base, 8, 6, Raster.BGRA8888);
+		NEW(part); Raster.InitRect(part, base, 2, 1, 4, 3);
+		ASSERT(part.width = 4); ASSERT(part.height = 3);
+		ASSERT(part.bpr = base.bpr);                     (* the stride stays that of the base *)
+
+		Raster.SetRGB(pix, 0FFH, 0, 0);
+		Raster.Fill(part, 0, 0, 4, 3, pix, mode);
+
+		(* what was filled in the part is what shows in the base, and only there *)
+		FOR y := 0 TO 5 DO
+			FOR x := 0 TO 7 DO
+				Raster.Get(base, x, y, out, mode);
+				IF (x >= 2) & (x < 6) & (y >= 1) & (y < 4) THEN
+					ASSERT(out[Raster.r] = 0FFX)
+				ELSE
+					ASSERT(out[Raster.r] = 0X)
+				END
+			END
+		END
+	END Test.
+
+positive: an indexed image gives back the colours its palette holds
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img: Raster.Image; pal, copy: Raster.Palette; fmt: Raster.Format;
+		mode: Raster.Mode; pix, out: Raster.Pixel; i, x: SIZE;
+
+	BEGIN
+		NEW(pal); pal.Init(4);
+		Raster.SetRGB(pal.col[0], 0, 0, 0);
+		Raster.SetRGB(pal.col[1], 0FFH, 0, 0);
+		Raster.SetRGB(pal.col[2], 0, 0FFH, 0);
+		Raster.SetRGB(pal.col[3], 0, 0, 0FFH);
+		Raster.InitPalette(pal, 4, 4);
+		ASSERT(pal.used = 4);
+
+		(* a colour that is in the palette is found at the entry it sits in, and not one below it *)
+		FOR i := 0 TO 3 DO
+			ASSERT(Raster.PaletteIndex(pal, ORD(pal.col[i, Raster.r]), ORD(pal.col[i, Raster.g]),
+				ORD(pal.col[i, Raster.b])) = i)
+		END;
+
+		Raster.InitPaletteFormat(fmt, pal);
+		ASSERT(fmt.code = Raster.p8); ASSERT(fmt.bpp = 8);
+
+		NEW(img); Raster.Create(img, 4, 1, fmt);
+		Raster.InitMode(mode, Raster.srcCopy);
+		FOR x := 0 TO 3 DO
+			pix := pal.col[x];
+			Raster.Put(img, x, 0, pix, mode)
+		END;
+		FOR x := 0 TO 3 DO
+			Raster.Get(img, x, 0, out, mode);
+			ASSERT(out[Raster.r] = pal.col[x, Raster.r]);
+			ASSERT(out[Raster.g] = pal.col[x, Raster.g]);
+			ASSERT(out[Raster.b] = pal.col[x, Raster.b])
+		END;
+
+		(* a copied palette holds the same colours *)
+		NEW(copy); Raster.CopyPalette(pal, copy);
+		ASSERT(copy.used = pal.used);
+		FOR i := 0 TO pal.used - 1 DO
+			ASSERT(copy.col[i, Raster.r] = pal.col[i, Raster.r]);
+			ASSERT(copy.col[i, Raster.g] = pal.col[i, Raster.g]);
+			ASSERT(copy.col[i, Raster.b] = pal.col[i, Raster.b])
+		END;
+
+		(* a grey ramp is grey, it goes up, and it spans the whole range from black to white *)
+		NEW(pal); Raster.InitGrayPalette(pal, 16, 4);
+		ASSERT(pal.used = 16);
+		FOR i := 0 TO 15 DO
+			ASSERT(pal.col[i, Raster.r] = pal.col[i, Raster.g]);
+			ASSERT(pal.col[i, Raster.g] = pal.col[i, Raster.b]);
+			IF i > 0 THEN ASSERT(ORD(pal.col[i, Raster.r]) > ORD(pal.col[i-1, Raster.r])) END
+		END;
+		ASSERT(pal.col[0, Raster.r] = 0X);
+		ASSERT(pal.col[15, Raster.r] = 0FFX)
+	END Test.
+
+positive: dithering into the same format is the picture itself
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR src, dst: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(src); Raster.Create(src, 6, 4, Raster.BGRA8888);
+		NEW(dst); Raster.Create(dst, 6, 4, Raster.BGRA8888);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 5 DO
+				Raster.SetRGB(pix, 20H*SIGNED32(x), 40H*SIGNED32(y), 80H);
+				Raster.Put(src, x, y, pix, mode)
+			END
+		END;
+
+		(* the destination can hold every colour of the source, so there is no error to spread *)
+		Raster.Dither(src, dst);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 5 DO
+				Raster.Get(dst, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(20H*x));
+				ASSERT(out[Raster.g] = CHR(40H*y));
+				ASSERT(out[Raster.b] = 80X)
+			END
+		END
+	END Test.
+
+positive: a pattern is tiled over the rectangle it was given
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR pat, dst: Raster.Image; mode: Raster.Mode; pix, out: Raster.Pixel; x, y: SIZE;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+
+		(* a 2x2 pattern whose four pixels are told apart by their red component *)
+		NEW(pat); Raster.Create(pat, 2, 2, Raster.BGRA8888);
+		FOR y := 0 TO 1 DO
+			FOR x := 0 TO 1 DO
+				Raster.SetRGB(pix, 10H + 10H*SIGNED32(x) + 20H*SIGNED32(y), 0, 0);
+				Raster.Put(pat, x, y, pix, mode)
+			END
+		END;
+
+		NEW(dst); Raster.Create(dst, 6, 4, Raster.BGRA8888);
+		Raster.FillPattern(pat, dst, 0, 0, 6, 4, 0, 0, mode);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 5 DO
+				Raster.Get(dst, x, y, out, mode);
+				ASSERT(out[Raster.r] = CHR(10H + 10H*(x MOD 2) + 20H*(y MOD 2)))
+			END
+		END;
+
+		(* a rectangle that does not start on a tile boundary keeps the phase of the origin *)
+		Raster.Clear(dst);
+		Raster.FillPattern(pat, dst, 1, 1, 5, 3, 0, 0, mode);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 5 DO
+				Raster.Get(dst, x, y, out, mode);
+				IF (x >= 1) & (x < 5) & (y >= 1) & (y < 3) THEN
+					ASSERT(out[Raster.r] = CHR(10H + 10H*(x MOD 2) + 20H*(y MOD 2)))
+				ELSE
+					ASSERT(out[Raster.r] = 0X)
+				END
+			END
+		END
+	END Test.
+
+positive: the formats know each other, and an index survives the trip through a colour
+
+	MODULE Test;
+	IMPORT Raster, Displays;
+
+	VAR fmt: Raster.Format; i: SIGNED32;
+
+	BEGIN
+		(* Same asks whether two formats pack and unpack alike, not whether they are one variable *)
+		fmt := Raster.BGRA8888;
+		ASSERT(Raster.Same(fmt, Raster.BGRA8888));
+		ASSERT(~Raster.Same(Raster.BGR565, Raster.BGRA8888));
+		ASSERT(~Raster.Same(Raster.A1, Raster.A8));
+
+		(* the transfer formats of a display map to the image formats of the same name *)
+		fmt := Raster.DisplayFormat(Displays.color565);
+		ASSERT(fmt.code = Raster.bgr565);
+		fmt := Raster.DisplayFormat(Displays.color888);
+		ASSERT(fmt.code = Raster.bgr888);
+		fmt := Raster.DisplayFormat(Displays.color8888);
+		ASSERT(fmt.code = Raster.bgra8888);
+		fmt := Raster.DisplayFormat(Displays.index8);
+		ASSERT(fmt.code = Raster.d8);
+
+		(* the default index mapping throws colour away, but never the index it was made from *)
+		FOR i := 0 TO 255 DO
+			ASSERT(Raster.ColorToIndex(Raster.IndexToColor(i)) = i)
+		END
+	END Test.
+
+positive: a palette computed for a picture holds the colours the picture is made of
+
+	MODULE Test;
+	IMPORT Raster;
+
+	VAR img: Raster.Image; pal: Raster.Palette; mode: Raster.Mode; pix: Raster.Pixel;
+		x, y: SIZE; i, idx: SIGNED32; seen: ARRAY 4 OF BOOLEAN;
+
+		PROCEDURE Colour(n: SIGNED32; VAR pix: Raster.Pixel);
+		BEGIN
+			CASE n OF
+			| 0: Raster.SetRGB(pix, 0FFH, 0, 0)
+			| 1: Raster.SetRGB(pix, 0, 0FFH, 0)
+			| 2: Raster.SetRGB(pix, 0, 0, 0FFH)
+			ELSE Raster.SetRGB(pix, 0FFH, 0FFH, 0FFH)
+			END
+		END Colour;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(img); Raster.Create(img, 8, 8, Raster.BGRA8888);
+		FOR y := 0 TO 7 DO
+			FOR x := 0 TO 7 DO
+				Colour(SIGNED32((x + y) MOD 4), pix);
+				Raster.Put(img, x, y, pix, mode)
+			END
+		END;
+
+		NEW(pal);
+		Raster.ComputePalette(img, pal, 0, 16, 4);
+		ASSERT(pal.used > 0); ASSERT(pal.used <= 16);
+
+		(* each of the four colours is matched by an entry that is that colour *)
+		FOR i := 0 TO 3 DO seen[i] := FALSE END;
+		FOR i := 0 TO 3 DO
+			Colour(i, pix);
+			idx := Raster.PaletteIndex(pal, ORD(pix[Raster.r]), ORD(pix[Raster.g]), ORD(pix[Raster.b]));
+			ASSERT(idx >= 0); ASSERT(idx < pal.used);
+			ASSERT(pal.col[idx, Raster.r] = pix[Raster.r]);
+			ASSERT(pal.col[idx, Raster.g] = pix[Raster.g]);
+			ASSERT(pal.col[idx, Raster.b] = pix[Raster.b]);
+			seen[i] := TRUE
+		END;
+		FOR i := 0 TO 3 DO ASSERT(seen[i]) END
+	END Test.
+
+positive: an indexed image written to a file brings its palette back with it
+
+	MODULE Test;
+	IMPORT Raster, Files, Streams;
+
+	VAR img, back: Raster.Image; pal: Raster.Palette; fmt: Raster.Format; mode: Raster.Mode;
+		pix, out: Raster.Pixel; file: Files.File; fw: Files.Writer; fr: Files.Reader;
+		w: Streams.Writer; r: Streams.Reader; x: SIZE;
+
+	BEGIN
+		NEW(pal); pal.Init(4);
+		Raster.SetRGB(pal.col[0], 0, 0, 0);
+		Raster.SetRGB(pal.col[1], 0FFH, 0, 0);
+		Raster.SetRGB(pal.col[2], 0, 0FFH, 0);
+		Raster.SetRGB(pal.col[3], 0, 0, 0FFH);
+		Raster.InitPalette(pal, 4, 4);
+		Raster.InitPaletteFormat(fmt, pal);
+
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(img); Raster.Create(img, 4, 2, fmt);
+		FOR x := 0 TO 3 DO
+			pix := pal.col[x];
+			Raster.Put(img, x, 0, pix, mode);
+			Raster.Put(img, x, 1, pix, mode)
+		END;
+
+		file := Files.New("rasterp8.img"); ASSERT(file # NIL);
+		Files.OpenWriter(fw, file, 0); w := fw;
+		Raster.Write(w, img);
+		w.Update; Files.Register(file);
+
+		file := Files.Old("rasterp8.img"); ASSERT(file # NIL);
+		Files.OpenReader(fr, file, 0); r := fr;
+		NEW(back); Raster.Read(r, back);
+		ASSERT(back.width = 4); ASSERT(back.height = 2);
+		ASSERT(back.fmt.code = Raster.p8);
+		ASSERT(back.fmt.pal # NIL);
+		ASSERT(back.fmt.pal.used = 4);
+		FOR x := 0 TO 3 DO
+			ASSERT(back.fmt.pal.col[x, Raster.r] = pal.col[x, Raster.r]);
+			ASSERT(back.fmt.pal.col[x, Raster.g] = pal.col[x, Raster.g]);
+			ASSERT(back.fmt.pal.col[x, Raster.b] = pal.col[x, Raster.b])
+		END;
+		FOR x := 0 TO 3 DO
+			Raster.Get(back, x, 1, out, mode);
+			ASSERT(out[Raster.r] = pal.col[x, Raster.r]);
+			ASSERT(out[Raster.g] = pal.col[x, Raster.g]);
+			ASSERT(out[Raster.b] = pal.col[x, Raster.b])
+		END
+	END Test.
