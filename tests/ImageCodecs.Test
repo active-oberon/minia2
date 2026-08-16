@@ -1,0 +1,310 @@
+# Tests for the image codecs of std/gui and std/media -- BMP, GIF and the Oberon Pict format.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# All three have an encoder and a decoder in the same module, so the property worth checking needs
+# no fixture file: what goes in comes out. The widths are odd on purpose -- a row of a BMP is padded
+# to four bytes, a row of a 4-bit one ends mid-byte and a row of a 1-bit one ends mid-bit, and that
+# is where a codec loses pixels. The pictures are compared against the image that was encoded, not
+# against the colours it was painted with: an indexed format quantises on the way in, and that is
+# the palette's business rather than the codec's.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a true-colour picture survives BMP, GIF and Pict
+
+	MODULE Test;
+	IMPORT Raster, BMPCodec, GIFCodec, PictCodec, Codecs, Files, Streams;
+
+	VAR mode: Raster.Mode; img: Raster.Image; pix: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Roundtrip(CONST name: ARRAY OF CHAR; enc: Codecs.ImageEncoder;
+			dec: Codecs.ImageDecoder; img: Raster.Image): Raster.Image;
+		VAR file: Files.File; fw: Files.Writer; fr: Files.Reader; res: INTEGER; back: Raster.Image;
+		BEGIN
+			file := Files.New(name); ASSERT(file # NIL);
+			Files.OpenWriter(fw, file, 0);
+			enc.Open(fw); enc.WriteImage(img, res);
+			ASSERT(res = 0);
+			fw.Update; Files.Register(file);
+
+			file := Files.Old(name); ASSERT(file # NIL);
+			Files.OpenReader(fr, file, 0);
+			dec.Open(fr, res);
+			ASSERT(res = 0);
+			back := NIL; dec.GetNativeImage(back);
+			ASSERT(back # NIL);
+			RETURN back
+		END Roundtrip;
+
+		(* every pixel of both, read through the same format, must be the same colour *)
+		PROCEDURE Same(a, b: Raster.Image): BOOLEAN;
+		VAR x, y: SIZE; p, q: Raster.Pixel;
+		BEGIN
+			IF (a.width # b.width) OR (a.height # b.height) THEN RETURN FALSE END;
+			FOR y := 0 TO a.height - 1 DO
+				FOR x := 0 TO a.width - 1 DO
+					Raster.Get(a, x, y, p, mode); Raster.Get(b, x, y, q, mode);
+					IF (p[Raster.r] # q[Raster.r]) OR (p[Raster.g] # q[Raster.g])
+						OR (p[Raster.b] # q[Raster.b]) THEN RETURN FALSE END
+				END
+			END;
+			RETURN TRUE
+		END Same;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		NEW(img); Raster.Create(img, 7, 4, Raster.BGR888);       (* 7: a row that needs padding *)
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 6 DO
+				Raster.SetRGB(pix, 20H*SIGNED32(x), 40H*SIGNED32(y), 88H);
+				Raster.Put(img, x, y, pix, mode)
+			END
+		END;
+
+		ASSERT(Same(img, Roundtrip("rt24.bmp", BMPCodec.EncoderFactory(),
+			BMPCodec.DecoderFactory(), img)));
+		ASSERT(Same(img, Roundtrip("rt.gif", GIFCodec.ImageEncoderFactory(),
+			GIFCodec.ImageDecoderFactory(), img)));
+		ASSERT(Same(img, Roundtrip("rt.pict", PictCodec.EncoderFactory(),
+			PictCodec.DecoderFactory(), img)));
+
+		(* and with an alpha channel, which BMP writes at 32 bits *)
+		NEW(img); Raster.Create(img, 5, 3, Raster.BGRA8888);
+		FOR y := 0 TO 2 DO
+			FOR x := 0 TO 4 DO
+				Raster.SetRGB(pix, 30H*SIGNED32(x), 50H*SIGNED32(y), 11H);
+				Raster.Put(img, x, y, pix, mode)
+			END
+		END;
+		ASSERT(Same(img, Roundtrip("rt32.bmp", BMPCodec.EncoderFactory(),
+			BMPCodec.DecoderFactory(), img)))
+	END Test.
+
+positive: an indexed picture survives a BMP at every depth it has
+
+	MODULE Test;
+	IMPORT Raster, BMPCodec, Codecs, Files, Streams;
+
+	VAR mode: Raster.Mode;
+
+		PROCEDURE Indexed(entries: SIGNED32; w, h: SIZE): Raster.Image;
+		VAR pal: Raster.Palette; fmt: Raster.Format; img: Raster.Image;
+			pix: Raster.Pixel; x, y: SIZE; i: SIGNED32;
+		BEGIN
+			NEW(pal); pal.Init(entries);
+			FOR i := 0 TO entries - 1 DO
+				Raster.SetRGB(pal.col[i], (i * 37) MOD 256, (i * 91) MOD 256, (i * 5) MOD 256)
+			END;
+			Raster.InitPalette(pal, entries, 4);
+			Raster.InitPaletteFormat(fmt, pal);
+			NEW(img); Raster.Create(img, w, h, fmt);
+			FOR y := 0 TO h - 1 DO
+				FOR x := 0 TO w - 1 DO
+					pix := pal.col[(x + SIGNED32(y)*3) MOD entries];
+					Raster.Put(img, x, y, pix, mode)
+				END
+			END;
+			RETURN img
+		END Indexed;
+
+		PROCEDURE Survives(CONST name: ARRAY OF CHAR; entries: SIGNED32; w, h: SIZE): BOOLEAN;
+		VAR img, back: Raster.Image; file: Files.File; fw: Files.Writer; fr: Files.Reader;
+			enc: Codecs.ImageEncoder; dec: Codecs.ImageDecoder; res: INTEGER;
+			x, y: SIZE; p, q: Raster.Pixel;
+		BEGIN
+			img := Indexed(entries, w, h);
+			file := Files.New(name); Files.OpenWriter(fw, file, 0);
+			enc := BMPCodec.EncoderFactory(); enc.Open(fw); enc.WriteImage(img, res);
+			IF res # 0 THEN RETURN FALSE END;
+			fw.Update; Files.Register(file);
+
+			file := Files.Old(name); Files.OpenReader(fr, file, 0);
+			dec := BMPCodec.DecoderFactory(); dec.Open(fr, res);
+			IF res # 0 THEN RETURN FALSE END;
+			back := NIL; dec.GetNativeImage(back);
+			IF (back = NIL) OR (back.width # w) OR (back.height # h) THEN RETURN FALSE END;
+			FOR y := 0 TO h - 1 DO
+				FOR x := 0 TO w - 1 DO
+					Raster.Get(img, x, y, p, mode); Raster.Get(back, x, y, q, mode);
+					IF (p[Raster.r] # q[Raster.r]) OR (p[Raster.g] # q[Raster.g])
+						OR (p[Raster.b] # q[Raster.b]) THEN RETURN FALSE END
+				END
+			END;
+			RETURN TRUE
+		END Survives;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		(* 256 colours are a byte a pixel: five of them are a row of five, padded to eight *)
+		ASSERT(Survives("ix256.bmp", 256, 5, 3));
+		ASSERT(Survives("ix256w.bmp", 256, 8, 3));
+		(* 16 are a nibble a pixel, and an odd width ends the row on the high half of a byte *)
+		ASSERT(Survives("ix16.bmp", 16, 5, 3));
+		ASSERT(Survives("ix16w.bmp", 16, 8, 3));
+		(* 2 are a bit a pixel, and a width that is not a multiple of eight ends mid-byte *)
+		ASSERT(Survives("ix2.bmp", 2, 5, 3));
+		ASSERT(Survives("ix2w.bmp", 2, 17, 2));
+		ASSERT(Survives("ix2f.bmp", 2, 16, 2))
+	END Test.
+
+positive: an indexed picture survives a Pict, whose palette is shorter than the format
+
+	MODULE Test;
+	IMPORT Raster, PictCodec, Codecs, Files, Streams;
+
+	VAR mode: Raster.Mode; img, back: Raster.Image; pal: Raster.Palette; fmt: Raster.Format;
+		pix, p, q: Raster.Pixel; x, y: SIZE; i: SIGNED32;
+		file: Files.File; fw: Files.Writer; fr: Files.Reader;
+		enc: Codecs.ImageEncoder; dec: Codecs.ImageDecoder; res: INTEGER;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		(* sixteen colours, but the format Raster gives them is eight bits a pixel, so the file
+		   carries a table of 256 and the palette can only fill the first sixteen of it *)
+		NEW(pal); pal.Init(16);
+		FOR i := 0 TO 15 DO
+			Raster.SetRGB(pal.col[i], i*17, 255 - i*17, (i*5) MOD 256)
+		END;
+		Raster.InitPalette(pal, 16, 4);
+		Raster.InitPaletteFormat(fmt, pal);
+		NEW(img); Raster.Create(img, 7, 4, fmt);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 6 DO
+				pix := pal.col[(x + SIGNED32(y)*3) MOD 16];
+				Raster.Put(img, x, y, pix, mode)
+			END
+		END;
+
+		file := Files.New("ix.pict"); Files.OpenWriter(fw, file, 0);
+		enc := PictCodec.EncoderFactory(); enc.Open(fw); enc.WriteImage(img, res);
+		ASSERT(res = 0);
+		fw.Update; Files.Register(file);
+
+		file := Files.Old("ix.pict"); Files.OpenReader(fr, file, 0);
+		dec := PictCodec.DecoderFactory(); dec.Open(fr, res);
+		ASSERT(res = 0);
+		back := NIL; dec.GetNativeImage(back);
+		ASSERT(back # NIL);
+		ASSERT(back.width = 7); ASSERT(back.height = 4);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 6 DO
+				Raster.Get(img, x, y, p, mode); Raster.Get(back, x, y, q, mode);
+				ASSERT(p[Raster.r] = q[Raster.r]);
+				ASSERT(p[Raster.g] = q[Raster.g]);
+				ASSERT(p[Raster.b] = q[Raster.b])
+			END
+		END
+	END Test.
+
+positive: a GIF holds a picture of one pixel, of one colour, and of more codes than nine bits
+
+	MODULE Test;
+	IMPORT Raster, GIFCodec, Codecs, Files, Streams;
+
+	VAR mode: Raster.Mode; img: Raster.Image; pix: Raster.Pixel; x, y: SIZE; i: SIGNED32;
+
+		PROCEDURE Survives(CONST name: ARRAY OF CHAR; img: Raster.Image): BOOLEAN;
+		VAR back: Raster.Image; file: Files.File; fw: Files.Writer; fr: Files.Reader;
+			enc: Codecs.ImageEncoder; dec: Codecs.ImageDecoder; res: INTEGER;
+			x, y: SIZE; p, q: Raster.Pixel;
+		BEGIN
+			file := Files.New(name); Files.OpenWriter(fw, file, 0);
+			enc := GIFCodec.ImageEncoderFactory(); enc.Open(fw); enc.WriteImage(img, res);
+			IF res # 0 THEN RETURN FALSE END;
+			fw.Update; Files.Register(file);
+
+			file := Files.Old(name); Files.OpenReader(fr, file, 0);
+			dec := GIFCodec.ImageDecoderFactory(); dec.Open(fr, res);
+			IF res # 0 THEN RETURN FALSE END;
+			back := NIL; dec.GetNativeImage(back);
+			IF (back = NIL) OR (back.width # img.width) OR (back.height # img.height) THEN
+				RETURN FALSE
+			END;
+			FOR y := 0 TO img.height - 1 DO
+				FOR x := 0 TO img.width - 1 DO
+					Raster.Get(img, x, y, p, mode); Raster.Get(back, x, y, q, mode);
+					IF (p[Raster.r] # q[Raster.r]) OR (p[Raster.g] # q[Raster.g])
+						OR (p[Raster.b] # q[Raster.b]) THEN RETURN FALSE END
+				END
+			END;
+			RETURN TRUE
+		END Survives;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+
+		(* one pixel: there is no second one to read, and the last pixel is also the first *)
+		NEW(img); Raster.Create(img, 1, 1, Raster.BGR888);
+		Raster.SetRGB(pix, 10H, 20H, 30H);
+		Raster.Put(img, 0, 0, pix, mode);
+		ASSERT(Survives("one.gif", img));
+
+		(* one colour over fifteen hundred pixels: the longest runs the coder can make, and a
+		   palette of one, which is not a palette a reverse lookup can be built over *)
+		NEW(img); Raster.Create(img, 64, 24, Raster.BGR888);
+		Raster.SetRGB(pix, 33, 66, 99);
+		Raster.Fill(img, 0, 0, 64, 24, pix, mode);
+		ASSERT(Survives("flat.gif", img));
+
+		(* a hundred and twenty-eight colours over fifteen hundred pixels, no two neighbours
+		   alike: the dictionary outgrows nine bits and the byte blocks fill up *)
+		NEW(img); Raster.Create(img, 64, 24, Raster.BGR888);
+		FOR y := 0 TO 23 DO
+			FOR x := 0 TO 63 DO
+				i := (SIGNED32(x)*7 + SIGNED32(y)*13) MOD 128;
+				Raster.SetRGB(pix, i*2, 255 - i*2, (i*5) MOD 256);
+				Raster.Put(img, x, y, pix, mode)
+			END
+		END;
+		ASSERT(Survives("grown.gif", img))
+	END Test.
+
+positive: what the codecs cannot do they refuse, and refusing is not trapping
+
+	MODULE Test;
+	IMPORT Raster, BMPCodec, GIFCodec, PictCodec, Codecs, Files, Streams;
+
+	VAR img: Raster.Image; file: Files.File; fw: Files.Writer; fr: Files.Reader;
+		enc: Codecs.ImageEncoder; dec: Codecs.ImageDecoder; res: INTEGER;
+
+		PROCEDURE Rubbish(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; fw: Files.Writer;
+		BEGIN
+			file := Files.New(name); ASSERT(file # NIL);
+			Files.OpenWriter(fw, file, 0);
+			fw.String("this is not a picture of anything at all");
+			fw.Update; Files.Register(file)
+		END Rubbish;
+
+	BEGIN
+		(* BMP has six depths and a pure alpha mask is none of them. Asking the palette of an
+		   image that has none used to take the process down. *)
+		NEW(img); Raster.Create(img, 4, 2, Raster.A8);
+		file := Files.New("mask.bmp"); Files.OpenWriter(fw, file, 0);
+		enc := BMPCodec.EncoderFactory(); enc.Open(fw);
+		enc.WriteImage(img, res);
+		ASSERT(res # 0);
+
+		(* nor is a palette of a size BMP has no depth for *)
+		NEW(img); Raster.Create(img, 4, 2, Raster.D8);
+		file := Files.New("d8.bmp"); Files.OpenWriter(fw, file, 0);
+		enc := BMPCodec.EncoderFactory(); enc.Open(fw);
+		enc.WriteImage(img, res);
+		ASSERT(res # 0);
+
+		(* and a stream that is not a picture is refused by all three, without a trap *)
+		Rubbish("rubbish.dat");
+
+		file := Files.Old("rubbish.dat"); Files.OpenReader(fr, file, 0);
+		dec := BMPCodec.DecoderFactory(); dec.Open(fr, res);
+		ASSERT(res # 0);
+
+		file := Files.Old("rubbish.dat"); Files.OpenReader(fr, file, 0);
+		dec := PictCodec.DecoderFactory(); dec.Open(fr, res);
+		ASSERT(res # 0);
+
+		file := Files.Old("rubbish.dat"); Files.OpenReader(fr, file, 0);
+		dec := GIFCodec.ImageDecoderFactory(); dec.Open(fr, res);
+		ASSERT(res # 0)
+	END Test.
