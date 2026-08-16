@@ -1846,7 +1846,11 @@ VAR
 		BEGIN
 			IF depth > 0 THEN
 				DEC(depth);
-				IF depth < MaxDepth THEN Emit(stack[depth], l, "") END
+				(*	Nothing is emitted for the outermost construct. A module is the file, so a
+					fold over it collapses everything to its first line -- and since every
+					top-level line is then inside it, `za` anywhere outside a procedure did that
+					instead of folding what the cursor was on. *)
+				IF (depth > 0) & (depth < MaxDepth) THEN Emit(stack[depth], l, "") END
 			END
 		END Pop;
 

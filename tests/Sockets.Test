@@ -94,7 +94,7 @@ positive: two ends of a connection over the loopback
 		END Server;
 
 	VAR server: Server; client: TCP.Connection; res: INTEGER; length: SIZE;
-		answer: ARRAY 64 OF CHAR;
+		answer: POINTER TO ARRAY OF CHAR;
 	BEGIN
 		NEW(server);
 		ASSERT(server.ready);                      (* the port was free and the socket opened *)
@@ -105,11 +105,20 @@ positive: two ends of a connection over the loopback
 		client.Send("hello", 0, 5, TRUE, res);
 		ASSERT(res = TCP.Ok);
 
-		client.Receive(answer, 0, LEN(answer) - 1, 9, length, res);
+		(*	The buffer is on the heap and not a variable of this module, and that is not
+			taste. Under qemu-aarch64 a receive into the module's own data comes back EFAULT
+			from an address that is provably valid -- printed either side of the call, inside
+			the one RWE segment the image is loaded from, and the receive before it into the
+			same buffer succeeds. It is the emulator's page bookkeeping, not the address and
+			not A2; on a real AArch64 machine this has never been seen, and neither has it on
+			x86-64. Held here because the case is about two ends of a connection, not about
+			where the bytes land. *)
+		NEW(answer, 64);
+		client.Receive(answer^, 0, LEN(answer) - 1, 9, length, res);
 		ASSERT(res = TCP.Ok);
 		ASSERT(length = 9);
 		answer[length] := 0X;
-		ASSERT(answer = "re: hello");              (* what came back is what was sent, answered *)
+		ASSERT(answer^ = "re: hello");             (* what came back is what was sent, answered *)
 
 		client.Close;
 		server.AwaitServed

@@ -956,7 +956,7 @@ positive: input the server has to survive: a message that is not JSON, and a met
 		ASSERT(s.Answers() = 3)            (* initialize, that one, shutdown -- and no notification *)
 	END Test.
 
-positive: folding ranges for the module, the record and each procedure
+positive: folding ranges for the record and each procedure, but not the module
 
 	MODULE Test;
 	IMPORT T := LSPTestShared, JSON;
@@ -982,8 +982,10 @@ positive: folding ranges for the module, the record and each procedure
 		id := s.Request("textDocument/foldingRange", p);
 		s.Run(FALSE);
 		r := s.Answer(id);
-		ASSERT(T.Count(r) = 4);
-		ASSERT(EndOf(r, 0) = 18);       (* the module, header to final END *)
+		ASSERT(T.Count(r) = 3);
+		(*	No fold over the module: it is the file, and folding it collapses everything to
+			its first line -- which is what `za` did on every top-level line before. *)
+		ASSERT(EndOf(r, 0) = -1);
 		ASSERT(EndOf(r, 3) = 5);        (* the record *)
 		(*	A procedure and its body share one END, so the fold is the whole procedure and there
 			is no second one starting at the BEGIN. *)
@@ -1064,7 +1066,7 @@ positive: folding tells a procedure type from a procedure, and finds comments an
 		s.Run(FALSE);
 		r := s.Answer(id);
 
-		ASSERT(EndOf(r, 0) = 24);                (* the module *)
+		ASSERT(EndOf(r, 0) = -1);                (* the module itself is not folded *)
 		ASSERT(T.Is(KindOf(r, 2), "imports"));   (* the import list, to the semicolon that ends it *)
 		ASSERT(EndOf(r, 2) = 4);
 		ASSERT(T.Is(KindOf(r, 6), "comment"));   (* a comment over three lines *)
@@ -1078,5 +1080,5 @@ positive: folding tells a procedure type from a procedure, and finds comments an
 			after it, so these are the cases that keep the rest honest. *)
 		ASSERT(EndOf(r, 11) = -1);
 		ASSERT(EndOf(r, 13) = -1);
-		ASSERT(T.Count(r) = 6)
+		ASSERT(T.Count(r) = 5)
 	END Test.

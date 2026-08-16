@@ -71,19 +71,3 @@ MathFunctions.Test	positive: a logarithm and an exponent undo each other
 # that loses a third of its updates is either a defect or a broken measurement, and both
 # are worth keeping in front of us.
 MachineFunctions.Test	positive: two activities adding to one counter lose nothing
-
-# --- a valid address the emulator calls bad -----------------------------------------
-# The case is a client and a server over the loopback in one process. On x86-64 it
-# passes. Here, under load (the suites run -j), the client's second recv comes back
-# EFAULT from an address that is its own module's data, four bytes into a 64-byte
-# array, with the whole range inside the one RWE segment the image is loaded from --
-# measured, not assumed: the address was printed either side of the call. The first
-# recv on the same buffer succeeds; adding a trace either side of the call makes the
-# case pass, which is what a race looks like and not what a wrong address looks like.
-# The likely answer is qemu-user's page bookkeeping racing another A2 thread that is
-# growing the heap, the same shape as the atomics entry above -- and, as there, likely
-# is not checked. Finding it was worth it anyway: it turned up a real defect on the way
-# (Sockets.Recv decided success by a variable assigned only on failure, so a failed
-# receive was handed to the caller as a length of -1), which is fixed.
-Sockets.Test	positive: two ends of a connection over the loopback
-
