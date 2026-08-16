@@ -1,0 +1,353 @@
+# Tests for std/gui -- the canvas the window manager draws with, and the rectangles under it.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# A BufferCanvas draws into a Raster image in memory, so none of this needs a screen: what it drew
+# is read back pixel by pixel. That is also the point of the first case -- a canvas over an image
+# must be makeable in a program that never boots the window manager, and for years it was not: the
+# constructor asked for the default font, and asking waits until one is installed.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a canvas over an image can be made where no font was ever installed
+
+	MODULE Test;
+	IMPORT WMGraphics, Raster;
+
+	VAR img: Raster.Image; canvas: WMGraphics.BufferCanvas; mode: Raster.Mode;
+		pix: Raster.Pixel; red: WMGraphics.Color; x, y: SIZE;
+
+	BEGIN
+		(* nothing here imports WMDefaultFont, and nothing here draws text *)
+		Raster.InitMode(mode, Raster.srcCopy);
+		red := WMGraphics.RGBAToColor(255, 0, 0, 255);
+		NEW(img); Raster.Create(img, 6, 4, Raster.BGRA8888);
+		canvas := WMGraphics.GenCanvas(img);
+		ASSERT(canvas # NIL);
+		ASSERT(canvas.GetImage() = img);
+
+		canvas.Fill(WMGraphics.MakeRectangle(1, 1, 4, 3), red, WMGraphics.ModeCopy);
+		FOR y := 0 TO 3 DO
+			FOR x := 0 TO 5 DO
+				Raster.Get(img, x, y, pix, mode);
+				IF (x >= 1) & (x < 4) & (y >= 1) & (y < 3) THEN
+					ASSERT(pix[Raster.r] = 0FFX); ASSERT(pix[Raster.a] = 0FFX)
+				ELSE
+					ASSERT(pix[Raster.a] = 0X)
+				END
+			END
+		END
+	END Test.
+
+positive: a colour packs and unpacks, and goes round the hue circle
+
+	MODULE Test;
+	IMPORT WMGraphics;
+
+	VAR r, g, b, a, h, s, l, R, G, B: WMGraphics.Color; i: SIGNED32; c: WMGraphics.Color;
+
+	BEGIN
+		(* the four components sit in one number and come back out of it *)
+		FOR i := 0 TO 255 DO
+			c := WMGraphics.RGBAToColor(i, 255 - i, (i*7) MOD 256, (i*3) MOD 256);
+			WMGraphics.ColorToRGBA(c, r, g, b, a);
+			ASSERT(r = i); ASSERT(g = 255 - i);
+			ASSERT(b = (i*7) MOD 256); ASSERT(a = (i*3) MOD 256)
+		END;
+
+		(* a grey has no hue and no saturation, and its lightness is the grey *)
+		FOR i := 0 TO 255 DO
+			WMGraphics.RGBtoHSL(i, i, i, h, s, l);
+			ASSERT(h = 0); ASSERT(s = 0); ASSERT(l = i)
+		END;
+
+		(* the six corners of the circle, at a sixth of 256 each *)
+		WMGraphics.RGBtoHSL(255, 0, 0, h, s, l);   ASSERT(h = 0); ASSERT(s = 255);
+		WMGraphics.RGBtoHSL(255, 255, 0, h, s, l); ASSERT(h = 42); ASSERT(s = 255);
+		WMGraphics.RGBtoHSL(0, 255, 0, h, s, l);   ASSERT(h = 85); ASSERT(s = 255);
+		WMGraphics.RGBtoHSL(0, 255, 255, h, s, l); ASSERT(h = 127); ASSERT(s = 255);
+		WMGraphics.RGBtoHSL(0, 0, 255, h, s, l);   ASSERT(h = 170); ASSERT(s = 255);
+		WMGraphics.RGBtoHSL(255, 0, 255, h, s, l); ASSERT(h = 211); ASSERT(s = 255);
+
+		(* black and white come back as themselves *)
+		WMGraphics.HSLtoRGB(0, 0, 0, R, G, B);
+		ASSERT(R = 0); ASSERT(G = 0); ASSERT(B = 0);
+		WMGraphics.HSLtoRGB(0, 0, 255, R, G, B);
+		ASSERT(R = 255); ASSERT(G = 255); ASSERT(B = 255);
+
+		(* a grey survives the trip both ways *)
+		FOR i := 0 TO 255 DO
+			WMGraphics.RGBtoHSL(i, i, i, h, s, l);
+			WMGraphics.HSLtoRGB(h, s, l, R, G, B);
+			ASSERT(R = i); ASSERT(G = i); ASSERT(B = i)
+		END;
+
+		(* a saturated hue comes back near where it went: the scale is 255 units of 8 bits, so
+		   the answer is within a unit or two of the corner, and not four or five out *)
+		WMGraphics.HSLtoRGB(0, 255, 127, R, G, B);
+		ASSERT(R >= 254); ASSERT(G <= 1); ASSERT(B <= 1);
+		WMGraphics.HSLtoRGB(85, 255, 127, R, G, B);
+		ASSERT(G >= 254); ASSERT(R <= 2); ASSERT(B <= 1);
+		WMGraphics.HSLtoRGB(170, 255, 127, R, G, B);
+		ASSERT(B >= 254); ASSERT(R <= 1); ASSERT(G <= 4);
+
+		(* the hue is a circle of 256, so a hue outside it is the same colour as inside *)
+		WMGraphics.HSLtoRGB(85, 255, 127, R, G, B);
+		WMGraphics.HSLtoRGB(85 + 256, 255, 127, r, g, b);
+		ASSERT(R = r); ASSERT(G = g); ASSERT(B = b);
+
+		(* the complement of the complement is where it started *)
+		FOR i := 0 TO 255 DO
+			WMGraphics.HSLtoRGB(i, 255, 127, R, G, B);
+			WMGraphics.ComplementaryRGB(R, G, B, r, g, b);
+			WMGraphics.RGBtoHSL(r, g, b, h, s, l);
+			(* half a circle away, to within what a hue of 256 steps can say *)
+			ASSERT((ABS(h - i) >= 124) & (ABS(h - i) <= 132))
+		END;
+
+		(* darker and lighter move the colour and leave the coverage alone *)
+		c := WMGraphics.RGBAToColor(255, 128, 64, 255);
+		WMGraphics.ColorToRGBA(WMGraphics.Dark(c), r, g, b, a);
+		ASSERT(r = 255 - 64); ASSERT(g = 128 - 64); ASSERT(b = 0); ASSERT(a = 255);
+		WMGraphics.ColorToRGBA(WMGraphics.Light(c), r, g, b, a);
+		ASSERT(r = 255); ASSERT(g = 128 + 64); ASSERT(b = 64 + 64); ASSERT(a = 255);
+
+		(* and neither runs off the end *)
+		c := WMGraphics.RGBAToColor(0, 0, 0, 128);
+		WMGraphics.ColorToRGBA(WMGraphics.Dark(c), r, g, b, a);
+		ASSERT(r = 0); ASSERT(g = 0); ASSERT(b = 0); ASSERT(a = 128);
+		c := WMGraphics.RGBAToColor(255, 255, 255, 128);
+		WMGraphics.ColorToRGBA(WMGraphics.Light(c), r, g, b, a);
+		ASSERT(r = 255); ASSERT(g = 255); ASSERT(b = 255); ASSERT(a = 128)
+	END Test.
+
+positive: the rectangles the canvas is cut into
+
+	MODULE Test;
+	IMPORT WMRectangles;
+
+	VAR a, b, c: WMRectangles.Rectangle;
+
+	BEGIN
+		a := WMRectangles.MakeRect(2, 3, 8, 9);
+		ASSERT(a.l = 2); ASSERT(a.t = 3); ASSERT(a.r = 8); ASSERT(a.b = 9);
+		ASSERT(WMRectangles.Area(a) = 36);
+		ASSERT(~WMRectangles.RectEmpty(a));
+
+		(* a rectangle holds its left and top edge and not its right and bottom *)
+		ASSERT(WMRectangles.PointInRect(2, 3, a));
+		ASSERT(WMRectangles.PointInRect(7, 8, a));
+		ASSERT(~WMRectangles.PointInRect(8, 8, a));
+		ASSERT(~WMRectangles.PointInRect(7, 9, a));
+		ASSERT(~WMRectangles.PointInRect(1, 3, a));
+
+		(* empty ones *)
+		b := WMRectangles.MakeRect(5, 5, 5, 9); ASSERT(WMRectangles.RectEmpty(b));
+		b := WMRectangles.MakeRect(5, 5, 9, 5); ASSERT(WMRectangles.RectEmpty(b));
+		b := WMRectangles.MakeRect(9, 5, 5, 9); ASSERT(WMRectangles.RectEmpty(b));
+
+		(* touching is not intersecting *)
+		b := WMRectangles.MakeRect(8, 3, 12, 9);
+		ASSERT(~WMRectangles.Intersect(a, b));
+		b := WMRectangles.MakeRect(7, 3, 12, 9);
+		ASSERT(WMRectangles.Intersect(a, b));
+
+		(* containment and equality *)
+		b := WMRectangles.MakeRect(3, 4, 7, 8);
+		ASSERT(WMRectangles.IsContained(a, b));
+		ASSERT(~WMRectangles.IsContained(b, a));
+		ASSERT(WMRectangles.IsContained(a, a));
+		ASSERT(WMRectangles.IsEqual(a, WMRectangles.MakeRect(2, 3, 8, 9)));
+		ASSERT(~WMRectangles.IsEqual(a, b));
+
+		(* clipping is clamping to the boundary, and a rectangle wholly outside becomes empty *)
+		b := WMRectangles.MakeRect(0, 0, 20, 20);
+		c := a; WMRectangles.ClipRect(c, b);
+		ASSERT(WMRectangles.IsEqual(c, a));
+		c := WMRectangles.MakeRect(-5, -5, 30, 30); WMRectangles.ClipRect(c, a);
+		ASSERT(WMRectangles.IsEqual(c, a));
+		c := WMRectangles.MakeRect(20, 20, 30, 30); WMRectangles.ClipRect(c, a);
+		ASSERT(WMRectangles.RectEmpty(c));
+
+		(* extending, resizing, moving, and putting the corners the right way round *)
+		c := a; b := WMRectangles.MakeRect(0, 5, 4, 20);
+		WMRectangles.ExtendRect(c, b);
+		ASSERT(WMRectangles.IsEqual(c, WMRectangles.MakeRect(0, 3, 8, 20)));
+
+		c := WMRectangles.ResizeRect(a, 2);
+		ASSERT(WMRectangles.IsEqual(c, WMRectangles.MakeRect(0, 1, 10, 11)));
+		c := WMRectangles.ResizeRect(a, -1);
+		ASSERT(WMRectangles.IsEqual(c, WMRectangles.MakeRect(3, 4, 7, 8)));
+
+		c := a; WMRectangles.MoveRel(c, 10, -3);
+		ASSERT(WMRectangles.IsEqual(c, WMRectangles.MakeRect(12, 0, 18, 6)));
+
+		c := WMRectangles.MakeRect(8, 9, 2, 3);
+		WMRectangles.Normalize(c);
+		ASSERT(WMRectangles.IsEqual(c, a));
+
+		WMRectangles.SetRect(c, 1, 2, 3, 4);
+		ASSERT(WMRectangles.IsEqual(c, WMRectangles.MakeRect(1, 2, 3, 4)))
+	END Test.
+
+positive: what the canvas draws lands where it was told, and nowhere else
+
+	MODULE Test;
+	IMPORT WMGraphics, Raster;
+
+	VAR img: Raster.Image; canvas: WMGraphics.BufferCanvas; mode: Raster.Mode;
+		red, blue: WMGraphics.Color; state: WMGraphics.CanvasState; pix: Raster.Pixel; x, y: SIZE;
+
+		PROCEDURE Painted(x, y: SIZE): BOOLEAN;
+		VAR p: Raster.Pixel;
+		BEGIN
+			Raster.Get(img, x, y, p, mode);
+			RETURN p[Raster.a] # 0X
+		END Painted;
+
+		PROCEDURE Only(l, t, r, b: SIZE): BOOLEAN;
+		VAR x, y: SIZE;
+		BEGIN
+			FOR y := 0 TO img.height - 1 DO
+				FOR x := 0 TO img.width - 1 DO
+					IF Painted(x, y) # ((x >= l) & (x < r) & (y >= t) & (y < b)) THEN RETURN FALSE END
+				END
+			END;
+			RETURN TRUE
+		END Only;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		red := WMGraphics.RGBAToColor(255, 0, 0, 255);
+		blue := WMGraphics.RGBAToColor(0, 0, 255, 255);
+		NEW(img); Raster.Create(img, 10, 6, Raster.BGRA8888);
+		canvas := WMGraphics.GenCanvas(img);
+
+		(* a single pixel, at both corners *)
+		canvas.SetPixel(0, 0, blue, WMGraphics.ModeCopy);
+		canvas.SetPixel(9, 5, blue, WMGraphics.ModeCopy);
+		ASSERT(Painted(0, 0)); ASSERT(Painted(9, 5)); ASSERT(~Painted(1, 1));
+
+		(* a line from corner to corner touches both ends *)
+		Raster.Clear(img);
+		canvas.Line(0, 0, 9, 5, red, WMGraphics.ModeCopy);
+		ASSERT(Painted(0, 0)); ASSERT(Painted(9, 5));
+		(* and one pixel in every column of it *)
+		FOR x := 0 TO 9 DO
+			y := 0;
+			WHILE (y < 6) & ~Painted(x, y) DO INC(y) END;
+			ASSERT(y < 6)
+		END;
+
+		(* the clipping rectangle holds the fill in *)
+		Raster.Clear(img);
+		canvas.SetClipRect(WMGraphics.MakeRectangle(2, 1, 5, 4));
+		canvas.Fill(WMGraphics.MakeRectangle(0, 0, 10, 6), red, WMGraphics.ModeCopy);
+		ASSERT(Only(2, 1, 5, 4));
+
+		(* the delta moves what is drawn, and the coordinates given stay the same *)
+		Raster.Clear(img);
+		canvas.SetClipRect(WMGraphics.MakeRectangle(0, 0, 10, 6));
+		canvas.SetDelta(3, 2);
+		canvas.Fill(WMGraphics.MakeRectangle(0, 0, 2, 2), blue, WMGraphics.ModeCopy);
+		ASSERT(Only(3, 2, 5, 4));
+
+		(* a state put away and taken back is the state that was put away *)
+		Raster.Clear(img);
+		canvas.SetDelta(0, 0);
+		canvas.SetClipRect(WMGraphics.MakeRectangle(0, 0, 10, 6));
+		canvas.SetColor(red);
+		canvas.SaveState(state);
+		canvas.SetClipRect(WMGraphics.MakeRectangle(0, 0, 3, 3));
+		canvas.SetDelta(5, 5);
+		canvas.SetColor(blue);
+		canvas.RestoreState(state);
+		ASSERT(canvas.GetColor() = red);
+		canvas.Fill(WMGraphics.MakeRectangle(0, 0, 10, 6), red, WMGraphics.ModeCopy);
+		ASSERT(Only(0, 0, 10, 6));
+
+		(* what is behind shows through what is drawn half over it *)
+		Raster.Clear(img);
+		canvas.Fill(WMGraphics.MakeRectangle(0, 0, 10, 6), red, WMGraphics.ModeCopy);
+		canvas.Fill(WMGraphics.MakeRectangle(2, 2, 6, 5),
+			WMGraphics.RGBAToColor(0, 0, 255, 128), WMGraphics.ModeSrcOverDst);
+		Raster.Get(img, 0, 0, pix, mode);
+		ASSERT(pix[Raster.r] = 0FFX); ASSERT(pix[Raster.b] = 0X);
+		Raster.Get(img, 3, 3, pix, mode);
+		ASSERT(ORD(pix[Raster.r]) > 0); ASSERT(ORD(pix[Raster.r]) < 255);
+		ASSERT(ORD(pix[Raster.b]) > 0); ASSERT(ORD(pix[Raster.b]) < 255);
+		ASSERT(pix[Raster.a] = 0FFX)
+	END Test.
+
+positive: polygons, an image drawn, and an image scaled by a whole number
+
+	MODULE Test;
+	IMPORT WMGraphics, Raster;
+
+	VAR img, src: Raster.Image; canvas: WMGraphics.BufferCanvas; mode: Raster.Mode;
+		red, blue: WMGraphics.Color; pts: ARRAY 8 OF WMGraphics.Point2d;
+		pix: Raster.Pixel; x, y: SIZE; n: SIGNED32;
+
+		PROCEDURE Red(x, y: SIZE): BOOLEAN;
+		VAR p: Raster.Pixel;
+		BEGIN
+			Raster.Get(img, x, y, p, mode);
+			RETURN (p[Raster.r] = 0FFX) & (p[Raster.b] = 0X)
+		END Red;
+
+		PROCEDURE Painted(x, y: SIZE): BOOLEAN;
+		VAR p: Raster.Pixel;
+		BEGIN
+			Raster.Get(img, x, y, p, mode);
+			RETURN p[Raster.a] # 0X
+		END Painted;
+
+	BEGIN
+		Raster.InitMode(mode, Raster.srcCopy);
+		red := WMGraphics.RGBAToColor(255, 0, 0, 255);
+		blue := WMGraphics.RGBAToColor(0, 0, 255, 255);
+		NEW(img); Raster.Create(img, 10, 8, Raster.BGRA8888);
+		canvas := WMGraphics.GenCanvas(img);
+
+		(* a filled rectangle drawn as a polygon is a filled rectangle *)
+		pts[0].x := 2; pts[0].y := 2;
+		pts[1].x := 7; pts[1].y := 2;
+		pts[2].x := 7; pts[2].y := 6;
+		pts[3].x := 2; pts[3].y := 6;
+		canvas.FillPolygonFlat(pts, 4, red, WMGraphics.ModeCopy);
+		ASSERT(Red(3, 3)); ASSERT(Red(6, 5));
+		ASSERT(~Painted(1, 3)); ASSERT(~Painted(3, 1)); ASSERT(~Painted(8, 3));
+
+		(* an outline is drawn on its edges and not inside them *)
+		Raster.Clear(img);
+		canvas.PolyLine(pts, 4, TRUE, blue, WMGraphics.ModeCopy);
+		ASSERT(Painted(2, 2)); ASSERT(Painted(7, 2));
+		ASSERT(Painted(2, 6)); ASSERT(Painted(7, 6));
+		ASSERT(Painted(4, 2)); ASSERT(Painted(2, 4));
+		ASSERT(~Painted(4, 4));
+
+		(* an image lands with its corner where it was put *)
+		NEW(src); Raster.Create(src, 2, 2, Raster.BGRA8888);
+		Raster.SetRGB(pix, 255, 0, 0); Raster.Put(src, 0, 0, pix, mode); Raster.Put(src, 1, 1, pix, mode);
+		Raster.SetRGB(pix, 0, 0, 255); Raster.Put(src, 1, 0, pix, mode); Raster.Put(src, 0, 1, pix, mode);
+		Raster.Clear(img);
+		canvas.DrawImage(3, 2, src, WMGraphics.ModeCopy);
+		ASSERT(Red(3, 2)); ASSERT(~Red(4, 2)); ASSERT(Painted(4, 2));
+		ASSERT(~Red(3, 3)); ASSERT(Red(4, 3));
+		ASSERT(~Painted(2, 2)); ASSERT(~Painted(5, 2));
+
+		(* a whole-number zoom repeats every pixel exactly that many times -- a threefold one used
+		   to give four columns of the first and two of the second, and a fivefold one six and four *)
+		FOR n := 2 TO 5 DO
+			NEW(img); Raster.Create(img, 2*n, 2*n, Raster.BGRA8888);
+			canvas := WMGraphics.GenCanvas(img);
+			canvas.ScaleImage(src, WMGraphics.MakeRectangle(0, 0, 2, 2),
+				WMGraphics.MakeRectangle(0, 0, 2*n, 2*n), WMGraphics.ModeCopy, WMGraphics.ScaleBox);
+			FOR y := 0 TO 2*n - 1 DO
+				FOR x := 0 TO 2*n - 1 DO
+					(* source (x DIV n, y DIV n) is red on the diagonal and blue off it *)
+					ASSERT(Red(x, y) = ((x DIV n) = (y DIV n)))
+				END
+			END
+		END
+	END Test.
