@@ -10,6 +10,12 @@
 #	Beep				imports Displays and XDisplay, which are not headless
 #
 # Regenerate with tests/gen-a64-stdlib.sh after changing headless-core.txt.
+#
+# NOT yet regenerated against the registry-derived headless-core.txt (2026-08-16): that list went
+# from 393 modules to 255, and this one has to follow, but the A64 objects are also what the A64
+# suites compile against -- so shrinking it means a full A64 rebuild and a full suite run to find
+# out which cases lose an import. Until that is done this list is a superset, which costs build
+# time and nothing else.
 AMD64.Builtins.Mod
 Trace.Mod
 Linux.Glue.Mod

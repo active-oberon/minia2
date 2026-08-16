@@ -2,11 +2,20 @@
   "name": "std/numerics",
   "tier": 2,
   "context": "A2",
+  "headless": true,
   "status": "stable",
   "description": "Advanced / special functions over the std/math number types: cube root, error/gamma functions, real & complex series, rational/real/integer numeric routines.",
   "provides": [
-    "MathCbrt", "MathCplx", "MathCplxSeries", "MathErf", "MathGamma",
-    "MathInt", "MathRat", "MathRe", "MathReSeries", "DataErrors"
+    "MathCbrt",
+    "MathCplx",
+    "MathCplxSeries",
+    "MathErf",
+    "MathGamma",
+    "MathInt",
+    "MathRat",
+    "MathRe",
+    "MathReSeries",
+    "DataErrors"
   ],
   "requires": {
     "std/runtime": "*",

@@ -2,11 +2,18 @@
   "name": "std/compress",
   "tier": 1,
   "context": "A2",
+  "headless": true,
   "status": "stable",
   "description": "DEFLATE/zlib primitives (inflate + deflate, buffers, stream readers/writers) and gzip. Container formats (ZIP) live in std/archive.",
   "provides": [
-    "GZip", "Inflate", "Zlib", "ZlibBuffers", "ZlibDeflate",
-    "ZlibInflate", "ZlibReaders", "ZlibWriters"
+    "GZip",
+    "Inflate",
+    "Zlib",
+    "ZlibBuffers",
+    "ZlibDeflate",
+    "ZlibInflate",
+    "ZlibReaders",
+    "ZlibWriters"
   ],
   "requires": {
     "std/runtime": "*"

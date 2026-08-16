@@ -2,12 +2,28 @@
   "name": "std/math",
   "tier": 1,
   "context": "A2",
+  "headless": true,
   "status": "stable",
   "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
-    "ComplexNumbers", "Math", "Math32", "Math64", "MathL", "NbrCplx",
-    "NbrInt", "NbrInt8", "NbrInt16", "NbrInt32", "NbrInt64", "NbrRat",
-    "NbrRe", "NbrRe32", "NbrRe64", "NbrStrings", "Random"
+    "ComplexNumbers",
+    "Math",
+    "Math32",
+    "Math64",
+    "MathL",
+    "NbrCplx",
+    "NbrInt",
+    "NbrInt8",
+    "NbrInt16",
+    "NbrInt32",
+    "NbrInt64",
+    "NbrRat",
+    "NbrRe",
+    "NbrRe32",
+    "NbrRe64",
+    "NbrStrings",
+    "Random",
+    "Shortreal"
   ],
   "requires": {
     "std/runtime": "*"

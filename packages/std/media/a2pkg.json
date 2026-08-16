@@ -2,13 +2,40 @@
   "name": "std/media",
   "tier": 2,
   "context": "A2",
+  "headless": false,
   "status": "draft",
   "description": "Audio/video/image codecs: MP3, DivX/MPEG video (+ IDCT, tables), WAV, GIF, AVI container, a codec registry and sound-device abstraction.",
   "provides": [
-    "AVI", "AnimationCodec", "Codecs", "DivXDecoder", "DivXHelper",
-    "DivXTypes", "GIFCodec", "IDCT", "MP3Decoder", "MPEGTables",
-    "MPEGUtilities", "MPEGVideoDecoder", "PictCodec", "PictImages",
-    "SoundDevices", "WAVCodec"
+    "AVI",
+    "AnimationCodec",
+    "Codecs",
+    "DivXDecoder",
+    "DivXHelper",
+    "DivXTypes",
+    "GIFCodec",
+    "IDCT",
+    "MP3Decoder",
+    "MPEGTables",
+    "MPEGUtilities",
+    "MPEGVideoDecoder",
+    "PictCodec",
+    "PictImages",
+    "SoundDevices",
+    "WAVCodec"
+  ],
+  "graphical": [
+    "AnimationCodec",
+    "AVI",
+    "Codecs",
+    "DivXDecoder",
+    "DivXHelper",
+    "GIFCodec",
+    "MP3Decoder",
+    "MPEGUtilities",
+    "MPEGVideoDecoder",
+    "PictCodec",
+    "PictImages",
+    "WAVCodec"
   ],
   "requires": {
     "std/runtime": "*",
@@ -18,8 +45,9 @@
     "std/archive": "*"
   },
   "residual": [
+    "Not in the headless SDK: the codecs render through Raster, and the four that do not are of no use without the ones that do.",
     "Re-homed from misc: the media codecs (MP3Decoder, DivX*, MPEG*, WAVCodec, GIFCodec) that had zero fan-in in this tree but are library, not apps.",
-    "UNPLACED: Raster + WM* (WMGraphics/WMRectangles/WMWindowManager) — the players/viewers need the GUI/raster stack. Split codec cores (headless-usable) from the interactive players (MP3Player, WAVRecorder, MPEG viewer) which go to an apps area; the cores then need only std/gfx (Raster) once that package exists.",
+    "UNPLACED: Raster + WM* (WMGraphics/WMRectangles/WMWindowManager) \u2014 the players/viewers need the GUI/raster stack. Split codec cores (headless-usable) from the interactive players (MP3Player, WAVRecorder, MPEG viewer) which go to an apps area; the cores then need only std/gfx (Raster) once that package exists.",
     "Codecs (the registry hub) pulls Archives -> std/archive; confirm during hub triage."
   ]
 }

@@ -2,10 +2,17 @@
   "name": "std/web",
   "tier": 2,
   "context": "A2",
+  "headless": true,
   "status": "draft",
   "description": "XML stack (parser/scanner/DOM objects) and the Configuration settings module built on it.",
   "provides": [
-    "Configuration", "XML", "XMLObjects", "XMLScanner", "XMLParser"
+    "Configuration",
+    "XML",
+    "XMLObjects",
+    "XMLScanner",
+    "XMLParser",
+    "JSON",
+    "WebSockets"
   ],
   "requires": {
     "std/runtime": "*",

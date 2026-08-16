@@ -2,6 +2,7 @@
   "name": "std/runtime",
   "tier": 0,
   "context": "A2",
+  "headless": true,
   "status": "stable",
   "description": "Sealed A2 runtime: kernel, GC/heaps, module system, object loader, files, streams, shell, shared low-level primitives. Import-closed \u2014 depends on nothing.",
   "provides": [
@@ -46,7 +47,11 @@
     "TrapWriters",
     "Traps",
     "Unix",
-    "UnixFiles"
+    "UnixFiles",
+    "Kernel32",
+    "User32",
+    "WSock32",
+    "WinTrace"
   ],
   "recovered_from_misc": {
     "note": "BIT (empty leaf), Locks (runtime-only), Debugging (pulls only Locks) were mis-filed in the misc pile but are import-closed shared primitives with high fan-in. Verified sealed; sunk to tier 0.",

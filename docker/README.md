@@ -344,8 +344,8 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 387 modules (symbol + object files) |
-| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 396 modules, for `build -t win64` |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 255 modules (symbol + object files) |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 254 modules, for `build -t win64` |
 | `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 408 modules including the runtime's, for `build -t a64` |
 | `ob` | the driver: one command over the compiler, the linker and the language server |
 
@@ -356,17 +356,30 @@ naive ~255MB Linux-only image in three steps:
   never reads it.
 - **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
   `ld-linux`) already ship in `debian:bookworm-slim`.
-- **Headless-core stdlib only** (~16MB saved): of the 712 built stdlib modules,
-  only the 387 whose import closure never reaches the window manager / display /
-  raster are shipped (this keeps the full networking stack — TCP/UDP/DNS/HTTP —
-  which registers through the generic `Plugins` driver registry, not the GUI).
-  See `docker/headless-core.txt`; regenerate it with
-  `docker/gen-headless-core.sh` (it taint-propagates the GUI roots through A2's
-  own `DependencyWalker`). Windows has its own list, `headless-core-win64.txt`,
-  computed the same way from the Win64 closure — not a translation of the Linux
-  one: `WinTrace` appears in no Linux closure and `StdIO` imports it on Windows. The kept set is closed under imports, so every retained
-  module both compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is
-  a compile error by design — use the full desktop build for GUI work.
+- **Only what the registry names** (~16MB saved): of the 712 built stdlib modules,
+  255 are shipped. Membership is decided by `packages/std/*/a2pkg.json`: a module
+  travels if a package whose `headless` is true lists it in `provides` and not in
+  `graphical`, or if the import closure of such a module needs it. So the payload
+  is a decision somebody wrote down package by package, and
+  `docker/gen-headless-core.sh` only works it out — `bash docker/gen-headless-core.sh`
+  to regenerate, `task registry` to check without writing. The check fails on a
+  module in the payload that no package claims, and on a `graphical` annotation
+  that no longer matches the import graph.
+
+  It used to be the other way round: keep everything whose closure never reaches
+  the window system. That is a filter for "not graphics", not for "ours", and it
+  shipped 144 modules nobody had asked for — a Samba server, a TV tuner driver, a
+  Fidonet client, the C# front end of a language nobody here compiles. It also
+  could not tell `FoxOberonFrontend` from `FoxCSharpFrontend`: both are loaded by
+  name, so both are roots that nothing imports.
+
+  The full networking stack (TCP/UDP/DNS/HTTP) is kept — it registers through the
+  generic `Plugins` driver registry, not the GUI. Windows has its own list,
+  `headless-core-win64.txt`, from the Win64 closure — not a translation of the
+  Linux one: `WinTrace` appears in no Linux closure and `StdIO` imports it on
+  Windows. The kept set is closed under imports, so every retained module both
+  compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is a compile
+  error by design — use the full desktop build for GUI work.
 
 **`ob` is itself Active Oberon** (`sdk/Ob.Mod`), linked into a binary that already holds
 Fox: a verb calls `Compiler.Modules` in this process rather than starting one, and an SDK

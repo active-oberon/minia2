@@ -538,6 +538,16 @@ tasks:
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/win-bundle.sh {{.BUILD_DIR}}/{{.HOST}}
 
+  registry:
+    desc: The shipped module lists still say what packages/std says
+    # docker/headless-core*.txt are derived from the registry, so they can go stale in two ways:
+    # a package gains or loses a module, or a module's imports start reaching the window system.
+    # --check writes nothing and fails on either, and on a module in the payload that no package
+    # claims -- which is the whole point of deriving it from the registry rather than from "not
+    # graphics". Regenerate with: bash docker/gen-headless-core.sh
+    cmds:
+      - bash {{.CURRENT_DIR}}/docker/gen-headless-core.sh --check
+
   ob:
     desc: "`ob` written in Active Oberon -- linked with the compiler inside, and made to answer for itself"
     cmds:
