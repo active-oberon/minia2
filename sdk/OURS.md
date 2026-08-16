@@ -8,8 +8,8 @@ and ETH's sit in one directory and cannot be told apart by looking.
 | | modules |
 | --- | ---: |
 | ours outright (in no vanilla tree) | 16 |
-| vanilla, changed by us | 51 |
-| vanilla, untouched | 701 |
+| vanilla, changed by us | 54 |
+| vanilla, untouched | 698 |
 
 ## Ours outright
 
@@ -39,6 +39,7 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `AMD64.Reals.Mod`
 - `BIT.Mod`
 - `BitSets.Mod`
+- `BMPCodec.Mod`
 - `Compiler.Mod`
 - `DataErrors.Mod`
 - `Dates.Mod`
@@ -54,6 +55,7 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `FP1616.Mod`
 - `GenericLinker.Mod`
 - `GenericSort.Mod`
+- `GIFCodec.Mod`
 - `Linker.Mod`
 - `Linux.Glue.Mod`
 - `Linux.Unix.Mod`
@@ -67,6 +69,7 @@ already gone upstream, it is in `a2oberon/.planning/upstream/`.
 - `NbrRe32.Mod`
 - `NbrRe64.Mod`
 - `Network.Mod`
+- `PictCodec.Mod`
 - `Pipes.Mod`
 - `Raster.Mod`
 - `Reflection.Mod`
