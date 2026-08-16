@@ -74,18 +74,37 @@ fi
 [ -z "$stale" ]   || echo "win-stdlib: source newer than the object:$stale"
 echo "win-stdlib: filling these in -- 'task Win64' is the real fix"
 
-# Order matters and alphabetical is not it, so the modules are compiled in the order their
-# dependencies allow: the compiler is given the whole set and resolves the rest itself, with
-# the existing Win64 objects on the search path.
-files=""
-for m in $todo; do files="$files ./$m.Mod"; done
-( cd "$work" && "$oberon" do "
-	Files.AddSearchPath $work~
-	Files.AddSearchPath $build/bin~
-	Files.AddSearchPath $winbin~
-	Files.SetWorkPath $work~
-	Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw$files ~
-" ) || { echo "win-stdlib: compilation failed" >&2; exit 1; }
+# Order matters and alphabetical is not it. The compiler takes the files in the order it is given
+# them and reads a symbol file it has already written, not a source file it has not reached yet, so
+# one list in the wrong order stops at the first module that imports a later one -- which is what a
+# set of new modules that import each other looks like (Frames imports TerminalCodes, and the two
+# arrive together). Rather than order the set, compile it in passes: each pass tries every module
+# still left, on its own, and a module whose imports are not built yet simply fails and waits for
+# the next one. A pass that builds nothing means the rest cannot be built at all, and says so.
+Attempt() {
+	( cd "$work" && "$oberon" do "
+		Files.AddSearchPath $work~
+		Files.AddSearchPath $build/bin~
+		Files.AddSearchPath $winbin~
+		Files.SetWorkPath $work~
+		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./$1.Mod ~
+	" ) > "$work/$1.log" 2>&1
+}
+
+left="$todo"
+while [ -n "$left" ]; do
+	again="" built=0
+	for m in $left; do
+		if Attempt "$m" && [ -f "$work/$m.SymWw" ]; then built=1; else again="$again $m"; fi
+	done
+	if [ "$built" = 0 ]; then
+		echo "win-stdlib: nothing in this pass compiled, and these are left:$again" >&2
+		for m in $again; do grep -E 'error' "$work/$m.log" | head -3 | sed 's/^/    /' >&2; done
+		echo "win-stdlib: compilation failed" >&2
+		exit 1
+	fi
+	left="$again"
+done
 
 installed=0
 for m in $todo; do
