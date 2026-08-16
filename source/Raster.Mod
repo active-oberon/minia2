@@ -263,16 +263,28 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 		END;
 	END PaletteIndex;
 
+	(*
+		The reverse lookup holds CLUTs.colors entries and no more, so a palette of at most that many
+		colors occupies slot n, and a larger one is sampled down into the slots -- which is what
+		PaletteIndex undoes when it scales a match back up. Slot n*MIN(used, CLUTs.colors) DIV used
+		is n exactly whenever used fits, and n*CLUTs.colors DIV used when it does not.
+	*)
+	PROCEDURE ClutSlot (n, used: SIGNED32): SIGNED32;
+	BEGIN
+		RETURN n * MIN(used, CLUTs.colors) DIV used
+	END ClutSlot;
+
 	(** compute internal palette structures whenever palette colors have been modified **)
 	PROCEDURE InitPalette* (pal: Palette; used, bits: SIGNED32);
 		VAR n: SIZE; red, green, blue, alpha: Color;
 	BEGIN
+		ASSERT(used > 0, 100);
 		n := 0;
 		IF used>pal.used THEN NEW(pal.col,used);END;
 		pal.used:=used;
 		WHILE n < used DO
 			GetRGBA(pal.col[n], red, green, blue, alpha);
-			CLUTs.Set(pal.clut, (*n*) n*255 DIV used, ASH(red, 16) + ASH(green, 8) + blue);
+			CLUTs.Set(pal.clut, ClutSlot(SIGNED32(n), used), ASH(red, 16) + ASH(green, 8) + blue);
 			INC(n)
 		END;
 		CLUTs.Init(pal.clut, MIN (used,256), bits);
@@ -282,13 +294,15 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 	PROCEDURE InitGrayPalette* (pal: Palette; used, bits: SIGNED32);
 		VAR n, gray: SIGNED32;
 	BEGIN
+		ASSERT(used > 0, 100);
 		n := 0;
 		IF used>pal.used THEN NEW(pal.col,used); END;
 		pal.used := used;
 		WHILE n < used DO
-			gray:= n*255 DIV used;
+			(* the ramp spans the whole range: the last entry of a gray palette is white *)
+			IF used = 1 THEN gray := 0 ELSE gray := n*255 DIV (used-1) END;
 			SetRGBA(pal.col[n],gray,gray,gray,255); (*PH 090122*)
-			CLUTs.Set(pal.clut, gray, ASH(gray, 16) + ASH(gray, 8) + gray);
+			CLUTs.Set(pal.clut, ClutSlot(n, used), ASH(gray, 16) + ASH(gray, 8) + gray);
 			INC(n)
 		END;
 		CLUTs.Init(pal.clut, MIN(used,256), bits);
@@ -4521,15 +4535,16 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 			WHILE x < i.width DO
 				i.fmt.unpack(i.fmt, iadr, ibit, ipix); j.fmt.unpack(j.fmt, jadr, jbit, jpix);
 
-				rpix[0] := Clamp[ORD(ipix[0]) + ORD(jpix[0])];
-				rpix[1] := Clamp[ORD(ipix[1]) + ORD(jpix[1])];
-				rpix[2] := Clamp[ORD(ipix[2]) + ORD(jpix[2])];
-				rpix[3] := Clamp[ORD(ipix[3]) + ORD(jpix[3])];
+				(* Clamp is indexed from 200H: the sum of two components is an offset, not an index *)
+				rpix[0] := Clamp[200H + ORD(ipix[0]) + ORD(jpix[0])];
+				rpix[1] := Clamp[200H + ORD(ipix[1]) + ORD(jpix[1])];
+				rpix[2] := Clamp[200H + ORD(ipix[2]) + ORD(jpix[2])];
+				rpix[3] := Clamp[200H + ORD(ipix[3]) + ORD(jpix[3])];
 
 				res.fmt.pack(res.fmt, radr, rbit, rpix);
-				ibit := ibit + i.fmt.bpp; INC(iadr, ibit); ibit := ibit MOD 8;
-				jbit := jbit + j.fmt.bpp; INC(jadr, jbit); jbit := jbit MOD 8;
-				rbit := rbit + res.fmt.bpp; INC(radr, rbit); rbit := rbit MOD 8;
+				ibit := ibit + i.fmt.bpp; INC(iadr, ibit DIV 8); ibit := ibit MOD 8;
+				jbit := jbit + j.fmt.bpp; INC(jadr, jbit DIV 8); jbit := jbit MOD 8;
+				rbit := rbit + res.fmt.bpp; INC(radr, rbit DIV 8); rbit := rbit MOD 8;
 				INC(x)
 			END;
 			INC(y)
