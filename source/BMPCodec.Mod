@@ -154,17 +154,39 @@ TYPE
 		BEGIN
 			IF img.fmt.pal # NIL THEN palentries := img.fmt.pal.used ELSE palentries := 0 END;
 
+			(* What depth this image is written at, decided once. A BMP has six of them and a Raster
+			   image can be in a format that is none of them -- a pure alpha mask, a palette of a size
+			   other than 2, 16 or 256. Asking the palette without looking first is how an image with
+			   no palette used to reach `img.fmt.pal.used` and take the process down; writing anyway is
+			   how one with the wrong palette size used to produce a file whose depth field was
+			   whatever was on the stack. Neither is an answer, so the answer is to refuse. *)
+			bpp := 0;
+			CASE img.fmt.code OF
+				  Raster.bgra8888: bpp := 32
+				| Raster.bgr888: bpp := 24
+				| Raster.bgr466, Raster.bgr555, Raster.bgr565: bpp := 16
+			ELSE
+				IF img.fmt.pal # NIL THEN
+					CASE img.fmt.pal.used OF
+						  2: bpp := 1
+						| 16: bpp := 4
+						| 256: bpp := 8
+					ELSE
+					END
+				END
+			END;
+			IF bpp = 0 THEN res := Codecs.ResFailed; RETURN END;
+
 			NEW(sm, img.width * img.height * 4); (* conservative *)
 			buf := sm.GetWriter();
 			(* Bitmap data *)
-			IF img.fmt.code = Raster.bgra8888 THEN Store32(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
-			ELSIF img.fmt.code = Raster.bgr888 THEN Store24(img, img.width, -img.height, buf)
-			ELSIF img.fmt.code = Raster.bgr466 THEN Store16(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
-			ELSIF img.fmt.code = Raster.bgr555 THEN Store16(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
-			ELSIF img.fmt.code = Raster.bgr565 THEN Store16(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
-			ELSIF img.fmt.pal.used = 256 THEN Store8(img, img.width, -img.height, buf)
-			ELSIF img.fmt.pal.used = 16 THEN Store4(img, img.width, -img.height, buf)
-			ELSIF img.fmt.pal.used = 2 THEN Store1(img, img.width, -img.height, buf)
+			CASE bpp OF
+				  32: Store32(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
+				| 24: Store24(img, img.width, -img.height, buf)
+				| 16: Store16(img, img.width, -img.height, redMask, greenMask, blueMask, buf)
+				| 8: Store8(img, img.width, -img.height, buf)
+				| 4: Store4(img, img.width, -img.height, buf)
+				| 1: Store1(img, img.width, -img.height, buf)
 			END;
 			dataSize := sm.GetLength()(SIGNED32);
 
@@ -184,18 +206,6 @@ TYPE
 			out.RawInt32(img.width(SIGNED32));
 			out.RawInt32(img.height(SIGNED32));
 			out.RawInt16(1);	(* biPlanes *)
-			IF img.fmt.pal # NIL THEN
-				CASE img.fmt.pal.used OF
-					  2: bpp := 1
-					| 16: bpp := 4
-					| 256: bpp := 8
-				ELSE
-				END
-			ELSIF (img.fmt.code = Raster.bgr565) OR (img.fmt.code = Raster.bgr555) OR (img.fmt.code = Raster.bgr466) THEN
-				bpp := 16
-			ELSIF img.fmt.code = Raster.bgr888 THEN bpp := 24
-			ELSIF img.fmt.code = Raster.bgra8888 THEN bpp := 32
-			END;
 			out.RawInt16(bpp);	(* biBitCount *)
 			(* biCompression *)
 			CASE img.fmt.code OF
@@ -469,9 +479,12 @@ BEGIN
 	WHILE h > 0 DO
 		x := 0; p := y * img.bpr;
 		WHILE x < w DO
+			(* the shift happens whether or not there is a pixel left: a row that does not fill its
+			   last byte leaves the spare bits at the right, and Load1 reads bit 7 first *)
 			b := 0;
 			FOR i := -7 TO 0 DO
-				IF x < w THEN b := ASH(b, 1) + ORD(img.mem[p]); INC(p) END;
+				b := ASH(b, 1);
+				IF x < w THEN INC(b, ORD(img.mem[p]) MOD 2); INC(p) END;
 				INC(x)
 			END;
 			out.Char(CHR(b))
@@ -490,14 +503,17 @@ BEGIN
 	WHILE h > 0 DO
 		x := 0; p := y * img.bpr;
 		WHILE x < w DO
-			b := 0;
-			b := ORD(img.mem[p]) MOD 10H; INC(p);
+			(* the first pixel of the pair is the high nibble even when there is no second one:
+			   an odd-width row used to leave its last pixel in the low nibble, and Load4 takes
+			   the high one *)
+			b := ASH(ORD(img.mem[p]) MOD 10H, 4); INC(p);
 			IF x+1 < w THEN
-				b := ASH(b, 4) + ORD(img.mem[p]) MOD 10H; INC(p)
+				INC(b, ORD(img.mem[p]) MOD 10H); INC(p)
 			END;
 			out.Char(CHR(b));
 			INC(x, 2)
 		END;
+		WHILE x MOD 8 # 0 DO out.Char(0X); INC(x, 2) END;	(* align to double word boundary *)
 		DEC(h); INC(y, dy)
 	END
 END Store4;
@@ -514,6 +530,7 @@ BEGIN
 			out.Char(img.mem[p]);
 			INC(p); INC(x)
 		END;
+		WHILE x MOD 4 # 0 DO out.Char(0X); INC(x) END;	(* align to double word boundary *)
 		DEC(h); INC(y, dy)
 	END
 END Store8;
@@ -535,6 +552,7 @@ END Store16;
 PROCEDURE Store24 (img: Raster.Image; w, h: SIZE; out : Streams.Writer);
 	VAR y, dy, x: SIZE; align: ARRAY 3 OF CHAR; p: SIZE;
 BEGIN
+	align[0] := 0X; align[1] := 0X; align[2] := 0X;	(* the padding is written, so it cannot be whatever was on the stack *)
 	IF h > 0 THEN y := 0; dy := 1
 	ELSE h := -h; y := h-1; dy := -1
 	END;
