@@ -2622,7 +2622,7 @@ END SSE2Q0BGRA8888BGR565;
 
 PROCEDURE Scale*(src : Image; sr : Rectangle; dst : Image; dr : Rectangle; clip : Rectangle; copyMode, scaleMode : SIGNED32);
 VAR dw, dh, sw, sh : SIZE;
-	fw, fh : FLOAT64; sx, sy : SIZE;
+	fw, fh : FLOAT64; sx, sy, stepx, stepy : SIZE;
 	scaler : ScalerProc; xscaler : XScalerProc;
 	mode : Raster.Mode;
 	SSE2enabled : BOOLEAN;
@@ -2650,16 +2650,24 @@ BEGIN
 
 	fw := sw / dw;
 	fh := sh / dh;
-	sx := sr.l * 65536;
-	sy := sr.t * 65536;
+	stepx := ENTIER(fw * 65536); stepy := ENTIER(fh * 65536);
+	(* The source position of a destination pixel is the MIDDLE of it, not its left edge. The step
+	   is truncated to a 65536th, so starting at the edge lets that truncation accumulate until the
+	   last destination pixel of a run falls back onto the previous source pixel: a threefold zoom
+	   came out four columns of one and two of the next instead of three and three, and a fivefold
+	   one -- the zoom the phone actually uses -- came out six and four. Half a step forward is
+	   where a nearest-neighbour sample belongs anyway, and the interpolating scalers below take
+	   their own half source pixel off it. *)
+	sx := sr.l * 65536 + stepx DIV 2;
+	sy := sr.t * 65536 + stepy DIV 2;
 	(* clipping *)
 	IF ~Rect.IsContained(clip, dr) THEN
 		sw := sr.r - sr.l; sh := sr.b - sr.t;
 		dw := dr.r - dr.l; dh := dr.b - dr.t;
 		IF dr.r > clip.r THEN dr.r := clip.r END;
 		IF dr.b > clip.b THEN dr.b := clip.b END;
-		IF dr.l < clip.l THEN sx := ENTIER(65536 * (sr.l +  sw * (clip.l - dr.l) / dw)); dr.l := clip.l END;
-		IF dr.t < clip.t THEN sy := ENTIER(65536 * (sr.t + sh * (clip.t - dr.t) / dh)); dr.t := clip.t END;
+		IF dr.l < clip.l THEN sx := ENTIER(65536 * (sr.l +  sw * (clip.l - dr.l) / dw)) + stepx DIV 2; dr.l := clip.l END;
+		IF dr.t < clip.t THEN sy := ENTIER(65536 * (sr.t + sh * (clip.t - dr.t) / dh)) + stepy DIV 2; dr.t := clip.t END;
 	END;
 	IF Rect.RectEmpty(dr) THEN RETURN END;
 	xscaler := NIL;
@@ -2708,7 +2716,7 @@ SSE2enabled := FALSE;
 
 	IF xscaler # NIL THEN
 		xscaler(src.adr, dst.adr, src.bpr, dst.bpr, dr.l, dr.t, dr.r, dr.b, sx, sy,
-			ENTIER(fw * 65536), ENTIER(fh * 65536), src.width, src.height)
+			stepx, stepy, src.width, src.height)
 	ELSE
 		scaler := Q0GenericSrcOverDst; (* fallback case *)
 		IF copyMode = ModeCopy THEN
@@ -2720,7 +2728,7 @@ SSE2enabled := FALSE;
 			ELSIF scaleMode = 1 THEN scaler := Q1GenericSrcOverDst
 			END;
 		END;
-		scaler(src, dst, dr, sx, sy, ENTIER(fw * 65536), ENTIER(fh * 65536));
+		scaler(src, dst, dr, sx, sy, stepx, stepy);
 	END;
 END Scale;
 
