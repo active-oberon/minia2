@@ -271,9 +271,11 @@ TYPE
 			The currently set font and color is used
 		*)
 		PROCEDURE DrawString*(x, y: SIZE; CONST text : ARRAY OF CHAR);
+		VAR f : Font;
 		BEGIN
-			IF font # NIL THEN
-				font.RenderString(SELF, x, y, text)
+			f := GetFont();	(* which is where a canvas without one waits for the default *)
+			IF f # NIL THEN
+				f.RenderString(SELF, x, y, text)
 			END
 		END DrawString;
 
@@ -534,7 +536,11 @@ TYPE
 			clipMode := { ClipRect };
 			(* filling *)
 			height := img.height; NEW(edges, height);
-			SetFont(GetDefaultFont());
+			(* the font is NOT fetched here. GetDefaultFont waits until one is installed, and a
+			   canvas over an image in memory needs none until something draws text on it -- so
+			   this line made GenCanvas hang for ever, with nothing said, in any program that had
+			   not booted the window manager first. Canvas.GetFont is lazy and documented to be,
+			   which is what DrawString goes through now. *)
 			generator:=Strings.NewString("WMGraphics.GenCanvas");
 		END New;
 
@@ -794,7 +800,10 @@ PROCEDURE HSLtoRGB*(h, s, l: Color; VAR r, g, b: Color);
 VAR v, vsf, m, m1, m2: Color;
 BEGIN
 	r := 0; g := 0; b := 0;
-	v := l * (256 + s) DIV 256 IF l <= 127 ELSE l + s - l * s DIV 255;
+	h := h MOD 256;	(* hue runs round: without this the CASE below falls off its last branch *)
+	(* the full scale of this module is 255 and not 256 -- RGBtoHSL uses 255 throughout, and the
+	   256 here made the brightest colour of a hue come back two short of it *)
+	v := l * (255 + s) DIV 255 IF l <= 127 ELSE l + s - l * s DIV 255;
 	IF v > 0 THEN
 		m := l * 2 - v;
 		h := h * 6;
@@ -817,8 +826,7 @@ PROCEDURE ComplementaryRGB*(r, g, b: Color; VAR R, G, B: Color);
 VAR h, s, l: Color;
 BEGIN
   RGBtoHSL(r, g, b, h, s, l);
-  h := h + 128;
-  IF h > 255 THEN h := h - 255 END;
+  h := (h + 128) MOD 256;	(* half way round a circle of 256, not of 255 *)
   HSLtoRGB(h, s, l, R, G, B);
 END ComplementaryRGB;
 
