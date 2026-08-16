@@ -98,7 +98,7 @@ TYPE
 		PROCEDURE WriteData(w: Streams.Writer; img: Raster.Image; pal : Raster.Palette);
 		CONST byteLen=8;
 		VAR
-			last, in, clearCode, endCode, codept, startSize, prefix, bufpos, bitsfree, codelen: SIGNED32;
+			in, clearCode, endCode, codept, startSize, prefix, bufpos, bitsfree, codelen: SIGNED32;
 			buffer: ARRAY 256 OF CHAR;
 			i2, len: SIGNED32;
 			page: CodePages;
@@ -149,6 +149,13 @@ TYPE
 
 			WriteCode(clearCode);
 			LOOP
+				(* whether there is a pixel left is asked BEFORE it is read: the first pixel was read
+				   above, and on an image of one pixel there is no second one to fetch. Asking
+				   afterwards read past the end of a 1x1 image and took the process down. *)
+				IF x = width THEN
+					IF y = img.height - 1 THEN EXIT END;
+					x := 0; INC(y)
+				END;
 				Raster.Get(img, x,y, pix, mode);
 				in := Raster.PaletteIndex(pal, ORD(pix[Raster.r]),ORD(pix[Raster.g]), ORD(pix[Raster.b]));
 				i2 := lastBlock[prefix];
@@ -172,18 +179,17 @@ TYPE
 						lastBlock[codept] := Dummy;
 						INC(codept)
 					END;
-					last := prefix; prefix := in
-				ELSE last := prefix; prefix := i2
+					prefix := in
+				ELSE prefix := i2
 				END;
-				INC(x);
-				IF x = width THEN
-					IF y = img.height - 1  THEN EXIT END;
-					x := 0; INC(y)
-				END
+				INC(x)
 			END;
-			WriteCode(last);
-			WriteCode(clearCode); codelen := startSize+1;
-			WriteCode(cb[prefix].code); WriteCode(endCode);
+			(* What is left over is `prefix`: the string matched but not yet emitted. It is one code
+			   and then the end. What stood here emitted the code BEFORE it a second time, cleared
+			   the table and sent the last pixel after the clear -- so the decoder filled the last
+			   pixel of the image with the second-to-last one and dropped the real one off the end.
+			   Every GIF this encoder ever wrote was wrong in its last pixel. *)
+			WriteCode(prefix); WriteCode(endCode);
 
 			IF bufpos > 0 THEN
 				IF bitsfree = 8 THEN
