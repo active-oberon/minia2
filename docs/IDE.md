@@ -112,7 +112,7 @@ diagnostics, hover, completion, etc.
 | **Rename** | Renames a module-level symbol (type, procedure, module variable, constant) and every use across the project, as one edit. (Locals / members declined for now.) |
 | **Formatting** | Reprints the module in Fox's canonical style, preserving the IMPORT list and comments. Only syntactically-valid files. |
 | **Code actions** | *Import &lt;M&gt;* quickfix for an undeclared module qualifier; *Comment / Uncomment* the selection. |
-| **Folding** | Modules, procedures, records and objects, statement blocks, `REPEAT`/`UNTIL`, the `IMPORT` list and multi-line comments. Worked out from the tokens, so it keeps working while the file does not parse. |
+| **Folding** | Procedures, records and objects, statement blocks, `REPEAT`/`UNTIL`, the `IMPORT` list and multi-line comments. Not the module itself — it is the file, and folding it would leave one line. Worked out from the tokens, so it keeps working while the file does not parse. |
 
 ---
 
@@ -132,10 +132,19 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | *(auto)* | Completion (nvim-cmp); manual trigger `<C-Space>` |
 | `:lua vim.lsp.buf.signature_help()` | Signature help (bind a key if you like) |
 | `[d` / `]d`, `<leader>e` | Diagnostics navigation / float (NVChad defaults) |
-| `za`, `zc`, `zo`, `zR`, `zM` | Folding (vim's own keys; ranges come from the server) |
+| `za` / `zA` | Fold or unfold what the cursor is in (`zA` takes the nested folds with it) |
+| `zc` / `zo`, `zC` / `zO` | Close / open one fold, or all of them under the cursor |
+| `zM` / `zR` | Close everything / open everything |
+| `zm` / `zr` | Close / open one level at a time |
+| `zj` / `zk` | Jump to the next fold's start / the previous fold's end |
+| `zv` | Open just enough to see the line the cursor is on |
 | `:ObFoldImports`, `:ObFoldComments` | Close every fold of that kind |
 
 Completion, diagnostics and semantic-token colouring apply automatically — nothing to press.
+Folding is vim's own set of keys; the server only supplies the ranges. A file opens unfolded
+(`foldlevel = 99` in the ftplugin — set it to `0` there if you would rather start folded). On a
+67-line module `zM` leaves 13 lines: the header, the constants, the object and one line per
+procedure.
 
 ---
 
