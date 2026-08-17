@@ -10,6 +10,7 @@
     "LocalSockets"
   ],
   "requires": {
+    "std/base": "*",
     "std/runtime": "*"
   },
   "residual": [

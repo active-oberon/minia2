@@ -1,0 +1,47 @@
+{
+  "name": "attic/oberon2",
+  "tier": null,
+  "context": "A2",
+  "headless": false,
+  "status": "unsupported",
+  "description": "The Oberon-2 compiler of the old system, and the Minos object format and linker beside it.",
+  "provides": [
+    "PCA386",
+    "PCAAMD64",
+    "PCAARM",
+    "PCARMCP",
+    "PCARMRegisters",
+    "PCArrays",
+    "PCB",
+    "PCBT",
+    "PCC",
+    "PCDebug",
+    "PCG386",
+    "PCGAMD64",
+    "PCGARM",
+    "PCLIR",
+    "PCM",
+    "PCO",
+    "PCOARM",
+    "PCOF",
+    "PCOFPE",
+    "PCOM",
+    "PCP",
+    "PCS",
+    "PCT",
+    "PCV",
+    "MinosLinker",
+    "FoxMinosObjectFile"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "A whole second compiler, not a part of ours: its own scanner, parser, symbol table and code generators for 386, AMD64 and ARM. Nothing in the Active Oberon toolchain reaches it.",
+    "Kept in source/ on purpose: dropping 26 files would widen the diff against vanilla ETH and make every future patch dearer. It is out of the registry, so it is out of the SDK, and that is enough."
+  ]
+}

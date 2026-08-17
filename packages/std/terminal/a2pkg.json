@@ -11,7 +11,9 @@
     "Frames"
   ],
   "requires": {
+    "std/base": "*",
     "std/runtime": "*",
+    "std/system": "*",
     "std/text": "*"
   },
   "residual": [

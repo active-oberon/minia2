@@ -18,8 +18,9 @@
     "DataErrors"
   ],
   "requires": {
+    "std/math": "*",
     "std/runtime": "*",
-    "std/math": "*"
+    "std/system": "*"
   },
   "residual": [
     "RESOLVED: the DataErrors->Beep->X11 blocker was cut in DataErrors.Mod (removed the Beep import + Kernel.Timer and the beep-on-error/warning loops; errors still logged to Error.Log). Verified: DataErrors now compiles headless. All 9 advanced modules resolve to std/math + DataErrors only.",

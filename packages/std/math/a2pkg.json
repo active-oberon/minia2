@@ -7,16 +7,18 @@
   "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
     "ComplexNumbers",
+    "FoxArrayBase",
+    "FoxArrayBaseOptimized",
     "Math",
     "Math32",
     "Math64",
     "MathL",
     "NbrCplx",
     "NbrInt",
-    "NbrInt8",
     "NbrInt16",
     "NbrInt32",
     "NbrInt64",
+    "NbrInt8",
     "NbrRat",
     "NbrRe",
     "NbrRe32",
@@ -26,7 +28,11 @@
     "Shortreal"
   ],
   "requires": {
-    "std/runtime": "*"
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*"
   },
-  "residual": []
+  "residual": [
+    "FoxArrayBase and FoxArrayBaseOptimized are the RUNTIME of math arrays: code the compiler generates calls them, no source names them. They live here rather than in std/compiler because their subject is arithmetic. FoxArrayBaseOptimized is x86 kernels and does not exist on AArch64; FoxArrayBase loads it by name if it is there."
+  ]
 }

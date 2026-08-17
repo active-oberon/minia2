@@ -32,8 +32,14 @@
     "UndoManager"
   ],
   "requires": {
-    "std/runtime": "*",
+    "std/archive": "*",
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/gui": "*",
     "std/math": "*",
+    "std/numerics": "*",
+    "std/runtime": "*",
+    "std/system": "*",
     "std/text": "*",
     "std/web": "*"
   },

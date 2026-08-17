@@ -16,7 +16,9 @@
     "ZlibWriters"
   ],
   "requires": {
-    "std/runtime": "*"
+    "std/base": "*",
+    "std/math": "*",
+    "std/system": "*"
   },
   "residual": []
 }

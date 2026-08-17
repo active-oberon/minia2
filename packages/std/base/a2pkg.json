@@ -4,15 +4,27 @@
   "context": "A2",
   "headless": true,
   "status": "draft",
-  "description": "Shared cross-cutting primitives recovered from the misc pile: input events, dynamic strings, lightweight class/log helpers, an event framework, 16.16 fixed-point; and a channel -- a queue that waits -- as a parametric module.",
+  "description": "The library that needs no host: strings and their pool, streams and number conversion, dates, bit sets, options, locks, pipes, the plugin registry, and the small collections.",
   "provides": [
+    "BIT",
+    "BitSets",
     "Channels",
+    "CRC",
+    "Dates",
+    "Diagnostics",
     "DynamicStrings",
     "Events",
     "FP1616",
     "Inputs",
-    "TFClasses",
-    "TFLog"
+    "Locks",
+    "Options",
+    "Pipes",
+    "Plugins",
+    "RealConversions",
+    "Streams",
+    "StringPool",
+    "Strings",
+    "TFClasses"
   ],
   "graphical": [
     "Inputs"
