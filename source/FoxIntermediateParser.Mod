@@ -99,6 +99,20 @@ TYPE
 			RETURN result
 		END ExpectIntegerWithSign;
 
+		(* A fingerprint is 64 bits, and ExpectIntegerWithSign takes 32 and refuses a token the
+		   scanner classified as Hugeint -- which is what every fingerprint above MAX(SIGNED32)
+		   is. So the fingerprint written into the intermediate code could never be read back,
+		   whatever notation it was written in. *)
+		PROCEDURE ExpectFingerprint(VAR value: SIGNED64): BOOLEAN;
+		BEGIN
+			IF ExpectSymbol(Scanner.Number)
+				& ((token.numberType = Scanner.Integer) OR (token.numberType = Scanner.Hugeint)) THEN
+				value := token.integer;
+				RETURN TRUE
+			END;
+			RETURN FALSE
+		END ExpectFingerprint;
+
 		PROCEDURE ExpectIntegerWithoutSign(VAR integer: SIGNED32): BOOLEAN;
 		VAR
 			result: BOOLEAN;
@@ -158,6 +172,7 @@ TYPE
 		PROCEDURE ParseOperand(VAR operand: IntermediateCode.Operand; sectionList: Sections.SectionList);
 		VAR
 			positionOfOperand, pos: Position; registerNumber, symbolOffset, integer: SIGNED32;
+			symbolFingerprint: SIGNED64;
 			someHugeint: SIGNED64;
 			hasTypeDescriptor, isMemoryOperand, lastWasIdentifier, isNegated: BOOLEAN;
 			someLongreal: FLOAT64;
@@ -197,6 +212,17 @@ TYPE
 
 					(* symbol name *)
 					symbolOffset := 0;
+					symbolFingerprint := 0;
+
+					(* consume the optional fingerprint the printer puts after the name --
+					   `M.a[066AEC200086H]:0`. It was written and never read: the parser stopped
+					   here with "expected symbol RightBracket". *)
+					IF ThisSymbol(Scanner.LeftBracket) THEN
+						IF ExpectFingerprint(symbolFingerprint) & ExpectSymbol(Scanner.RightBracket) THEN
+						ELSE
+							Error(token.position, "invalid symbol fingerprint")
+						END
+					END;
 
 					(* consume optional symbol offset *)
 					IF ThisSymbol(Scanner.Colon) THEN
@@ -210,7 +236,7 @@ TYPE
 					IF Trace THEN D.String(">>> symbol detected"); D.Ln END;
 
 					Basic.ToSegmentedName(identifier, name);
-					IntermediateCode.InitAddress(operand, IntermediateCode.UnsignedIntegerType(system.addressSize), name, 0, symbolOffset)
+					IntermediateCode.InitAddress(operand, IntermediateCode.UnsignedIntegerType(system.addressSize), name, symbolFingerprint, symbolOffset)
 				END
 
 			ELSIF token.symbol = Scanner.String THEN
@@ -368,7 +394,7 @@ TYPE
 		(** parse a list of section properties **)
 		PROCEDURE ParseSectionProperties(VAR section: IntermediateCode.Section);
 		VAR
-			positionOfProperty: Position;  integer: SIGNED32;
+			positionOfProperty: Position;  integer: SIGNED32; fingerprint: SIGNED64;
 		BEGIN
 			IF Trace THEN D.Ln; D.String(">>> ParseSectionProperties"); D.Ln END;
 
@@ -377,11 +403,11 @@ TYPE
 
 				(* fingerprint *)
 				IF ThisIdentifier("fingerprint") & ExpectSymbol(Scanner.Equal) THEN
-					IF ExpectIntegerWithSign(integer) THEN
-						IF (section.fingerprint # 0) & (section.fingerprint # integer) THEN
+					IF ExpectFingerprint(fingerprint) THEN
+						IF (section.fingerprint # 0) & (section.fingerprint # fingerprint) THEN
 							Error(positionOfProperty, "incompatible fingerprint");
 						ELSE
-							section.SetFingerprint(integer);
+							section.SetFingerprint(fingerprint);
 						END
 					ELSE
 						Error(positionOfProperty, "invalid fingerprint")
@@ -430,7 +456,7 @@ TYPE
 		VAR
 			pos, positionOfDirective:Position;
 			identifier: Scanner.IdentifierString;
-			afterModuleDirective, afterImportsDirective, afterFirstSection, isExternalSection: BOOLEAN;
+			afterModuleDirective, afterImportsDirective, afterExportsDirective, afterFirstSection, isExternalSection: BOOLEAN;
 			sectionType: SIGNED8;
 			section: IntermediateCode.Section;
 			name: Basic.SegmentedName;
@@ -448,6 +474,7 @@ TYPE
 			(* go through directives *)
 			afterModuleDirective := FALSE;
 			afterImportsDirective := FALSE;
+			afterExportsDirective := FALSE;
 			afterFirstSection := FALSE;
 			IgnoreNewLines;
 			WHILE ~error & (token.symbol # Scanner.EndOfText) DO
@@ -493,6 +520,29 @@ TYPE
 							UNTIL error OR ~ThisSymbol(Scanner.Comma);
 							IF ExpectLineDelimiter() THEN
 								afterImportsDirective := TRUE
+							END
+						END
+
+					(* 'exports' directive. Sections.Module.Dump writes one whenever the module
+					   exports anything -- that is, for every module there is -- and this parser
+					   used to stop at it with "invalid directive or section type", so the
+					   compiler's own textual intermediate code could not be read back by the
+					   compiler's own parser. Mirrors the imports case above. *)
+					ELSIF identifier = "exports" THEN
+						IF ~afterModuleDirective THEN
+							Error(positionOfDirective, "export directive must be preceeded by module directive")
+						ELSIF afterExportsDirective THEN
+							Error(positionOfDirective, "multiple export directives")
+						ELSIF afterFirstSection THEN
+							Error(positionOfDirective, "export directive not before all sections")
+						ELSE
+							REPEAT
+								IF ExpectAnyIdentifier(positionOfDirective, identifier) THEN
+									module.exports.AddName(identifier)
+								END
+							UNTIL error OR ~ThisSymbol(Scanner.Comma);
+							IF ExpectLineDelimiter() THEN
+								afterExportsDirective := TRUE
 							END
 						END
 
