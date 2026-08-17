@@ -1,0 +1,314 @@
+# Tests for std/compiler -- FoxFingerprinter, on which separate compilation rests.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# A fingerprint is a number standing for an interface. The compiler writes it into the symbol file
+# and compares it on the next build: same number means "nothing a client can see has changed, do not
+# recompile", a different one means "recompile". So the whole of separate compilation rests on two
+# properties, and neither had a test:
+#
+#   -  two interfaces that differ must get different numbers. A collision means the compiler skips a
+#      recompile it owed, the client keeps calling the old shape, and what breaks breaks later and
+#      elsewhere -- at run time, in another module, as a trap with no bad line in it.
+#   -  what is NOT the interface must not change the number, or every edit to a procedure body
+#      rebuilds the world.
+#
+# The cases analyse module texts in memory -- parser plus semantic checker, the same setup the
+# language server uses -- and fingerprint the symbols. Nothing is written to disk and no import is
+# resolved, so the fixtures must name no other module.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE FPTestShared;
+	IMPORT SyntaxTree := FoxSyntaxTree, FoxParser, FoxScanner, FoxSemanticChecker, FoxGlobal,
+		Fingerprinter := FoxFingerprinter, Compiler, Diagnostics, Streams, KernelLog;
+
+	CONST Max* = 128;
+
+	TYPE
+		(** A table of interfaces and the public fingerprint each got. *)
+		Table* = RECORD
+			fp*: ARRAY Max OF SIGNED64;
+			name*: ARRAY Max OF ARRAY 32 OF CHAR;
+			n*: SIGNED32;
+		END;
+
+	(* Parse and check a module text, exactly as the language server does. NIL if it will not
+	   parse -- which for a fixture means the fixture is wrong, so the caller asserts on it. *)
+	PROCEDURE Analyze* (CONST text: ARRAY OF CHAR): SyntaxTree.Module;
+	VAR optR, srcR: Streams.StringReader; opts: Compiler.CompilerOptions;
+		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+		checker: FoxSemanticChecker.Checker; importCache: SyntaxTree.ModuleScope;
+		system: FoxGlobal.System;
+	BEGIN
+		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
+		Streams.OpenStringReader(optR, "-p=Unix64");
+		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN NIL END;
+		Streams.OpenStringReader(srcR, text);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN NIL END;
+		system := opts.backend.GetSystem();
+		IF opts.symbolFile # NIL THEN opts.symbolFile.Initialize(diag, system, "") END;
+		importCache := NIL;
+		checker := FoxSemanticChecker.NewChecker(diag, FALSE, FALSE, system, opts.symbolFile, importCache, "");
+		checker.Module(module);
+		RETURN module
+	END Analyze;
+
+	PROCEDURE Find* (module: SyntaxTree.Module; CONST name: ARRAY OF CHAR): SyntaxTree.Symbol;
+	VAR sym: SyntaxTree.Symbol; nm: ARRAY 64 OF CHAR;
+	BEGIN
+		IF module = NIL THEN RETURN NIL END;
+		sym := module.moduleScope.firstSymbol;
+		WHILE sym # NIL DO
+			sym.GetName(nm);
+			IF nm = name THEN RETURN sym END;
+			sym := sym.nextSymbol
+		END;
+		RETURN NIL
+	END Find;
+
+	PROCEDURE Append (VAR s: ARRAY OF CHAR; CONST t: ARRAY OF CHAR);
+	VAR i, j: SIZE;
+	BEGIN
+		i := 0; WHILE s[i] # 0X DO INC(i) END;
+		j := 0; WHILE t[j] # 0X DO s[i] := t[j]; INC(i); INC(j) END;
+		s[i] := 0X
+	END Append;
+
+	(** Fingerprint one declaration wrapped in a module of the given name; -1 if it did not
+		analyse or the symbol is not there, which the caller is expected to catch. *)
+	PROCEDURE Of* (CONST moduleName, decl, symbol: ARRAY OF CHAR;
+		VAR public, private, shallow: SIGNED64): BOOLEAN;
+	VAR text: ARRAY 1024 OF CHAR; m: SyntaxTree.Module; sym: SyntaxTree.Symbol;
+		fpr: Fingerprinter.Fingerprinter; fp: SyntaxTree.Fingerprint;
+	BEGIN
+		text := "MODULE "; Append(text, moduleName); Append(text, "; ");
+		Append(text, decl); Append(text, " END "); Append(text, moduleName); Append(text, ".");
+		m := Analyze(text);
+		sym := Find(m, symbol);
+		IF sym = NIL THEN RETURN FALSE END;
+		NEW(fpr);
+		fp := fpr.SymbolFP(sym);
+		public := fp.public; private := fp.private; shallow := fp.shallow;
+		RETURN TRUE
+	END Of;
+
+	(** Fingerprint a declaration and remember it under a label. *)
+	PROCEDURE Add* (VAR t: Table; CONST label, decl, symbol: ARRAY OF CHAR): BOOLEAN;
+	VAR public, private, shallow: SIGNED64;
+	BEGIN
+		IF t.n >= Max THEN RETURN FALSE END;
+		IF ~Of("M", decl, symbol, public, private, shallow) THEN
+			KernelLog.String("fixture did not analyse: "); KernelLog.String(label); KernelLog.Ln;
+			RETURN FALSE
+		END;
+		t.fp[t.n] := public; COPY(label, t.name[t.n]); INC(t.n);
+		RETURN TRUE
+	END Add;
+
+	(** How many pairs in the table share a fingerprint; each is named as it is found. *)
+	PROCEDURE Collisions* (CONST t: Table): SIGNED32;
+	VAR i, j, found: SIGNED32;
+	BEGIN
+		found := 0;
+		FOR i := 0 TO t.n - 2 DO
+			FOR j := i + 1 TO t.n - 1 DO
+				IF t.fp[i] = t.fp[j] THEN
+					INC(found);
+					KernelLog.String("same fingerprint: "); KernelLog.String(t.name[i]);
+					KernelLog.String(" == "); KernelLog.String(t.name[j]); KernelLog.Ln
+				END
+			END
+		END;
+		RETURN found
+	END Collisions;
+
+	(** How many entries differ from the first; each is named. *)
+	PROCEDURE Differences* (CONST t: Table): SIGNED32;
+	VAR i, found: SIGNED32;
+	BEGIN
+		found := 0;
+		FOR i := 1 TO t.n - 1 DO
+			IF t.fp[i] # t.fp[0] THEN
+				INC(found);
+				KernelLog.String("differs from the first: "); KernelLog.String(t.name[i]); KernelLog.Ln
+			END
+		END;
+		RETURN found
+	END Differences;
+
+	END FPTestShared.
+
+	MODULE Test;
+	IMPORT T := FPTestShared;
+	VAR t: T.Table; a, b, c: SIGNED64;
+	BEGIN
+		t.n := 0;
+		ASSERT(T.Add(t, "one", "PROCEDURE P*; BEGIN END P;", "P"));
+		ASSERT(t.n = 1);
+		ASSERT(T.Collisions(t) = 0);
+		ASSERT(T.Of("M", "PROCEDURE P*; BEGIN END P;", "P", a, b, c));
+		ASSERT(a = t.fp[0]);
+		ASSERT(~T.Of("M", "PROCEDURE P*; BEGIN END P;", "NoSuchName", a, b, c))
+	END Test.
+
+positive: two interfaces that differ get different fingerprints
+
+	MODULE Test;
+	IMPORT T := FPTestShared;
+
+	VAR t: T.Table;
+
+		PROCEDURE Add (CONST label, decl, symbol: ARRAY OF CHAR);
+		BEGIN ASSERT(T.Add(t, label, decl, symbol))
+		END Add;
+
+	BEGIN
+		t.n := 0;
+
+		(* the parameter list: type, kind, count, order *)
+		Add("a:SIGNED32", "PROCEDURE P*(a: SIGNED32); BEGIN END P;", "P");
+		Add("a:SIGNED64", "PROCEDURE P*(a: SIGNED64); BEGIN END P;", "P");
+		Add("a:SIGNED16", "PROCEDURE P*(a: SIGNED16); BEGIN END P;", "P");
+		Add("VAR a", "PROCEDURE P*(VAR a: SIGNED32); BEGIN END P;", "P");
+		Add("CONST a", "PROCEDURE P*(CONST a: ARRAY OF CHAR); BEGIN END P;", "P");
+		Add("a,b", "PROCEDURE P*(a, b: SIGNED32); BEGIN END P;", "P");
+		Add("int,bool", "PROCEDURE P*(a: SIGNED32; b: BOOLEAN); BEGIN END P;", "P");
+		Add("bool,int", "PROCEDURE P*(a: BOOLEAN; b: SIGNED32); BEGIN END P;", "P");
+		Add("no params", "PROCEDURE P*; BEGIN END P;", "P");
+
+		(* the return type *)
+		Add("ret SIGNED32", "PROCEDURE P*(): SIGNED32; BEGIN RETURN 0 END P;", "P");
+		Add("ret BOOLEAN", "PROCEDURE P*(): BOOLEAN; BEGIN RETURN TRUE END P;", "P");
+
+		(* the basic types, which must not be interchangeable *)
+		Add("set", "PROCEDURE P*(a: SET); BEGIN END P;", "P");
+		Add("char", "PROCEDURE P*(a: CHAR); BEGIN END P;", "P");
+		Add("float32", "PROCEDURE P*(a: FLOAT32); BEGIN END P;", "P");
+		Add("float64", "PROCEDURE P*(a: FLOAT64); BEGIN END P;", "P");
+		Add("address", "PROCEDURE P*(a: ADDRESS); BEGIN END P;", "P");
+		Add("size", "PROCEDURE P*(a: SIZE); BEGIN END P;", "P");
+
+		(* arrays: open against static, and one length against another *)
+		Add("arr open", "PROCEDURE P*(a: ARRAY OF SIGNED32); BEGIN END P;", "P");
+		Add("arr 4", "PROCEDURE P*(VAR a: ARRAY 4 OF SIGNED32); BEGIN END P;", "P");
+		Add("arr 5", "PROCEDURE P*(VAR a: ARRAY 5 OF SIGNED32); BEGIN END P;", "P");
+
+		(* records: a field added, renamed, retyped, reordered, or made private -- the last one
+		   counts because the offsets of the public fields move with it *)
+		Add("rec x", "TYPE R* = RECORD x*: SIGNED32 END;", "R");
+		Add("rec x,y", "TYPE R* = RECORD x*, y*: SIGNED32 END;", "R");
+		Add("rec y,x", "TYPE R* = RECORD y*, x*: SIGNED32 END;", "R");
+		Add("rec x:64", "TYPE R* = RECORD x*: SIGNED64 END;", "R");
+		Add("rec x priv", "TYPE R* = RECORD x: SIGNED32 END;", "R");
+		Add("rec x + priv y", "TYPE R* = RECORD x*: SIGNED32; y: SIGNED32 END;", "R");
+		Add("rec base:32", "TYPE B* = RECORD u*: SIGNED32 END; R* = RECORD (B) x*: SIGNED32 END;", "R");
+		Add("rec base:64", "TYPE B* = RECORD u*: SIGNED64 END; R* = RECORD (B) x*: SIGNED32 END;", "R");
+
+		(* objects: a method added or its signature changed *)
+		Add("obj m", "TYPE R* = OBJECT VAR x*: SIGNED32; PROCEDURE M*; BEGIN END M; END R;", "R");
+		Add("obj m(a)", "TYPE R* = OBJECT VAR x*: SIGNED32; PROCEDURE M*(a: SIGNED32); BEGIN END M; END R;", "R");
+		Add("obj m,n", "TYPE R* = OBJECT VAR x*: SIGNED32; PROCEDURE M*; BEGIN END M; PROCEDURE N*; BEGIN END N; END R;", "R");
+
+		(* pointers: whether the collector traces the field, whether NIL is checked, whether
+		   there is a type descriptor at all. FoxFingerprinter carried none of these until
+		   2026-08-17: POINTER TO R and POINTER {UNSAFE} TO R were one interface. *)
+		Add("ptr fld", "TYPE R* = RECORD x*: POINTER TO RECORD u*: SIGNED32 END END;", "R");
+		Add("ptr fld untraced", "TYPE R* = RECORD x* {UNTRACED}: POINTER TO RECORD u*: SIGNED32 END END;", "R");
+		Add("ptr unsafe", "TYPE R* = RECORD x*: POINTER {UNSAFE} TO RECORD u*: SIGNED32 END END;", "R");
+
+		(* procedure types, delegates and math arrays *)
+		Add("proc ty", "TYPE R* = PROCEDURE (a: SIGNED32);", "R");
+		Add("proc ty 64", "TYPE R* = PROCEDURE (a: SIGNED64);", "R");
+		Add("delegate", "TYPE R* = PROCEDURE {DELEGATE} (a: SIGNED32);", "R");
+		Add("math open", "TYPE R* = ARRAY [*] OF SIGNED32;", "R");
+		Add("math 2d", "TYPE R* = ARRAY [*,*] OF SIGNED32;", "R");
+		Add("math tensor", "TYPE R* = ARRAY [?] OF SIGNED32;", "R");
+
+		(* enumerations: a value added, reordered, or given a number *)
+		Add("enum a,b", "TYPE R* = ENUM a*, b* END;", "R");
+		Add("enum a,b,c", "TYPE R* = ENUM a*, b*, c* END;", "R");
+		Add("enum b,a", "TYPE R* = ENUM b*, a* END;", "R");
+		Add("enum a=5", "TYPE R* = ENUM a* = 5, b* END;", "R");
+
+		(* constants carry their value, so changing it changes the interface *)
+		Add("const 1", "CONST C* = 1;", "C");
+		Add("const 2", "CONST C* = 2;", "C");
+		Add("const str", 'CONST C* = "a";', "C");
+		Add("const TRUE", "CONST C* = TRUE;", "C");
+		Add("const FALSE", "CONST C* = FALSE;", "C");
+		Add("const 1.0", "CONST C* = 1.0;", "C");
+
+		(* and a variable is not a constant of the same type *)
+		Add("var int", "VAR C*: SIGNED32;", "C");
+
+		ASSERT(t.n = 51);
+		ASSERT(T.Collisions(t) = 0)
+	END Test.
+
+positive: what is not the interface does not change the fingerprint
+
+	MODULE Test;
+	IMPORT T := FPTestShared;
+
+	VAR t: T.Table;
+
+		PROCEDURE Add (CONST label, decl, symbol: ARRAY OF CHAR);
+		BEGIN ASSERT(T.Add(t, label, decl, symbol))
+		END Add;
+
+	BEGIN
+		t.n := 0;
+		Add("the interface", "PROCEDURE P*(a: SIGNED32): BOOLEAN; BEGIN RETURN TRUE END P;", "P");
+
+		(* the body is what a fingerprint must NOT see: if it did, every edit inside a procedure
+		   would rebuild every module that calls it *)
+		Add("other body", "PROCEDURE P*(a: SIGNED32): BOOLEAN; BEGIN a := 1; RETURN a = 1 END P;", "P");
+		(* a parameter's name is not part of the contract in this language *)
+		Add("param renamed", "PROCEDURE P*(zz: SIGNED32): BOOLEAN; BEGIN RETURN TRUE END P;", "P");
+		Add("comment added", "(* hello *) PROCEDURE P*(a: SIGNED32): BOOLEAN; BEGIN RETURN TRUE END P;", "P");
+		(* a private neighbour, and a public one declared after it: neither is this symbol *)
+		Add("private neighbour",
+			"PROCEDURE Q(x: SIGNED64); BEGIN END Q; PROCEDURE P*(a: SIGNED32): BOOLEAN; BEGIN RETURN TRUE END P;", "P");
+		Add("neighbour after",
+			"PROCEDURE P*(a: SIGNED32): BOOLEAN; BEGIN RETURN TRUE END P; PROCEDURE R*; BEGIN END R;", "P");
+
+		ASSERT(t.n = 6);
+		ASSERT(T.Differences(t) = 0)
+	END Test.
+
+positive: a fingerprint is the same number every time, and the shallow one is the type's name
+
+	MODULE Test;
+	IMPORT T := FPTestShared;
+
+	VAR pub1, priv1, sh1, pub2, priv2, sh2: SIGNED64;
+
+	BEGIN
+		(* twice over the same text: a fingerprint that is not deterministic is not a fingerprint *)
+		ASSERT(T.Of("M", "TYPE R* = RECORD x*: SIGNED32 END;", "R", pub1, priv1, sh1));
+		ASSERT(T.Of("M", "TYPE R* = RECORD x*: SIGNED32 END;", "R", pub2, priv2, sh2));
+		ASSERT(pub1 = pub2); ASSERT(priv1 = priv2); ASSERT(sh1 = sh2);
+
+		(* the shallow fingerprint is the type's identity -- its module and its name -- so the
+		   same declaration in another module is another type *)
+		ASSERT(T.Of("N", "TYPE R* = RECORD x*: SIGNED32 END;", "R", pub2, priv2, sh2));
+		ASSERT(sh1 # sh2);
+
+		(* and it does NOT depend on the contents, which is what lets a recursive type be
+		   fingerprinted at all: a pointer to R inside R would not otherwise terminate *)
+		ASSERT(T.Of("M", "TYPE R* = RECORD x*, y*: SIGNED32 END;", "R", pub2, priv2, sh2));
+		ASSERT(sh1 = sh2);
+		ASSERT(pub1 # pub2);
+
+		(* private differs from public where a private field is in play, and agrees where none is *)
+		ASSERT(T.Of("M", "TYPE R* = RECORD x*: SIGNED32; y: SIGNED32 END;", "R", pub2, priv2, sh2));
+		ASSERT(pub2 # priv2);
+		ASSERT(pub1 # pub2)
+	END Test.

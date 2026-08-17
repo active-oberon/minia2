@@ -125,6 +125,19 @@ CONST
 
 	fpUntraced = 4;
 
+	(* Pointer flags. A pointer's fingerprint used to be its name and its base type and nothing
+	   else, so POINTER TO R and POINTER {UNSAFE} TO R were the same interface -- and they are
+	   not: whether the collector traces the field, whether NIL is checked, whether there is a
+	   type descriptor at all all hang off these. Two records differing only in such a field
+	   produce different type descriptors, which is exactly the kind of difference a fingerprint
+	   exists to make visible. `untraced` on a FIELD was already fingerprinted (see Field above);
+	   the same property on the pointer type was not. *)
+	fpPointerPlain = 31;
+	fpPointerUnsafe = 32;
+	fpPointerUntraced = 33;
+	fpPointerDisposable = 34;
+	fpPointerHidden = 35;
+
 	Trace=FALSE;
 
 TYPE
@@ -494,6 +507,11 @@ TYPE
 				SELF.deep := FALSE;
 				fp := 0;
 				FPNumber(fp, fpTypePointer); FPNumber(fp, fpTypeBasic);
+				IF x.isPlain THEN FPNumber(fp, fpPointerPlain) END;
+				IF x.isUnsafe THEN FPNumber(fp, fpPointerUnsafe) END;
+				IF x.isUntraced THEN FPNumber(fp, fpPointerUntraced) END;
+				IF x.isDisposable THEN FPNumber(fp, fpPointerDisposable) END;
+				IF x.isHidden THEN FPNumber(fp, fpPointerHidden) END;
 				TypeName(fp,x);
 				FPType(fp,x.pointerBase);
 				fingerprint.shallow := fp;
