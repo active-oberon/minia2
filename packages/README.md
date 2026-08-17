@@ -169,3 +169,46 @@ and **`a2pkg.lock`** (`{ "<repo>": {"version","commit"} }`).
 > (362 resolved import-edges among the five stable packages, **0 upward edges**); the
 > import extractor handles aliases (`X := Y`) and Fox contexts (`Y IN Ctx`). End-to-end
 > `ob get` (network + git) needs an image rebuilt with the new `git`/`jq` layer.
+
+## What the manifests say since 2026-08-16
+
+Three fields were added, and two of them are checked rather than trusted.
+
+- **`headless`** — does the SDK carry this package. It is what decides the contents of
+  `docker/headless-core*.txt`: the payload is the union of the `provides` of the packages
+  where this is true, closed under imports. `bash docker/gen-headless-core.sh` writes the
+  lists, `task registry` verifies them without writing, and CI runs the check.
+- **`graphical`** — the members of a *shipped* package that cannot travel, because their own
+  import closure reaches the window system: `Texts`, the SSH family, the decoders. Checked
+  against the import graph in both directions, so it cannot go quietly out of date. On a
+  package where `headless` is false the field says nothing and is refused.
+- **`requires`** — now derived from the import graph rather than written by hand.
+
+**`packages/attic/`** is a third area beside `std` and `apps`: what lives in `source/` and is
+not ours. The Oberon-2 compiler (26 modules), the ActiveCells# front end, the TRM and
+interpreter back ends, the 32-bit ARM back end. They stay in the tree — dropping the files
+would widen the diff against vanilla ETH and make every future patch dearer — and they stay
+out of the SDK, which is the part that matters.
+
+**The runtime is now the closed kernel it claims to be.** `std/runtime` was 46 modules of
+"low-level things"; it is 15, and the rule is the Go and Zig one: a module belongs there iff
+generated code references it without the programmer naming it, or the loader cannot run
+without it. What used to be called runtime and is not — the trap handler (it prints through
+`Streams`), the dynamic loader (it reads through `Files`), the command interpreter — is
+**`std/system`**, above `std/base`. `std/runtime` imports nothing outside itself; that is
+checked by hand, not by the script, so re-check it when adding a module.
+
+### Known and not yet resolved: nine cross-package cycles
+
+Deriving `requires` from the graph made visible what hand-written requires hid. These pairs
+import each other:
+
+    std/compiler <-> std/data      std/data <-> std/gui       std/data <-> std/text
+    std/drivers  <-> std/gui       std/gui  <-> std/media     std/gui  <-> std/text
+    std/media    <-> std/text      std/net  <-> std/web       std/text <-> std/web
+
+A cycle inside a package is allowed and normal (the graphics stack is one); a cycle *between*
+packages means the boundary is drawn in the wrong place, and it makes the tier numbers
+fiction wherever it appears. They are recorded rather than papered over: resolving them is
+the next piece of registry work, and each one is a real question about where a module belongs
+(`Texts` between `std/text` and the window system is the loudest).

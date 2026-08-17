@@ -17,10 +17,9 @@
     "CalcGrunwald"
   ],
   "requires": {
-    "std/runtime": "*",
+    "std/data": "*",
     "std/math": "*",
-    "std/numerics": "*",
-    "std/data": "*"
+    "std/numerics": "*"
   },
   "residual": [
     "This closes the MathMitLef -> CalcGauss forward-pointer from std/numerics: MathMitLef (Mittag-Leffler) belongs here or in a numerics-special layer that requires std/calc.",

@@ -74,9 +74,6 @@ FoxA64InstructionSet
 FoxAMD64Assembler
 FoxAMD64InstructionSet
 FoxAMDBackend
-FoxARMAssembler
-FoxARMBackend
-FoxARMInstructionSet
 FoxActiveCells
 FoxArrayBase
 FoxArrayBaseOptimized
@@ -84,9 +81,6 @@ FoxAssembler
 FoxBackend
 FoxBasic
 FoxBinaryCode
-FoxCSharpFrontend
-FoxCSharpParser
-FoxCSharpScanner
 FoxCodeGenerators
 FoxDisassembler
 FoxDocumentationBackend
@@ -108,10 +102,6 @@ FoxIntermediateCode
 FoxIntermediateLinker
 FoxIntermediateObjectFile
 FoxIntermediateParser
-FoxInterpreter
-FoxInterpreterBackend
-FoxInterpreterSymbols
-FoxMinosObjectFile
 FoxOberonFrontend
 FoxParser
 FoxPrintout
@@ -121,9 +111,6 @@ FoxScanner
 FoxSections
 FoxSemanticChecker
 FoxSyntaxTree
-FoxTRMAssembler
-FoxTRMBackend
-FoxTRMInstructionSet
 FoxTestBackend
 FoxTextualSymbolFile
 FoxTranspilerBackend
@@ -163,7 +150,6 @@ MathL
 MathRat
 MathRe
 MathReSeries
-MinosLinker
 Modules
 NbrCplx
 NbrInt
@@ -181,8 +167,6 @@ ODBC
 ObjectFile
 Objects
 Options
-PCDebug
-PCM
 PKCS1
 POP3Client
 PersistentObjects

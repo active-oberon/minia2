@@ -58,12 +58,14 @@
     "UDPChatClient"
   ],
   "requires": {
-    "std/runtime": "*",
     "std/base": "*",
-    "std/text": "*",
-    "std/web": "*",
+    "std/crypto": "*",
+    "std/gui": "*",
     "std/math": "*",
-    "std/crypto": "*"
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*",
+    "std/web": "*"
   },
   "residual": [
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",

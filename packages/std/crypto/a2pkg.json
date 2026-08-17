@@ -38,8 +38,10 @@
     "X509"
   ],
   "requires": {
+    "std/base": "*",
+    "std/math": "*",
     "std/runtime": "*",
-    "std/math": "*"
+    "std/system": "*"
   },
   "residual": []
 }

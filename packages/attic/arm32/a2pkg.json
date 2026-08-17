@@ -1,0 +1,24 @@
+{
+  "name": "attic/arm32",
+  "tier": null,
+  "context": "A2",
+  "headless": false,
+  "status": "unsupported",
+  "description": "The 32-bit ARM back end, assembler and disassembler.",
+  "provides": [
+    "FoxARMAssembler",
+    "FoxARMBackend",
+    "FoxARMInstructionSet",
+    "ARMDecoder"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "configs/env.yml knows Linux64 and Win64 only: this target is not built here, so the code is unverified by construction. It is what a LinARM-32 tarball (idea 2d) would need, and idea 2d is deferred because 64-bit Raspberry Pi OS runs our linux-arm64 tarball today.",
+    "Not to be confused with FoxA64*, which is ours and is in std/compiler."
+  ]
+}

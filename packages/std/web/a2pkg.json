@@ -15,7 +15,11 @@
     "WebSockets"
   ],
   "requires": {
+    "std/base": "*",
+    "std/crypto": "*",
+    "std/net": "*",
     "std/runtime": "*",
+    "std/system": "*",
     "std/text": "*"
   },
   "residual": [

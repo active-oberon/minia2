@@ -8,9 +8,12 @@
 #
 # WHAT DECIDES MEMBERSHIP
 #
-# The registry does: packages/std/*/a2pkg.json. A module is shipped iff some package whose
+# The registry does: packages/*/*/a2pkg.json. A module is shipped iff some package whose
 # `headless` is true names it in `provides` and does not name it in `graphical`, or iff the
-# import closure of such a module needs it. Nothing else. The list is therefore a decision
+# import closure of such a module needs it. packages/attic/* is where the tree's other languages
+# and other machines are declared -- `headless` false, `status` unsupported, in source/ but not
+# ours: the Oberon-2 compiler, the ActiveCells# front end, the TRM and interpreter back ends,
+# the 32-bit ARM back end. Nothing else. The list is therefore a decision
 # that somebody wrote down, package by package, and this script only works it out.
 #
 # It did not used to be. The rule was the other way round -- keep every module whose import
@@ -116,7 +119,7 @@ def closure(seed):
 
 packages, owner, seed = {}, {}, set()
 problems = []
-for f in sorted(glob.glob("packages/std/*/a2pkg.json")):
+for f in sorted(glob.glob("packages/*/*/a2pkg.json")):
     d = json.load(open(f))
     name = d["name"]
     if "headless" not in d:
@@ -124,18 +127,25 @@ for f in sorted(glob.glob("packages/std/*/a2pkg.json")):
         continue
     packages[name] = d
     graphical = set(d.get("graphical", []))
+    # `graphical` only says something about a package that ships: it is the reason a member of it
+    # does NOT. On a package that stays home the whole list would be noise, so it is not allowed
+    # there and not checked.
+    if not d["headless"] and graphical:
+        problems.append(f"{name}: `headless` is false, so `graphical` says nothing -- drop it")
     for m in d.get("provides", []):
         if m in owner:
             problems.append(f"{m}: provided by both {owner[m]} and {name}")
         owner[m] = name
         if m not in deps:
             continue                        # no source on this target: Shortreal on AArch64, and so on
+        if not d["headless"]:
+            continue
         reaches = any(gui(x) for x in closure({m}))
         if reaches and m not in graphical:
             problems.append(f"{name}: {m} reaches the window system and is not in `graphical`")
         if not reaches and m in graphical:
             problems.append(f"{name}: {m} is in `graphical` but reaches no window system module")
-        if d["headless"] and not reaches:
+        if not reaches:
             seed.add(m)
 
 keep = sorted(closure(seed) & have)

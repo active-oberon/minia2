@@ -13,8 +13,10 @@
     "Archives"
   ],
   "requires": {
-    "std/runtime": "*",
+    "std/base": "*",
     "std/compress": "*",
+    "std/runtime": "*",
+    "std/system": "*",
     "std/web": "*"
   },
   "residual": [

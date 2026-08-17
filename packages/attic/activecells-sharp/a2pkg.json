@@ -1,0 +1,23 @@
+{
+  "name": "attic/activecells-sharp",
+  "tier": null,
+  "context": "A2",
+  "headless": false,
+  "status": "unsupported",
+  "description": "ActiveCells# -- a C#-flavoured syntax over the ActiveCells model, from Alexey Gokhberg's parser.",
+  "provides": [
+    "FoxCSharpFrontend",
+    "FoxCSharpParser",
+    "FoxCSharpScanner"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Not C# and not ours: the scanner has `cell`, `cellnet`, `port` and `select` beside `class` and `switch`, and FoxGlobal carries @lynx_* and lynx@send for it. Fox is a framework with pluggable front ends and somebody hung a second language on it.",
+    "Nothing in the tree names it. It reached the SDK until 2026-08-16 only because an import graph cannot tell a front end loaded by name from any other module loaded by name."
+  ]
+}
