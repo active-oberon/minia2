@@ -1,6 +1,6 @@
 {
   "name": "attic/interpreter",
-  "tier": null,
+  "tier": 9,
   "context": "A2",
   "headless": false,
   "status": "unsupported",

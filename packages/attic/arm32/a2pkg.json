@@ -1,6 +1,6 @@
 {
   "name": "attic/arm32",
-  "tier": null,
+  "tier": 8,
   "context": "A2",
   "headless": false,
   "status": "unsupported",

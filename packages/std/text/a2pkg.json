@@ -1,6 +1,6 @@
 {
   "name": "std/text",
-  "tier": 1,
+  "tier": 4,
   "context": "A2",
   "headless": true,
   "status": "draft",

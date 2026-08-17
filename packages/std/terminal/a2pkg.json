@@ -1,6 +1,6 @@
 {
   "name": "std/terminal",
-  "tier": 1,
+  "tier": 3,
   "context": "A2",
   "headless": true,
   "status": "draft",
