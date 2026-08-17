@@ -1,6 +1,6 @@
 {
   "name": "std/compiler",
-  "tier": 3,
+  "tier": 7,
   "context": "A2",
   "headless": true,
   "status": "draft",

@@ -1,6 +1,6 @@
 {
   "name": "std/net",
-  "tier": 2,
+  "tier": 7,
   "context": "A2",
   "headless": true,
   "status": "draft",

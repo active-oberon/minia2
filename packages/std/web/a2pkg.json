@@ -1,6 +1,6 @@
 {
   "name": "std/web",
-  "tier": 2,
+  "tier": 3,
   "context": "A2",
   "headless": true,
   "status": "draft",
