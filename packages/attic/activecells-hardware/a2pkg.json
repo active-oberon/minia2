@@ -1,6 +1,6 @@
 {
   "name": "attic/activecells-hardware",
-  "tier": null,
+  "tier": 8,
   "context": "A2",
   "headless": false,
   "status": "unsupported",
@@ -9,7 +9,12 @@
     "FoxActiveCells",
     "FoxHardware"
   ],
-  "requires": {},
+  "requires": {
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
   "residual": [
     "ActiveCells -- cell, cellnet, port -- is a feature of the LANGUAGE and the compiler supports it: the parser and the semantic checker are in std/compiler and stay there. What is here is the synthesis back end, and nothing in the tree imports FoxHardware at all.",
     "Not shipped and not tested: it cannot be used without hardware tooling we do not have, and there is no way for us to tell whether it still works."

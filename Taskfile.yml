@@ -547,6 +547,18 @@ tasks:
     # graphics". Regenerate with: bash docker/gen-headless-core.sh
     cmds:
       - bash {{.CURRENT_DIR}}/docker/gen-headless-core.sh --check
+      # And the published registry says what this one says. a2-registry is where the catalogue and
+      # the website live; there is one source of truth for what a standard package contains and it
+      # is packages/ here, because this is the only copy anything checks. Skipped where the clone
+      # is absent -- CI has no reason to hold it -- and A2_REGISTRY points elsewhere if you do.
+      - |
+        set -eo pipefail
+        registry="${A2_REGISTRY:-{{.CURRENT_DIR}}/../a2-registry}"
+        if [ -f "$registry/tools/sync-std.py" ]; then
+          MINIA2="{{.CURRENT_DIR}}" python3 "$registry/tools/sync-std.py" --check
+        else
+          echo "[SKIP] no a2-registry clone at $registry -- nothing to compare the catalogue with"
+        fi
 
   ob:
     desc: "`ob` written in Active Oberon -- linked with the compiler inside, and made to answer for itself"
