@@ -85,6 +85,9 @@ Neovim runtime files. They live in the dotfiles repo
   `docker … minia2-sdk lsp --live`, mounting the file's directory at `/work`. Prefer the
   tarball: an image built yesterday does not have what the server learnt today.
   Honours `$A2_STDLIB_SRC` and `$A2_SYMS` (see §5).
+- `lua/plugins/init.lua` — `hedyhli/outline.nvim` for the side panel (`gO`), unfiltered by
+  symbol kind on purpose: constants, variables and record fields are exactly what one looks
+  for in an Oberon module, and aerial.nvim's default `filter_kind` would drop all three.
 - `syntax/oberon.vim` — syntax highlighting (keywords/types/builtins; `END` is coloured
   by what it closes).
 
@@ -104,7 +107,7 @@ diagnostics, hover, completion, etc.
 | **Diagnostics** | Syntax + semantic errors/warnings on open & save (`--live` also re-checks as you type, debounced). Full message shown inline. |
 | **Hover** | Type, kind and doc-comment of the symbol under the cursor, resolved across modules (`KernelLog.Int` → its real signature). Readable type names (`Streams.Writer`, `SIGNED32`). |
 | **Go-to-definition** | Jumps to the declaration — same-file *and* cross-module (project modules resolve to a sibling; stdlib with `$A2_STDLIB_SRC`). Works from statement use-sites and declaration-site type annotations. |
-| **Document symbols** | Hierarchical module outline — types with their fields & methods, procedures, variables, constants — **in the order the file is in**, with a `*` on what the module exports and the imports collapsed under one `IMPORT (n)` node. Operators carry their parameter types, so three declarations of `=` are three distinct rows. `CONST` and `VAR` are deliberately *not* grouped: a name has to stay findable by typing it in a fuzzy symbol search. (This is PET's Program Structure panel; a client that prefers alphabetical sorts it itself, which is why the server sends source order — the reverse is not recoverable.) |
+| **Document symbols** | Hierarchical module outline — types with their fields & methods, procedures, variables, constants — **in the order the file is in**, with a `*` on what the module exports and the imports collapsed under one `IMPORT (n)` node. Operators carry their parameter types, so three declarations of `=` are three distinct rows. `CONST` and `VAR` are deliberately *not* grouped: a name has to stay findable by typing it in a fuzzy symbol search. (This is PET's Program Structure panel; a client that prefers alphabetical sorts it itself, which is why the server sends source order — the reverse is not recoverable.) **A picker flattens and sorts all of that away**, so use the side panel (`gO`) to see it. |
 | **Completion** | After `Mod.` → the module's exported symbols; after `var.` → the fields/methods of its record/object type (incl. inherited); otherwise keywords + imports + this module's declarations. With kind + signature. |
 | **Signature help** | While typing a call, shows the parameter list and highlights the active argument (`Mod.Proc(`, `proc(`, `obj.Method(`). |
 | **Find references** | Every use-site of a symbol + its declaration. Project-wide for module-level symbols and record/object members; current-file for locals. |
@@ -125,7 +128,8 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | `K` | Hover (type / signature / doc) |
 | `gd`, `<C-]>`, `Ctrl-Click` | Go to definition |
 | `gr` | Find references (Telescope picker / quickfix) |
-| `g0` | Document outline (Telescope picker / loclist) |
+| `g0` | Document outline as a picker (Telescope / loclist) — type to filter |
+| `gO` | Document outline as a **side panel** ([outline.nvim](https://github.com/hedyhli/outline.nvim)) — the tree as the server sends it |
 | `<leader>ra` | Rename (NVChad default) |
 | `<leader>fm` | Format buffer (NVChad default), or `:lua vim.lsp.buf.format()` |
 | `<leader>ca` | Code actions (NVChad default), or `:lua vim.lsp.buf.code_action()` |
