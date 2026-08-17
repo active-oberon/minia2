@@ -141,6 +141,20 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | `:ObFoldImports`, `:ObFoldComments` | Close every fold of that kind |
 
 Completion, diagnostics and semantic-token colouring apply automatically — nothing to press.
+
+**The two token modifiers need colours, or they do nothing.** Neovim links semantic tokens to
+`@lsp.*` groups, and it has no default for a modifier it has not heard of, so `dangerous` and
+`checks` are invisible until you say what they look like. Anywhere in your config:
+
+```lua
+-- everything of SYSTEM, plus HALT / UNTRACED / UNTRACKED / UNCHECKED / UNCOOPERATIVE / UNSAFE
+vim.api.nvim_set_hl(0, "@lsp.mod.dangerous.oberon", { fg = "#ff6b6b", bold = true })
+-- ASSERT, and nothing else in the language
+vim.api.nvim_set_hl(0, "@lsp.mod.checks.oberon",    { fg = "#e2b56d" })
+```
+
+`:Inspect` on a word says which groups it got, which is the quickest way to see whether the server
+sent the modifier at all.
 Folding is vim's own set of keys; the server only supplies the ranges. A file opens unfolded
 (`foldlevel = 99` in the ftplugin — set it to `0` there if you would rather start folded). On a
 67-line module `zM` leaves 13 lines: the header, the constants, the object and one line per
