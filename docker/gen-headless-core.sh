@@ -165,6 +165,16 @@ for f in sorted(glob.glob("packages/*/*/a2pkg.json")):
 # one -- but two packages importing each other means the boundary is drawn in the wrong place, and
 # the tier numbers stop meaning anything there. A pair that genuinely cannot be split says so in
 # `cycle`, on both sides, with the reason in `residual`.
+# std/runtime is meant to be closed: the kernel cannot import the library it sits under. The
+# manifest says so in words; this says so in arithmetic, because a module added later would break
+# it silently otherwise.
+runtime = {m for n, d in packages.items() if n == "std/runtime" for m in d.get("provides", [])}
+for m in sorted(runtime):
+    outside = sorted(x for x in deps.get(m, ()) if x not in runtime and x in owner)
+    if outside:
+        problems.append(f"std/runtime is not closed: {m} imports "
+                        + ", ".join(f"{x} ({owner[x]})" for x in outside))
+
 requires = {n: set(d.get("requires", {})) for n, d in packages.items()}
 declared = {n: set(d.get("cycle", [])) for n, d in packages.items()}
 for a in sorted(requires):
