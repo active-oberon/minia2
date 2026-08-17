@@ -612,7 +612,7 @@ TYPE
 					END;
 				ELSIF operand.symbol.name # "" THEN
 					Basic.WriteSegmentedName(w,operand.symbol.name);
-					IF operand.symbol.fingerprint # 0 THEN w.String("["); w.Hex(operand.symbol.fingerprint,0); w.String("]"); END;
+					IF operand.symbol.fingerprint # 0 THEN w.String("[0"); w.Hex(operand.symbol.fingerprint,0); w.String("H]"); END;
 					w.String(":"); w.Int(operand.symbolOffset,1);
 					IF operand.offset > 0 THEN w.String("+"); w.Int(operand.offset, 1);
 					ELSIF operand.offset < 0 THEN w.String("-"); w.Int(-operand.offset, 1);
@@ -628,7 +628,7 @@ TYPE
 		|ModeImmediate:
 			IF operand.symbol.name # "" THEN
 				Basic.WriteSegmentedName(w,operand.symbol.name);
-				IF operand.symbol.fingerprint # 0 THEN w.String("["); w.Hex(operand.symbol.fingerprint,0); w.String("]"); END;
+				IF operand.symbol.fingerprint # 0 THEN w.String("[0"); w.Hex(operand.symbol.fingerprint,0); w.String("H]"); END;
 				w.String(":"); w.Int(operand.symbolOffset,1);
 				IF operand.offset > 0 THEN w.String("+"); w.Int(operand.offset, 1);
 				ELSIF operand.offset < 0 THEN w.String("-"); w.Int(-operand.offset, 1);

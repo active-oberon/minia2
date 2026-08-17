@@ -1,0 +1,205 @@
+# Tests for std/compiler -- the textual intermediate code, printed by one half and read by the other.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# `ob build -b=Intermediate` writes the compiler's intermediate representation as text, and
+# FoxIntermediateParser reads that text back: it is how a module can be compiled on one machine and
+# assembled on another, and it is the only readable form the compiler has of what it is about to
+# emit. Printer and parser are two halves of one format and nothing checked that they agree.
+#
+# They did not. Four things were printed and never read -- the `.exports` directive, section
+# fingerprints (in a notation no reader accepts, and 64 bits wide where the reader took 32), and the
+# fingerprint after a symbol in an operand -- so the compiler could not read its own output at all,
+# for any module that exports anything, which is every module.
+#
+# The cases compile a module in memory with the intermediate back end, print it, and read it back.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE IRTestShared;
+	IMPORT SyntaxTree := FoxSyntaxTree, FoxParser, FoxScanner, FoxSemanticChecker, FoxGlobal,
+		Compiler, Diagnostics, Streams, Strings, KernelLog, Formats := FoxFormats,
+		IntermediateBackend := FoxIntermediateBackend, Parser := FoxIntermediateParser,
+		Sections := FoxSections, Backend := FoxBackend, IntermediateCode := FoxIntermediateCode;
+
+	TYPE Module* = Sections.Module;
+
+	(** Compile a module text with the intermediate back end and return its sections, or NIL. *)
+	PROCEDURE Build* (CONST text: ARRAY OF CHAR): Sections.Module;
+	VAR optR, srcR: Streams.StringReader; opts: Compiler.CompilerOptions;
+		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
+		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
+		checker: FoxSemanticChecker.Checker; importCache: SyntaxTree.ModuleScope;
+		system: FoxGlobal.System; be: Backend.Backend; gen: Formats.GeneratedModule;
+	BEGIN
+		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
+		Streams.OpenStringReader(optR, "-p=Unix64");
+		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN NIL END;
+		Streams.OpenStringReader(srcR, text);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		parser := FoxParser.NewParser(scanner, diag, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN NIL END;
+		system := opts.backend.GetSystem();
+		IF opts.symbolFile # NIL THEN opts.symbolFile.Initialize(diag, system, "") END;
+		importCache := NIL;
+		checker := FoxSemanticChecker.NewChecker(diag, FALSE, FALSE, system, opts.symbolFile, importCache, "");
+		checker.Module(module);
+		IF diag.nofErrors > 0 THEN RETURN NIL END;
+		be := IntermediateBackend.Get();
+		be.Initialize(diag, log, {}, checker, system);
+		gen := be.ProcessSyntaxTreeModule(module);
+		IF gen = NIL THEN RETURN NIL END;
+		RETURN gen(Sections.Module)
+	END Build;
+
+	(** What FoxIntermediateObjectFile.ExportModuleTextual does before it prints: drop the
+		generated binary and the comments, which are not part of the format. *)
+	PROCEDURE Prepare* (m: Sections.Module);
+	VAR i: SIZE; sec: Sections.Section;
+	BEGIN
+		FOR i := 0 TO m.allSections.Length() - 1 DO
+			sec := m.allSections.GetSection(i);
+			sec(IntermediateCode.Section).SetResolved(NIL);
+			sec(IntermediateCode.Section).DeleteComments
+		END
+	END Prepare;
+
+	PROCEDURE Print* (m: Sections.Module): Strings.String;
+	VAR b: Streams.Buffer; w: Streams.Writer;
+	BEGIN
+		NEW(b, 16384); w := b.GetWriter();
+		m.Dump(w); w.Update;
+		RETURN b.GetString()
+	END Print;
+
+	(** Read intermediate code back. NIL and a message on the first error, because a parser that
+		cannot read what the printer wrote is the thing these tests are about. *)
+	PROCEDURE Read* (text: Strings.String): Sections.Module;
+	VAR optR, r: Streams.StringReader; opts: Compiler.CompilerOptions;
+		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer;
+		m: Sections.Module; e: Diagnostics.Entry;
+	BEGIN
+		NEW(diag); NEW(logbuf, 128);
+		Streams.OpenStringReader(optR, "-p=Unix64");
+		IF ~Compiler.GetOptions(optR, logbuf.GetWriter(), diag, opts) THEN RETURN NIL END;
+		NEW(m, NIL, opts.backend.GetSystem());
+		Streams.OpenStringReader(r, text^);
+		IF Parser.ParseReader(r, diag, m) THEN RETURN m END;
+		e := diag.entries;
+		WHILE e # NIL DO
+			KernelLog.String("  intermediate code did not parse: "); KernelLog.String(e.message);
+			KernelLog.Ln; e := e.next
+		END;
+		RETURN NIL
+	END Read;
+
+	(** The fingerprint of the first section whose name ends in the given suffix, or 0. *)
+	PROCEDURE SectionFP* (m: Sections.Module; CONST suffix: ARRAY OF CHAR): SIGNED64;
+	VAR i: SIZE; sec: Sections.Section; b: Streams.Buffer; w: Streams.Writer; s: Strings.String;
+	BEGIN
+		FOR i := 0 TO m.allSections.Length() - 1 DO
+			sec := m.allSections.GetSection(i);
+			NEW(b, 128); w := b.GetWriter();
+			sec.DumpName(w); w.Update; s := b.GetString();
+			IF (s # NIL) & (Strings.Pos(suffix, s^) >= 0) THEN RETURN sec.fingerprint END
+		END;
+		RETURN 0
+	END SectionFP;
+
+	END IRTestShared.
+
+	MODULE Test;
+	IMPORT T := IRTestShared;
+	VAR m: T.Module;
+	BEGIN
+		m := T.Build("MODULE M; PROCEDURE P*; BEGIN END P; END M.");
+		ASSERT(m # NIL);
+		ASSERT(m.allSections.Length() > 0);
+		ASSERT(T.Print(m) # NIL);
+		ASSERT(T.Build("MODULE M; this is not Oberon END M.") = NIL)
+	END Test.
+
+positive: the compiler can read the intermediate code it just wrote
+
+	MODULE Test;
+	IMPORT T := IRTestShared, Strings;
+
+	VAR m, back: T.Module; text: Strings.String;
+
+	BEGIN
+		(* a module that exports something, has a variable, a procedure and a call: every one of
+		   those puts a directive or an operand form into the text *)
+		m := T.Build("MODULE M; VAR a*: SIGNED32; PROCEDURE P*(x: SIGNED32): SIGNED32; BEGIN RETURN x + a END P; PROCEDURE Q*; BEGIN a := P(1) END Q; END M.");
+		ASSERT(m # NIL);
+		T.Prepare(m);
+		text := T.Print(m);
+		ASSERT(text # NIL);
+
+		(* the module exports, so the printer writes `.exports` -- which the parser did not know *)
+		ASSERT(Strings.Pos(".exports", text^) >= 0);
+		(* and the sections carry fingerprints, which were printed in a notation no reader takes *)
+		ASSERT(Strings.Pos("fingerprint=", text^) >= 0);
+
+		back := T.Read(text);
+		ASSERT(back # NIL);
+		ASSERT(back.moduleName = m.moduleName);
+		ASSERT(back.allSections.Length() = m.allSections.Length());
+		ASSERT(back.imports.Length() = m.imports.Length());
+		ASSERT(back.exports.Length() = m.exports.Length())
+	END Test.
+
+positive: a fingerprint survives the trip through the text
+
+	MODULE Test;
+	IMPORT T := IRTestShared, Strings;
+
+	VAR m, back: T.Module; text: Strings.String; before, after: SIGNED64;
+
+	BEGIN
+		m := T.Build("MODULE M; VAR a*: SIGNED32; PROCEDURE P*(x: SIGNED32): SIGNED32; BEGIN RETURN x + a END P; END M.");
+		ASSERT(m # NIL);
+		T.Prepare(m);
+		before := T.SectionFP(m, "M.P");
+		(* a procedure's section carries the fingerprint of its interface; 0 would mean the test
+		   is looking at the wrong section and proves nothing *)
+		ASSERT(before # 0);
+		(* and it is wider than 32 bits, which is what the reader used to be limited to *)
+		ASSERT(before > MAX(SIGNED32));
+
+		text := T.Print(m);
+		back := T.Read(text);
+		ASSERT(back # NIL);
+		after := T.SectionFP(back, "M.P");
+		ASSERT(after = before)
+	END Test.
+
+positive: printing what was read gives the same text again
+
+	MODULE Test;
+	IMPORT T := IRTestShared, Strings;
+
+	VAR m, r1, r2: T.Module; t1, t2, t3: Strings.String;
+
+	BEGIN
+		m := T.Build("MODULE M; TYPE R* = RECORD x*: SIGNED32 END; VAR a*: R; PROCEDURE P*(VAR r: R): SIGNED32; BEGIN RETURN r.x END P; END M.");
+		ASSERT(m # NIL);
+		T.Prepare(m);
+
+		(* The first print is NOT a fixed point, and that is by design rather than by accident:
+		   the section header carries `unit=` and `size=`, which the printer calls redundant and
+		   omits while they are unknown, and which reading fills in. From the second print on the
+		   text is its own answer -- and that is the property worth holding, because it is what
+		   says the parser understood everything the printer said rather than most of it. *)
+		t1 := T.Print(m);
+		r1 := T.Read(t1);
+		ASSERT(r1 # NIL);
+		t2 := T.Print(r1);
+		r2 := T.Read(t2);
+		ASSERT(r2 # NIL);
+		t3 := T.Print(r2);
+		ASSERT(t2^ = t3^);
+		ASSERT(Strings.Length(t2^) > 100)
+	END Test.

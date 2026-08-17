@@ -117,7 +117,10 @@ TYPE
 				w.String(" aligned="); w.Int(positionOrAlignment, 0)
 			END;
 
-			IF fingerprint # 0 THEN w.String(" fingerprint="); w.Hex(fingerprint, 0) END;
+			(* 0...H, the form the scanner reads and the one this file already uses for large
+			   immediates. Bare hex was printed here and could not be read back: the parser sees a
+			   decimal number and stops at the first letter in it. *)
+			IF fingerprint # 0 THEN w.String(" fingerprint=0"); w.Hex(fingerprint, 0); w.String("H") END;
 
 			IF bitsPerUnit # UnknownSize THEN w.String(" unit="); w.Int(bitsPerUnit, 0) END;
 
