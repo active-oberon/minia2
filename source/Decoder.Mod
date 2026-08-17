@@ -2055,7 +2055,9 @@ VAR
 		RETURN NIL
 	END GetDecoderType;
 
-	PROCEDURE GetDecoder (CONST ext : Extension; reader : Streams.Reader) : Decoder;
+	(** Exported so a disassembler can be had without a window. Decoder.Open builds one, and used
+		to be the only way in, which made the disassembler untestable and unusable from a program. *)
+	PROCEDURE GetDecoder* (CONST ext : Extension; reader : Streams.Reader) : Decoder;
 	VAR dec : DecoderType;
 	BEGIN
 		dec := GetDecoderType(ext);
