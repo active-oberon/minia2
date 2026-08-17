@@ -143,6 +143,7 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | `zj` / `zk` | Jump to the next fold's start / the previous fold's end |
 | `zv` | Open just enough to see the line the cursor is on |
 | `:ObFoldImports`, `:ObFoldComments` | Close every fold of that kind |
+| `:ObRestart` | Restart the language server (after `task update` puts a new `ob` in place) |
 
 Completion, diagnostics and semantic-token colouring apply automatically — nothing to press.
 
@@ -166,7 +167,10 @@ A background wash is also the truer picture: what is marked is a *region* where 
 being checked, not a word that happens to be a keyword.
 
 `:Inspect` on a word says which groups it got, which is the quickest way to see whether the server
-sent the modifier at all.
+sent the modifier at all. A colour change needs only `:e` — it is client-side. A **new `ob` binary**
+needs the server restarted, and there is no `:LspRestart` to reach for: nvim-lspconfig 2.x dropped
+its `Lsp*` commands and this client is started by the ftplugin with `vim.lsp.start` rather than by
+lspconfig, so nothing registers one. Hence `:ObRestart`.
 Folding is vim's own set of keys; the server only supplies the ranges. A file opens unfolded
 (`foldlevel = 99` in the ftplugin — set it to `0` there if you would rather start folded). On a
 67-line module `zM` leaves 13 lines: the header, the constants, the object and one line per
