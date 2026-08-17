@@ -198,17 +198,33 @@ without it. What used to be called runtime and is not — the trap handler (it p
 **`std/system`**, above `std/base`. `std/runtime` imports nothing outside itself; that is
 checked by hand, not by the script, so re-check it when adding a module.
 
-### Known and not yet resolved: nine cross-package cycles
+### Cross-package cycles: nine found, eight resolved, one declared
 
-Deriving `requires` from the graph made visible what hand-written requires hid. These pairs
-import each other:
+Deriving `requires` from the graph made visible what hand-written requires hid: nine pairs of
+packages imported each other. A cycle inside a package is normal — the graphics stack is one — but
+a cycle *between* packages means the boundary is drawn in the wrong place, and it makes the tier
+numbers fiction wherever it appears. Eight were the boundary being wrong, and moving one module
+fixed each:
 
-    std/compiler <-> std/data      std/data <-> std/gui       std/data <-> std/text
-    std/drivers  <-> std/gui       std/gui  <-> std/media     std/gui  <-> std/text
-    std/media    <-> std/text      std/net  <-> std/web       std/text <-> std/web
+| pair | what was really wrong |
+|------|-----------------------|
+| `text` ↔ `gui` | one edge, `Texts → WMEvents` — and `WMEvents` is not graphical at all (see below) |
+| `data` ↔ `gui` | `Models`, `Repositories`, `Types`, `UndoManager` are the GUI's document model, not data structures → `std/gui` |
+| `data` ↔ `text` | same four modules |
+| `drivers` ↔ `gui` | `DisplayRefresher` is a window-manager helper, not a driver → `std/gui` |
+| `media` ↔ `text` | `Codecs` is the codec registry and its interface is written in `Raster.Image` → `std/gui` |
+| `compiler` ↔ `data` | `Versioning` is used by `FoxTest` and uses `FoxBasic` → `std/compiler` |
+| `net` ↔ `web` | `WebSockets` is a network protocol → `std/net` |
+| `text` ↔ `web` | `UTF8Strings` is string handling with no host → `std/base` |
 
-A cycle inside a package is allowed and normal (the graphics stack is one); a cycle *between*
-packages means the boundary is drawn in the wrong place, and it makes the tier numbers
-fiction wherever it appears. They are recorded rather than papered over: resolving them is
-the next piece of registry work, and each one is a real question about where a module belongs
-(`Texts` between `std/text` and the window system is the loudest).
+**`WMEvents` was the expensive one.** The taint rule treats a `WM` prefix as "graphical", and
+`WMEvents` wears the prefix without earning it: it is a broadcaster over `Kernel`, `Objects` and
+`Strings` and draws nothing. `Texts` imports it, so `Texts`, `TextUtilities`, `Codecs`,
+`Repositories`, `Models` and `Types` were all held out of the SDK by one edge to a module with no
+graphics in it. The generator now carries an exception list, and an exception is only accepted if
+the module's own closure reaches no real root — asserted, not asserted-to.
+
+**One pair is left and it is declared.** `std/gui` ↔ `std/media`: the window manager loads images
+through the codec registry, and the codec registry hands back a `Raster.Image`. It is the same
+irreducible SCC as gfx-and-wm, one layer out. Both manifests say `"cycle": ["…"]` with the reason,
+and the generator **fails on any undeclared cycle** — so this file cannot quietly grow a tenth.

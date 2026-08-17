@@ -28,10 +28,14 @@
 #      FoxOberonFrontend from FoxCSharpFrontend: both are roots, both are reachable from nothing.
 #      A package saying "I provide this" can.
 #   -  A module that belongs to a package we ship but cannot go in a headless payload, because its
-#      own closure reaches the window system -- Texts, SSH, the PC* compiler family. That is the
-#      `graphical` list in the manifest, and it is CHECKED here: a module named there that turns
-#      out to be headless-clean, or one not named there that reaches the window system, is an
-#      error. The annotation cannot rot quietly.
+#      own closure reaches the window system -- SSH, the decoders. That is the `graphical` list in
+#      the manifest, and it is CHECKED here: a module named there that turns out to be
+#      headless-clean, or one not named there that reaches the window system, is an error. The
+#      annotation cannot rot quietly.
+#   -  Two packages importing each other. `requires` is derived from the import graph, so a cycle
+#      between packages is visible, and it means the boundary is in the wrong place. A pair that
+#      genuinely cannot be split declares itself in `cycle` on both sides; an undeclared one is an
+#      error.
 #
 # The window system is Displays / WindowManager / Raster / Inputs / KbdMouse / XDisplay / WM*.
 # NB: the generic `Plugins` driver registry is deliberately NOT one of those -- network drivers,
@@ -105,7 +109,13 @@ have = {os.path.basename(p)[:-len(symext)-1] for p in glob.glob(binp+"/*."+symex
 
 ROOTS = {"Displays","Display","Inputs","KbdMouse","Raster",
          "WindowManager","WMGraphics","WMWindowManager","XDisplay"}
-gui = lambda m: m.startswith("WM") or m in ROOTS
+# The WM prefix is a naming convention, not a fact, and one module wears it without earning it:
+# WMEvents is a generic broadcaster over Kernel/Objects/Strings with nothing graphical in it. It
+# cost the whole text stack -- Texts imports it, so Texts, TextUtilities, Codecs, Repositories,
+# Models and Types were all tainted through one edge to a module that draws nothing. An exception
+# is only allowed if the module's own closure reaches no real root, and that is asserted below.
+NOTGUI = {"WMEvents"}
+gui = lambda m: m not in NOTGUI and (m.startswith("WM") or m in ROOTS)
 
 sys.setrecursionlimit(10000)
 def closure(seed):
@@ -119,6 +129,9 @@ def closure(seed):
 
 packages, owner, seed = {}, {}, set()
 problems = []
+for m in sorted(NOTGUI):
+    if m in deps and any(gui(x) for x in closure(deps[m])):
+        problems.append(f"{m}: exempted from the window system, but its own imports reach it")
 for f in sorted(glob.glob("packages/*/*/a2pkg.json")):
     d = json.load(open(f))
     name = d["name"]
@@ -147,6 +160,18 @@ for f in sorted(glob.glob("packages/*/*/a2pkg.json")):
             problems.append(f"{name}: {m} is in `graphical` but reaches no window system module")
         if not reaches:
             seed.add(m)
+
+# No undeclared cycle between packages. One inside a package is normal -- the graphics stack is
+# one -- but two packages importing each other means the boundary is drawn in the wrong place, and
+# the tier numbers stop meaning anything there. A pair that genuinely cannot be split says so in
+# `cycle`, on both sides, with the reason in `residual`.
+requires = {n: set(d.get("requires", {})) for n, d in packages.items()}
+declared = {n: set(d.get("cycle", [])) for n, d in packages.items()}
+for a in sorted(requires):
+    for b in sorted(requires[a]):
+        if a < b and a in requires.get(b, ()):
+            if b not in declared.get(a, ()) or a not in declared.get(b, ()):
+                problems.append(f"{a} and {b} import each other and neither declares it in `cycle`")
 
 keep = sorted(closure(seed) & have)
 

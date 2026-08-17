@@ -11,16 +11,12 @@
     "XMLObjects",
     "XMLScanner",
     "XMLParser",
-    "JSON",
-    "WebSockets"
+    "JSON"
   ],
   "requires": {
     "std/base": "*",
-    "std/crypto": "*",
-    "std/net": "*",
     "std/runtime": "*",
-    "std/system": "*",
-    "std/text": "*"
+    "std/system": "*"
   },
   "residual": [
     "This is the XML/config core only; the HTTP stack lives in std/net and HTML/CSS/DynamicWebpage rendering is a separate future std/html pass.",

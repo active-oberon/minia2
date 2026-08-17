@@ -24,7 +24,9 @@
     "Streams",
     "StringPool",
     "Strings",
-    "TFClasses"
+    "TFClasses",
+    "UTF8Strings",
+    "WMEvents"
   ],
   "graphical": [
     "Inputs"

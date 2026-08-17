@@ -17,9 +17,11 @@ CalcFn
 CalcGauss
 CalcGrunwald
 Channels
+Clipboard
 Clock
 Commands
 Compiler
+CompilerInterface
 ComplexNumbers
 Configuration
 CryptoAES
@@ -122,6 +124,7 @@ GenericSort
 HTTPSession
 HTTPSupport
 Heaps
+HostClipboard
 IP
 IPBandwidth
 Inflate
@@ -201,6 +204,7 @@ TFLog
 TFTP
 TLS
 TerminalCodes
+Texts
 Trace
 TrapWriters
 Traps
@@ -212,6 +216,7 @@ Unzip
 User32
 V24
 Versioning
+WMEvents
 WSock32
 WebHTTP
 WebHTTPClient

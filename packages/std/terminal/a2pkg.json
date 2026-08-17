@@ -13,8 +13,7 @@
   "requires": {
     "std/base": "*",
     "std/runtime": "*",
-    "std/system": "*",
-    "std/text": "*"
+    "std/system": "*"
   },
   "residual": [
     "Terminal is Unix only: raw mode is termios and the size is an ioctl. A Windows console twin is what a TUI there waits for, and until it exists this package builds on Unix targets alone; TerminalCodes and Frames are portable and carry no platform code.",
