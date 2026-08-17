@@ -1754,7 +1754,7 @@ TYPE
 			ELSIF Optional( Scanner.Procedure ) THEN type := ProcedureType( position,parentScope);
 			ELSIF Optional( Scanner.Enum ) THEN type := EnumerationType( position,parentScope);
 			ELSIF (Symbol() = Scanner.Address) OR (Symbol() = Scanner.Size) THEN
-				qualifiedIdentifier := SyntaxTree.NewQualifiedIdentifier(position,SyntaxTree.invalidIdentifier, token.identifier);
+				qualifiedIdentifier := SyntaxTree.NewQualifiedIdentifier(token.position,SyntaxTree.invalidIdentifier, token.identifier);
 				type := SyntaxTree.NewQualifiedType( qualifiedIdentifier.position, parentScope, qualifiedIdentifier );
 				NextToken;
 			ELSE qualifiedIdentifier := QualifiedIdentifier();

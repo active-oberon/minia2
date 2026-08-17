@@ -37,7 +37,7 @@ TYPE
 		   usable within the module the scope was taken from, hence NIL for the
 		   cross-file sweep, which visits module-level symbols only. *)
 		keyScope: SyntaxTree.Scope;
-		refOff: ARRAY 16384 OF SIGNED64; refLen, refKind: ARRAY 16384 OF SIGNED32; refN: SIGNED32;
+		refOff: ARRAY 16384 OF SIGNED64; refLen, refKind, refMod: ARRAY 16384 OF SIGNED32; refN: SIGNED32;
 
 		(* LSP semantic-token type index (see the legend in Serve), or -1 to skip. *)
 		PROCEDURE SemKind (sym: SyntaxTree.Symbol): SIGNED32;
@@ -49,6 +49,7 @@ TYPE
 				| SyntaxTree.Import DO k := 0
 				| SyntaxTree.TypeDeclaration DO k := 1
 				| SyntaxTree.Procedure DO IF inRec THEN k := 7 ELSE k := 2 END
+				| SyntaxTree.Builtin DO k := 2
 				| SyntaxTree.Variable DO IF inRec THEN k := 6 ELSE k := 3 END
 				| SyntaxTree.Parameter DO k := 4
 				| SyntaxTree.Constant DO k := 5
@@ -56,6 +57,33 @@ TYPE
 			END;
 			RETURN k
 		END SemKind;
+
+		(* LSP semantic-token modifier bits (the legend in Serve names them): 1 = dangerous,
+		   2 = checks.
+
+		   This is the one thing A2's own editor colours that a reader of the language most needs,
+		   and it is not decoration. `Dangerous` in data/SyntaxHighlighter.XML is the whole of
+		   SYSTEM plus HALT, UNTRACED, UNTRACKED, UNCHECKED, UNCOOPERATIVE and UNSAFE, and `Checks`
+		   is one word, ASSERT. What they mark is where the program stops being a checked program:
+		   for a language sold as "one language from the interrupt handler to the application, and
+		   you can read the whole system", seeing where the safe part ends is the point. *)
+		PROCEDURE SemMod (sym: SyntaxTree.Symbol): SIGNED32;
+		VAR nm: ARRAY 128 OF CHAR; m: SyntaxTree.Module;
+		BEGIN
+			IF sym IS SyntaxTree.Import THEN
+				m := sym(SyntaxTree.Import).module;
+				IF (m # NIL) & FoxGlobal.IsSystemModule(m) THEN RETURN 1 END;
+				RETURN 0
+			END;
+			sym.GetName(nm);
+			IF nm = "ASSERT" THEN RETURN 2 END;
+			IF (nm = "HALT") OR (nm = "UNTRACED") OR (nm = "UNTRACKED") OR (nm = "UNCHECKED")
+				OR (nm = "UNCOOPERATIVE") OR (nm = "UNSAFE") THEN RETURN 1 END;
+			(* everything declared in SYSTEM: GET, PUT, MOVE, VAL, ADR, the register names, ... *)
+			IF (sym.scope # NIL) & (sym.scope.ownerModule # NIL)
+				& FoxGlobal.IsSystemModule(sym.scope.ownerModule) THEN RETURN 1 END;
+			RETURN 0
+		END SemMod;
 
 		(* Coarse symbol class, to disambiguate same-named symbols. *)
 		PROCEDURE KindOf (sym: SyntaxTree.Symbol): SIGNED32;
@@ -94,7 +122,7 @@ TYPE
 				IF (hitStart >= 0) & (refN < LEN(refOff)) THEN
 					IF SemKind(sym) >= 0 THEN
 						refOff[refN] := hitStart; refLen[refN] := SIGNED32(nameLen);
-						refKind[refN] := SemKind(sym); INC(refN)
+						refKind[refN] := SemKind(sym); refMod[refN] := SemMod(sym); INC(refN)
 					END
 				END
 			ELSIF collect THEN
@@ -167,12 +195,20 @@ TYPE
 		END WList;
 
 		PROCEDURE WExpr (e: SyntaxTree.Expression);
+		VAR bnm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF e = NIL THEN RETURN END;
 			WITH e:
 				  SyntaxTree.SymbolDesignator DO Consider(e); WExpr(e.left)
 				| SyntaxTree.ProcedureCallDesignator DO WExpr(e.left); WList(e.parameters)
-				| SyntaxTree.BuiltinCallDesignator DO WExpr(e.left); WList(e.parameters)
+				| SyntaxTree.BuiltinCallDesignator DO
+					(* the builtin's own name, which nothing else records: without it ASSERT and
+					   HALT are the two words in the language that get no token at all *)
+					IF e.builtin # NIL THEN
+						e.builtin.GetName(bnm);
+						Hit(e.builtin, e.position.start, Strings.Length(bnm), e.position.start, Strings.Length(bnm))
+					END;
+					WExpr(e.left); WList(e.parameters)
 				| SyntaxTree.ParameterDesignator DO WExpr(e.left); WList(e.parameters)
 				| SyntaxTree.IndexDesignator DO WExpr(e.left); WList(e.parameters)
 				| SyntaxTree.BracketDesignator DO WExpr(e.left); WList(e.parameters)
@@ -356,10 +392,48 @@ TYPE
 			RETURN r
 		END Range;
 
-		PROCEDURE Node (sym: SyntaxTree.Symbol; kind: SIGNED32; children: JSON.Array): JSON.Object;
-		VAR nm: ARRAY 128 OF CHAR; o: JSON.Object;
+		(* The type as one word, where the type has a name to be called by. No Printout here:
+		   this object is in the type section and cannot reach the module-level printers. *)
+		PROCEDURE TypeLabel (t: SyntaxTree.Type; VAR s: ARRAY OF CHAR): BOOLEAN;
+		VAR td: SyntaxTree.TypeDeclaration;
+		BEGIN
+			s[0] := 0X;
+			IF t = NIL THEN RETURN FALSE END;
+			td := t.typeDeclaration;
+			IF td = NIL THEN RETURN FALSE END;
+			td.GetName(s);
+			RETURN s[0] # 0X
+		END TypeLabel;
+
+		(* The name as the outline shows it: a star on what the module exports, because that is
+		   what a reader of the panel wants first, and the parameter types after an operator,
+		   because a module that overloads `=` three times otherwise shows three rows called `=`. *)
+		PROCEDURE Label (sym: SyntaxTree.Symbol; VAR nm: ARRAY OF CHAR);
+		VAR t: SyntaxTree.Type; p: SyntaxTree.Parameter; one: ARRAY 128 OF CHAR; first: BOOLEAN;
 		BEGIN
 			sym.GetName(nm);
+			IF ~(((nm[0] >= "A") & (nm[0] <= "Z")) OR ((nm[0] >= "a") & (nm[0] <= "z")) OR (nm[0] = "_"))
+				& (sym IS SyntaxTree.Procedure) THEN
+				t := sym.type;
+				IF (t # NIL) & (t IS SyntaxTree.ProcedureType) THEN
+					p := t(SyntaxTree.ProcedureType).firstParameter; first := TRUE;
+					WHILE p # NIL DO
+						IF TypeLabel(p.type, one) THEN
+							IF first THEN Strings.Append(nm, " (") ELSE Strings.Append(nm, ", ") END;
+							Strings.Append(nm, one); first := FALSE
+						END;
+						p := p.nextParameter
+					END;
+					IF ~first THEN Strings.Append(nm, ")") END
+				END
+			END;
+			IF SyntaxTree.PublicRead IN sym.access THEN Strings.Append(nm, "*") END
+		END Label;
+
+		PROCEDURE Node (sym: SyntaxTree.Symbol; kind: SIGNED32; children: JSON.Array): JSON.Object;
+		VAR nm: ARRAY 256 OF CHAR; o: JSON.Object;
+		BEGIN
+			Label(sym, nm);
 			o := JSON.NewObject();
 			o.Set("name", JSON.NewString(nm));
 			o.Set("kind", JSON.NewNumber(kind));
@@ -369,6 +443,21 @@ TYPE
 			RETURN o
 		END Node;
 
+		(* A node that stands for no symbol: the IMPORT header, with the imports under it. Its
+		   range is the first child's, which is inside the module and is what a client needs. *)
+		PROCEDURE Group (CONST name: ARRAY OF CHAR; kind: SIGNED32; at: SyntaxTree.Symbol;
+			children: JSON.Array): JSON.Object;
+		VAR o: JSON.Object;
+		BEGIN
+			o := JSON.NewObject();
+			o.Set("name", JSON.NewString(name));
+			o.Set("kind", JSON.NewNumber(kind));
+			o.Set("range", Range(at));
+			o.Set("selectionRange", Range(at));
+			o.Set("children", children);
+			RETURN o
+		END Group;
+
 		PROCEDURE RecordScopeOf (t: SyntaxTree.Type): SyntaxTree.Scope;
 		BEGIN
 			IF t = NIL THEN RETURN NIL END;
@@ -377,49 +466,97 @@ TYPE
 			RETURN NIL
 		END RecordScopeOf;
 
+		(* A scope keeps its symbols sorted by name, because that is what a compiler looks them up
+		   by. An outline wants the order the file is in -- PET's panel shows that, and has a Sort
+		   button beside it for the other -- so the symbols of a scope are gathered and put back in
+		   source order here. A client that prefers alphabetical still sorts; the reverse is not
+		   possible, because the position is lost once the order is gone. *)
+		PROCEDURE Gather (scope: SyntaxTree.Scope; VAR syms: ARRAY OF SyntaxTree.Symbol): SIGNED32;
+		VAR sym, t: SyntaxTree.Symbol; n, i, j: SIGNED32; nm: ARRAY 128 OF CHAR;
+		BEGIN
+			n := 0;
+			IF scope = NIL THEN RETURN 0 END;
+			sym := scope.firstSymbol;
+			WHILE (sym # NIL) & (n < LEN(syms)) DO
+				sym.GetName(nm);
+				IF (nm[0] # "@") & (sym.position.line > 0) THEN syms[n] := sym; INC(n) END;
+				sym := sym.nextSymbol
+			END;
+			i := 1;
+			WHILE i < n DO                                  (* insertion sort by source offset *)
+				t := syms[i]; j := i - 1;
+				WHILE (j >= 0) & (syms[j].position.start > t.position.start) DO
+					syms[j+1] := syms[j]; DEC(j)
+				END;
+				syms[j+1] := t; INC(i)
+			END;
+			RETURN n
+		END Gather;
+
 		(* record/object members: fields (kind Field=8) and methods (kind Method=6) *)
 		PROCEDURE Members (scope: SyntaxTree.Scope): JSON.Array;
-		VAR arr: JSON.Array; sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR;
+		VAR arr: JSON.Array; syms: ARRAY 512 OF SyntaxTree.Symbol; sym: SyntaxTree.Symbol;
+			n, i: SIGNED32;
 		BEGIN
 			arr := JSON.NewArray();
-			IF scope = NIL THEN RETURN arr END;
-			sym := scope.firstSymbol;
-			WHILE sym # NIL DO
-				sym.GetName(nm);
-				IF (nm[0] # "@") & (sym.position.line > 0) THEN
-					WITH sym:
-						  SyntaxTree.Variable DO arr.Add(Node(sym, 8, NIL))
-						| SyntaxTree.Procedure DO arr.Add(Node(sym, 6, NIL))
-					ELSE
-					END
+			n := Gather(scope, syms); i := 0;
+			WHILE i < n DO
+				sym := syms[i];                             (* WITH wants a variable, not an element *)
+				WITH sym:
+					  SyntaxTree.Variable DO arr.Add(Node(sym, 8, NIL))
+					| SyntaxTree.Procedure DO arr.Add(Node(sym, 6, NIL))
+				ELSE
 				END;
-				sym := sym.nextSymbol
+				INC(i)
 			END;
 			RETURN arr
 		END Members;
 
-		(* top-level module members; types carry their record/object members as children *)
+		(* Top-level module members, in declaration order -- which is the order the source is in,
+		   and the order PET's Program Structure panel shows. A client that would rather have
+		   them alphabetical sorts them itself; that is a property of the panel, not of the data.
+		   Types carry their record/object members as children.
+
+		   IMPORT is the one thing collapsed into a group, and only it. Grouping CONST and VAR too
+		   would read better in a tree and worse in a fuzzy symbol search, where a constant stops
+		   being findable by typing its own name; a star on what is exported does the job the
+		   grouping was wanted for. *)
 		PROCEDURE TopLevel (scope: SyntaxTree.Scope): JSON.Array;
-		VAR arr, ch: JSON.Array; sym: SyntaxTree.Symbol; nm: ARRAY 128 OF CHAR; rs: SyntaxTree.Scope;
+		VAR arr, ch, imports: JSON.Array; firstImport, sym: SyntaxTree.Symbol;
+			head: ARRAY 32 OF CHAR; rs: SyntaxTree.Scope; n, i, imp: SIGNED32;
+			syms: ARRAY 2048 OF SyntaxTree.Symbol;
 		BEGIN
 			arr := JSON.NewArray();
-			IF scope = NIL THEN RETURN arr END;
-			sym := scope.firstSymbol;
-			WHILE sym # NIL DO
-				sym.GetName(nm);
-				IF (nm[0] # "@") & (sym.position.line > 0) THEN
-					WITH sym:
-						  SyntaxTree.TypeDeclaration DO
-							rs := RecordScopeOf(sym.declaredType);
-							IF rs # NIL THEN ch := Members(rs) ELSE ch := NIL END;
-							arr.Add(Node(sym, 5, ch))
-						| SyntaxTree.Procedure DO arr.Add(Node(sym, 12, NIL))
-						| SyntaxTree.Variable DO arr.Add(Node(sym, 13, NIL))
-						| SyntaxTree.Constant DO arr.Add(Node(sym, 14, NIL))
-					ELSE
-					END
+			n := Gather(scope, syms);
+			imports := JSON.NewArray(); imp := 0; i := 0;
+			WHILE i < n DO
+				IF syms[i] IS SyntaxTree.Import THEN
+					IF firstImport = NIL THEN firstImport := syms[i] END;
+					imports.Add(Node(syms[i], 2, NIL));   (* kind Module=2 *)
+					INC(imp)
 				END;
-				sym := sym.nextSymbol
+				INC(i)
+			END;
+			IF imp > 0 THEN
+				head := "IMPORT (";
+				Strings.AppendInt(head, imp);
+				Strings.Append(head, ")");
+				arr.Add(Group(head, 3, firstImport, imports))   (* kind Namespace=3 *)
+			END;
+			i := 0;
+			WHILE i < n DO
+				sym := syms[i];                             (* WITH wants a variable, not an element *)
+				WITH sym:
+					  SyntaxTree.TypeDeclaration DO
+						rs := RecordScopeOf(sym.declaredType);
+						IF rs # NIL THEN ch := Members(rs) ELSE ch := NIL END;
+						arr.Add(Node(sym, 5, ch))
+					| SyntaxTree.Procedure DO arr.Add(Node(sym, 12, NIL))
+					| SyntaxTree.Variable DO arr.Add(Node(sym, 13, NIL))
+					| SyntaxTree.Constant DO arr.Add(Node(sym, 14, NIL))
+				ELSE
+				END;
+				INC(i)
 			END;
 			RETURN arr
 		END TopLevel;
@@ -1565,15 +1702,16 @@ VAR
 
 	(* Insertion sort a Finder's collected tokens by byte offset (nearly sorted already). *)
 	PROCEDURE SortTokens (f: Finder);
-	VAR i, j: SIGNED32; o: SIGNED64; l, k: SIGNED32;
+	VAR i, j: SIGNED32; o: SIGNED64; l, k, md: SIGNED32;
 	BEGIN
 		i := 1;
 		WHILE i < f.refN DO
-			o := f.refOff[i]; l := f.refLen[i]; k := f.refKind[i]; j := i - 1;
+			o := f.refOff[i]; l := f.refLen[i]; k := f.refKind[i]; md := f.refMod[i]; j := i - 1;
 			WHILE (j >= 0) & (f.refOff[j] > o) DO
-				f.refOff[j+1] := f.refOff[j]; f.refLen[j+1] := f.refLen[j]; f.refKind[j+1] := f.refKind[j]; DEC(j)
+				f.refOff[j+1] := f.refOff[j]; f.refLen[j+1] := f.refLen[j];
+				f.refKind[j+1] := f.refKind[j]; f.refMod[j+1] := f.refMod[j]; DEC(j)
 			END;
-			f.refOff[j+1] := o; f.refLen[j+1] := l; f.refKind[j+1] := k; INC(i)
+			f.refOff[j+1] := o; f.refLen[j+1] := l; f.refKind[j+1] := k; f.refMod[j+1] := md; INC(i)
 		END
 	END SortTokens;
 
@@ -1599,7 +1737,7 @@ VAR
 				IF dl = 0 THEN dc := curChar - prevChar ELSE dc := curChar END;
 				data.Add(JSON.NewNumber(dl)); data.Add(JSON.NewNumber(dc));
 				data.Add(JSON.NewNumber(f.refLen[i])); data.Add(JSON.NewNumber(f.refKind[i]));
-				data.Add(JSON.NewNumber(0));
+				data.Add(JSON.NewNumber(f.refMod[i]));
 				prevLine := curLine; prevChar := curChar
 			END;
 			INC(i)
@@ -2075,7 +2213,7 @@ VAR
 	VAR msg: JSON.Value; req, params, td, caps, result, pos, initOpts, compl, sighelp, semtok, legend: JSON.Object;
 		rng, ctx, endO: JSON.Object;
 		method, uri, text, sopt: Strings.String; in: Streams.Reader; out: Streams.Writer;
-		changes: JSON.Value; arr, trig, sigtrig, ttypes, diagsArr: JSON.Array; first, res, diagsV: JSON.Value;
+		changes: JSON.Value; arr, trig, sigtrig, ttypes, tmods, diagsArr: JSON.Array; first, res, diagsV: JSON.Value;
 		line, char, line2, char2: SIGNED32; doc: Document; alive: BOOLEAN;
 	BEGIN
 		in := context.in; out := context.out;
@@ -2109,7 +2247,9 @@ VAR
 						ttypes.Add(JSON.NewString("parameter")); ttypes.Add(JSON.NewString("enumMember"));
 						ttypes.Add(JSON.NewString("property")); ttypes.Add(JSON.NewString("method"));
 						legend.Set("tokenTypes", ttypes);
-						legend.Set("tokenModifiers", JSON.NewArray());
+						tmods := JSON.NewArray();
+						tmods.Add(JSON.NewString("dangerous")); tmods.Add(JSON.NewString("checks"));
+						legend.Set("tokenModifiers", tmods);
 						semtok := JSON.NewObject();
 						semtok.Set("legend", legend);
 						semtok.Set("full", JSON.NewBool(TRUE));
