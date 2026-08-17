@@ -152,10 +152,18 @@ Completion, diagnostics and semantic-token colouring apply automatically — not
 
 ```lua
 -- everything of SYSTEM, plus HALT / UNTRACED / UNTRACKED / UNCHECKED / UNCOOPERATIVE / UNSAFE
-vim.api.nvim_set_hl(0, "@lsp.mod.dangerous.oberon", { fg = "#ff6b6b", bold = true })
+vim.api.nvim_set_hl(0, "@lsp.mod.dangerous.oberon", { fg = "#ffd9d0", bg = "#5c1f26", bold = true })
 -- ASSERT, and nothing else in the language
-vim.api.nvim_set_hl(0, "@lsp.mod.checks.oberon",    { fg = "#e2b56d" })
+vim.api.nvim_set_hl(0, "@lsp.mod.checks.oberon",    { fg = "#2bbac5", bold = true })
 ```
+
+**A red foreground is the obvious choice and the wrong one.** In the default NvChad theme (onedark)
+`Statement` and `Identifier` are both `#e06c75`, so `IMPORT`, `CONST`, `VAR` and every plain
+identifier are already red: a red `SYSTEM` lands in the middle of a red page and marks nothing.
+Check your own theme before picking — `#e06c75` red, `#c678dd` purple, `#e5c07b` yellow, `#98c379`
+green and `#61afef` blue are all spoken for there, which leaves the **background** and **cyan**.
+A background wash is also the truer picture: what is marked is a *region* where the language stopped
+being checked, not a word that happens to be a keyword.
 
 `:Inspect` on a word says which groups it got, which is the quickest way to see whether the server
 sent the modifier at all.
