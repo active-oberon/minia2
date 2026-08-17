@@ -17,9 +17,11 @@ CalcFn
 CalcGauss
 CalcGrunwald
 Channels
+Clipboard
 Clock
 Commands
 Compiler
+CompilerInterface
 ComplexNumbers
 Configuration
 CryptoAES
@@ -123,6 +125,7 @@ Glue
 HTTPSession
 HTTPSupport
 Heaps
+HostClipboard
 IP
 IPBandwidth
 Inflate
@@ -203,6 +206,7 @@ TFTP
 TLS
 Terminal
 TerminalCodes
+Texts
 Trace
 TrapWriters
 Traps
@@ -215,6 +219,7 @@ UnixFiles
 Unzip
 V24
 Versioning
+WMEvents
 WebHTTP
 WebHTTPClient
 WebHTTPServer

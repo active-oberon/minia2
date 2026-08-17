@@ -6,19 +6,10 @@
   "status": "draft",
   "description": "Rich text model and Unicode text utilities: the Texts piece-list model, TextUtilities (load/store/convert), UTF-8 helpers.",
   "provides": [
-    "Texts",
-    "TextUtilities",
-    "UTF8Strings"
-  ],
-  "graphical": [
-    "Texts",
-    "TextUtilities"
+    "Texts"
   ],
   "requires": {
     "std/base": "*",
-    "std/data": "*",
-    "std/gui": "*",
-    "std/media": "*",
     "std/runtime": "*",
     "std/system": "*",
     "std/web": "*"

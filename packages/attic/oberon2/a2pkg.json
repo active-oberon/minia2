@@ -36,6 +36,7 @@
   "requires": {
     "std/base": "*",
     "std/compiler": "*",
+    "std/gui": "*",
     "std/runtime": "*",
     "std/system": "*",
     "std/text": "*"

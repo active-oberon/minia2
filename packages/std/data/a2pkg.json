@@ -14,33 +14,19 @@
     "DataTrees",
     "GenericCollections",
     "GenericSort",
-    "Models",
-    "Repositories",
-    "Types",
     "PersistentObjects",
-    "Versioning",
     "Attributes",
     "CSV",
     "SQL",
-    "UndoManager",
     "ODBC"
   ],
-  "graphical": [
-    "Models",
-    "Repositories",
-    "Types",
-    "UndoManager"
-  ],
   "requires": {
-    "std/archive": "*",
     "std/base": "*",
     "std/compiler": "*",
-    "std/gui": "*",
     "std/math": "*",
     "std/numerics": "*",
     "std/runtime": "*",
     "std/system": "*",
-    "std/text": "*",
     "std/web": "*"
   },
   "residual": [

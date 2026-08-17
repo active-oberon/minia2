@@ -6,28 +6,25 @@
   "status": "draft",
   "description": "Low-level device drivers: display registry, serial ports (V24), keyboard/mouse, PC speaker, clipboard.",
   "provides": [
-    "Displays",
-    "Serials",
-    "SerialsVirtual",
-    "V24",
-    "KbdMouse",
+    "Clipboard",
     "Display",
     "DisplayGTF",
     "DisplayNull",
-    "DisplayRefresher",
-    "Clipboard"
+    "Displays",
+    "HostClipboard",
+    "KbdMouse",
+    "Serials",
+    "SerialsVirtual",
+    "V24"
   ],
   "graphical": [
-    "Clipboard",
     "Display",
     "DisplayNull",
-    "DisplayRefresher",
     "Displays",
     "KbdMouse"
   ],
   "requires": {
     "std/base": "*",
-    "std/gui": "*",
     "std/math": "*",
     "std/runtime": "*",
     "std/system": "*",
