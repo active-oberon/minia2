@@ -499,11 +499,15 @@ else
 			*"Hello from A2"*) echo "ok    the Windows bundle compiles and runs a module" ;;
 			*) echo "FAIL  windows bundle run: $(runsdk ob.exe run examples/Hello.Mod | tr '\n' ' ')"; fail=1 ;;
 		esac
-		runsdk ob.exe build examples/Hello.Mod -t a64 -o hello-arm64 >/dev/null 2>&1 || true
+		# The output is kept: this used to be `>/dev/null 2>&1 || true`, and then a wine that was
+		# merely slow to start -- which is what the first wine of a session after a rebuild is --
+		# read exactly like a compiler that cannot cross-build, with nothing on screen to say which.
+		a64out="$(runsdk ob.exe build examples/Hello.Mod -t a64 -o hello-arm64 2>&1 || true)"
 		if [ -f "$winout/hello-arm64" ] && head -c 20 "$winout/hello-arm64" | grep -q "$(printf '\177ELF')"; then
 			echo "ok    the Windows bundle cross-builds for AArch64"
 		else
-			echo "FAIL  the Windows bundle did not cross-build for AArch64"; fail=1
+			echo "FAIL  the Windows bundle did not cross-build for AArch64"
+			printf '%s\n' "$a64out" | tail -8 | sed 's/^/        /'; fail=1
 		fi
 		case "$(runsdk ob.exe build examples/Hello.Mod -t linux64 -o x)" in
 			*"ships no objects for target linux64"*) echo "ok    it refuses a target it has no objects for" ;;

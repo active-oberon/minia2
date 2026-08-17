@@ -6,6 +6,9 @@
   "status": "unsupported",
   "description": "The Oberon-2 compiler of the old system, and the Minos object format and linker beside it.",
   "provides": [
+    "ASMAMD64",
+    "FoxMinosObjectFile",
+    "MinosLinker",
     "PCA386",
     "PCAAMD64",
     "PCAARM",
@@ -29,9 +32,7 @@
     "PCP",
     "PCS",
     "PCT",
-    "PCV",
-    "MinosLinker",
-    "FoxMinosObjectFile"
+    "PCV"
   ],
   "requires": {
     "std/base": "*",
@@ -43,6 +44,7 @@
   },
   "residual": [
     "A whole second compiler, not a part of ours: its own scanner, parser, symbol table and code generators for 386, AMD64 and ARM. Nothing in the Active Oberon toolchain reaches it.",
-    "Kept in source/ on purpose: dropping 26 files would widen the diff against vanilla ETH and make every future patch dearer. It is out of the registry, so it is out of the SDK, and that is enough."
+    "Kept in source/ on purpose: dropping 26 files would widen the diff against vanilla ETH and make every future patch dearer. It is out of the registry, so it is out of the SDK, and that is enough.",
+    "ASMAMD64 is here because PCAAMD64 and PCGAMD64 are the only modules in the tree that import it: it is the assembler of this compiler, not of ours."
   ]
 }
