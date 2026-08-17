@@ -690,12 +690,65 @@ positive: the outline lists what a module declares, and nests a record's fields 
 		ASSERT(T.Number(T.Field(root, "kind")) = 2);
 		kids := T.Field(root, "children");
 		ASSERT(T.Count(kids) = 3);
-		ASSERT(T.Number(T.Field(T.ItemWith(kids, "name", "Add"), "kind")) = 12);
-		ASSERT(T.ItemWith(kids, "name", "Shift") # NIL);
-		point := T.ItemWith(kids, "name", "Point");
+		(* a star on what the module exports, as PET's panel shows it -- LspLib exports all three *)
+		ASSERT(T.Number(T.Field(T.ItemWith(kids, "name", "Add*"), "kind")) = 12);
+		ASSERT(T.ItemWith(kids, "name", "Shift*") # NIL);
+		ASSERT(T.ItemWith(kids, "name", "Add") = NIL);
+		point := T.ItemWith(kids, "name", "Point*");
 		ASSERT(T.Number(T.Field(point, "kind")) = 5);
-		ASSERT(T.Number(T.Field(T.ItemWith(T.Field(point, "children"), "name", "x"), "kind")) = 8);
-		ASSERT(T.ItemWith(T.Field(point, "children"), "name", "y") # NIL)
+		ASSERT(T.Number(T.Field(T.ItemWith(T.Field(point, "children"), "name", "x*"), "kind")) = 8);
+		ASSERT(T.ItemWith(T.Field(point, "children"), "name", "y*") # NIL);
+		(* and in the order the file is in, not the order a scope keeps its symbols in *)
+		ASSERT(T.Is(T.Field(T.Item(kids, 0), "name"), "Point*"));
+		ASSERT(T.Is(T.Field(T.Item(kids, 1), "name"), "Add*"));
+		ASSERT(T.Is(T.Field(T.Item(kids, 2), "name"), "Shift*"))
+	END Test.
+
+positive: the outline collapses the imports and tells two operators of the same name apart
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON, Strings;
+	VAR s: T.Session; src, p: T.Text; id: SIGNED32; root, kids, imports: JSON.Value;
+
+		PROCEDURE Ln (CONST t: ARRAY OF CHAR);
+		VAR one: ARRAY 2 OF CHAR;
+		BEGIN
+			Strings.Append(src, t); one[0] := 0AX; one[1] := 0X; Strings.Append(src, one)
+		END Ln;
+
+	BEGIN
+		src := "";
+		Ln("MODULE LspOps;");
+		Ln("IMPORT Streams, Strings, Files;");
+		Ln("TYPE");
+		Ln("	Point* = RECORD x*, y*: SIGNED32 END;");
+		Ln("	Span* = RECORD a*, b*: SIGNED32 END;");
+		Ln("	OPERATOR '='* (u, v: Point): BOOLEAN; BEGIN RETURN u.x = v.x END '=';");
+		Ln("	OPERATOR '='* (u, v: Span): BOOLEAN; BEGIN RETURN u.a = v.a END '=';");
+		Ln("END LspOps.");
+		NEW(s); id := s.Start();
+		s.Open("file://lsp/LspOps.Mod", src);
+		T.Doc("file://lsp/LspOps.Mod", p);
+		id := s.Request("textDocument/documentSymbol", p);
+		s.Run(FALSE);
+		root := T.Item(s.Answer(id), 0);
+		kids := T.Field(root, "children");
+
+		(* the imports are one collapsed node saying how many, and they are its children *)
+		imports := T.Item(kids, 0);
+		ASSERT(T.Is(T.Field(imports, "name"), "IMPORT (3)"));
+		ASSERT(T.Number(T.Field(imports, "kind")) = 3);
+		ASSERT(T.Count(T.Field(imports, "children")) = 3);
+		ASSERT(T.Is(T.Field(T.Item(T.Field(imports, "children"), 0), "name"), "Streams"));
+		ASSERT(T.Is(T.Field(T.Item(T.Field(imports, "children"), 2), "name"), "Files"));
+
+		(* CONST and VAR are NOT collapsed: a name has to stay findable by typing it *)
+		ASSERT(T.ItemWith(kids, "name", "Point*") # NIL);
+
+		(* two operators called `=` are two rows called `=`, until the parameters are in the name *)
+		ASSERT(T.ItemWith(kids, "name", "= (Point, Point)*") # NIL);
+		ASSERT(T.ItemWith(kids, "name", "= (Span, Span)*") # NIL);
+		ASSERT(T.ItemWith(kids, "name", "=*") = NIL)
 	END Test.
 
 positive: completion after the dot offers exactly what that module exports, with signatures
@@ -817,6 +870,69 @@ positive: semantic tokens come back as five-tuples, in reading order
 		ASSERT(T.Number(T.Item(data, 0)) = 3);          (* the first declaration, three lines down *)
 		ASSERT(T.Number(T.Item(data, 2)) = 5);          (* "Point" is five characters *)
 		ASSERT(T.Number(T.Item(data, 3)) = 1)           (* and it is a type *)
+	END Test.
+
+positive: the words that leave the safe language are marked, and ADDRESS is where it is written
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON, Strings;
+	VAR s: T.Session; src, p: T.Text; id, i, n, line, char, len, mod: SIGNED32;
+		data: JSON.Value; danger, checks, addr: SIGNED32;
+
+		PROCEDURE Ln (CONST t: ARRAY OF CHAR);
+		VAR one: ARRAY 2 OF CHAR;
+		BEGIN
+			Strings.Append(src, t); one[0] := 0AX; one[1] := 0X; Strings.Append(src, one)
+		END Ln;
+
+	BEGIN
+		src := "";
+		(* SYSTEM and nothing else: the fixture the server analyses must import no library
+		   module, because under `ob test -t a64` the server's own search path does not reach
+		   the standard library, the checker then stops at the unresolved import, and the
+		   token stream comes back nearly empty -- which reads as this feature not working. *)
+		Ln("MODULE LspDanger;");
+		Ln("IMPORT SYSTEM;");
+		Ln("VAR a: SIGNED32; p: ADDRESS;");
+		Ln("	PROCEDURE Do*;");
+		Ln("	BEGIN");
+		Ln("		ASSERT(a = 0);");
+		Ln("		SYSTEM.GET(p, a);");
+		Ln("		IF a < 0 THEN HALT(100) END");
+		Ln("	END Do;");
+		Ln("END LspDanger.");
+		NEW(s); id := s.Start();
+		s.Open("file://lsp/LspDanger.Mod", src);
+		T.Doc("file://lsp/LspDanger.Mod", p);
+		id := s.Request("textDocument/semanticTokens/full", p);
+		s.Run(FALSE);
+		data := T.Field(s.Answer(id), "data");
+		ASSERT(T.Count(data) MOD 5 = 0);
+
+		(* walk the delta encoding back into absolute positions and count the modifiers *)
+		n := SIGNED32(T.Count(data)); i := 0; line := 0; char := 0;
+		danger := 0; checks := 0; addr := -1;
+		WHILE i < n DO
+			IF SIGNED32(T.Number(T.Item(data, i))) # 0 THEN
+				INC(line, SIGNED32(T.Number(T.Item(data, i)))); char := SIGNED32(T.Number(T.Item(data, i + 1)))
+			ELSE
+				INC(char, SIGNED32(T.Number(T.Item(data, i + 1))))
+			END;
+			len := SIGNED32(T.Number(T.Item(data, i + 2)));
+			mod := SIGNED32(T.Number(T.Item(data, i + 4)));
+			IF mod = 1 THEN INC(danger) END;
+			IF mod = 2 THEN INC(checks) END;
+			(* ADDRESS on the third line: its own seven characters, not two before them.
+			   FoxParser used to hand out the position it had when it entered Type, which is
+			   where the ':' is, so the token covered ": ADDRE". *)
+			IF (line = 2) & (len = 7) THEN addr := char END;
+			INC(i, 5)
+		END;
+		(* SYSTEM twice (the import and the call), GET, HALT *)
+		ASSERT(danger = 4);
+		(* ASSERT, and nothing else in the language, is a check *)
+		ASSERT(checks = 1);
+		ASSERT(addr = 20)
 	END Test.
 
 positive: a local can be renamed, and only where that local is used
