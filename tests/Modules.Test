@@ -1,0 +1,190 @@
+# Tests for std/runtime -- Modules, the loader's registry and the type system's index.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Three suites name Modules already, and all three only import it. What it actually answers -- which
+# module is loaded, which type belongs to it, which module a code address falls in, where a named
+# procedure is -- is asked by the trap handler, the dynamic loader, the language server and every
+# `System.Load`, and none of it was asserted anywhere.
+#
+# All of it is checkable from inside a module that is itself loaded: the test can ask about itself and
+# compare the answer with what the compiler already told it. That is the shape of every case here --
+# the runtime's answer against the language's.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the registry knows what is loaded, and admits what is not
+
+	MODULE Test;
+	IMPORT Modules;
+	VAR m: Modules.Module; res: INTEGER; msg: ARRAY 256 OF CHAR;
+	BEGIN
+		(* a module that is certainly loaded, because this code is calling into it *)
+		m := Modules.ThisModule("Modules", res, msg);
+		ASSERT(m # NIL);
+		ASSERT(res = 0);
+		ASSERT(m.name = "Modules");
+
+		(* and this module itself, which is mid-initialisation and must already be published --
+			publication happens before the body runs, or imports could not resolve *)
+		m := Modules.ThisModule("Test", res, msg);
+		ASSERT(m # NIL);
+		ASSERT(m.name = "Test");
+
+		(* a name nothing could have loaded: NIL, a reason, and no trap *)
+		msg := "";
+		m := Modules.ThisModule("NoSuchModuleExistsAnywhere", res, msg);
+		ASSERT(m = NIL);
+		ASSERT(res # 0);
+		ASSERT(msg # "");           (* the caller is told why, not just that *)
+
+		(* the empty name is the degenerate case of the same question, and must answer the same way
+			rather than trapping -- the shape that broke AppendToSegmentedName *)
+		m := Modules.ThisModule("", res, msg);
+		ASSERT(m = NIL);
+		ASSERT(res # 0);
+
+		(* ModuleByName walks the same list and must agree with ThisModule for a loaded module *)
+		ASSERT(Modules.ModuleByName("Modules") = Modules.ThisModule("Modules", res, msg));
+		ASSERT(Modules.ModuleByName("NoSuchModuleExistsAnywhere") = NIL)
+	END Test.
+
+positive: the module list is a list, and this module is on it
+
+	MODULE Test;
+	IMPORT Modules;
+	VAR m: Modules.Module; n, found: SIGNED32;
+	BEGIN
+		(* Modules.root is the head of the published list. Walking it must terminate, reach this
+			module, and hold no unnamed entry -- a module is published under a name or not at all. *)
+		m := Modules.root; n := 0; found := 0;
+		WHILE (m # NIL) & (n < 100000) DO
+			ASSERT(m.name # "");
+			IF m.name = "Test" THEN INC(found) END;
+			INC(n); m := m.next
+		END;
+		ASSERT(m = NIL);            (* terminated, so the list is not a cycle *)
+		ASSERT(n > 1);
+		ASSERT(found = 1)           (* exactly once: publishing twice is how a stale one lingers *)
+	END Test.
+
+positive: a type descriptor found by name is the type the language gives
+
+	MODULE Test;
+	IMPORT Modules;
+	TYPE
+		Base = OBJECT VAR a: SIGNED32 END Base;
+		Derived = OBJECT (Base) VAR b: SIGNED32 END Derived;
+	VAR m: Modules.Module; t: Modules.TypeDesc; res: INTEGER; msg: ARRAY 256 OF CHAR;
+		base: Base; derived: Derived; any: ANY;
+	BEGIN
+		m := Modules.ThisModule("Test", res, msg);
+		ASSERT(m # NIL);
+
+		(* the runtime's descriptor for a type declared right here, looked up by its name *)
+		t := Modules.ThisType(m, "Base");
+		ASSERT(t # NIL);
+		ASSERT(t.name = "Base");
+
+		(* and it is the same descriptor the language attaches to an instance *)
+		NEW(base);
+		ASSERT(Modules.TypeOf(base) = t);
+
+		(* a derived type is a different descriptor, and TypeOf reports the dynamic one *)
+		NEW(derived);
+		ASSERT(Modules.ThisType(m, "Derived") # t);
+		ASSERT(Modules.TypeOf(derived) = Modules.ThisType(m, "Derived"));
+		base := derived;
+		ASSERT(Modules.TypeOf(base) = Modules.ThisType(m, "Derived"));
+
+		(* a name that is not a type of this module is NIL, not a trap and not another module's *)
+		ASSERT(Modules.ThisType(m, "NoSuchTypeHere") = NIL);
+		ASSERT(Modules.ThisType(m, "") = NIL);
+
+		(* NewObj builds from the descriptor alone, which is how deserialisation works, and what it
+			builds must carry that same descriptor *)
+		any := Modules.NewObj(Modules.ThisType(m, "Derived"), FALSE);
+		ASSERT(any # NIL);
+		ASSERT(Modules.TypeOf(any) = Modules.ThisType(m, "Derived"));
+		ASSERT(any IS Base);        (* and the language agrees about its ancestry *)
+		ASSERT(any IS Derived)
+	END Test.
+
+positive: a code address belongs to the module it was compiled into
+
+	MODULE Test;
+	IMPORT Modules, SYSTEM;
+	VAR m: Modules.Module; res: INTEGER; msg: ARRAY 256 OF CHAR; adr: ADDRESS;
+
+		PROCEDURE Somewhere*;
+		BEGIN
+		END Somewhere;
+
+	BEGIN
+		(* This is what the trap handler does to name the frames of a stack: it has an address and
+			nothing else. The address of a procedure of this module must resolve to this module. *)
+		adr := SYSTEM.VAL(ADDRESS, Somewhere);
+		m := Modules.ThisModuleByAdr(adr);
+		ASSERT(m # NIL);
+		ASSERT(m.name = "Test");
+
+		(* an address that is in no module's code at all resolves to nothing rather than to the
+			nearest one -- guessing here is how a trap gets blamed on the wrong module *)
+		ASSERT(Modules.ThisModuleByAdr(0) = NIL);
+
+		(* Somewhere is exported and takes nothing, so it is in this module's command table with both
+			descriptors nil -- but GetProcedure cannot be asked for it from here. It waits for the
+			module to finish initialising, and the body doing the asking is what would finish it, so
+			the wait spins for ModuleInitTimeout (three seconds) and then gives up silently. Asserted
+			against a module that IS initialised instead; the self-call is left alone rather than paid
+			for on every run. *)
+		adr := 0;
+		Modules.GetProcedure("Heaps", "InvokeGC", 0, 0, adr);
+		ASSERT(adr # 0);
+		m := Modules.ThisModule("Heaps", res, msg);
+		ASSERT(m # NIL);
+		ASSERT(Modules.ThisModuleByAdr(adr) = m);   (* and the address lands back in Heaps *)
+
+		(* a procedure nothing declared is not found, and says so by leaving the address alone
+			rather than by trapping *)
+		adr := 0;
+		Modules.GetProcedure("Heaps", "NoSuchProcedure", 0, 0, adr);
+		ASSERT(adr = 0);
+
+		(* the descriptors are part of the key, not decoration: the same name with a signature it
+			does not have must not match *)
+		adr := 0;
+		Modules.GetProcedure("Heaps", "InvokeGC", 1, 0, adr);
+		ASSERT(adr = 0);
+
+		(* and a module that is not loaded yields nothing *)
+		adr := 0;
+		Modules.GetProcedure("NoSuchModuleExistsAnywhere", "Somewhere", 0, 0, adr);
+		ASSERT(adr = 0)
+	END Test.
+
+positive: the name helpers, at the edges where they are actually called
+
+	MODULE Test;
+	IMPORT Modules;
+	VAR s: ARRAY 128 OF CHAR;
+	BEGIN
+		(* Append is how every module name in the system is assembled. Appending to nothing, and
+			appending nothing, are both ordinary cases -- the loader does both. *)
+		s := ""; Modules.Append("Files", s); ASSERT(s = "Files");
+		s := "Files"; Modules.Append("", s); ASSERT(s = "Files");
+		s := ""; Modules.Append("", s); ASSERT(s = "");
+		s := "A"; Modules.Append("B", s); ASSERT(s = "AB");
+
+		(* PackagePath APPENDS to `to` -- it does not assign it, whatever the name suggests. Pinned
+			because the caller has to clear the buffer first, and a caller that does not gets the
+			previous name with this one stuck on the end. *)
+		s := ""; Modules.PackagePath("", "Files", s); ASSERT(s = "Files");
+		s := "already"; Modules.PackagePath("", "Files", s); ASSERT(s = "alreadyFiles");
+
+		(* an empty package names the module by itself, with no stray separator; and "A2" counts as
+			no package, which is the convention the loader relies on *)
+		s := ""; Modules.PackagePath("A2", "Files", s); ASSERT(s = "Files");
+		s := ""; Modules.PackagePath("std", "Files", s);
+		ASSERT(s # ""); ASSERT(s # "std"); ASSERT(s # "Files")   (* package, delimiter, then name *)
+	END Test.

@@ -1,0 +1,117 @@
+# Tests for std/runtime -- Heaps, the allocator and the collector, which nothing named until now.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Most of Heaps is what the compiler emits calls into -- NewRec, NewArr, the tag arithmetic -- and it
+# is exercised by every case in every other suite by construction. What is NOT exercised anywhere is
+# the part a program can ask about and act on: the accounting GetHeapInfo reports, and whether a
+# collection leaves the heap in a state the next allocation can use.
+#
+# So these are invariants, not values: the numbers depend on the machine and on what ran before, and
+# a test that pinned them would be a test of the runner. An invariant that holds for every heap in
+# every state is worth more here than a figure that holds on one.
+#
+# DELIBERATELY NOT ASSERTED: that a finalizer runs. Heaps.AddFinalizer registers one and
+# Heaps.GetFinalizer hands back the pending nodes, but when they become pending depends on the
+# collector reaching the object, which depends on the stack it scans -- so a case asserting it either
+# needs a bound that makes it flaky or a wait that can hang. Neither belongs in a suite. It wants a
+# test that can drive the collector directly, and that is not this file.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: what the heap reports about itself has to be consistent
+
+	MODULE Test;
+	IMPORT Heaps;
+	VAR total, free, largest: SIZE;
+	BEGIN
+		Heaps.GetHeapInfo(total, free, largest);
+
+		(* a heap that is running this code exists and has a size *)
+		ASSERT(total > 0);
+
+		(* the three are nested: the largest single block cannot exceed what is free, and what is
+			free cannot exceed the whole heap. Both were unasserted anywhere. *)
+		ASSERT(free >= 0);
+		ASSERT(free <= total);
+		ASSERT(largest >= 0);
+		ASSERT(largest <= free)
+	END Test.
+
+positive: a collection leaves a heap the next allocation can use
+
+	MODULE Test;
+	IMPORT Heaps;
+	TYPE Node = POINTER TO RECORD next: Node; payload: ARRAY 64 OF CHAR END;
+	VAR total, free, largest, total2, free2, largest2: SIZE; head, n: Node; i: SIGNED32;
+	BEGIN
+		(* make some garbage, and keep a live chain so the collector has both kinds to sort out *)
+		FOR i := 1 TO 2000 DO
+			NEW(n); n.next := head; head := n;      (* live *)
+			NEW(n)                                   (* dropped on the next turn of the loop *)
+		END;
+		ASSERT(head # NIL);
+
+		Heaps.GetHeapInfo(total, free, largest);
+		ASSERT(free <= total);
+
+		(* a full collection and a sweep, one after the other, must not break the invariants -- and
+			must not lose the chain that is still reachable *)
+		Heaps.InvokeGC;
+		Heaps.FullSweep;
+
+		Heaps.GetHeapInfo(total2, free2, largest2);
+		ASSERT(total2 > 0);
+		ASSERT(free2 <= total2);
+		ASSERT(largest2 <= free2);
+
+		(* the heap does not shrink under collection *)
+		ASSERT(total2 >= total);
+
+		(* the live chain is intact and still has its length *)
+		i := 0; n := head;
+		WHILE n # NIL DO INC(i); n := n.next END;
+		ASSERT(i = 2000);
+
+		(* and allocation still works afterwards, which is the point of sweeping *)
+		NEW(n); ASSERT(n # NIL); ASSERT(n.next = NIL)
+	END Test.
+
+positive: a fresh block is zeroed, whatever was in that memory before
+
+	MODULE Test;
+	IMPORT Heaps;
+	TYPE
+		Big = POINTER TO RECORD data: ARRAY 512 OF SIGNED32 END;
+		Arr = POINTER TO ARRAY OF SIGNED32;
+	VAR b: Big; a: Arr; i, j: SIGNED32; k: SIZE; clean: BOOLEAN;
+	BEGIN
+		(* dirty a lot of heap, then drop it: whatever is handed out next has held these bytes *)
+		FOR j := 1 TO 200 DO
+			NEW(b);
+			FOR i := 0 TO 511 DO b.data[i] := -1 END
+		END;
+		b := NIL;
+		Heaps.InvokeGC;
+
+		(* the language guarantees a new record starts zeroed, and the guarantee is Heaps' to keep *)
+		clean := TRUE;
+		FOR j := 1 TO 200 DO
+			NEW(b);
+			FOR i := 0 TO 511 DO IF b.data[i] # 0 THEN clean := FALSE END END
+		END;
+		ASSERT(clean);
+
+		(* and so does an open array, at sizes either side of a block boundary *)
+		clean := TRUE;
+		FOR j := 0 TO 12 DO
+			NEW(a, ASH(1, j));
+			FOR k := 0 TO LEN(a) - 1 DO IF a[k] # 0 THEN clean := FALSE END END
+		END;
+		ASSERT(clean);
+
+		(* an empty open array is a legal allocation and not NIL -- the shape that broke QuickSort *)
+		NEW(a, 0);
+		ASSERT(a # NIL);
+		ASSERT(LEN(a) = 0)
+	END Test.
