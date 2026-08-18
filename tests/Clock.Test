@@ -1,0 +1,123 @@
+# Tests for std/runtime -- Clock, the real-time clock driver, which nothing named until now.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Clock is fifteen lines of code and three exported variables, and every one of them is read by
+# something that puts the answer on the wire: Streams.Date822 stamps the `Date:` header of every
+# HTTP response with Clock.tz, and PCOFPE converts to UTC seconds by subtracting it.
+#
+# The clock is the machine's, so a test cannot assert a value. What it can assert is that the three
+# readings agree with each other: Unix.gettimeofday gives UTC epoch seconds, Clock.Get gives the
+# local wall clock, and Clock.tz claims the difference between them. Two of the three pin the third,
+# on any machine in any zone.
+#
+# HONEST LIMIT: on a machine whose zone is UTC -- a CI runner, unless TZ says otherwise -- the
+# offset is zero, and a defect that reports zero passes. The triangle below still checks Get against
+# gettimeofday there; only the tz half goes quiet. Run it once on a machine east or west of
+# Greenwich before believing tz.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the three readings of the clock agree with each other
+
+	MODULE Test;
+	IMPORT Clock, Unix;
+	VAR time, date, localSecs, offsetSecs: SIGNED32; utc: SIGNED64;
+		tv: Unix.Timeval; tz: Unix.Timezone; ret: SIGNED32;
+	BEGIN
+		ret := Unix.gettimeofday(tv, tz);
+		Clock.Get(time, date);
+
+		(* the documented decoding, from the notes at the end of Clock.Mod *)
+		localSecs := (time DIV 4096 MOD 32) * 3600 + (time DIV 64 MOD 64) * 60 + time MOD 64;
+		ASSERT((0 <= time DIV 4096 MOD 32) & (time DIV 4096 MOD 32 < 24));
+		ASSERT((0 <= time DIV 64 MOD 64) & (time DIV 64 MOD 64 < 60));
+		ASSERT((0 <= time MOD 64) & (time MOD 64 < 61));   (* 60 is a leap second *)
+
+		(* and of the date, which has to be a day of a month of this millennium *)
+		ASSERT((1 <= date MOD 32) & (date MOD 32 <= 31));
+		ASSERT((1 <= date DIV 32 MOD 16) & (date DIV 32 MOD 16 <= 12));
+		ASSERT(1900 + date DIV 512 >= 2000);
+
+		(* tz is minutes east of UTC: Streams.Date822 writes "+" when it is positive, and the notes
+			in Clock.Mod say MET DST is +120. So it must be within a day either way. *)
+		ASSERT((-720 <= Clock.tz) & (Clock.tz <= 720));
+
+		(* The triangle. gettimeofday is UTC; Clock.Get is local; tz claims the difference. Compared
+			modulo a day, so it holds across midnight in either direction. *)
+		utc := tv.sec;
+		offsetSecs := SIGNED32(utc MOD 86400) + Clock.tz * 60 - localSecs;
+		offsetSecs := (offsetSecs MOD 86400 + 86400) MOD 86400;
+		(* a second of slack: the two readings are not taken at the same instant *)
+		ASSERT((offsetSecs <= 2) OR (offsetSecs >= 86398))
+	END Test.
+
+positive: the load time is a reading of the same clock, and not in the future
+
+	MODULE Test;
+	IMPORT Clock;
+	VAR time, date: SIGNED32;
+	BEGIN
+		(* Clock.Init runs Get into these, so a zero date means the module body never ran *)
+		ASSERT(Clock.startdate # 0);
+		ASSERT((1 <= Clock.startdate MOD 32) & (Clock.startdate MOD 32 <= 31));
+		ASSERT(1900 + Clock.startdate DIV 512 >= 2000);
+
+		Clock.Get(time, date);
+		(* the encoding is monotone within a day, so on the same day now cannot precede the load *)
+		ASSERT(date >= Clock.startdate);
+		IF date = Clock.startdate THEN ASSERT(time >= Clock.starttime) END
+	END Test.
+
+positive: Clock and Dates are the same clock
+
+	MODULE Test;
+	IMPORT Clock, Dates;
+	VAR time, date: SIGNED32; dt: Dates.DateTime; a, b: SIGNED32;
+	BEGIN
+		Clock.Get(time, date);
+		dt := Dates.Now();
+
+		ASSERT(dt.year = 1900 + date DIV 512);
+		ASSERT(dt.month = date DIV 32 MOD 16);
+		ASSERT(dt.day = date MOD 32);
+
+		(* to the minute: the two calls are not one instant, so allow the minute to have turned *)
+		a := (time DIV 4096 MOD 32) * 60 + time DIV 64 MOD 64;
+		b := dt.hour * 60 + dt.minute;
+		ASSERT((a = b) OR (a + 1 = b) OR (b + 1 = a) OR (ABS(a - b) = 1439))
+	END Test.
+
+positive: the offset the machine really has, against the two places that claim it
+
+	MODULE Test;
+	IMPORT Clock, Unix;
+	VAR tv: Unix.Timeval; tz: Unix.Timezone; t: Unix.TmPtr; ret: SIGNED32;
+		time, date, localSecs, derived: SIGNED32;
+	BEGIN
+		ret := Unix.gettimeofday(tv, tz);
+		Clock.Get(time, date);
+		t := Unix.localtime(tv);
+
+		(* The offset derived from nothing but the two clocks: local wall time minus UTC, in whole
+			minutes, folded into (-720, 720]. This is the authority the other two are checked
+			against -- neither of them is consulted to compute it. *)
+		localSecs := (time DIV 4096 MOD 32) * 3600 + (time DIV 64 MOD 64) * 60 + time MOD 64;
+		derived := (localSecs - SIGNED32(tv.sec MOD 86400)) DIV 60;
+		derived := (derived MOD 1440 + 1440) MOD 1440;
+		IF derived > 720 THEN DEC(derived, 1440) END;
+
+		(* gettimeofday's timezone argument has been ignored by glibc for decades: it is left as the
+			caller passed it. So it is not a source for the offset, and a clock reading it reports
+			none. This one is not a defect in the tree, it is why the next two have to hold. *)
+		ASSERT(tz.minuteswest = 0);
+
+		(* localtime fills tm_gmtoff -- seconds east of UTC, following daylight saving because
+			localtime does. It is the only source of the offset in the tree, so if the record it
+			comes back in is laid out wrongly, nothing downstream can be right. *)
+		ASSERT(t.gmtoff MOD 60 = 0);                  (* whole minutes, or the field is misread *)
+		ASSERT(t.gmtoff DIV 60 = derived);
+
+		(* and Clock.tz is what Streams.Date822 stamps on every HTTP Date: header *)
+		ASSERT(Clock.tz = derived)
+	END Test.

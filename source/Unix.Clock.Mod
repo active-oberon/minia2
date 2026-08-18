@@ -10,12 +10,19 @@ VAR
 
 	(** Return the current time and date in Oberon format. *)
 	PROCEDURE Get*( VAR time, date: SIGNED32 );
-	VAR tv: Unix.Timeval;  tz: Unix.Timezone;  t: Unix.TmPtr;  ret: SIGNED32;
+	VAR tv: Unix.Timeval;  utz: Unix.Timezone;  t: Unix.TmPtr;  ret: SIGNED32;
 	BEGIN
-		ret := Unix.gettimeofday( tv, tz );
+		ret := Unix.gettimeofday( tv, utz );
 		t := Unix.localtime( tv );
 		time := t.sec + ASH( t.min, 6 ) + ASH( t.hour, 12 );
 		date := t.mday + ASH( t.mon + 1, 5 ) + ASH( t.year, 9 );
+		(* Refreshed on every reading, not once at load: the notes below promise tz may change at
+			any time for daylight saving, and localtime has just answered for this instant anyway.
+			Not utz.minuteswest -- gettimeofday's timezone argument has been ignored by glibc for
+			decades, so tz read 0 in every zone, and Streams.Date822 stamps it on the Date: header of
+			every HTTP response next to a local time. minuteswest is also the opposite sign to the
+			offset documented below. *)
+		tz := SIGNED32( t.gmtoff DIV 60 )
 	END Get;
 
 	(** Set the current time and date in Oberon format. *)
@@ -25,11 +32,8 @@ VAR
 
 
 	PROCEDURE Init;
-	VAR utv: Unix.Timeval;  utz: Unix.Timezone;  ret: SIGNED32;
 	BEGIN
-		ret := Unix.gettimeofday( utv, utz );
-		tz := utz.minuteswest;
-		Get( starttime, startdate )
+		Get( starttime, startdate )   (* which also sets tz *)
 	END Init;
 
 BEGIN

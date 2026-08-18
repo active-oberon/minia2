@@ -429,7 +429,14 @@ TYPE
 	TmPtr* = POINTER {UNSAFE, UNTRACED} TO Tm;
 	Tm* = RECORD
 				sec*, min*, hour*, mday*, mon*, year*, wday*, yday*, isdst*: SIGNED32;
-				gmtoff*, tmzone*: SIGNED32;
+				(* struct tm ends in `long tm_gmtoff; const char *tm_zone`, so on a 64-bit target the
+					nine ints are followed by four bytes of padding and then two eight-byte fields.
+					Declared as two SIGNED32 the pair read the padding and the low half of gmtoff:
+					gmtoff came back 0 whatever the zone, which is the only source of the offset in
+					the tree. *)
+				pad-: SIGNED32;
+				gmtoff*: LONGINTEGER;   (* seconds east of UTC, daylight saving included *)
+				tmzone*: ADDRESS;       (* const char *, the zone's abbreviated name *)
 			END;
 
 	Tms* = RECORD
