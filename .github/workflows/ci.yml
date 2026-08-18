@@ -39,6 +39,14 @@ jobs:
         env:
           A64_REQUIRE: "1"
         run: task test
+      - name: AMD64 code generation
+        # The AMD64 backend is the one everything here is built with, and the execution suites run
+        # its output -- but an instruction can execute correctly on every path a case takes and be
+        # encoded wrongly on a path none takes. That is how `x MOD 100000000H` returning `x` got in.
+        # This decodes what the generator emitted for a module of nothing but boundary cases.
+        env:
+          AMD64_REQUIRE: "1"
+        run: task amd64-codegen
       - name: A64 standard library and self hosting
         # `task test` covers the A64 backend, the runtime, module loading and the collector; it
         # stops short of the standard library, which is minutes of compiling, and therefore of the
