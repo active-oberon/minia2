@@ -1,0 +1,199 @@
+# Tests for std/runtime -- Reals, which nothing named until now.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Reals is the seam between a floating point number and its bits: the exponent, the two halves of the
+# word, powers of ten, and NaN. Everything that prints or reads a real goes through it, and every
+# answer here is decided by IEEE 754 rather than by taste, so it can be asserted exactly.
+#
+# The bit patterns below are IEEE 754 binary64 and binary32 as any reference gives them: 1.0 is
+# 3FF0000000000000, the FLOAT32 exponent is biased by 127 and the FLOAT64 one by 1023, and machine
+# epsilon is 2^-24 and 2^-53 for the definition Reals uses (the largest x with 1-x < 1).
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a real and its bits are the same thing, read either way
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR f: FLOAT32; x: FLOAT64; h, l: SIGNED32;
+	BEGIN
+		(* 1.0 is the pattern every reference opens with *)
+		ASSERT(Reals.Int(1.0) = SIGNED32(03F800000H));
+		Reals.IntL(1.0D0, h, l);
+		ASSERT(h = SIGNED32(03FF00000H)); ASSERT(l = 0);
+
+		(* and back, which is the property that matters: the pair is a bijection *)
+		ASSERT(Reals.Real(SIGNED32(03F800000H)) = 1.0);
+		ASSERT(Reals.RealL(SIGNED32(03FF00000H), 0) = 1.0D0);
+
+		(* a round trip through the bits, including a negative and a fraction *)
+		f := -3.5; ASSERT(Reals.Real(Reals.Int(f)) = f);
+		f := 1.0E-5; ASSERT(Reals.Real(Reals.Int(f)) = f);
+		x := -3.5D0; Reals.IntL(x, h, l); ASSERT(Reals.RealL(h, l) = x);
+		x := 1.0D-300; Reals.IntL(x, h, l); ASSERT(Reals.RealL(h, l) = x);
+
+		(* zero is all zero bits, and the sign bit alone is negative zero *)
+		ASSERT(Reals.Int(0.0) = 0);
+		ASSERT(Reals.Real(SIGNED32(080000000H)) = 0.0)   (* -0.0 = 0.0 by IEEE comparison *)
+	END Test.
+
+positive: the exponent, biased as IEEE says and put back where it was
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR f: FLOAT32; x: FLOAT64;
+	BEGIN
+		(* the shifted exponent: bias 127 at FLOAT32, 1023 at FLOAT64 *)
+		ASSERT(Reals.Expo(1.0) = 127);
+		ASSERT(Reals.Expo(2.0) = 128);
+		ASSERT(Reals.Expo(0.5) = 126);
+		ASSERT(Reals.ExpoL(1.0D0) = 1023);
+		ASSERT(Reals.ExpoL(2.0D0) = 1024);
+		ASSERT(Reals.ExpoL(0.5D0) = 1022);
+
+		(* the sign is not part of it *)
+		ASSERT(Reals.Expo(-1.0) = 127);
+		ASSERT(Reals.ExpoL(-1.0D0) = 1023);
+
+		(* zero has exponent zero, and so does the whole subnormal range *)
+		ASSERT(Reals.Expo(0.0) = 0);
+		ASSERT(Reals.ExpoL(0.0D0) = 0);
+
+		(* writing back what was read changes nothing -- sign and mantissa must survive *)
+		f := -6.25; Reals.SetExpo(Reals.Expo(f), f); ASSERT(f = -6.25);
+		x := -6.25D0; Reals.SetExpoL(Reals.ExpoL(x), x); ASSERT(x = -6.25D0);
+
+		(* and writing one more scales by exactly two, because that is what the field means *)
+		f := 6.25; Reals.SetExpo(Reals.Expo(f) + 1, f); ASSERT(f = 12.5);
+		x := 6.25D0; Reals.SetExpoL(Reals.ExpoL(x) + 1, x); ASSERT(x = 12.5D0);
+		f := -6.25; Reals.SetExpo(Reals.Expo(f) - 1, f); ASSERT(f = -3.125)
+	END Test.
+
+positive: powers of ten, exactly where they are exact and at both ends
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR h, l, e: SIGNED32; x: FLOAT64;
+	BEGIN
+		(* 10^0 .. 10^22 are exactly representable in binary64, so these must be equalities and not
+			comparisons with a tolerance *)
+		ASSERT(Reals.Ten(0) = 1.0D0);
+		ASSERT(Reals.Ten(1) = 10.0D0);
+		ASSERT(Reals.Ten(22) = 1.0D22);
+		x := 1.0D0;
+		FOR e := 0 TO 22 DO ASSERT(Reals.Ten(e) = x); x := x * 10.0D0 END;
+
+		(* beyond 22 they are not exact, but each must still be the nearest double to the power of
+			ten -- which is what the correction in Ten is for. 10^23 is 44B52D02C7E14AF6. *)
+		Reals.IntL(Reals.Ten(23), h, l);
+		ASSERT(h = SIGNED32(044B52D02H)); ASSERT(l = SIGNED32(0C7E14AF6H));
+
+		(* the top of the range: 10^308 is 7FE1CCF385EBC8A0 and is a finite double *)
+		Reals.IntL(Reals.Ten(308), h, l);
+		ASSERT(h = SIGNED32(07FE1CCF3H)); ASSERT(l = SIGNED32(085EBC8A0H));
+		ASSERT(~Reals.IsNaNL(Reals.Ten(308)));
+		ASSERT(Reals.Ten(308) < MAX(FLOAT64));
+
+		(* one past it is +infinity, which is what the interface promises *)
+		Reals.IntL(Reals.Ten(309), h, l);
+		ASSERT(h = SIGNED32(07FF00000H)); ASSERT(l = 0);
+		ASSERT(Reals.IsNaNL(Reals.Ten(309)));
+
+		(* and the bottom: the table reaches 10^-307, below which it answers zero rather than a
+			subnormal. That is the documented edge of the table, not a rounding accident. *)
+		ASSERT(Reals.Ten(-307) > 0.0D0);
+		ASSERT(Reals.Ten(-308) = 0.0D0);
+		ASSERT(Reals.Ten(-400) = 0.0D0)
+	END Test.
+
+positive: IsNaN is true of infinity as well, and a NaN carries its code
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR f: FLOAT32; h, l: SIGNED32;
+	BEGIN
+		(* The name says NaN and the comment says "NaN/Infinite": it tests the exponent field only.
+			Pinned here because a caller reading the name alone would guess otherwise. *)
+		ASSERT(Reals.IsNaN(Reals.NaN(0)));            (* code 0 is infinity, not a NaN *)
+		ASSERT(Reals.IsNaN(Reals.NaN(1)));
+		ASSERT(Reals.IsNaNL(Reals.NaNL(0, 0)));
+		ASSERT(Reals.IsNaNL(Reals.Ten(309)));         (* +infinity *)
+
+		(* and false of everything finite, including zero and the subnormals *)
+		ASSERT(~Reals.IsNaN(0.0));
+		ASSERT(~Reals.IsNaN(1.0));
+		ASSERT(~Reals.IsNaN(-1.0E30));
+		ASSERT(~Reals.IsNaNL(0.0D0));
+		ASSERT(~Reals.IsNaNL(MAX(FLOAT64)));
+
+		(* the code goes in and comes back *)
+		ASSERT(Reals.NaNCode(Reals.NaN(0)) = 0);
+		ASSERT(Reals.NaNCode(Reals.NaN(1)) = 1);
+		ASSERT(Reals.NaNCode(Reals.NaN(12345)) = 12345);
+		ASSERT(Reals.NaNCode(Reals.NaN(07FFFFFH)) = 07FFFFFH);   (* the widest code that fits *)
+
+		(* -1 means "this is not one of them", which is how callers tell them apart *)
+		ASSERT(Reals.NaNCode(1.0) = -1);
+		ASSERT(Reals.NaNCode(0.0) = -1);
+		Reals.NaNCodeL(1.0D0, h, l);
+		ASSERT(h = -1); ASSERT(l = -1);
+		Reals.NaNCodeL(Reals.NaNL(0, 12345), h, l);
+		ASSERT(h = 0); ASSERT(l = 12345);
+
+		(* infinity is code 0 at both widths, i.e. the pattern with an empty mantissa *)
+		f := Reals.NaN(0);
+		ASSERT(Reals.Int(f) = SIGNED32(07F800000H))
+	END Test.
+
+positive: machine epsilon, by the definition Reals uses
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR f: FLOAT32; x: FLOAT64;
+	BEGIN
+		(* Reals.Eps is the largest x for which 1-x is still below 1 and above 0, so 2^-24 at
+			FLOAT32 and 2^-53 at FLOAT64 -- one of the two competing definitions, as its own comment
+			says. The bits are what pin which one. *)
+		ASSERT(Reals.Int(Reals.Eps()) = SIGNED32(033800000H));         (* 2^-24 *)
+		ASSERT(Reals.ExpoL(Reals.EpsL()) = 1023 - 53);                 (* 2^-53 *)
+
+		(* the defining property, both halves of it *)
+		f := Reals.Eps();
+		ASSERT(1.0 - f < 1.0);
+		ASSERT(1.0 - f > 0.0);
+		ASSERT(1.0 - f / 2.0 = 1.0);
+		x := Reals.EpsL();
+		ASSERT(1.0D0 - x < 1.0D0);
+		ASSERT(1.0D0 - x > 0.0D0);
+		ASSERT(1.0D0 - x / 2.0D0 = 1.0D0);
+
+		(* asked twice it answers the same: the value is computed once and cached *)
+		ASSERT(Reals.Eps() = f);
+		ASSERT(Reals.EpsL() = x)
+	END Test.
+
+positive: what Reals can produce and the scanner will not accept
+
+	MODULE Test;
+	IMPORT Reals;
+	VAR x: FLOAT64;
+	BEGIN
+		(* FoxScanner rejects a real literal from 1E308 upward -- "number too large" -- although
+			binary64 reaches 1.797E308. So the top decade of the type has no literal at all:
+			`1.0D308` and `1.79D308` do not compile, while `1.0D307` does. MaxLongrealExponent is
+			308 and the guard is `e <= 308`, but it is applied before the decimal point is folded in,
+			so one fractional digit costs one decade.
+			The reason this belongs in Reals.Test: Reals.Ten(308) computes the very value the scanner
+			refuses to read, so the two can be compared without writing the literal down. *)
+		x := Reals.Ten(308);
+		ASSERT(x > 0.0D0);
+		ASSERT(~Reals.IsNaNL(x));
+		ASSERT(x < MAX(FLOAT64));
+		ASSERT(x > Reals.Ten(307));
+
+		(* MAX(FLOAT64) is in the decade that has no literal, and it is a finite number *)
+		ASSERT(~Reals.IsNaNL(MAX(FLOAT64)));
+		ASSERT(MAX(FLOAT64) > Reals.Ten(308));
+		ASSERT(Reals.ExpoL(MAX(FLOAT64)) = 2046)   (* the largest exponent that is not infinity *)
+	END Test.
