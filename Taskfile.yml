@@ -585,6 +585,24 @@ tasks:
           fi
         }
 
+  amd64-codegen:
+    desc: Compile tests/AMD64Codegen.Mod for Unix64 and decode what came out (VERBOSE=1 to list it)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/amd64-codegen-check.sh {{.BUILD_DIR}}/{{.HOST}} {{if .VERBOSE}}--verbose{{end}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # AMD64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$AMD64_REQUIRE" ] || { echo "[FAIL] the AMD64 code generation check needs llvm-mc, and AMD64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the AMD64 code generation check needs llvm-mc"
+          else
+            exit "$status"
+          fi
+        }
+
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)
     cmds:
