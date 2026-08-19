@@ -103,9 +103,15 @@ VAR
 		dynamicsection:
 		DD 05H, base + stringtable
 		DD 06H, symboltablebegin + base
-		DD 07H, dlsymrelocation + base
-		DD 08H, dlsymrelocation_end-dlsymrelocation ; size (relocationtable)
-		DD 09H, 0CH
+		; DT_REL (11H) and not DT_RELA (07H): ELF32 on i386 and on ARM relocates through
+		; Elf32_Rel, and glibc's loader for both defines ELF_MACHINE_NO_RELA -- a DT_RELA table
+		; is read and then ignored, without a word. The symbol below stays NIL, and the first
+		; thing Init does about it is ASSERT(dlsym # NIL), which is an INT 3 and reaches the
+		; shell as "Trace/breakpoint trap". The addend is implicit: R_386_32 adds what is
+		; already at the target, and the target is a variable, so it is zero.
+		DD 11H, dlsymrelocation + base
+		DD 12H, dlsymrelocation_end-dlsymrelocation ; size (relocationtable)
+		DD 13H, 08H
 		DD 0AH, stringtable_end - stringtable; size (stringtable)
 		DD 0BH, 10H
 
@@ -122,7 +128,7 @@ VAR
 		DB 01H ; relocation type 
 		#END
 		DB 01H, 00H, 00H; index of the symbol
-		DD 0H
+		; no addend field here: an Elf32_Rel entry is eight bytes, not twelve
 		dlsymrelocation_end:
 
 		stringtable:
