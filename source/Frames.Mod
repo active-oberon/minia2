@@ -15,7 +15,7 @@ MODULE Frames;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Oberon's model of a scre
 	A text here is a list of lines, not a rope: the frames this is for hold a screenful of a log
 	or a list of commands. Where a real editor is wanted, this is not it. *)
 
-IMPORT Streams, Strings, Commands, TerminalCodes;
+IMPORT Streams, Strings, Commands, TerminalCodes, UTF8Strings;
 
 CONST
 	MaxFrames* = 8;                    (** how many frames one screen holds *)
@@ -414,13 +414,25 @@ VAR i: SIGNED32;
 BEGIN FOR i := 1 TO n DO w.Char(" ") END
 END Blanks;
 
-(* As much of a line as the width allows, and blanks for the rest of it. *)
+(*	As much of a line as the width allows, and blanks for the rest of it. Counted in characters,
+	not in bytes: a Cyrillic letter is one column and two bytes, so counting bytes both ended the
+	line early and could cut a sequence in half -- which a terminal draws as a replacement glyph.
+	Found on a phone, where the catalogue of a radio program is in Ukrainian.
+	ponytail: one column per code point. Wrong for the wide characters of CJK and for combining
+	marks; a width table is the upgrade, and nothing here needs one yet. *)
 PROCEDURE Fitted (w: Streams.Writer; CONST s: ARRAY OF CHAR; width: SIGNED32);
-VAR i: SIGNED32;
+VAR i, next: SIZE; columns: SIGNED32; ucs: UTF8Strings.Char32;
 BEGIN
-	i := 0;
-	WHILE (i < width) & (s[i] # 0X) DO w.Char(s[i]); INC(i) END;
-	Blanks(w, width - i)
+	i := 0; columns := 0;
+	WHILE (columns < width) & (s[i] # 0X) DO
+		next := i;
+		(* a byte that decodes as nothing is written as itself, so that a malformed line still
+			appears and still ends -- the alternative is a loop that never advances *)
+		IF ~UTF8Strings.DecodeChar(s, next, ucs) OR (next <= i) THEN next := i + 1 END;
+		WHILE i < next DO w.Char(s[i]); INC(i) END;
+		INC(columns)
+	END;
+	Blanks(w, width - columns)
 END Fitted;
 
 (*	The box around a frame, with its name in the top edge. Rounded corners, because that is what

@@ -326,6 +326,24 @@ positive: what a screen draws is its frames, their names and the lines that fit
 		ASSERT(T.Shows("╯"))
 	END Test.
 
+positive: a line of two-byte characters is cut by characters, not by bytes
+
+	MODULE Test;
+	IMPORT T := FramesTestShared, Frames, Strings, UTF8Strings;
+	VAR f: Frames.Frame; s: Frames.Screen; t: Frames.Text; drawn: Strings.String;
+	BEGIN
+		NEW(t); t.Add("Наше Радіо — HD");        (* Ukrainian: two bytes to a letter *)
+		NEW(f, "stations", t);
+		NEW(s); s.Add(f); s.Layout(6, 12);        (* ten columns inside the border *)
+		T.Restart; s.Draw(T.W);
+		drawn := T.Drawn();
+		(* the whole transcript, box characters and escapes included, is still well-formed: a
+			frame that cut by bytes left half a sequence here *)
+		ASSERT(UTF8Strings.Valid(drawn^));
+		ASSERT(T.Shows("Наше Радіо"));            (* exactly what fits, counted in characters *)
+		ASSERT(~T.Shows("HD"))
+	END Test.
+
 positive: scrolling shows the far end of a text, and only that
 
 	MODULE Test;
