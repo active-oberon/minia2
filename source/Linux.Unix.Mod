@@ -21,8 +21,8 @@ CONST
 	(*	Bionic, the C library of Android, names its libraries without the version and has only the
 		one: the POSIX threads and the POSIX clocks are part of libc there rather than libraries of
 		their own. Both sets of names are tried, so that one binary runs on a glibc system and on a
-		phone -- which is worth more than a second build of everything, and the cost is two failed
-		Dlopen calls at startup on Android. *)
+		phone -- which is worth more than a second build of everything. On Android BOTH fail, and
+		that is not a problem: see the comment at the Dlopen calls in Init. *)
 	libcnameBionic = "libc.so";
 
 	LittleEndian* = TRUE;   (** byte order of basic types *)
@@ -1252,7 +1252,7 @@ VAR
 		RETURN val # 0
 	END DlsymOptional;
 
-	PROCEDURE Dlopen*( CONST libname: ARRAY OF CHAR;  mode: SIGNED32 ): ADDRESS;
+	PROCEDURE DlopenReporting( CONST libname: ARRAY OF CHAR;  mode: SIGNED32;  report: BOOLEAN ): ADDRESS;
 	VAR h: ADDRESS;  i, j, k: SIGNED16;
 		p: ARRAY 256 OF CHAR;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
@@ -1267,12 +1267,23 @@ VAR
 				h := Glue.dlopen( ADDRESSOF( p ), mode );  INC( i );
 			END
 		END;
-		IF h = 0 THEN
+		IF (h = 0) & report THEN
 			Trace.String( "Unix.Dlopen: loading library " );
 			Trace.String( libname );  Trace.String( " failed" );  Trace.Ln;
 		END;
 		RETURN h
+	END DlopenReporting;
+
+	PROCEDURE Dlopen*( CONST libname: ARRAY OF CHAR;  mode: SIGNED32 ): ADDRESS;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		RETURN DlopenReporting( libname, mode, TRUE )
 	END Dlopen;
+
+	(** open a library that need not be there; unlike Dlopen this says nothing when it is missing **)
+	PROCEDURE DlopenOptional*( CONST libname: ARRAY OF CHAR;  mode: SIGNED32 ): ADDRESS;
+	BEGIN {UNCOOPERATIVE, UNCHECKED}
+		RETURN DlopenReporting( libname, mode, FALSE )
+	END DlopenOptional;
 
 	PROCEDURE Dlclose*( lib: ADDRESS );
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
@@ -1468,10 +1479,17 @@ VAR
 	=== error
 #END
 
-		libc := Dlopen( libcname, 2 );
-		IF libc = 0 THEN libc := Dlopen( libcnameBionic, 2 ) END;
-		libp := Dlopen( libpthreadname, 2 );
-		IF libp = 0 THEN libp := libc END;		(* Bionic: the threads are in libc *)
+		(*	Asked quietly, because on Android every one of these fails and none of them is needed.
+			Bionic's linker will not dlopen a system library on behalf of a caller it did not map
+			itself, and a2boot maps this image by hand -- so no name, versioned or not, absolute or
+			not, opens libc there. It costs nothing: handle 0 is RTLD_DEFAULT in both C libraries,
+			so every Dlsym below searches the global scope, and a2boot is itself linked against
+			libc, which puts the whole of it there. What this is NOT is a reason to print three
+			lines of failure before every single command the SDK runs. *)
+		libc := DlopenOptional( libcname, 2 );
+		IF libc = 0 THEN libc := DlopenOptional( libcnameBionic, 2 ) END;
+		libp := DlopenOptional( libpthreadname, 2 );
+		IF libp = 0 THEN libp := libc END;		(* Bionic: the threads are in libc, or in the global scope *)
 
 		(*	Which C library this is, asked once and for all: what follows differs by more than the
 			names of things -- struct sigaction is ordered differently -- and every later decision
