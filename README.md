@@ -67,7 +67,8 @@ assembled by the same scripts, so they cannot drift apart:
 task bundle          # target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz  (no Docker)
 task bundle-check    # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle      # the Windows SDK: ob.exe and the library it compiles against
-task a64-bundle      # the AArch64 SDK, native on the device
+task a64-bundle      # the AArch64 SDK, native on the device (glibc)
+task a64-bundle-android  # the same against Bionic: Termux without proot
 task sdk             # the Docker image (same payload at /opt/a2sdk)
 ```
 
@@ -85,7 +86,9 @@ The tarball needs nothing but 64-bit x86 Linux and glibc — unpack it and run `
 carries `ob build -t win64` (a Windows `.exe`) and `-t a64` (an AArch64 ELF) as cross
 targets when their objects are present. The Windows SDK is `ob.exe` and needs no bash,
 Cygwin or WSL; the AArch64 one runs on the device — a Pi 4/5, an ARM server, a phone
-under Termux — and compiles there natively.
+under `proot-distro` — and compiles there natively. Termux itself is Bionic, not glibc, so
+it has a tarball of its own (`android-arm64`), and `install.sh` picks between the two by
+looking at which loader the machine has.
 
 `ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`.
 See [`docker/README.md`](docker/README.md) for all of them and

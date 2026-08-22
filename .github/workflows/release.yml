@@ -50,6 +50,17 @@ jobs:
           # Renamed so the two SDKs sit side by side on the release page; inside it still unpacks
           # into a2-a64/, which is what its own README says to cd into.
           cp target/A64/bundle.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
+      # The same device, without proot: Bionic. A separate asset because the loader and the one
+      # library the image names are read before any of our code runs, so they cannot be decided on
+      # the phone. The NDK is on the runner image already; A64_REQUIRE turns a missing one into a
+      # failure rather than a silent skip that reads like a pass.
+      - name: Tarball SDK (Android/Bionic)
+        env:
+          A64_REQUIRE: "1"
+          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          task a64-bundle-android
+          cp target/A64/bundle-android.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-android-arm64.tar.gz"
       # The third host. ob is a Windows binary here, not a shell script, so this SDK needs neither
       # bash nor WSL nor Docker on the machine it lands on. Built by cross-compilation, which is
       # why it is produced on this Linux runner like the other two.

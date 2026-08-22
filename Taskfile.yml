@@ -768,9 +768,25 @@ tasks:
   a64-bundle:
     desc: Assemble a self-contained AArch64 SDK + its tests, to run on a real ARM machine
     cmds:
+      - task: a64-bundle-run
+        vars: {FLAVOUR: "", OUT: bundle}
+
+  # Same payload against Bionic instead of glibc, which is what Termux runs natively -- the glibc
+  # bundle only gets onto a phone through proot. Needs an NDK for android/a2boot.c; the script
+  # finds one itself or takes ANDROID_NDK.
+  a64-bundle-android:
+    desc: The AArch64 SDK against Bionic, for Termux without proot (needs an Android NDK)
+    cmds:
+      - task: a64-bundle-run
+        vars: {FLAVOUR: "--android", OUT: bundle-android}
+
+  a64-bundle-run:
+    internal: true
+    cmds:
       - |
         set -eo pipefail
-        {{.CURRENT_DIR}}/tests/a64-bundle.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+        {{.CURRENT_DIR}}/tests/a64-bundle.sh {{.FLAVOUR}} -o {{.BUILD_DIR}}/A64/{{.OUT}} \
+          {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
             [ -z "$A64_REQUIRE" ] || { echo "[FAIL] bundling the A64 SDK needs the A64 standard library and a built host compiler, and A64_REQUIRE is set"; exit 1; }
