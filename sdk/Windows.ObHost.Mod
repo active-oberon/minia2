@@ -170,6 +170,20 @@ BEGIN
 	RETURN attributes DIV DirectoryAttribute MOD 2 = 0
 END Executable;
 
+(** Copy a file byte for byte, by OS path. The Unix half explains why this is not Files' job. *)
+PROCEDURE CopyFile*(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR source, target: ARRAY MaxPath OF CHAR;
+BEGIN
+	COPY(from, source); COPY(to, target);		(* Kernel32 takes them as VAR, so it gets copies *)
+	RETURN Kernel32.CopyFile(source, target, 0) # 0
+END CopyFile;
+
+(** TRUE when this system will not start a plain A2 image. Windows runs what the linker wrote. *)
+PROCEDURE ImageNeedsLoader*(): BOOLEAN;
+BEGIN
+	RETURN FALSE
+END ImageNeedsLoader;
+
 (** Nothing to do: a Windows file is executable because of its name. *)
 PROCEDURE MakeExecutable*(CONST path: ARRAY OF CHAR): BOOLEAN;
 BEGIN

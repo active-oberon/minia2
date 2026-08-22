@@ -748,8 +748,27 @@ BEGIN
 	RETURN CompileReader(name, reader, platform, objectExtension, symbolExtension, TRUE)
 END CompileString;
 
+PROCEDURE CopyFile(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR source, destination: Files.File; reader: Files.Reader; writer: Files.Writer;
+	buffer: ARRAY 4096 OF CHAR; length: SIZE;
+BEGIN
+	source := Files.Old(from);
+	IF source = NIL THEN RETURN FALSE END;
+	destination := Files.New(to);
+	IF destination = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, source, 0); Files.OpenWriter(writer, destination, 0);
+	REPEAT
+		reader.Bytes(buffer, 0, LEN(buffer), length);
+		IF length > 0 THEN writer.Bytes(buffer, 0, length) END
+	UNTIL length = 0;
+	writer.Update; Files.Register(destination);
+	source.Close; destination.Close;
+	RETURN TRUE
+END CopyFile;
+
 PROCEDURE BuildVerb;
 VAR source, output, absolute, scratch, destination, directory, fileName, name: Path;
+	program, loader: Path;
 	target, procedure, argument: Path;
 	compilerPlatform, objectExtension, symbolExtension, suffix: Path;
 	linkOptions, boot, bootModules, library: Path;
@@ -783,6 +802,18 @@ BEGIN
 	IF directory = "" THEN COPY(project, directory) END;
 	IF ~ObHost.Exists(directory) THEN DieOn("no such directory: ", directory); RETURN END;
 
+	(*	On Android the linked image is not startable by name, so it is built AS <name>.img and the
+		loader goes over it afterwards -- the same arrangement the SDK's own `oberon` and `ob` have,
+		and the reason `ob build` on a phone produced a file the kernel refused with "Android only
+		supports position-independent executables". Native builds only: a cross build is for another
+		machine, and that machine's rules are not this one's. *)
+	IF ObHost.ImageNeedsLoader() & (target = HostTarget) THEN
+		COPY(destination, program);
+		Strings.Append(destination, ".img"); Strings.Append(fileName, ".img")
+	ELSE
+		program := ""
+	END;
+
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	(* lib is on the path even for a cross build: the backend and the frontend are loaded by name
 	   when the compiler runs, and what runs here is this machine's code whatever is being built *)
@@ -804,8 +835,20 @@ BEGIN
 			IF SetWorkPath(directory) & Link(arguments) & ObHost.Exists(destination) THEN
 				IF ~ObHost.MakeExecutable(destination) THEN
 					DieOn("cannot make it executable: ", destination)
+				ELSIF (program # "") & ~ObHost.ExecutablePath(loader) THEN
+					Die("cannot read /proc/self/exe, so the loader cannot be found")
+				ELSIF (program # "") & ~ObHost.CopyFile(loader, program) THEN
+					(*	a2boot takes the image from the name it was invoked as, so the copy needs no
+						configuration -- but without it the image is unreachable, and reporting the
+						build as done would be a lie. *)
+					line := "cannot copy the loader "; Strings.Append(line, loader);
+					Strings.Append(line, " to "); DieOn(line, program)
+				ELSIF (program # "") & ~ObHost.MakeExecutable(program) THEN
+					DieOn("cannot make the loader executable: ", program)
 				ELSE
-					line := "ob: wrote "; Strings.Append(line, destination);
+					line := "ob: wrote ";
+					IF program # "" THEN Strings.Append(line, program); Strings.Append(line, " + ") END;
+					Strings.Append(line, destination);
 					Strings.Append(line, "  (target: "); Strings.Append(line, target);
 					Strings.Append(line, ", baked entry: "); Strings.Append(line, name);
 					Strings.AppendChar(line, '.'); Strings.Append(line, procedure);
@@ -822,24 +865,6 @@ BEGIN
 	END;
 	DiscardScratch(scratch)
 END BuildVerb;
-
-PROCEDURE CopyFile(CONST from, to: ARRAY OF CHAR): BOOLEAN;
-VAR source, destination: Files.File; reader: Files.Reader; writer: Files.Writer;
-	buffer: ARRAY 4096 OF CHAR; length: SIZE;
-BEGIN
-	source := Files.Old(from);
-	IF source = NIL THEN RETURN FALSE END;
-	destination := Files.New(to);
-	IF destination = NIL THEN RETURN FALSE END;
-	Files.OpenReader(reader, source, 0); Files.OpenWriter(writer, destination, 0);
-	REPEAT
-		reader.Bytes(buffer, 0, LEN(buffer), length);
-		IF length > 0 THEN writer.Bytes(buffer, 0, length) END
-	UNTIL length = 0;
-	writer.Update; Files.Register(destination);
-	source.Close; destination.Close;
-	RETURN TRUE
-END CopyFile;
 
 (*
 	Copy a prepared scratch directory into a fresh one. `ob test -j` gives every job a directory of

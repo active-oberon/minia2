@@ -146,6 +146,23 @@ if [ ! -f "$work/A64OnDevice.GofU8" ] && [ "$s" -ne 124 ]; then
 	echo "        (and it wrote no object file)"
 fi
 
+# 4b. `ob build`, and then the program it built. The second half is the point: the suite proved for
+#     months that the compiler works on the device and never once started what it produced -- so on
+#     Android `ob build` wrote a plain A2 image, the kernel refused it with "only supports
+#     position-independent executables", and this run stayed green. A build whose output nobody
+#     starts is not a build that works.
+s=0; started=$SECONDS
+( cd "$work" && PWD="$work" timeout 600 "$root/ob" build "$root/examples/Hello.Mod" -o "$work/hello" \
+	> "$results/obbuild.log" 2>&1 ) || s=$?
+if [ "$s" -eq 0 ] && [ -x "$work/hello" ]; then
+	( cd "$work" && PWD="$work" timeout 120 "$work/hello" >> "$results/obbuild.log" 2>&1 ) || s=$?
+elif [ "$s" -eq 0 ]; then
+	echo "ob build reported success and left no executable at $work/hello" >> "$results/obbuild.log"
+	s=1
+fi
+_ELAPSED=$((SECONDS - started))
+report "ob build, and running it" "$s" "$results/obbuild.log" 'Hello from A2'
+
 # 5. A fault on a thread that is not ours goes back to whoever handled it before us. Only in the
 #    Android bundle, because only there is the harness built (tests/a64-bundle.sh) -- and only there
 #    does it matter in earnest: an application belongs to ART before it belongs to us, and ART
