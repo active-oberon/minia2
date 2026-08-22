@@ -36,7 +36,7 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 	is where its own header lives.
 *)
 
-IMPORT Files, Streams, Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
+IMPORT Files, Streams, Strings, UTF8Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
 	Random, Kernel,
 	(*	One parametric module, instantiated for the kind of thing this program hands about: the
 		waiting is written once, in the library, and named here. *)
@@ -456,7 +456,9 @@ VAR
 			context.error.String("Radio: standard input is not a terminal"); context.error.Ln;
 			RETURN
 		END;
-		socketPath := "/tmp/a2-radio-"; Strings.AppendInt(socketPath, Unix.getpid());
+		(* $TMPDIR before /tmp: Termux has no /tmp at all, and mpv is told this path too. *)
+		IF ~Processes.Environment("TMPDIR", socketPath) OR (socketPath = "") THEN socketPath := "/tmp" END;
+		Strings.Append(socketPath, "/a2-radio-"); Strings.AppendInt(socketPath, Unix.getpid());
 		Strings.Append(socketPath, ".sock");
 		playing := -1; volume := 70; paused := FALSE;
 		NEW(dice); dice.InitSeed(SIGNED32(Kernel.GetTicks()));   (* a different station each run *)
@@ -531,14 +533,16 @@ BEGIN
 		context.error.String("Radio: no catalogue at "); context.error.String(path);
 		context.error.Ln; RETURN
 	END;
+	(* UTF8Strings.Length, not Strings.Length: the genres are Ukrainian, and a column padded by
+		byte count is a column that does not line up *)
 	width := 0;
 	FOR i := 0 TO stations-1 DO
-		n := SIGNED32(Strings.Length(station[i].genre^));
+		n := SIGNED32(UTF8Strings.Length(station[i].genre^));
 		IF n > width THEN width := n END
 	END;
 	FOR i := 0 TO stations-1 DO
 		context.out.String(station[i].genre^);
-		n := width - SIGNED32(Strings.Length(station[i].genre^)) + 2;
+		n := width - SIGNED32(UTF8Strings.Length(station[i].genre^)) + 2;
 		WHILE n > 0 DO context.out.Char(" "); DEC(n) END;
 		context.out.String(station[i].name^); context.out.Ln
 	END;
