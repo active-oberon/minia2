@@ -579,6 +579,21 @@ VAR
 	   slash). The client also mounts that same tree at /libsrc so the server can read
 	   it. Empty => go-to-definition into stdlib modules is disabled. *)
 	stdlibSrcHost: ARRAY 512 OF CHAR;
+	(*	What a symbol file is called here, and what to compile one for. Both used to be the
+		literals of one platform -- ".SymUu" and "-p=Unix64" -- which made this server Linux64-only:
+		on the AArch64 SDK the library beside it is .SymU8, so nothing resolved and every import in
+		every module was reported unknown. The caller sets these from its own host target; the
+		defaults keep a caller that sets nothing working as before. *)
+	symbolSuffix: ARRAY 16 OF CHAR;
+	compileFor: ARRAY 64 OF CHAR;
+
+	(** Name symbol files and compile them for this platform: ".SymU8", "UnixA64". *)
+	PROCEDURE SetTarget* (CONST suffix, platform: ARRAY OF CHAR);
+	BEGIN
+		COPY(suffix, symbolSuffix);
+		compileFor := "-p="; Strings.Append(compileFor, platform);
+		Strings.Append(compileFor, " --destPath=./")
+	END SetTarget;
 
 	PROCEDURE FindDoc (CONST uri: ARRAY OF CHAR): Document;
 	VAR d: Document;
@@ -713,7 +728,7 @@ VAR
 	BEGIN
 		reader := FoxBasic.GetFileReader(modFile); IF reader = NIL THEN RETURN END;
 		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
-		Streams.OpenStringReader(optR, "-p=Unix64 --destPath=./");
+		Streams.OpenStringReader(optR, compileFor);
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN END;
 		opts.objectFile := NIL;   (* symbolFile.Export still runs -> writes <M>.SymUu *)
 		importCache := NIL;
@@ -725,7 +740,7 @@ VAR
 		diag: Diagnostics.DiagnosticsList; scanner: FoxScanner.Scanner; parser: FoxParser.Parser;
 		module: SyntaxTree.Module; imp: SyntaxTree.Import;
 	BEGIN
-		COPY(name, symFile); Strings.Append(symFile, ".SymUu");
+		COPY(name, symFile); Strings.Append(symFile, symbolSuffix);
 		IF FileExists(symFile) THEN RETURN END;           (* already have symbols *)
 		COPY(name, modFile); Strings.Append(modFile, ".Mod");
 		reader := FoxBasic.GetFileReader(modFile);
@@ -2436,4 +2451,7 @@ VAR
 	PROCEDURE RunLive* (context: Commands.Context);
 	BEGIN Serve(context, TRUE) END RunLive;
 
+BEGIN
+	(* what the two literals used to say, for a caller that never sets a target *)
+	SetTarget(".SymUu", "Unix64")
 END LSP.

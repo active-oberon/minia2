@@ -2787,6 +2787,7 @@ END TestVerb;
 *)
 PROCEDURE LspVerb;
 VAR argument, scratch, symbols: Path; live: BOOLEAN; context: Commands.Context; ignore: BOOLEAN;
+	compilerPlatform, objectExtension, symbolExtension, linkOptions, suffix, boot: Path;
 BEGIN
 	live := FALSE;
 	WHILE NextArgument(argument) DO
@@ -2794,6 +2795,13 @@ BEGIN
 		ELSE DieOn("unknown option: ", argument); RETURN
 		END
 	END;
+	(*	The server names symbol files and compiles them for ONE platform, and until now that was
+		Unix64 written into its source -- so on the AArch64 SDK it looked for .SymUu beside a library
+		of .SymU8, found nothing, and reported every import in every module as unknown. It takes the
+		host's own settings now, from the same table `ob build` uses. *)
+	IF ~TargetSettings(HostTarget, compilerPlatform, objectExtension, symbolExtension,
+			linkOptions, suffix, boot) THEN RETURN END;
+	LSP.SetTarget(symbolExtension, compilerPlatform);
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	IF AddSearchPath(lib) & AddSearchPath(libSym) & AddSearchPath(project)
 			& AddSearchPath(scratch) & SetWorkPath(scratch) THEN
