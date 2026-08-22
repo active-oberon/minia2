@@ -163,6 +163,29 @@ fi
 _ELAPSED=$((SECONDS - started))
 report "ob build, and running it" "$s" "$results/obbuild.log" 'Hello from A2'
 
+# 4c. The language server, on this machine, answering about a module that imports one thing. Three
+#     places in LSP.Mod compiled for a hardcoded platform, so on AArch64 the server looked for
+#     .SymUu beside a library of .SymU8 and called every import unknown -- in a two-line Hello.
+#     Nothing anywhere ran `ob lsp` off x86-64, which is why it stayed broken through two fixes.
+#     A minimal LSP session over stdio: initialize, didOpen, and the first publishDiagnostics.
+lspreq() { printf 'Content-Length: %d\r\n\r\n%s' "${#1}" "$1"; }
+lsphello='{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/LspProbe.Mod","languageId":"oberon","version":1,"text":"MODULE LspProbe;\nIMPORT KernelLog;\nBEGIN KernelLog.String(\"x\"); KernelLog.Ln\nEND LspProbe.\n"}}}'
+s=0; started=$SECONDS
+{
+	lspreq '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":"file:///tmp","capabilities":{}}}'
+	lspreq '{"jsonrpc":"2.0","method":"initialized","params":{}}'
+	lspreq "$lsphello"
+	sleep 45
+} | ( cd "$work" && PWD="$work" timeout 120 "$root/ob" lsp > "$results/lsp.log" 2>&1 ) || s=$?
+_ELAPSED=$((SECONDS - started))
+if grep -q 'could not import' "$results/lsp.log"; then
+	printf '  FAIL  %-28s the server could not import KernelLog\n' "the language server"
+	FAILED+=("the language server"); fail=$((fail+1))
+	grep -o 'could not import [A-Za-z]*' "$results/lsp.log" | sort -u | sed 's/^/          /'
+else
+	report "the language server" "$s" "$results/lsp.log" '"diagnostics":\[\]'
+fi
+
 # 5. A fault on a thread that is not ours goes back to whoever handled it before us. Only in the
 #    Android bundle, because only there is the harness built (tests/a64-bundle.sh) -- and only there
 #    does it matter in earnest: an application belongs to ART before it belongs to us, and ART
