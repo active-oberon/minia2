@@ -130,6 +130,8 @@ Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 | `gr` | Find references (Telescope picker / quickfix) |
 | `g0` | Document outline as a picker (Telescope / loclist) — type to filter |
 | `gO` | Document outline as a **side panel** ([outline.nvim](https://github.com/hedyhli/outline.nvim)) — the tree as the server sends it |
+| `<leader>rr` | Compile and run the current module (`ob run %`) — output in the pager, `Enter` returns |
+| `<leader>rb` | Compile only, binary to `/tmp/<Module>` (`ob build`) |
 | `<leader>ra` | Rename (NVChad default) |
 | `<leader>fm` | Format buffer (NVChad default), or `:lua vim.lsp.buf.format()` |
 | `<leader>ca` | Code actions (NVChad default), or `:lua vim.lsp.buf.code_action()` |
