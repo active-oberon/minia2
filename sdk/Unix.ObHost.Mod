@@ -97,6 +97,15 @@ BEGIN
 	RETURN Unix.access(ADDRESSOF(path), Unix.X_Ok) = 0
 END Executable;
 
+(** TRUE when this system will not start a plain A2 image, so a built program needs the loader beside it. *)
+PROCEDURE ImageNeedsLoader*(): BOOLEAN;
+BEGIN
+	(*	Android, and only Android: Bionic refuses an ET_EXEC outright and an A2 image cannot be
+		position independent, so nothing links here that the kernel will run by name. Unix.bionic is
+		read off __system_property_get at startup, which nothing but Android has. *)
+	RETURN Unix.bionic
+END ImageNeedsLoader;
+
 (** Make the file executable, as a freshly linked binary has to be. *)
 PROCEDURE MakeExecutable*(CONST path: ARRAY OF CHAR): BOOLEAN;
 BEGIN
@@ -168,6 +177,29 @@ BEGIN
 	ignore := Unix.close(file);
 	RETURN written = length
 END WriteFile;
+
+(*
+	Copying a file without going through Files, and for a different reason than WriteFile's:
+	Files.Old cannot open an absolute path at all once search paths are configured -- it returns
+	NIL, which is how `ob build` on Android came to link the image and then fail to put the loader
+	beside it. Ob.CopyFile stays for what it can do (names inside A2's own file systems, prefixes
+	and all); this one is for a path the operating system gave us.
+*)
+PROCEDURE CopyFile*(CONST from, to: ARRAY OF CHAR): BOOLEAN;
+VAR source, target, ignore: SIGNED32; buffer: ARRAY 32768 OF CHAR; read, written: SIZE;
+BEGIN
+	source := Unix.open(ADDRESSOF(from), SET32(Unix.O_RDONLY), Unix.rwrwr);
+	IF source < 0 THEN RETURN FALSE END;
+	target := Unix.open(ADDRESSOF(to), SET32(Unix.O_WRONLY) + Unix.creat + Unix.trunc, Unix.rwrwr);
+	IF target < 0 THEN ignore := Unix.close(source); RETURN FALSE END;
+	REPEAT
+		read := Unix.read(source, ADDRESSOF(buffer), LEN(buffer));
+		IF read > 0 THEN written := Unix.write(target, ADDRESSOF(buffer), read) ELSE written := 0 END
+	UNTIL (read <= 0) OR (written # read);
+	ignore := Unix.close(source); ignore := Unix.close(target);
+	(* read = 0 is the end of the file; a short write left the loop with read # 0 *)
+	RETURN (read = 0) & (written = 0)
+END CopyFile;
 
 (*
 	Send this process's standard output and standard error to a file, appending, and keep them
