@@ -118,6 +118,20 @@ case "$(probe Linux aarch64)" in
 	*"minia2-sdk-0000.00.00-linux-arm64.tar.gz"*) ok "AArch64 Linux asks for the linux-arm64 tarball" ;;
 	*) bad "AArch64 Linux resolved to: $(probe Linux aarch64 | tr '\n' ' ')" ;;
 esac
+# The two ARM answers, told apart by the loader rather than by uname -- so the fake sysroot is
+# what the probe varies here. Termux: Bionic only. proot-distro: a glibc rootfs on the same
+# kernel, and the glibc tarball is the one that runs.
+mkdir -p "$work/termux/system/bin" && : > "$work/termux/system/bin/linker64"
+mkdir -p "$work/proot/system/bin" "$work/proot/lib"
+: > "$work/proot/system/bin/linker64"; : > "$work/proot/lib/ld-linux-aarch64.so.1"
+case "$(A2SDK_SYSROOT="$work/termux" probe Linux aarch64)" in
+	*"minia2-sdk-0000.00.00-android-arm64.tar.gz"*) ok "Bionic asks for the android-arm64 tarball" ;;
+	*) bad "Termux resolved to: $(A2SDK_SYSROOT="$work/termux" probe Linux aarch64 | tr '\n' ' ')" ;;
+esac
+case "$(A2SDK_SYSROOT="$work/proot" probe Linux aarch64)" in
+	*"minia2-sdk-0000.00.00-linux-arm64.tar.gz"*) ok "a glibc rootfs on an Android kernel asks for linux-arm64" ;;
+	*) bad "proot resolved to: $(A2SDK_SYSROOT="$work/proot" probe Linux aarch64 | tr '\n' ' ')" ;;
+esac
 case "$(probe Linux riscv64)" in
 	*"no SDK build for Linux on riscv64"*) ok "a machine with no build is told so, and where to look" ;;
 	*) bad "an unsupported machine was not refused: $(probe Linux riscv64 | tr '\n' ' ')" ;;

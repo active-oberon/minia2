@@ -72,9 +72,18 @@ platform=""
 if [ -z "$tarball" ]; then
 	os="$(uname -s)"
 	arch="$(uname -m)"
+	# Android shares the kernel and the architecture with any other 64-bit ARM Linux and differs
+	# in the one thing that decides whether the image starts at all: its C library. So the loader
+	# on the box is what is asked, not uname. Both present means a glibc rootfs on an Android
+	# kernel -- proot-distro -- and there the glibc tarball is the right one. A2SDK_SYSROOT is
+	# for install-check.sh, which cannot create /system on the machine it runs on.
+	bionic=0
+	if [ -e "${A2SDK_SYSROOT:-}/system/bin/linker64" ] &&
+	   [ ! -e "${A2SDK_SYSROOT:-}/lib/ld-linux-aarch64.so.1" ]; then bionic=1; fi
 	case "$os/$arch" in
 		Linux/x86_64|Linux/amd64) platform="linux-amd64" ;;
-		Linux/aarch64|Linux/arm64) platform="linux-arm64" ;;
+		Linux/aarch64|Linux/arm64)
+			if [ "$bionic" = 1 ]; then platform="android-arm64"; else platform="linux-arm64"; fi ;;
 		Darwin/*) die "macOS has no SDK build yet; the Docker image runs there (docker/README.md)" ;;
 		*) die "no SDK build for $os on $arch; the releases page lists what there is: https://github.com/$repo/releases" ;;
 	esac

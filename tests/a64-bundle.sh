@@ -275,6 +275,10 @@ else
 fi
 rm -rf "$obwork"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
+# The examples the other two bundles carry. `ob run examples/Radio.Mod` is the reason: on a phone
+# it is the one program here that a person uses rather than tests, and it needs no display.
+mkdir -p "$out/examples"
+install -m 644 "$root"/docker/examples/*.Mod "$out/examples/"
 cp "$root"/tests/*.Test "$out/tests/"
 cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$root/tests/wm-expected.txt" "$out/tests/"
 cp "$root"/tests/A64*.Mod "$out/tests/"
