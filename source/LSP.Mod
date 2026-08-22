@@ -585,15 +585,23 @@ VAR
 		every module was reported unknown. The caller sets these from its own host target; the
 		defaults keep a caller that sets nothing working as before. *)
 	symbolSuffix: ARRAY 16 OF CHAR;
-	compileFor: ARRAY 64 OF CHAR;
+	platformOption: ARRAY 32 OF CHAR;
 
 	(** Name symbol files and compile them for this platform: ".SymU8", "UnixA64". *)
 	PROCEDURE SetTarget* (CONST suffix, platform: ARRAY OF CHAR);
 	BEGIN
 		COPY(suffix, symbolSuffix);
-		compileFor := "-p="; Strings.Append(compileFor, platform);
-		Strings.Append(compileFor, " --destPath=./")
+		platformOption := "-p="; Strings.Append(platformOption, platform)
 	END SetTarget;
+
+	(* The compiler options for one job, all of them beginning with the platform. Every place that
+		compiles has to agree with it: a module analysed as one architecture cannot import symbols
+		written for another, and what came out of that was "could not import KernelLog" in a
+		two-line Hello. *)
+	PROCEDURE Options (CONST rest: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	BEGIN
+		COPY(platformOption, out); Strings.Append(out, rest)
+	END Options;
 
 	PROCEDURE FindDoc (CONST uri: ARRAY OF CHAR): Document;
 	VAR d: Document;
@@ -724,11 +732,12 @@ VAR
 	PROCEDURE CompileToSym (CONST modFile: ARRAY OF CHAR);
 	VAR optR: Streams.StringReader; opts: Compiler.CompilerOptions; reader: Streams.Reader;
 		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
-		importCache: SyntaxTree.ModuleScope; ignore: BOOLEAN;
+		importCache: SyntaxTree.ModuleScope; ignore: BOOLEAN; opt: ARRAY 64 OF CHAR;
 	BEGIN
 		reader := FoxBasic.GetFileReader(modFile); IF reader = NIL THEN RETURN END;
 		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
-		Streams.OpenStringReader(optR, compileFor);
+		Options(" --destPath=./", opt);
+		Streams.OpenStringReader(optR, opt);
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN END;
 		opts.objectFile := NIL;   (* symbolFile.Export still runs -> writes <M>.SymUu *)
 		importCache := NIL;
@@ -789,12 +798,13 @@ VAR
 		diag: Diagnostics.DiagnosticsList; importCache: SyntaxTree.ModuleScope;
 		logbuf: Streams.Buffer; log: Streams.Writer; ignore: BOOLEAN;
 		e: Diagnostics.Entry; arr: JSON.Array; d, range: JSON.Object;
-		line, char, sev: SIGNED32; msg: ARRAY 256 OF CHAR;
+		line, char, sev: SIGNED32; msg: ARRAY 256 OF CHAR; opt: ARRAY 64 OF CHAR;
 	BEGIN
 		arr := JSON.NewArray();
 		EnsureImportsOf(text);   (* build project import-closure symbols first *)
 		NEW(diag); NEW(logbuf, 256); log := logbuf.GetWriter();
-		Streams.OpenStringReader(optR, "-p=Unix64 --warnings");
+		Options(" --warnings", opt);
+		Streams.OpenStringReader(optR, opt);
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN arr END;
 		opts.objectFile := NIL;   (* skip codegen; keep symbolFile so imports resolve *)
 		Streams.OpenStringReader(srcR, text^); importCache := NIL;
@@ -1061,10 +1071,12 @@ VAR
 		diag: Diagnostics.DiagnosticsList; logbuf: Streams.Buffer; log: Streams.Writer;
 		scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
 		checker: FoxSemanticChecker.Checker; importCache: SyntaxTree.ModuleScope; system: FoxGlobal.System;
+		opt: ARRAY 64 OF CHAR;
 	BEGIN
 		EnsureImportsOf(text);   (* build project import-closure symbols first *)
 		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
-		Streams.OpenStringReader(optR, "-p=Unix64");
+		Options("", opt);
+		Streams.OpenStringReader(optR, opt);
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN NIL END;
 		Streams.OpenStringReader(srcR, text^);
 		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
