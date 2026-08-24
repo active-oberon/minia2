@@ -124,7 +124,7 @@ CompileForA64 Inputs Inputs
 
 # The graphics stack, for the same reason and one more.
 #
-# The same reason: none of it is in the headless standard library -- docker/headless-core.txt keeps
+# The same reason: none of it is in the headless standard library -- configs/headless-core.txt keeps
 # Displays out on purpose, and a headless SDK has no screen to give it -- and both bundles want it,
 # because both run the picture checks. Displays first of all: the drivers below and the demos above it
 # all import it, and until now the only copy of its object anywhere was one left in target/A64/bin by a
@@ -278,7 +278,7 @@ install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
 # The examples the other two bundles carry. `ob run examples/Radio.Mod` is the reason: on a phone
 # it is the one program here that a person uses rather than tests, and it needs no display.
 mkdir -p "$out/examples"
-install -m 644 "$root"/docker/examples/*.Mod "$out/examples/"
+install -m 644 "$root"/examples/*.Mod "$out/examples/"
 cp "$root"/tests/*.Test "$out/tests/"
 cp "$root/tests/a2test-expected-a64.txt" "$root/tests/display-expected.txt" "$root/tests/wm-expected.txt" "$out/tests/"
 cp "$root"/tests/A64*.Mod "$out/tests/"

@@ -84,7 +84,7 @@ if [ -z "$tarball" ]; then
 		Linux/x86_64|Linux/amd64) platform="linux-amd64" ;;
 		Linux/aarch64|Linux/arm64)
 			if [ "$bionic" = 1 ]; then platform="android-arm64"; else platform="linux-arm64"; fi ;;
-		Darwin/*) die "macOS has no SDK build yet; the Docker image runs there (docker/README.md)" ;;
+		Darwin/*) die "macOS has no SDK build yet; the Docker image runs there (docs/SDK.md)" ;;
 		*) die "no SDK build for $os on $arch; the releases page lists what there is: https://github.com/$repo/releases" ;;
 	esac
 fi

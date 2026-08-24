@@ -20,7 +20,7 @@ command -v script >/dev/null 2>&1 || { echo "no 'script' here, and nothing else 
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/terminal-check.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-cp "$root/docker/examples/Keys.Mod" "$work/"
+cp "$root/examples/Keys.Mod" "$work/"
 
 fail=0
 ok()  { printf 'ok    %s\n' "$1"; }
@@ -87,7 +87,7 @@ echo "=== frames on that terminal, and a line that runs"
 # is not politeness: until the program has put the terminal into raw mode the line discipline is
 # still the one it inherited, which holds what is typed until a newline and eats Ctrl-Q and
 # Ctrl-S as flow control. Keys sent before then arrive late or not at all.
-cp "$root/docker/examples/Panels.Mod" "$work/"
+cp "$root/examples/Panels.Mod" "$work/"
 panels="$work/panels"
 { sleep 3; printf '\005'; sleep 2; printf '\021'; } \
 	| ( cd "$work" && timeout 180 script -qec "$sdk/ob run Panels.Mod" /dev/null ) \

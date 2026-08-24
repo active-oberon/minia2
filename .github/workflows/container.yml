@@ -59,7 +59,7 @@ jobs:
           done
           exit 1
       # The page people read before they pull anything. It used to be pasted in by hand and
-      # was therefore always one release behind; it is docker/README.md now, uploaded here.
+      # was therefore always one release behind; it is docs/SDK.md now, uploaded here.
       - name: Docker Hub description
         env:
           HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}

@@ -9,7 +9,7 @@ Your editor talks to it over LSP either way.
 
 This document covers **installation, editor setup, every feature, and the
 keybindings**. For how the toolchain itself works (`ob run/build/compile`, standalone
-binaries, image internals) see [`docker/README.md`](../docker/README.md).
+binaries, image internals) see [`docs/SDK.md`](../docs/SDK.md).
 
 ---
 
