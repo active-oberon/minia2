@@ -254,20 +254,44 @@ BEGIN
 	RETURN Execute("Files.SetWorkPath", quoted)
 END SetWorkPath;
 
+(** A reader over a source file, whether it was written as plain text or as an A2 Text -- the
+	binary format A2's own editors save, which opens with F0X 01X and the offset of the text after
+	the font table. Fox reads both (FoxBasic.GetFileReader), ob read only the first and so refused
+	sources the compiler compiles; half of a2oberon/ocp is saved as Text. The handle comes back
+	with the reader because the caller has to close it: a verb walks every file of a project. *)
+PROCEDURE Source(CONST file: ARRAY OF CHAR; VAR handle: Files.File): Streams.Reader;
+VAR reader: Files.Reader; offset: SIGNED32;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN NIL END;
+	Files.OpenReader(reader, handle, 0);
+	offset := 0;
+	IF (reader.Get() = 0F0X) & (reader.Get() = 001X) THEN
+		offset := ORD(reader.Get());
+		INC(offset, SIGNED32(ORD(reader.Get())) * 100H)
+	END;
+	(* a reader positioned there rather than SetPos on this one: the buffer is then nobody's
+	   guess, and this is what every other reader in ob is opened with *)
+	Files.OpenReader(reader, handle, offset);
+	RETURN reader
+END Source;
+
 (** The name after MODULE, which is what the compiler names its output after -- so a source
 	called Unix.ObHost.Mod produces ObHost.GofUu, and the caller has to know that. *)
 PROCEDURE ModuleName(CONST file: ARRAY OF CHAR; VAR name: ARRAY OF CHAR): BOOLEAN;
-VAR handle: Files.File; reader: Files.Reader; line: ARRAY 1024 OF CHAR; position, length: SIZE;
+VAR handle: Files.File; reader: Streams.Reader; line: ARRAY 1024 OF CHAR; position, length: SIZE;
 BEGIN
-	handle := Files.Old(file);
-	IF handle = NIL THEN RETURN FALSE END;
-	Files.OpenReader(reader, handle, 0);
+	reader := Source(file, handle);
+	IF reader = NIL THEN RETURN FALSE END;
 	WHILE reader.res = Streams.Ok DO
 		reader.Ln(line);
-		(* the header, not a mention of it: MODULE has to open the line, as the shell's grep required *)
+		(* the header, not a mention of it: MODULE has to open the line, as the shell's grep
+		   required. Lowercase too, because the scanner decides the case of a source by its first
+		   keyword (FoxScanner.Mod:987) and compiles `module M;` with no option asked for --
+		   ocp/YR/SmallPT.mod is written that way. *)
 		position := 0;
 		WHILE (line[position] = ' ') OR (line[position] = 9X) DO INC(position) END;
-		IF Strings.Pos("MODULE ", line) = position THEN
+		IF (Strings.Pos("MODULE ", line) = position) OR (Strings.Pos("module ", line) = position) THEN
 			INC(position, 7);
 			WHILE line[position] = ' ' DO INC(position) END;
 			length := 0;
@@ -319,11 +343,10 @@ END CompileReader;
 
 PROCEDURE CompileFile(CONST file, platform, objectExtension, symbolExtension: ARRAY OF CHAR;
 		report: BOOLEAN): BOOLEAN;
-VAR handle: Files.File; reader: Files.Reader; compiled: BOOLEAN;
+VAR handle: Files.File; reader: Streams.Reader; compiled: BOOLEAN;
 BEGIN
-	handle := Files.Old(file);
-	IF handle = NIL THEN IF report THEN Die("cannot open the source file") END; RETURN FALSE END;
-	Files.OpenReader(reader, handle, 0);
+	reader := Source(file, handle);
+	IF reader = NIL THEN IF report THEN Die("cannot open the source file") END; RETURN FALSE END;
 	compiled := CompileReader(file, reader, platform, objectExtension, symbolExtension, report);
 	handle.Close;
 	RETURN compiled
@@ -998,15 +1021,14 @@ BEGIN
 END ScanPackages;
 
 PROCEDURE LintFile(CONST file: ARRAY OF CHAR; VAR violations: SIGNED32);
-VAR handle: Files.File; reader: Files.Reader; diagnostics: Diagnostics.DiagnosticsList;
+VAR handle: Files.File; reader: Streams.Reader; diagnostics: Diagnostics.DiagnosticsList;
 	scanner: FoxScanner.Scanner; parser: FoxParser.Parser; module: SyntaxTree.Module;
 	import: SyntaxTree.Import; name, imported, package, importedPackage, line: Path;
 	tier, importedTier: SIGNED32;
 BEGIN
 	IF ~ModuleName(file, name) THEN RETURN END;
-	handle := Files.Old(file);
-	IF handle = NIL THEN RETURN END;
-	Files.OpenReader(reader, handle, 0);
+	reader := Source(file, handle);
+	IF reader = NIL THEN RETURN END;
 	NEW(diagnostics);
 	scanner := FoxScanner.NewScanner(name, reader, 0, diagnostics);
 	parser := FoxParser.NewParser(scanner, diagnostics, "");

@@ -158,6 +158,27 @@ case "$LAST_OUTPUT" in
 	*) echo "FAIL  compile said: $LAST_OUTPUT"; fail=1 ;;
 esac
 
+# A source saved by A2's own editors: the binary Text format -- F0X 01X, the offset of the text,
+# then the font table, whose bytes include 0X. Fox reads it (FoxBasic.GetFileReader skips to the
+# offset), and until 2026-08-24 ob did not: it opened the file as plain text, found no line
+# starting with MODULE, and said "no MODULE header" about a file the compiler compiles. Half of
+# a2oberon/ocp is saved this way, so the packages could not be built through ob at all.
+{ printf '\360\001\010\000\001\000\002\000'
+  printf 'MODULE Textual;\nIMPORT Commands;\n\tPROCEDURE Do* (context: Commands.Context);\n'
+  printf '\tBEGIN context.out.String("from a Text"); context.out.Ln\n\tEND Do;\nEND Textual.\n'
+} > "$project/Textual.Mod"
+check "compile, a source in A2's binary Text format" 0 "$ob" compile Textual.Mod -o out
+[ -f "$project/out/Textual.GofUu" ] && echo "ok    the Text-format source produced its object" \
+	|| { echo "FAIL  no out/Textual.GofUu from a Text-format source"; fail=1; }
+
+# And a source in the lowercase dialect: the scanner decides a file's case by its first keyword
+# (FoxScanner.Mod:987) and needs no option to compile `module M;`, so ob has no business demanding
+# capitals -- ocp/YR/SmallPT.mod is written that way.
+printf 'module Lower;\n\tprocedure Do*;\n\tbegin\n\tend Do;\nend Lower.\n' > "$project/Lower.Mod"
+check "compile, the lowercase dialect" 0 "$ob" compile Lower.Mod -o out
+[ -f "$project/out/Lower.GofUu" ] && echo "ok    the lowercase source produced its object" \
+	|| { echo "FAIL  no out/Lower.GofUu from a lowercase source"; fail=1; }
+
 check "a missing file fails" 1 "$ob" compile NoSuchModule.Mod
 check "an unknown verb fails"  1 "$ob" frobnicate
 check "help" 0 "$ob" help
