@@ -100,11 +100,18 @@ import sys, os, glob, json
 graph, binp, out, objext, symext, check = sys.argv[1:7]
 check = check == "1"
 
+# A module can have a line per platform file -- Unix.Beep.Mod and Windows.Beep.Mod are both
+# `Beep.GofUu:` here -- so the sets are merged, not replaced. Assigning let the last line win, and
+# the last line for Beep is the Windows one (Kernel32, Kernel) while the Unix one imports X11,
+# Displays and XDisplay: Beep looked headless and rode into the payload. A module counts as
+# reaching the window system if any of its platform variants does, which is the safe side to err
+# on for a list that decides what an image carries.
 deps = {}
 for line in open(graph):
     lhs, _, rhs = line.strip().partition(":")
     m = lhs[:-len(objext)-1] if lhs.endswith("."+objext) else lhs
-    deps[m] = {t[:-len(objext)-1] for t in rhs.split() if t.endswith("."+objext)}
+    deps.setdefault(m, set()).update(
+        t[:-len(objext)-1] for t in rhs.split() if t.endswith("."+objext))
 have = {os.path.basename(p)[:-len(symext)-1] for p in glob.glob(binp+"/*."+symext)}
 
 ROOTS = {"Displays","Display","Inputs","KbdMouse","Raster",
