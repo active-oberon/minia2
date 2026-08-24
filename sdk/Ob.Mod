@@ -2274,6 +2274,91 @@ END PlanReplay;
 	Plan one file: its cases, cut into chunks of at most `size`, each with what it has to replay.
 	A file that is skipped whole still gets a chunk, so that the run says so in the right place.
 *)
+(*
+	Collect the `{TEST}` procedures of these modules into one test file. A procedure marked so --
+	exported, in module scope, no parameters, no result (FoxSemanticChecker checks that shape) -- is
+	a test the compiler knows about, and FoxTestBackend writes one `positive:` case per procedure in
+	the format ob test already runs. So an invariant can live in the module it is about rather than
+	in a file beside it.
+
+	Through Commands.Activate rather than Compiler.Modules, and that is not laziness: the backend
+	learns the name of its file in its own GetOptions, which the compiler reaches only on the second
+	parse of the option string -- the one the command does. Called with a hand-built option record
+	the backend gets no file name and RUNS the procedures instead of collecting them, silently.
+
+	One module per call, merged here, because the alternative was measured on ocp/Matrix and does
+	not survive contact with it: the compiler stops at the first module it cannot compile, and
+	LinearFIRConvolve.Mod makes it throw outright, which loses every case of every module after it.
+	Per module, a bad module costs its own cases and no others.
+*)
+PROCEDURE Harvest(sources: Strings.StringArray; count: SIZE; CONST into: ARRAY OF CHAR): BOOLEAN;
+VAR arguments: ARRAY 4096 OF CHAR; quoted, one: Path; index: SIZE; whole, harvested: BOOLEAN;
+	source, destination: Files.File; reader: Files.Reader; writer: Files.Writer;
+	buffer: ARRAY 4096 OF CHAR; length: SIZE; first: BOOLEAN;
+
+	(* The header once, the cases of every module after it. *)
+	PROCEDURE Append(CONST from: ARRAY OF CHAR): BOOLEAN;
+	VAR line: Path;
+	BEGIN
+		source := Files.Old(from);
+		IF source = NIL THEN RETURN FALSE END;
+		Files.OpenReader(reader, source, 0);
+		IF first THEN
+			REPEAT
+				reader.Bytes(buffer, 0, LEN(buffer), length);
+				IF length > 0 THEN writer.Bytes(buffer, 0, length) END
+			UNTIL length = 0;
+			first := FALSE
+		ELSE
+			(* past the two comment lines the backend writes for every file *)
+			WHILE (reader.res = Streams.Ok) DO
+				reader.Ln(line);
+				IF (line # "") & (line[0] # '#') THEN writer.String(line); writer.Ln END
+			END
+		END;
+		writer.Update; source.Close;
+		RETURN TRUE
+	END Append;
+
+BEGIN
+	destination := Files.New(into);
+	IF destination = NIL THEN Die("cannot write the harvested test file"); RETURN FALSE END;
+	Files.OpenWriter(writer, destination, 0);
+	first := TRUE; harvested := FALSE;
+	COPY(into, one); Strings.Append(one, ".one");
+	FOR index := 0 TO count-1 DO
+		arguments := "-p="; Strings.Append(arguments, testPlatform);
+		Strings.Append(arguments, " --objectFileExtension="); Strings.Append(arguments, testObject);
+		Strings.Append(arguments, " --symbolFileExtension="); Strings.Append(arguments, testSymbol);
+		Quoted(one, quoted);
+		Strings.Append(arguments, " --test=Test --testFile="); Strings.Append(arguments, quoted);
+		Quoted(sources[index]^, quoted);
+		Strings.Append(arguments, " "); Strings.Append(arguments, quoted);
+		whole := Execute("Compiler.Compile", arguments);
+		IF whole & Append(one) THEN harvested := TRUE
+		ELSIF ~whole THEN failed := FALSE; DieOn("no cases from ", sources[index]^); failed := FALSE
+		END
+	END;
+	writer.Update; Files.Register(destination); destination.Close;
+	RETURN harvested
+END Harvest;
+
+(** Whether a test file holds any case at all -- a module with no `{TEST}` procedure harvests to
+	nothing but the header, and saying so beats reporting a run of zero cases. *)
+PROCEDURE HasCases(CONST file: ARRAY OF CHAR): BOOLEAN;
+VAR handle: Files.File; reader: Files.Reader; line: Path;
+BEGIN
+	handle := Files.Old(file);
+	IF handle = NIL THEN RETURN FALSE END;
+	Files.OpenReader(reader, handle, 0);
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line);
+		IF Strings.Pos("positive:", line) = 0 THEN handle.Close; RETURN TRUE END
+	END;
+	handle.Close;
+	RETURN FALSE
+END HasCases;
+
 PROCEDURE PlanFile(CONST file: ARRAY OF CHAR; pieces: SIZE; VAR list, last: Chunk; VAR total: SIZE);
 CONST Smallest = 32;			(* below this a chunk is all overhead: a directory to fill, cases to replay *)
 VAR cases, case: TestCase; count, size, taken: SIZE; execute, header: BOOLEAN;
@@ -2689,13 +2774,13 @@ END TestCaseVerb;
 PROCEDURE TestVerb;
 CONST MaxJobs = 64;
 VAR argument, target, expect, write, entry, path, line: Path;
-	files: Strings.StringArray; count, index, chunkCount: SIZE; handle: ADDRESS; jobs: SIGNED32;
-	chunks, lastChunk: Chunk;
+	files, sources: Strings.StringArray; count, sourceCount, harvestable, index, chunkCount: SIZE;
+	handle: ADDRESS; jobs: SIGNED32; chunks, lastChunk: Chunk;
 BEGIN
 	testVerbose := FALSE; testFilter := ""; testReport := ""; expect := ""; write := "";
 	COPY(HostTarget, target); jobs := 1;
 	testGithub := ObHost.Env("GITHUB_ACTIONS", line) & (line = "true");
-	NEW(files, 256); count := 0;
+	NEW(files, 256); count := 0; NEW(sources, 256); sourceCount := 0;
 	WHILE NextArgument(argument) DO
 		IF (argument = "-v") OR (argument = "--verbose") THEN testVerbose := TRUE
 		ELSIF (argument = "-j") OR (argument = "--jobs") THEN
@@ -2714,13 +2799,16 @@ BEGIN
 			IF ~NextArgument(testReport) THEN Die("--report needs a file"); RETURN END
 		ELSIF argument = "--github" THEN testGithub := TRUE
 		ELSIF argument[0] = '-' THEN DieOn("unknown option: ", argument); RETURN
+		(* a source rather than a test file: its `{TEST}` procedures become the cases *)
+		ELSIF Strings.Match("*.Mod", argument) & (sourceCount < LEN(sources^)) THEN
+			sources[sourceCount] := Strings.NewString(argument); INC(sourceCount)
 		ELSIF count < LEN(files^) THEN files[count] := Strings.NewString(argument); INC(count)
 		END
 	END;
 
 	IF ~TestTargetSettings(target) THEN RETURN END;
 
-	IF count = 0 THEN
+	IF (count = 0) & (sourceCount = 0) THEN
 		handle := ObHost.OpenDirectory(project);
 		IF handle # 0 THEN
 			WHILE ObHost.NextEntry(handle, entry) & (count < LEN(files^)) DO
@@ -2741,6 +2829,11 @@ BEGIN
 		ELSE DieOn("no such file: ", files[index]^); RETURN
 		END
 	END;
+	FOR index := 0 TO sourceCount-1 DO
+		IF ObHost.RealPath(sources[index]^, path) THEN sources[index] := Strings.NewString(path)
+		ELSE DieOn("no such file: ", sources[index]^); RETURN
+		END
+	END;
 
 	IF expect = "" THEN
 		IF target = "linux64" THEN expect := "a2test-expected.txt"
@@ -2759,6 +2852,37 @@ BEGIN
 	END;
 	(* Only now, because the image is linked into the scratch directory. *)
 	PrepareEmulator;
+
+	(* Sources named on the command line are harvested here, where the search paths and the
+	   siblings are already in place, and the cases they yield join the run like any file's. *)
+	IF sourceCount > 0 THEN
+		(* Only the sources that compiled: Compiler.Compile stops at the first module it cannot
+		   compile, so one source needing the window system would cost every source after it its
+		   cases. What compiled is what BuildSiblings left a symbol file for, one line above. *)
+		index := 0; harvestable := 0;
+		WHILE index < sourceCount DO
+			IF ModuleName(sources[index]^, entry) THEN
+				Join(testScratch, entry, path); Strings.Append(path, testSymbol);
+				IF ObHost.Exists(path) THEN
+					sources[harvestable] := sources[index]; INC(harvestable)
+				ELSE DieOn("not compiled, so no cases from it: ", sources[index]^); failed := FALSE
+				END
+			END;
+			INC(index)
+		END;
+		sourceCount := harvestable;
+		IF sourceCount = 0 THEN
+			Say("ob test: none of the sources compiled -- nothing to harvest");
+			DiscardScratch(testScratch); RETURN
+		END;
+		Join(testScratch, "Harvested.Test", path);
+		IF ~Harvest(sources, sourceCount, path) THEN failed := FALSE END;
+		IF ~HasCases(path) THEN
+			Say("ob test: no {TEST} procedure in what was given -- nothing to run");
+			DiscardScratch(testScratch); RETURN
+		END;
+		IF count < LEN(files^) THEN files[count] := Strings.NewString(path); INC(count) END
+	END;
 
 	(*
 		How finely the case lists are cut. One piece per file leaves the run as long as its longest
@@ -2865,7 +2989,8 @@ BEGIN
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
 	Say("");
-	Say("ob test -j N runs N test files at a time; -t names another architecture.")
+	Say("ob test -j N runs N test files at a time; -t names another architecture.");
+	Say("ob test File.Mod runs the {TEST} procedures of that module, harvested by the compiler.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)

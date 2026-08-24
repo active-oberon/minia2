@@ -179,6 +179,24 @@ check "compile, the lowercase dialect" 0 "$ob" compile Lower.Mod -o out
 [ -f "$project/out/Lower.GofUu" ] && echo "ok    the lowercase source produced its object" \
 	|| { echo "FAIL  no out/Lower.GofUu from a lowercase source"; fail=1; }
 
+# `{TEST}` procedures: the compiler has known about them all along (FoxTestBackend writes one case
+# per procedure) and ob had no way to ask. Given a source rather than a test file, ob test harvests
+# it -- so an invariant can live in the module it is about. The failing one must fail: a harvest that
+# reports everything green would be worse than no harvest at all.
+printf 'MODULE SelfOk;\nVAR x: SIGNED32;\n\tPROCEDURE {TEST} Invariant*;\n\tBEGIN ASSERT(x = 0)\n\tEND Invariant;\nBEGIN x := 0\nEND SelfOk.\n' > "$project/SelfOk.Mod"
+printf 'MODULE SelfBad;\nVAR x: SIGNED32;\n\tPROCEDURE {TEST} Invariant*;\n\tBEGIN ASSERT(x = 1)\n\tEND Invariant;\nBEGIN x := 0\nEND SelfBad.\n' > "$project/SelfBad.Mod"
+check "test harvests {TEST} procedures from a source" 1 "$ob" test SelfOk.Mod SelfBad.Mod
+case "$LAST_OUTPUT" in
+	*"2 case(s), 1 passed, 1 failed"*) echo "ok    the harvested invariant passed and the broken one failed" ;;
+	*) echo "FAIL  harvest said: $(printf '%s' "$LAST_OUTPUT" | tr '\n' ' ' | tail -c 120)"; fail=1 ;;
+esac
+check "test says so when a source has no {TEST}" 0 "$ob" test Hello.Mod
+case "$LAST_OUTPUT" in
+	*"no {TEST} procedure"*) echo "ok    a source without invariants is reported, not run" ;;
+	*) echo "FAIL  a source without {TEST} said: $LAST_OUTPUT"; fail=1 ;;
+esac
+rm -f "$project/SelfOk.Mod" "$project/SelfBad.Mod"
+
 check "a missing file fails" 1 "$ob" compile NoSuchModule.Mod
 check "an unknown verb fails"  1 "$ob" frobnicate
 check "help" 0 "$ob" help
