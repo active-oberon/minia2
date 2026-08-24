@@ -610,9 +610,10 @@ positive: initialize announces every provider, with the triggers and the token l
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 1), ","));
 		legend := T.Field2(T.Field(caps, "semanticTokensProvider"), "legend", "tokenTypes");
-		ASSERT(T.Count(legend) = 8);
+		ASSERT(T.Count(legend) = 9);
 		ASSERT(T.Is(T.Item(legend, 0), "namespace"));
 		ASSERT(T.Is(T.Item(legend, 7), "method"));
+		ASSERT(T.Is(T.Item(legend, 8), "decorator"));
 		ASSERT(T.IsNull(s.Answer(id + 1)))                (* shutdown is answered with null *)
 	END Test.
 
@@ -900,6 +901,16 @@ positive: the words that leave the safe language are marked, and ADDRESS is wher
 		Ln("		SYSTEM.GET(p, a);");
 		Ln("		IF a < 0 THEN HALT(100) END");
 		Ln("	END Do;");
+		(* the five words in braces are modifiers, not symbols: the tree walk cannot see them and
+		   they are read off the token stream, where a comment naming one is a token of its own *)
+		Ln("	(* UNTRACED in a comment is not a modifier *)");
+		Ln("	PROCEDURE Raw*;");
+		Ln("	TYPE Bare = POINTER {UNSAFE} TO RECORD x: SIGNED32 END;");
+		Ln("		Node = POINTER {UNTRACED} TO RECORD n: Node END;");
+		Ln("	VAR b: Bare; n: Node;");
+		Ln("	BEGIN {UNCOOPERATIVE, UNCHECKED, UNTRACKED}");
+		Ln("		b := NIL; n := NIL");
+		Ln("	END Raw;");
 		Ln("END LspDanger.");
 		NEW(s); id := s.Start();
 		s.Open("file://lsp/LspDanger.Mod", src);
@@ -928,8 +939,8 @@ positive: the words that leave the safe language are marked, and ADDRESS is wher
 			IF (line = 2) & (len = 7) THEN addr := char END;
 			INC(i, 5)
 		END;
-		(* SYSTEM twice (the import and the call), GET, HALT *)
-		ASSERT(danger = 4);
+		(* SYSTEM twice (the import and the call), GET, HALT, and the five modifiers in braces *)
+		ASSERT(danger = 9);
 		(* ASSERT, and nothing else in the language, is a check *)
 		ASSERT(checks = 1);
 		ASSERT(addr = 20)
