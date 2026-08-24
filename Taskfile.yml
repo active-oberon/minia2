@@ -536,6 +536,13 @@ tasks:
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/reboot-check.sh {{.BUILD_DIR}}/{{.HOST}}
 
+  vscode:
+    desc: The VS Code extension -- built into the .vsix that ships beside the tarball
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/vscode-check.sh
+
   terminal:
     desc: The terminal as a device -- raw mode, the keys and the size, on a real pseudo-terminal
     cmds:

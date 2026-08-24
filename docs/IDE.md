@@ -105,9 +105,30 @@ Neovim runtime files. They live in the dotfiles repo
 Restart Neovim, open a `.Mod` file — the server starts automatically and you should see
 diagnostics, hover, completion, etc.
 
-> **VS Code**: point any generic LSP-bridge extension at
-> `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp --live` with a document selector
-> for `*.Mod` / language `oberon`.
+### 1d. VS Code
+
+The extension lives in this repository, in `editors/vscode`, and is installed from a `.vsix`
+— **there is no marketplace listing on purpose**: it is versioned with the SDK it talks to.
+The `.vsix` ships beside the tarball in a release, or is built here:
+
+```sh
+cd editors/vscode && npm install && ./package.sh     # prints the path of the .vsix
+code --install-extension active-oberon-<version>.vsix
+```
+
+It finds the server the same way the Neovim config does — the `activeOberon.server.path`
+setting, else `$A2_OB`, else `ob` on the PATH — and gives it `$A2_STDLIB_SRC` /
+`$A2_SYMS` from `activeOberon.stdlibSource` / `activeOberon.symbolDir` (see §5). Without
+the tarball, point it at the image instead:
+
+```json
+"activeOberon.server.path": "docker",
+"activeOberon.server.args": ["run", "--rm", "-i", "-v", "${workspaceFolder}:/work", "minia2-sdk", "lsp", "--live"]
+```
+
+Syntax highlighting comes with it — the same word lists as our Pygments lexer, so the
+colours match what the documentation and the website show. `task vscode` builds and checks
+the package.
 
 ---
 

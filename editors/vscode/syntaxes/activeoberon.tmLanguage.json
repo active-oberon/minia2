@@ -1,0 +1,259 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Active Oberon",
+  "scopeName": "source.activeoberon",
+  "comment": "Ported from the Pygments lexer in pygments-activeoberon/activeoberon.py -- same word lists, same reading of the language. Keywords are matched case insensitively because the Fox compiler reads them that way.",
+  "patterns": [
+    {
+      "include": "#trailer"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#preprocessor"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#modifiers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.activeoberon",
+          "begin": "\\(\\*\\*(?!\\))",
+          "end": "\\*\\)",
+          "patterns": [
+            {
+              "include": "#commentBody"
+            }
+          ]
+        },
+        {
+          "name": "comment.block.activeoberon",
+          "begin": "\\(\\*",
+          "end": "\\*\\)",
+          "patterns": [
+            {
+              "include": "#commentBody"
+            }
+          ]
+        }
+      ]
+    },
+    "commentBody": {
+      "comment": "Comments nest in Oberon, which is why the block includes itself.",
+      "patterns": [
+        {
+          "name": "comment.block.activeoberon",
+          "begin": "\\(\\*",
+          "end": "\\*\\)",
+          "patterns": [
+            {
+              "include": "#commentBody"
+            }
+          ]
+        }
+      ]
+    },
+    "preprocessor": {
+      "name": "meta.preprocessor.activeoberon",
+      "match": "(?i)^\\s*#\\s*(if|elsif|else|end)\\b.*$"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.activeoberon",
+          "match": "\"[^\\n\"]*\""
+        },
+        {
+          "name": "string.quoted.single.activeoberon",
+          "match": "'[^\\n']*'"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.character.activeoberon",
+          "match": "(?i)\\b[0-9][0-9A-F']*X\\b"
+        },
+        {
+          "name": "constant.numeric.hex.activeoberon",
+          "match": "(?i)\\b[0-9][0-9A-F']*[HL]\\b"
+        },
+        {
+          "name": "constant.numeric.hex.activeoberon",
+          "match": "(?i)\\b0x[0-9A-F']+"
+        },
+        {
+          "name": "constant.numeric.binary.activeoberon",
+          "match": "\\b0b[01']+"
+        },
+        {
+          "name": "constant.numeric.float.activeoberon",
+          "match": "(?i)\\b[0-9][0-9']*\\.(?!\\.)[0-9']*([ED][+-]?[0-9]+)?"
+        },
+        {
+          "name": "constant.numeric.float.activeoberon",
+          "match": "(?i)\\b[0-9][0-9']*[ED][+-]?[0-9]+"
+        },
+        {
+          "name": "constant.numeric.integer.activeoberon",
+          "match": "\\b[0-9][0-9']*"
+        }
+      ]
+    },
+    "modifiers": {
+      "comment": "The words in braces: PROCEDURE {DELEGATE}, BEGIN {EXCLUSIVE}, POINTER {UNSAFE} TO. They are reserved in that position and appear nowhere else, so they are matched without tracking the braces.",
+      "name": "storage.modifier.activeoberon",
+      "match": "(?i)\\b(ACTIVE|EXCLUSIVE|PRIORITY|SAFE|REALTIME|UNCOOPERATIVE|ABSTRACT|FINAL|OVERRIDE|DELEGATE|DYNAMIC|UNTRACED|UNTRACKED|UNSAFE|UNCHECKED|DISPOSABLE|ALIGNED|OFFSET|MOVABLE|REGISTER|PLAIN|WINAPI|INTERRUPT|NORETURN|ALIGNSTACK|PCOFFSET|OPENING|CLOSING|TEST)\\b"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.activeoberon",
+          "match": "(?i)\\b(IF|THEN|ELSE|ELSIF|CASE|OF|WITH)\\b"
+        },
+        {
+          "name": "keyword.control.repeat.activeoberon",
+          "match": "(?i)\\b(WHILE|FOR|REPEAT|UNTIL|LOOP|DO|BY|TO|EXIT)\\b"
+        },
+        {
+          "name": "keyword.control.flow.activeoberon",
+          "match": "(?i)\\b(RETURN|AWAIT|FINALLY|IGNORE|EXTERN|CODE)\\b"
+        },
+        {
+          "name": "storage.type.declaration.activeoberon",
+          "match": "(?i)\\b(MODULE|IMPORT|DEFINITION|CONST|TYPE|VAR|PROCEDURE|OPERATOR|BEGIN|END)\\b"
+        },
+        {
+          "name": "storage.type.structure.activeoberon",
+          "match": "(?i)\\b(RECORD|OBJECT|ENUM|CELL|CELLNET|ARRAY|POINTER|PORT|ALIAS)\\b"
+        },
+        {
+          "name": "keyword.operator.word.activeoberon",
+          "match": "(?i)\\b(DIV|MOD|OR|IN|IS|NEW|OUT)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "support.type.primitive.activeoberon",
+      "match": "(?i)\\b(BOOLEAN|CHAR|INTEGER|LONGINTEGER|RANGE|INTEGERSET|SIGNED8|SIGNED16|SIGNED32|SIGNED64|UNSIGNED8|UNSIGNED16|UNSIGNED32|UNSIGNED64|FLOAT32|FLOAT64|REAL|COMPLEX|COMPLEX32|COMPLEX64|SET|SET8|SET16|SET32|SET64|ADDRESS|SIZE|ANY|OBJECT|BYTE|SHORTINT|LONGINT|HUGEINT|LONGREAL)\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.activeoberon",
+          "match": "(?i)\\b(TRUE|FALSE|NIL|IMAG)\\b"
+        },
+        {
+          "name": "variable.language.activeoberon",
+          "match": "(?i)\\b(SELF|RESULT)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.activeoberon",
+          "match": "(?i)\\b(ABS|ADDRESSOF|ALL|ASH|ASSERT|CAP|CAS|CHR|CONNECT|COPY|DEC|DECMUL|DIM|DISPOSE|ENTIER|ENTIERH|EXCL|FIRST|FLOOR|GETPROCEDURE|HALT|IM|INC|INCL|INCMUL|INCR|LAST|LEN|LONG|LSH|MAX|MIN|ODD|ORD|ORD32|RE|RECEIVE|RESHAPE|ROL|ROR|ROT|SEND|SHL|SHORT|SHR|SIZEOF|STEP|SUM|TRACE|WAIT)\\b"
+        },
+        {
+          "name": "support.class.activeoberon",
+          "match": "\\bSYSTEM\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "MODULE Foo; and the procedure being declared -- the two names one scans a file for.",
+          "match": "(?i)\\b(MODULE)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.declaration.activeoberon"
+            },
+            "2": {
+              "name": "entity.name.type.module.activeoberon"
+            }
+          }
+        },
+        {
+          "match": "(?i)\\b(PROCEDURE)\\s*(\\{[^}]*\\})?\\s*(&)?\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.declaration.activeoberon"
+            },
+            "2": {
+              "name": "storage.modifier.activeoberon"
+            },
+            "3": {
+              "name": "keyword.operator.activeoberon"
+            },
+            "4": {
+              "name": "entity.name.function.activeoberon"
+            }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.channel.activeoberon",
+          "match": "<<\\?|>>\\?|<<|>>|\\?\\?|!!|[!?]"
+        },
+        {
+          "name": "keyword.operator.elementwise.activeoberon",
+          "match": "\\.=|\\.#|\\.<=|\\.>=|\\.<|\\.>|\\.\\*|\\./|\\*\\*|\\+\\*"
+        },
+        {
+          "name": "keyword.operator.activeoberon",
+          "match": ":=|<=|>=|\\.\\.|[+\\-*/=#<>&~^$]"
+        }
+      ]
+    },
+    "trailer": {
+      "begin": "(?i)^\\s*(END)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\.)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.declaration.activeoberon"
+        },
+        "2": {
+          "name": "entity.name.type.module.activeoberon"
+        },
+        "3": {
+          "name": "punctuation.terminator.activeoberon"
+        }
+      },
+      "end": "(?!\\A)\\z",
+      "name": "comment.block.trailer.activeoberon"
+    }
+  }
+}
