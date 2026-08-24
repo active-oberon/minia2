@@ -159,16 +159,22 @@ docker run --rm -it minia2-sdk repl
 docker run --rm -i -v "$PWD:/work" minia2-sdk lsp
 ```
 
-### A shorter command: the `ob` alias
+### A shorter command: an alias, and not called `ob`
 
-Typing the full `docker run …` each time is tedious. Add an alias to your
-`~/.bashrc` (or `~/.zshrc`) so the SDK feels like a locally installed `ob` tool:
+Typing the full `docker run …` each time is tedious, so alias it — under a name that is
+**not** `ob`:
 
 ```sh
-alias ob='docker run --rm -v "$PWD:/work" minia2-sdk'
+alias obd='docker run --rm -v "$PWD:/work" minia2-sdk'
 # interactive verbs (repl) also want a TTY:
-alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'
+alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'
 ```
+
+> ⚠️ **`ob` is a real binary since 2026-08-10** — the tarball installs it and the editor
+> spawns it. An `alias ob='docker run …'` shadows it, and from then on `ob` means one thing
+> in your shell and another everywhere else: a compile that works in the editor and fails in
+> the terminal, or the reverse. This section used to recommend exactly that, from the days
+> when the image was the only way to have the SDK.
 
 Reload the shell (`source ~/.bashrc`) and the workflow becomes:
 
