@@ -1,0 +1,144 @@
+{
+  "name": "active-oberon",
+  "displayName": "Active Oberon (A2)",
+  "description": "Active Oberon syntax and the minia2 language server. Installed from the .vsix that ships with the SDK -- there is no marketplace listing.",
+  "version": "0.1.0",
+  "publisher": "active-oberon",
+  "license": "SEE LICENSE IN license.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/active-oberon/minia2"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:oberon"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "oberon",
+        "aliases": [
+          "Active Oberon",
+          "oberon"
+        ],
+        "extensions": [
+          ".Mod",
+          ".mod"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "oberon",
+        "scopeName": "source.activeoberon",
+        "path": "./syntaxes/activeoberon.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "activeOberon.restartServer",
+        "title": "Active Oberon: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Active Oberon",
+      "properties": {
+        "activeOberon.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The `ob` command of the SDK. Empty means `$A2_OB`, else `ob` on the PATH. A Docker fallback is written here too: set the path to `docker` and the arguments to `[\"run\",\"--rm\",\"-i\",\"-v\",\"${workspaceFolder}:/work\",\"minia2-sdk\",\"lsp\",\"--live\"]`."
+        },
+        "activeOberon.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "lsp",
+            "--live"
+          ],
+          "description": "Arguments the server is started with. ${workspaceFolder} is substituted."
+        },
+        "activeOberon.stdlibSource": {
+          "type": "string",
+          "default": "",
+          "description": "Passed as $A2_STDLIB_SRC: where the standard library sources are, for go-to-definition into them."
+        },
+        "activeOberon.symbolDir": {
+          "type": "string",
+          "default": "",
+          "description": "Passed as $A2_SYMS: a prebuilt symbol directory (…/target/Linux64/bin), so imports resolve from build artifacts instead of on-demand compilation."
+        },
+        "activeOberon.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the traffic between VS Code and the server."
+        }
+      }
+    },
+    "semanticTokenModifiers": [
+      {
+        "id": "dangerous",
+        "description": "A modifier that switches a safety of the language off: UNSAFE, UNCHECKED, UNCOOPERATIVE, UNTRACED."
+      },
+      {
+        "id": "checks",
+        "description": "A modifier that keeps the checks on."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "oberon",
+        "scopes": {
+          "decorator": [
+            "storage.modifier.activeoberon"
+          ]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[oberon]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "editor.semanticTokenColorCustomizations": {
+        "[*]": {
+          "rules": {
+            "*.dangerous": {
+              "foreground": "#ffd9d0",
+              "bold": true
+            },
+            "*.checks": {
+              "foreground": "#2bbac5",
+              "bold": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The language server compiles the modules of the folder it is opened on, which means running the compiler over code the workspace supplies. That is not something to do in a folder one has not trusted."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The server is a local process that reads the files from disk."
+    }
+  }
+}
