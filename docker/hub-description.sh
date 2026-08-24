@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The Docker Hub description, made out of docker/README.md rather than written twice.
+# The Docker Hub description, made out of docs/SDK.md rather than written twice.
 #
 # Two things have to happen on the way. Hub renders one Markdown blob with no repository
 # around it, so a relative link points at nothing -- every link is rewritten to an absolute
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-source="$root/docker/README.md"
+source="$root/docs/SDK.md"
 repo="${HUB_SOURCE_URL:-https://github.com/active-oberon/minia2/blob/main}"
 limit=25000
 

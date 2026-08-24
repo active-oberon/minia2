@@ -68,7 +68,7 @@ install -m 755 "$runtime" "$out/oberon"
 install -m 644 "$build/oberon.cfg" "$out/oberon.cfg"
 install -m 644 "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 
-# lib/ is the headless core (docker/headless-core.txt: nothing whose closure reaches the window
+# lib/ is the headless core (configs/headless-core.txt: nothing whose closure reaches the window
 # manager, display or raster). lib-sym/ is every symbol file, for the language server, which
 # resolves imports to graphical modules it can check but not link.
 copied=0
@@ -77,7 +77,7 @@ while read -r m; do
 	for e in SymUu GofUu; do
 		[ -f "$build/bin/$m.$e" ] && install -m 644 "$build/bin/$m.$e" "$out/lib/" && copied=1
 	done
-done < "$root/docker/headless-core.txt"
+done < "$root/configs/headless-core.txt"
 [ "$copied" = 1 ] || { echo "no headless-core objects found in $build/bin" >&2; exit 1; }
 install -m 644 "$build"/bin/*.SymUu "$out/lib-sym/"
 
@@ -87,10 +87,10 @@ targets="$(dirname "$build")"
 if ls "$targets/Win64/bin"/*.SymWw >/dev/null 2>&1; then
 	mkdir -p "$out/lib-win64"
 	install -m 644 "$root/configs/moduleListWin.txt" "$out/boot-modules-win64.txt"
-	# The Win64 core is its own closure (docker/headless-core-win64.txt), not the Linux list with
+	# The Win64 core is its own closure (configs/headless-core-win64.txt), not the Linux list with
 	# Kernel32 and WinFS added: WinTrace is in no Linux closure and StdIO imports it on Windows,
 	# so filtering with the Linux list yields a lib-win64 that compiles everything but printing.
-	sort -u "$root/docker/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
+	sort -u "$root/configs/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
 	while read -r m; do
 		case "$m" in ''|\#*) continue ;; esac
 		for e in SymWw GofWw; do
@@ -123,7 +123,7 @@ install -m 644 "$work"/Ob.SymUu "$work"/ObHost.SymUu "$out/lib-sym/"
 install -m 755 "$root/tests/bundle-selfcheck.sh" "$out/run.sh"
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
 cp -r "$root/packages" "$out/packages"
-install -m 644 "$root"/docker/examples/*.Mod "$out/examples/"
+install -m 644 "$root"/examples/*.Mod "$out/examples/"
 install -m 644 "$root"/tests/*.Test "$out/tests/"
 install -m 644 "$root/tests/a2test-expected.txt" "$out/tests/"
 printf '%s\n' "$version" > "$out/VERSION"

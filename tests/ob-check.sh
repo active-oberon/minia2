@@ -465,7 +465,7 @@ else
 	mkdir -p "$win" "$winsdk"
 	# Only our two modules are compiled here. Kernel32 (with the bindings ObHost needs), JSON,
 	# LSP and WinTrace come out of lib-win64 like any other library module -- they are in the
-	# Win64 release definition and in docker/headless-core-win64.txt, so a Win64 build and the
+	# Win64 release definition and in configs/headless-core-win64.txt, so a Win64 build and the
 	# bundle made from it carry them. That was not true while the Win64 build in the tree was
 	# months old, and the difference read as "the release list is missing them".
 	cp "$root/sdk/Windows.ObHost.Mod"  "$win/ObHost.Mod"

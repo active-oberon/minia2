@@ -92,7 +92,7 @@ looking at which loader the machine has.
 
 `ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`.
 `ob test` takes `*.Test` files, or sources — then it runs the `{TEST}` procedures inside them.
-See [`docker/README.md`](docker/README.md) for all of them and
+See [`docs/SDK.md`](docs/SDK.md) for all of them and
 [`docs/IDE.md`](docs/IDE.md) for editor setup.
 
 ## Layout

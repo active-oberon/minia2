@@ -2,7 +2,7 @@
 #
 # Make a Win64 build carry everything the Windows SDK ships -- and say so when it did not.
 #
-# The list of what it should carry is docker/headless-core-win64.txt plus the Win boot list;
+# The list of what it should carry is configs/headless-core-win64.txt plus the Win boot list;
 # what it does carry is the .SymWw/.GofWw in target/Win64/bin. On a build made from the current
 # tree the two agree and this script does nothing. It exists for the two cases where they don't:
 #
@@ -33,8 +33,8 @@ oberon="$build/oberon"
 [ -x "$oberon" ] || { echo "no built runtime in $build; run 'task Linux64' first" >&2; exit 2; }
 [ -d "$winbin" ]  || { echo "no Win64 build in $winbin; run 'task Win64' first" >&2; exit 2; }
 
-core="$root/docker/headless-core-win64.txt"
-[ -f "$core" ] || { echo "no $core; regenerate it with docker/gen-headless-core.sh win64" >&2; exit 2; }
+core="$root/configs/headless-core-win64.txt"
+[ -f "$core" ] || { echo "no $core; regenerate it with tests/gen-headless-core.sh win64" >&2; exit 2; }
 
 # Where a module's source is, given its module name. The platform prefix is a file-name
 # convention, not part of the name: Windows.Kernel32.Mod defines MODULE Kernel32.

@@ -3,8 +3,8 @@
 # Regenerate the headless core lists — the standard-library modules the SDK ships in lib/,
 # one list per target platform:
 #
-#     docker/headless-core.txt         Linux64  (the image's /opt/a2sdk/lib, and the tarball's)
-#     docker/headless-core-win64.txt   Win64    (lib-win64/ in the tarball, lib/ in the Windows SDK)
+#     configs/headless-core.txt         Linux64  (the image's /opt/a2sdk/lib, and the tarball's)
+#     configs/headless-core-win64.txt   Win64    (lib-win64/ in the tarball, lib/ in the Windows SDK)
 #
 # WHAT DECIDES MEMBERSHIP
 #
@@ -51,9 +51,9 @@
 # with the Linux list is missing it — that lib compiles everything that does not print.
 #
 # Run from the repository root, after the stdlib for that platform has been built:
-#     bash docker/gen-headless-core.sh              # both, whichever builds are present
-#     bash docker/gen-headless-core.sh linux64      # just one
-#     bash docker/gen-headless-core.sh --check      # verify the lists match the registry, write nothing
+#     bash tests/gen-headless-core.sh              # both, whichever builds are present
+#     bash tests/gen-headless-core.sh linux64      # just one
+#     bash tests/gen-headless-core.sh --check      # verify the lists match the registry, write nothing
 #
 # Requires: the bootstrap compiler (compilers/Linux64/oberon) and python3.
 set -euo pipefail
@@ -79,9 +79,9 @@ generate() {
 	local platform="$1" bin defines objext symext out graph
 	case "$platform" in
 		linux64) bin=target/Linux64/bin; defines=UNIX,AMD64; objext=GofUu; symext=SymUu
-		         out=docker/headless-core.txt ;;
+		         out=configs/headless-core.txt ;;
 		win64)   bin=target/Win64/bin;   defines=WIN,AMD64;  objext=GofWw; symext=SymWw
-		         out=docker/headless-core-win64.txt ;;
+		         out=configs/headless-core-win64.txt ;;
 		*) echo "unknown platform: $platform (linux64, win64)" >&2; return 2 ;;
 	esac
 	if [ ! -d "$bin" ]; then

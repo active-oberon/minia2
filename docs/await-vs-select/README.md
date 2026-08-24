@@ -22,7 +22,7 @@ Compared is **the plumbing alone**: the queue between the sources and the loop, 
 readers. Not the catalogue, not the drawing, not the control socket — those are the same work in
 both languages and would only pad both sides.
 
-- Active Oberon: `docker/examples/Radio.Mod` -- the `Arrival` record and the `Keyboard`, `Player`
+- Active Oberon: `examples/Radio.Mod` -- the `Arrival` record and the `Keyboard`, `Player`
   and `Clock` objects -- and `source/Channels.Mod`, which is counted separately because it is
   library and is written once.
 - Go: `radio.go` in this directory, the section marked *the plumbing*.

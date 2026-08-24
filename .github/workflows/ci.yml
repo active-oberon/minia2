@@ -120,7 +120,7 @@ jobs:
             exit 1
           fi
       - name: The shipped module lists still say what the registry says
-        # docker/headless-core*.txt are derived from packages/std, not hand-kept. This fails if a
+        # configs/headless-core*.txt are derived from packages/std, not hand-kept. This fails if a
         # package gained or lost a module, if a module's imports started reaching the window
         # system, or if something in the payload is claimed by no package at all.
         run: task registry

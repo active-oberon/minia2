@@ -175,8 +175,8 @@ and **`a2pkg.lock`** (`{ "<repo>": {"version","commit"} }`).
 Three fields were added, and two of them are checked rather than trusted.
 
 - **`headless`** — does the SDK carry this package. It is what decides the contents of
-  `docker/headless-core*.txt`: the payload is the union of the `provides` of the packages
-  where this is true, closed under imports. `bash docker/gen-headless-core.sh` writes the
+  `configs/headless-core*.txt`: the payload is the union of the `provides` of the packages
+  where this is true, closed under imports. `bash tests/gen-headless-core.sh` writes the
   lists, `task registry` verifies them without writing, and CI runs the check.
 - **`graphical`** — the members of a *shipped* package that cannot travel, because their own
   import closure reaches the window system: `Texts`, the SSH family, the decoders. Checked

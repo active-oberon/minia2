@@ -3,7 +3,7 @@
 # Write configs/moduleListA64.txt: the headless standard library in dependency order.
 #
 # The order comes from Release.Build, which is what the host platform is built in. The selection is
-# what the SDK image ships (docker/headless-core.txt) PLUS what the test suites import: these
+# what the SDK image ships (configs/headless-core.txt) PLUS what the test suites import: these
 # objects have two consumers, and the suites test the graphics stack, which the image leaves out.
 # Deriving only from the payload was tried on 2026-08-24 and cost 23 cases in Raster.Test and
 # WMGraphics.Test -- they lost Raster, WMGraphics, WMRectangles and Displays. Four modules are
@@ -35,7 +35,7 @@ import sys, glob, re, os
 root = "'"$root"'"
 graph = "'"$graph"'"
 ordered = [l.strip() for l in sys.stdin if l.strip()]
-keep = {l.strip() for l in open(root + "/docker/headless-core.txt") if l.strip()}
+keep = {l.strip() for l in open(root + "/configs/headless-core.txt") if l.strip()}
 
 deps = {}
 for line in open(graph):

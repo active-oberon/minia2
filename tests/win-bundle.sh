@@ -51,11 +51,11 @@ oberon="$build/oberon"
 rm -rf "$out"
 mkdir -p "$out/lib" "$out/examples" "$out/tests"
 
-# lib/ is this SDK's own platform: the Win64 headless core (docker/headless-core-win64.txt --
+# lib/ is this SDK's own platform: the Win64 headless core (configs/headless-core-win64.txt --
 # its own closure, not a translation of the Linux one, which is how WinTrace gets in: StdIO
 # imports it on Windows and no Linux closure has ever heard of it).
 copied=0
-sort -u "$root/docker/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
+sort -u "$root/configs/headless-core-win64.txt" "$root/configs/moduleListWin.txt" |
 while read -r m; do
 	case "$m" in ''|\#*) continue ;; esac
 	for e in SymWw GofWw; do
@@ -98,7 +98,7 @@ install -m 644 "$work"/Ob.SymWw "$work"/ObHost.SymWw "$out/lib/"
 
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
 cp -r "$root/packages" "$out/packages"
-install -m 644 "$root"/docker/examples/*.Mod "$out/examples/"
+install -m 644 "$root"/examples/*.Mod "$out/examples/"
 install -m 644 "$root"/tests/*.Test "$out/tests/"
 install -m 644 "$root/tests/a2test-expected.txt" "$out/tests/"
 printf '%s\n' "$version" > "$out/VERSION"

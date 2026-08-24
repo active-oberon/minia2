@@ -2,7 +2,7 @@
 #
 # Compile the headless standard library for UnixA64 and report how much of it gets through.
 #
-# The list is configs/moduleListA64.txt: what docker/headless-core.txt keeps, in the order
+# The list is configs/moduleListA64.txt: what configs/headless-core.txt keeps, in the order
 # Release.Build prints for Linux64, less the modules that are x86 by nature. Each module is
 # compiled in its own process so that one failure does not hide the modules behind it, and the
 # symbol files of the ones already done are found in the output directory.
