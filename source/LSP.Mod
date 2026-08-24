@@ -681,6 +681,14 @@ VAR
 	BEGIN RETURN FoxBasic.GetFileReader(fn) # NIL
 	END FileExists;
 
+	PROCEDURE StartsWith (CONST s, prefix: ARRAY OF CHAR): BOOLEAN;
+	VAR i: SIZE;
+	BEGIN
+		i := 0;
+		WHILE (prefix[i] # 0X) & (s[i] = prefix[i]) DO INC(i) END;
+		RETURN prefix[i] = 0X
+	END StartsWith;
+
 	(* The directory of an open document, with its trailing slash, taken from the document's
 	   own URI. The sweep over a project's other modules used to enumerate "./*.Mod", which
 	   is the process's working directory -- and `ob lsp` sets that to a scratch directory,
@@ -1096,8 +1104,48 @@ VAR
 
 	(* Locate the readable source of module <mname>: a project module symlinked into
 	   the cwd (from /work), else the stdlib source tree the client mounted at /libsrc. *)
-	PROCEDURE ModSourceFile (CONST mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
+	(* The imported module's source, looked for beside the document that imports it first. The bare
+	   name is the working directory, and `ob lsp` sets that to a scratch directory of its own -- so
+	   with an editor opened on a project root, "Strings.Mod" was never found and every jump into
+	   another module answered null. Same lesson as SiblingMask above: the directory we can always
+	   name is the one the open document is in. *)
+	(* A platform module lives in a file named after the platform it is for -- Machine is
+	   Unix.Machine.Mod here, Windows.Machine.Mod on Windows, BIOS.Machine.Mod on the metal. Look for
+	   "<anything>.<module>.Mod" beside the document when the plain name is not there, and prefer the
+	   prefix of the platform the server itself compiles for; otherwise the first match answers. *)
+	PROCEDURE PrefixedSource (CONST dir, mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
+	VAR en: Files.Enumerator; found, tail, name: ARRAY 1024 OF CHAR;
+		flags: SET; tm, dt: SIGNED32; sz: Files.Size; mask: ARRAY 1024 OF CHAR; wanted: ARRAY 32 OF CHAR;
 	BEGIN
+		COPY(".", tail); Strings.Append(tail, mname); Strings.Append(tail, ".Mod");
+		(* platformOption is "-p=Unix64" / "-p=Win64" -- what the server compiles for, and so which
+		   platform's copy of a module is the one being talked about. *)
+		IF Strings.Pos("Unix", platformOption) >= 0 THEN COPY("Unix.", wanted)
+		ELSIF Strings.Pos("Win", platformOption) >= 0 THEN COPY("Windows.", wanted)
+		ELSE COPY("", wanted)
+		END;
+		COPY(dir, mask); Strings.Append(mask, "*"); Strings.Append(mask, tail);
+		found := "";
+		NEW(en); en.Open(mask, {});
+		WHILE en.HasMoreEntries() DO
+			IF en.GetEntry(name, flags, tm, dt, sz) THEN
+				IF found = "" THEN COPY(name, found) END;
+				ModuleBaseName(name, fn);
+				IF StartsWith(fn, wanted) THEN COPY(name, found) END
+			END
+		END;
+		IF found = "" THEN RETURN FALSE END;
+		COPY(found, fn); RETURN TRUE
+	END PrefixedSource;
+
+	PROCEDURE ModSourceFile (uri: Strings.String; CONST mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
+	VAR dir: ARRAY 1024 OF CHAR;
+	BEGIN
+		IF DocumentDir(uri, dir) THEN
+			COPY(dir, fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
+			IF FileExists(fn) THEN RETURN TRUE END;
+			IF PrefixedSource(dir, mname, fn) THEN RETURN TRUE END
+		END;
 		COPY(mname, fn); Strings.Append(fn, ".Mod");
 		IF FileExists(fn) THEN RETURN TRUE END;
 		IF stdlibSrcHost[0] # 0X THEN
@@ -1110,10 +1158,10 @@ VAR
 	(* Reliable declaration position of symbol <symName> in module <mname>: re-analyze
 	   the module's own source (positions from a .SymUu can't be trusted) and find the
 	   declaration by name. Returns FALSE if the source or the declaration isn't found. *)
-	PROCEDURE FindDeclPos (CONST mname, symName: ARRAY OF CHAR; VAR line, char: SIGNED32): BOOLEAN;
-	VAR fn: ARRAY 256 OF CHAR; text: Strings.String; module: SyntaxTree.Module; ds: DeclScan; sym: SyntaxTree.Symbol;
+	PROCEDURE FindDeclPos (uri: Strings.String; CONST mname, symName: ARRAY OF CHAR; VAR line, char: SIGNED32): BOOLEAN;
+	VAR fn: ARRAY 1024 OF CHAR; text: Strings.String; module: SyntaxTree.Module; ds: DeclScan; sym: SyntaxTree.Symbol;
 	BEGIN
-		IF ~ModSourceFile(mname, fn) THEN RETURN FALSE END;
+		IF ~ModSourceFile(uri, mname, fn) THEN RETURN FALSE END;
 		text := ReadFile(fn); IF text = NIL THEN RETURN FALSE END;
 		module := Analyze(text); IF module = NIL THEN RETURN FALSE END;
 		NEW(ds); sym := ds.Find(module, symName); IF sym = NIL THEN RETURN FALSE END;
@@ -1172,6 +1220,12 @@ VAR
 	PROCEDURE SourceUriFor (curUri: Strings.String; CONST mname: ARRAY OF CHAR): Strings.String;
 	VAR f, s: ARRAY 1024 OF CHAR;
 	BEGIN
+		IF ModSourceFile(curUri, mname, f) & ~StartsWith(f, "/libsrc/") THEN
+			(* beside the document: an absolute path already, so it is its own URI. From the working
+			   directory: a bare name, and the document's own directory is what it is relative to. *)
+			IF f[0] = "/" THEN COPY("file://", s); Strings.Append(s, f); RETURN Strings.NewString(s) END;
+			RETURN SiblingUri(curUri, mname)
+		END;
 		COPY(mname, f); Strings.Append(f, ".Mod");
 		IF FileExists(f) THEN RETURN SiblingUri(curUri, mname) END;
 		IF stdlibSrcHost[0] # 0X THEN
@@ -1185,16 +1239,53 @@ VAR
 		RETURN NIL
 	END SourceUriFor;
 
+	PROCEDURE Location (uri: Strings.String; line, char, len: SIGNED32): JSON.Object;
+	VAR loc, range: JSON.Object;
+	BEGIN
+		range := JSON.NewObject();
+		range.Set("start", Position(line, char));
+		range.Set("end", Position(line, char + len));
+		loc := JSON.NewObject();
+		loc.Set("uri", JSON.NewString(uri^)); loc.Set("range", range);
+		RETURN loc
+	END Location;
+
+	(* Where module <mname> names itself, read from its own source. *)
+	PROCEDURE ModuleDeclPos (uri: Strings.String; CONST mname: ARRAY OF CHAR; VAR line, char: SIGNED32): BOOLEAN;
+	VAR fn: ARRAY 1024 OF CHAR; text: Strings.String; module: SyntaxTree.Module;
+	BEGIN
+		IF ~ModSourceFile(uri, mname, fn) THEN RETURN FALSE END;
+		text := ReadFile(fn); IF text = NIL THEN RETURN FALSE END;
+		module := Analyze(text); IF module = NIL THEN RETURN FALSE END;
+		IF module.position.line <= 0 THEN RETURN FALSE END;
+		line := SIGNED32(module.position.line) - 1;
+		char := SIGNED32(module.position.start - module.position.linepos);
+		RETURN TRUE
+	END ModuleDeclPos;
+
 	(* textDocument/definition Location. Resolves declarations in the current file
 	   AND in other modules: the imported symbol's position (line/start/linepos) is
 	   preserved in the .SymUu, so we point at the owning module's source file. *)
 	PROCEDURE DefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
-	VAR module, owner: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
-		nm, mname: ARRAY 128 OF CHAR; loc, range: JSON.Object; line, char: SIGNED32; targetUri: Strings.String;
+	VAR module, owner, imported: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
+		nm, mname: ARRAY 128 OF CHAR; line, char: SIGNED32; targetUri: Strings.String;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
 		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
 		sym := f.foundSym;
+		(* A name in the IMPORT list is the module itself. Its own declaration is the line under the
+		   cursor, and an editor handed that answers by opening a references box instead of the module
+		   -- so point at the module's source, at its MODULE line. Aliases (WM := WMWindowManager)
+		   resolve to the module, not to the alias. *)
+		IF sym IS SyntaxTree.Import THEN
+			imported := sym(SyntaxTree.Import).module;
+			IF imported = NIL THEN RETURN NIL END;
+			imported.GetName(mname);
+			targetUri := SourceUriFor(uri, mname);
+			IF targetUri = NIL THEN RETURN NIL END;
+			IF ~ModuleDeclPos(uri, mname, line, char) THEN line := 0; char := 0 END;
+			RETURN Location(targetUri, line, char, SIGNED32(Strings.Length(mname)))
+		END;
 		IF sym.scope = NIL THEN RETURN NIL END;
 		owner := sym.scope.ownerModule;
 		IF owner = NIL THEN RETURN NIL END;
@@ -1212,14 +1303,9 @@ VAR
 			owner.GetName(mname);
 			targetUri := SourceUriFor(uri, mname);
 			IF targetUri = NIL THEN RETURN NIL END;
-			IF ~FindDeclPos(mname, nm, line, char) THEN RETURN NIL END
+			IF ~FindDeclPos(uri, mname, nm, line, char) THEN RETURN NIL END
 		END;
-		range := JSON.NewObject();
-		range.Set("start", Position(line, char));
-		range.Set("end", Position(line, char + SIGNED32(Strings.Length(nm))));
-		loc := JSON.NewObject();
-		loc.Set("uri", JSON.NewString(targetUri^)); loc.Set("range", range);
-		RETURN loc
+		RETURN Location(targetUri, line, char, SIGNED32(Strings.Length(nm)))
 	END DefinitionAt;
 
 	(* textDocument/documentSymbol: the module's symbol tree (outline). *)
@@ -1718,7 +1804,7 @@ VAR
 		   would happily return a sibling procedure's same-named declaration -- and the
 		   real one is in `arr` already, collected by scope. *)
 		IF wide THEN declUri := SourceUriFor(uri, owner) ELSE declUri := NIL END;
-		IF (declUri # NIL) & FindDeclPos(owner, name, line, char) & ~LocExists(arr, declUri^, line, char) THEN
+		IF (declUri # NIL) & FindDeclPos(uri, owner, name, line, char) & ~LocExists(arr, declUri^, line, char) THEN
 			range := JSON.NewObject();
 			range.Set("start", Position(line, char));
 			range.Set("end", Position(line, char + SIGNED32(Strings.Length(name))));
