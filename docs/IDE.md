@@ -1,11 +1,14 @@
 # A2 / Active Oberon IDE (minia2 SDK + LSP)
 
 A full editor experience for **A2 / Active Oberon**, with no per-OS toolchain to
-build: the compiler, standard library and a language server ship as one SDK — either
-a **tarball** you unpack (64-bit Linux on x86 or ARM, and Windows, where it is `ob.exe`
-and wants no bash; nothing installed, no container in the loop) or a **Docker image**
-(`minia2-sdk`, anywhere Docker runs: Linux, macOS, Windows via Docker Desktop / WSL2).
-Your editor talks to it over LSP either way.
+build: the compiler, standard library and a language server ship as one SDK. **The way to
+have it is the tarball** — 64-bit Linux on x86 or ARM, Android/Termux, and Windows, where it
+is `ob.exe` and wants no bash: nothing installed, no container, no privilege. One command,
+`sdk/install.sh`, puts it in `~/.local/share/a2sdk`.
+
+The **Docker image** (`minia2-sdk`) is the fallback for a machine where the tarball has no
+build — macOS today — and for CI that already thinks in containers. It is one way of four,
+not the default. Your editor talks to the SDK over LSP either way.
 
 This document covers **installation, editor setup, every feature, and the
 keybindings**. For how the toolchain itself works (`ob run/build/compile`, standalone
@@ -52,13 +55,21 @@ Verify: `docker run --rm minia2-sdk version` (or `ob version` from the tarball).
 
 ### 1b. The `ob` command (CLI)
 
-From the tarball `ob` *is* the command — the link above is all it takes. With the image,
-an alias makes it feel like one:
+From the tarball `ob` *is* the command — the link that `install.sh` makes is all it takes,
+and nothing else is needed.
+
+If you work through the image instead, alias it under **another name**:
 
 ```sh
-alias ob='docker run --rm -v "$PWD:/work" minia2-sdk'
-alias obit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # for the interactive REPL
+alias obd='docker run --rm -v "$PWD:/work" minia2-sdk'
+alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # interactive verbs, e.g. repl
 ```
+
+> ⚠️ **Do not call that alias `ob`.** It would shadow the real binary, and then `ob` means
+> different things depending on which shell you are in — the editor spawns the binary while
+> your prompt spawns a container. Older revisions of this document did exactly that; it was
+> written when the image was the only way to have the SDK, and that stopped being true on
+> 2026-08-10.
 
 | Command | Does |
 |---------|------|
