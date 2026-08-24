@@ -7,15 +7,10 @@
 #	Shortreal			half precision floats through the AVX F16C instructions
 #	FoxArrayBaseOptimized	the x86 kernels of the array runtime; FoxArrayBase loads them by name
 #				if they are there and works without them if they are not
-#	Beep				imports Displays and XDisplay, which are not headless
+#	Beep				X11 and Displays -- and since 2026-08-24 it is not in the payload
+#				either, so the generator's own drop list is belt over braces here
 #
 # Regenerate with tests/gen-a64-stdlib.sh after changing headless-core.txt.
-#
-# NOT yet regenerated against the registry-derived headless-core.txt (2026-08-16): that list went
-# from 393 modules to 255, and this one has to follow, but the A64 objects are also what the A64
-# suites compile against -- so shrinking it means a full A64 rebuild and a full suite run to find
-# out which cases lose an import. Until that is done this list is a superset, which costs build
-# time and nothing else.
 AMD64.Builtins.Mod
 Trace.Mod
 Linux.Glue.Mod
@@ -72,6 +67,7 @@ Loader.Mod
 Unix.BootConsole.Mod
 Shell.Mod
 StdIOShell.Mod
+Displays.Mod
 Events.Mod
 EventsUtils.Mod
 EventsKernelLog.Mod
@@ -107,16 +103,12 @@ Linker.Mod
 FoxBasic.Mod
 FoxProgTools.Mod
 FoxScanner.Mod
-FoxCSharpScanner.Mod
 FoxSyntaxTree.Mod
 FoxGlobal.Mod
-FoxActiveCells.Mod
-FoxHardware.Mod
 FoxFormats.Mod
 FoxFingerprinter.Mod
 FoxPrintout.Mod
 FoxParser.Mod
-FoxCSharpParser.Mod
 FoxSemanticChecker.Mod
 FoxSections.Mod
 FoxBinaryCode.Mod
@@ -124,7 +116,6 @@ FoxBackend.Mod
 FoxFrontend.Mod
 Compiler.Mod
 FoxOberonFrontend.Mod
-FoxCSharpFrontend.Mod
 FoxInterfaceComparison.Mod
 FoxTextualSymbolFile.Mod
 FoxIntermediateCode.Mod
@@ -137,20 +128,12 @@ FoxAMDBackend.Mod
 FoxAssembler.Mod
 FoxIntermediateAssembler.Mod
 FoxDisassembler.Mod
-FoxARMInstructionSet.Mod
-FoxARMAssembler.Mod
-FoxARMBackend.Mod
-FoxMinosObjectFile.Mod
 FoxA64InstructionSet.Mod
 FoxA64Assembler.Mod
 FoxA64Backend.Mod
 FoxIntermediateParser.Mod
 FoxIntermediateObjectFile.Mod
 FoxIntermediateLinker.Mod
-FoxTRMInstructionSet.Mod
-FoxTRMAssembler.Mod
-FoxTRMBackend.Mod
-FoxInterpreterBackend.Mod
 FoxTranspilerBackend.Mod
 FoxDocumentationScanner.Mod
 FoxDocumentationTree.Mod
@@ -167,9 +150,6 @@ MathL.Mod
 ComplexNumbers.Mod
 FoxArrayBase.Mod
 PersistentObjects.Mod
-FoxInterpreterSymbols.Mod
-FoxInterpreter.Mod
-MinosLinker.Mod
 StreamUtilities.Mod
 Errors.Mod
 Unix.ProcessInfo0.Mod
@@ -185,15 +165,25 @@ Autostart.Mod
 FSTools.Mod
 UpTime.Mod
 CLUTs.Mod
+Raster.Mod
 Localization.Mod
 Archives.Mod
+WMRectangles.Mod
+WMEvents.Mod
+Repositories.Mod
 FP1616.Mod
+Texts.Mod
 Inflate.Mod
 Unzip.Mod
 ZipFS.Mod
-PCDebug.Mod
-PCM.Mod
-ASMAMD64.Mod
+Codecs.Mod
+UnicodeProperties.Mod
+ContextualDependency.Mod
+AMD64.WMRasterScale.Mod
+WMGraphics.Mod
+TextUtilities.Mod
+CompilerInterface.Mod
+HostClipboard.Mod
 Tar.Mod
 Zlib.Mod
 ZlibBuffers.Mod
@@ -204,7 +194,9 @@ ZlibReaders.Mod
 Zip.Mod
 ZipTool.Mod
 BIT.Mod
-PartitionEditorTable.Mod
+BMPCodec.Mod
+GIFCodec.Mod
+PictCodec.Mod
 Unix.HierarchicalProfiler0.Mod
 HierarchicalProfiler.Mod
 FTPClient.Mod
@@ -239,7 +231,6 @@ CryptoStreams.Mod
 CryptoFortuna.Mod
 CryptoFortunaRng.Mod
 Checksum.Mod
-Fido.Mod
 A2Sequencers.Mod
 V24Tracer.Mod
 XMLGeneratorSchema.Mod
@@ -256,7 +247,6 @@ TCPServices.Mod
 TestServer.Mod
 TCPTools.Mod
 IPBandwidth.Mod
-Windows.Performance.Mod
 Bin2Hex.Mod
 BinToCode.Mod
 Base64.Mod
@@ -278,7 +268,6 @@ WebHTTPServerStatistics.Mod
 WebSockets.Mod
 POP3Client.Mod
 RFC865Client.Mod
-QuoteServer.Mod
 RfsConnection.Mod
 RfsClientProxy.Mod
 RfsFS.Mod
@@ -290,11 +279,6 @@ WebFTPServer.Mod
 XModem.Mod
 TaskScheduler.Mod
 DES.Mod
-IDCT.Mod
-MPEGTables.Mod
-DivXTypes.Mod
-JPEG2000DecoderUtil.Mod
-JPEG2000DecoderCS.Mod
 MD5.Mod
 HTTPSupport.Mod
 HTTPSession.Mod
@@ -310,34 +294,19 @@ NewHTTPClient.Mod
 CSV.Mod
 JSON.Mod
 LSP.Mod
+Channels.Mod
 TerminalCodes.Mod
 Unix.Terminal.Mod
 Frames.Mod
-Channels.Mod
 Unix.Processes.Mod
 Unix.LocalSockets.Mod
-ColorModels.Mod
-OpenTypeInt.Mod
-OpenTypeScan.Mod
-OpenType.Mod
-OpenTypeFonts.Mod
-Unix.X11.Mod
 Attributes.Mod
 FNHistories.Mod
 MemoryReader.Mod
 SSHPackets.Mod
 TFStringPool.Mod
-TFTypeSys.Mod
-TFScopeTools.Mod
-TFCheck.Mod
-Looks.Mod
 OGGUtilities.Mod
 OGGVorbisPlayer.Mod
-GfxMatrix.Mod
-GfxPaths.Mod
-GfxRegions.Mod
-SVGUtilities.Mod
-SVGMatrix.Mod
 MailStorage.Mod
 IsoImages.Mod
 ReleaseThreadPool.Mod
@@ -392,16 +361,3 @@ CalcDiethelm.Mod
 AlmSmtpReceiver.Mod
 WebCGI.Mod
 RegisterRFW.Mod
-WebBimbodot.Mod
-TFWebForum.Mod
-AFM.Mod
-OdUtil.Mod
-OdXml.Mod
-OdCond.Mod
-OdAuthBase.Mod
-OdAuth.Mod
-OdVCSBase.Mod
-SVNArgument.Mod
-SVNOutput.Mod
-SVNUtil.Mod
-SVNAdmin.Mod

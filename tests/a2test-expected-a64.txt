@@ -30,27 +30,13 @@ Oberon.Compilation.Test	positive: export inline code with reference to (local) c
 # image for the same reason.
 JPEG.Execution.Test	positive: test RGB to I420 2x2x8x8 block conversion used for encoding
 #
-# The three below import TextUtilities, which is not in the headless set either -- and
-# unlike Texts, which a listed module drags in, nothing reaches it. Putting it in would
-# put its closure in too (XML and its scanner and parser, Repositories, Configuration,
-# Codecs, UnicodeProperties), and the SDK is not going to carry that so three cases can
-# run. They run on x86-64, where the suites go against the whole build rather than the
-# shipped subset.
-Texts.Test	positive: a text counts characters, not bytes
-Texts.Test	positive: inserting and deleting in the middle of a text
-Texts.Test	positive: searching a text for a pattern
-#
-# The five below import BMPCodec, GIFCodec and PictCodec. The AArch64 objects are the headless
-# set plus what tests/a64-bundle.sh compiles for the window on a device -- the display registry,
-# Raster, Codecs and the window manager -- and the image codecs are in neither. They could be
-# added, but they would go into the AArch64 SDK tarball with everything else in that directory,
-# and growing a shipped artifact so that five cases can run is the wrong trade. They run on
-# x86-64, where the suites go against the whole build.
-ImageCodecs.Test	positive: a true-colour picture survives BMP, GIF and Pict
-ImageCodecs.Test	positive: an indexed picture survives a BMP at every depth it has
-ImageCodecs.Test	positive: an indexed picture survives a Pict, whose palette is shorter than the format
-ImageCodecs.Test	positive: a GIF holds a picture of one pixel, of one colour, and of more codes than nine bits
-ImageCodecs.Test	positive: what the codecs cannot do they refuse, and refusing is not trapping
+# The eight cases that used to stand here -- three in Texts.Test over TextUtilities, five in
+# ImageCodecs.Test over BMPCodec/GIFCodec/PictCodec -- pass since 2026-08-24 and are gone from this
+# file. The trade they were listed under has turned around: configs/moduleListA64.txt is now derived
+# as the payload PLUS what the suites import, closed over the import graph, instead of being an
+# ageing superset. That took the AArch64 objects from 407 modules to 350 -- so the shipped tarball
+# got smaller, and these eight got the modules they were missing. Both at once, which is why the
+# note about "growing a shipped artifact so that five cases can run" no longer applies.
 #
 # --- written for an instruction set this one is not ---------------------------------
 # The case imports Shortreal, which is AMD64.Shortreal.Mod: half precision floats
