@@ -543,6 +543,23 @@ tasks:
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/vscode-check.sh
 
+  lsp-stdlib:
+    desc: Go-to-definition into a library module, with the SDK run natively (not in the image)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/lsp-stdlib-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # Same rule as the other checks: where the SDK is meant to exist -- CI -- a silent
+            # skip is the check not running at all, which reads the same as it passing.
+            [ -z "$LSP_STDLIB_REQUIRE" ] || { echo "[FAIL] the jump into a library module needs an SDK and python3, and LSP_STDLIB_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the jump into a library module needs the bundled SDK (task bundle) and python3"
+          else
+            exit "$status"
+          fi
+        }
+
   terminal:
     desc: The terminal as a device -- raw mode, the keys and the size, on a real pseudo-terminal
     cmds:

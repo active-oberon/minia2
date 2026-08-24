@@ -1149,6 +1149,12 @@ VAR
 		COPY(mname, fn); Strings.Append(fn, ".Mod");
 		IF FileExists(fn) THEN RETURN TRUE END;
 		IF stdlibSrcHost[0] # 0X THEN
+			(* The host tree first: the native SDK reads the path it was handed, and /libsrc is a
+			   mount only the image has -- looking there alone made stdlibSrc dead weight outside a
+			   container, so no jump ever left the open file. *)
+			COPY(stdlibSrcHost, fn); Strings.Append(fn, "/");
+			Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
+			IF FileExists(fn) THEN RETURN TRUE END;
 			COPY("/libsrc/", fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
 			IF FileExists(fn) THEN RETURN TRUE END
 		END;

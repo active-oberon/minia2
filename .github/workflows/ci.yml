@@ -159,6 +159,16 @@ jobs:
           TERMINAL_REQUIRE: "1"
         run: tests/terminal-check.sh "$RUNNER_TEMP/a2sdk"
 
+      - name: Go-to-definition reaches the library source, natively
+        # tests/LSP.Test answers this with the document and the library in one directory, which is
+        # the case the server gets right on its own. What only a real run catches is the library
+        # source living somewhere else and named in stdlibSrc: the server used to look for it at
+        # /libsrc, a mount the image has and the tarball does not, so every jump into a library
+        # module quietly stayed in the open file. Run against the SDK the steps above assembled.
+        env:
+          LSP_STDLIB_REQUIRE: "1"
+        run: tests/lsp-stdlib-check.sh "$RUNNER_TEMP/a2sdk"
+
       - name: The VS Code extension packs
         # The extension is what a stranger installs; what breaks in it is the packaging, not the
         # logic -- a grammar that stopped being JSON, a .vsix missing the manifest VS Code reads
