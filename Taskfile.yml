@@ -371,10 +371,10 @@ tasks:
       - |
         cat > {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg << EOF
         Heaps.SetMetaData~
+        Files.AddSearchPath work~
         Files.AddSearchPath bin~
         Files.AddSearchPath source~
         Files.AddSearchPath data~
-        Files.AddSearchPath work~
         Files.SetWorkPath work~
         Configuration.Init~
         FSTools.Mount WORK RelativeFileSystem .~
@@ -391,7 +391,10 @@ tasks:
             cat > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.sh << 'EOF'
         #!/bin/sh
         cd "$(dirname "$0")" || exit 1
-        ./oberon run a2.cfg
+        # A2 hosted on Unix cannot restart itself: Machine.Shutdown can only leave the process, and it
+        # says which way it left -- System.Reboot exits 0, System.PowerDown and closing the window exit
+        # 1. So the reboot is this loop, and the shutdown is it ending.
+        while ./oberon run a2.cfg; do :; done
         EOF
             chmod +x {{.BUILD_DIR}}/{{.PLATFORM}}/a2.sh
             echo 'KbdMouse.DisableMouseEmulation~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.cfg
@@ -400,7 +403,12 @@ tasks:
           Win32|Win64)
             echo '@echo off' > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'cd /d "%~dp0"' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            # Same as a2.sh: exit 0 is System.Reboot and means start it again, 1 and up means stop.
+            echo ':a2' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'oberon.exe run a2.cfg' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'if errorlevel 1 goto done' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'goto a2' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo ':done' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'Machine.SetTraceFile~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg
             echo 'Traps.Install~' >> {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.cfg
             ;;
@@ -513,6 +521,20 @@ tasks:
       - |
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
+
+  backdrop:
+    desc: The wallpaper a person picks -- replaced, not stacked, and still there next start
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/backdrop-check.sh {{.BUILD_DIR}}/{{.HOST}}
+
+  reboot:
+    desc: Reboot from the menu -- the runtime leaves with the code a2.sh restarts on
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/reboot-check.sh {{.BUILD_DIR}}/{{.HOST}}
 
   terminal:
     desc: The terminal as a device -- raw mode, the keys and the size, on a real pseudo-terminal

@@ -29,10 +29,13 @@ to the screen (`source/WMBackdrop.Mod`), so keep new art at the screen aspect
 ratio to avoid stretching.
 
 Installed into `data/`, registered in `data/BackdropList.XML` (curated menu:
-Nebula + the 16), packaged in `data/Release.Tool`. Startup backdrop is set in the
-Autostart section of `data/Configuration.XML`
-(`WMBackdrop.AddBackdropImage nebula_nord.png ? ? ? ?`). Switch at runtime via the
-desktop right-click **Backdrops** menu.
+Nebula + the 16), packaged in `data/Release.Tool`. Startup backdrop is the
+Autostart line of `data/Configuration.XML`
+(`WMBackdrop.SetBackdropImage nebula_nord.png ? ? ? ?`), and that line is also where
+a pick is remembered: switching at runtime via the desktop right-click **Backdrops**
+menu replaces the backdrop and writes the new line, so the choice survives a restart.
+`WMBackdrop.AddBackdropImage` still adds one without replacing or remembering -- that
+is the one to use for tiling several across a wide screen.
 
 Stock A2 backdrops (`mars.png`, `BluebottlePic0.png`, `SaasFee.jpg`, `*.jp2`)
 remain in `data/` but are de-listed from the menu; re-add `<Look>` lines to
