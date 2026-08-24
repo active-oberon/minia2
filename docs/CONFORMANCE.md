@@ -46,6 +46,9 @@ compiler, and the document is a faithful-but-incomplete, slightly stale snapshot
 | B3 | Active-object / cell communication built-ins **`WAIT`, `CONNECT`, `RECEIVE`, `SEND`, `DELEGATE`** | `FoxGlobal.Mod:931-951` | no (only the `!`/`?`/`<<`/`>>` statement forms are documented) |
 | B4 | Extensive `{...}` modifier vocabulary — calling conventions (`WINAPI`, `C`, `PlatformCC`), memory/tracing (`UNTRACED`, `UNTRACKED`, `ALIGNED`, `MOVABLE`, `DISPOSABLE`, `PLAIN`, `UNSAFE`), OO (`ABSTRACT`, `FINAL`, `OVERRIDE`, `DELEGATE`), concurrency (`ACTIVE`, `EXCLUSIVE`, `PRIORITY`, `SAFE`, `REALTIME`), and cell/hardware props (`DataMemorySize`, `CodeMemorySize`, `ChannelWidth/Depth`, `Channels`, `Vector`, `FloatingPoint`, `NoMul`, `HasNonBlockingIO`, `Engine`, `TRM`, `TRMS`, `Backend`, `Runtime`, `Fingerprint`) | names `FoxGlobal.Mod:9-67`, checked in `FoxSemanticChecker.Mod` (pointer/record 575-592, procedure 774-794, variable 832-834, cell 1008-1019) | grammar treats `Flag` generically; names not enumerated/documented |
 
+| B5 | **Conditional expression** — `a IF cond ELSE b`, Python's order, usable wherever an expression is | `FoxParser.Mod` (`Expression`), verified by compiling `RETURN a IF a > b ELSE b` | no |
+| B6 | **`{TEST}` procedures and the test backend** — an exported parameterless module-scope procedure marked `{TEST}` (checked in `FoxSemanticChecker.Mod:6610`) is harvested by `Compiler.Compile --test=Test --testFile=X.Test` into a runnable FoxTest file, one `positive:` case per procedure | `FoxTestBackend.Mod`, option in `Compiler.Mod:391` | no |
+
 ## C. Confirmed matches (the bulk of the language)
 
 All of the following are specified by the report **and** implemented as described:
