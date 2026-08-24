@@ -449,6 +449,15 @@ import closure reaches `Texts` → `TextUtilities` → `Codecs` → `Displays`/`
 whose `# options` ask for another target (`-p=Win32 …`) are reported as skipped rather
 than failing every case.
 
+Given a **source** rather than a test file — `ob test Foo.Mod Bar.Mod` — the cases come out of
+the modules themselves: an exported parameterless module-scope procedure marked `{TEST}` is a
+test the compiler has always known about (`FoxTestBackend` writes one `positive:` case per
+procedure), and until 2026-08-24 nothing in `ob` could ask for them. So an invariant can live in
+the module it is about instead of in a file beside it. A source with no such procedure is
+reported as having none rather than run as an empty file. The harvest is one compiler call for
+all the sources named, because the backend creates its file when the options are parsed and
+appends to it per module.
+
 `--report FILE` writes one JSON document with the counts and an entry per case
 (`{"status": "ok|failed|known|fixed|skipped", "file": …, "kind": …, "name": …}`), which is
 what CI keeps as an artifact. `--github` prints an Actions annotation per failing case, so
