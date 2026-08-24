@@ -54,12 +54,17 @@ jobs:
       # library the image names are read before any of our code runs, so they cannot be decided on
       # the phone. The NDK is on the runner image already; A64_REQUIRE turns a missing one into a
       # failure rather than a silent skip that reads like a pass.
+      # ANDROID_NDK is read from the runner's own environment inside the shell, not through
+      # ${{ env.… }}: that context holds only what this workflow's `env:` blocks set, so the
+      # variable came out empty and this step failed the first release it ever ran in (2026.08.24).
       - name: Tarball SDK (Android/Bionic)
         env:
           A64_REQUIRE: "1"
-          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
-          task a64-bundle-android
+          ndk="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_HOME:+$ANDROID_HOME/ndk-bundle}}}"
+          [ -n "$ndk" ] && [ -d "$ndk" ] || { echo "no NDK on this runner: ANDROID_NDK_LATEST_HOME=$ANDROID_NDK_LATEST_HOME"; exit 1; }
+          echo "NDK: $ndk"
+          ANDROID_NDK="$ndk" task a64-bundle-android
           cp target/A64/bundle-android.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-android-arm64.tar.gz"
       # The third host. ob is a Windows binary here, not a shell script, so this SDK needs neither
       # bash nor WSL nor Docker on the machine it lands on. Built by cross-compilation, which is
