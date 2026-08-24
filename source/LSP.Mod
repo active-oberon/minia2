@@ -66,7 +66,11 @@ TYPE
 		   SYSTEM plus HALT, UNTRACED, UNTRACKED, UNCHECKED, UNCOOPERATIVE and UNSAFE, and `Checks`
 		   is one word, ASSERT. What they mark is where the program stops being a checked program:
 		   for a language sold as "one language from the interrupt handler to the application, and
-		   you can read the whole system", seeing where the safe part ends is the point. *)
+		   you can read the whole system", seeing where the safe part ends is the point.
+
+		   Only HALT of that list reaches here, being a builtin and so a symbol; the five words in
+		   braces are modifiers, which the parser folds into flags -- those are marked lexically,
+		   in DangerWords. *)
 		PROCEDURE SemMod (sym: SyntaxTree.Symbol): SIGNED32;
 		VAR nm: ARRAY 128 OF CHAR; m: SyntaxTree.Module;
 		BEGIN
@@ -77,8 +81,7 @@ TYPE
 			END;
 			sym.GetName(nm);
 			IF nm = "ASSERT" THEN RETURN 2 END;
-			IF (nm = "HALT") OR (nm = "UNTRACED") OR (nm = "UNTRACKED") OR (nm = "UNCHECKED")
-				OR (nm = "UNCOOPERATIVE") OR (nm = "UNSAFE") THEN RETURN 1 END;
+			IF nm = "HALT" THEN RETURN 1 END;
 			(* everything declared in SYSTEM: GET, PUT, MOVE, VAL, ADR, the register names, ... *)
 			IF (sym.scope # NIL) & (sym.scope.ownerModule # NIL)
 				& FoxGlobal.IsSystemModule(sym.scope.ownerModule) THEN RETURN 1 END;
@@ -1742,6 +1745,31 @@ VAR
 		END
 	END SortTokens;
 
+	(* DangerWords marks the five modifiers no tree walk can see -- they are folded into flags,
+	   not kept as symbols, so unlike HALT they never reach SemMod. Read off the token stream
+	   like folding does; a comment or a string mentioning the word is a token of its own there
+	   and cannot be mistaken for one. *)
+	PROCEDURE DangerWords (text: Strings.String; f: Finder);
+	VAR srcR: Streams.StringReader; diag: Diagnostics.DiagnosticsList;
+		scanner: FoxScanner.Scanner; token: FoxScanner.Token; nm: ARRAY 32 OF CHAR;
+	BEGIN
+		NEW(diag); Streams.OpenStringReader(srcR, text^);
+		scanner := FoxScanner.NewScanner("source", srcR, 0, diag);
+		LOOP
+			IF ~scanner.GetNextToken(token) THEN scanner.ResetError END;
+			IF (token.symbol = FoxScanner.EndOfText) OR (f.refN >= LEN(f.refOff)) THEN EXIT END;
+			IF token.symbol = FoxScanner.Identifier THEN
+				COPY(token.identifierString, nm);
+				IF (nm = "UNSAFE") OR (nm = "UNTRACED") OR (nm = "UNTRACKED") OR (nm = "UNCHECKED")
+					OR (nm = "UNCOOPERATIVE") THEN
+					f.refOff[f.refN] := token.position.start;
+					f.refLen[f.refN] := SIGNED32(Strings.Length(nm));
+					f.refKind[f.refN] := 8; f.refMod[f.refN] := 1; INC(f.refN)   (* decorator, dangerous *)
+				END
+			END
+		END
+	END DangerWords;
+
 	(* textDocument/semanticTokens/full: delta-encoded 5-tuples (deltaLine, deltaChar,
 	   length, tokenType, 0) for every resolved identifier occurrence, sorted by position. *)
 	PROCEDURE SemanticTokens (text: Strings.String): JSON.Value;
@@ -1751,7 +1779,7 @@ VAR
 		data := JSON.NewArray();
 		result := JSON.NewObject(); result.Set("data", data);
 		module := Analyze(text); IF module = NIL THEN RETURN result END;
-		NEW(f); f.CollectTokens(module); SortTokens(f);
+		NEW(f); f.CollectTokens(module); DangerWords(text, f); SortTokens(f);
 		pos := 0; curLine := 0; curChar := 0; prevLine := 0; prevChar := 0; i := 0;
 		WHILE i < f.refN DO
 			IF (i = 0) OR (f.refOff[i] # f.refOff[i-1]) THEN   (* drop duplicate positions *)
@@ -2273,6 +2301,8 @@ VAR
 						ttypes.Add(JSON.NewString("function")); ttypes.Add(JSON.NewString("variable"));
 						ttypes.Add(JSON.NewString("parameter")); ttypes.Add(JSON.NewString("enumMember"));
 						ttypes.Add(JSON.NewString("property")); ttypes.Add(JSON.NewString("method"));
+						(* the words in braces are decorators, not symbols -- see DangerWords *)
+						ttypes.Add(JSON.NewString("decorator"));
 						legend.Set("tokenTypes", ttypes);
 						tmods := JSON.NewArray();
 						tmods.Add(JSON.NewString("dangerous")); tmods.Add(JSON.NewString("checks"));
