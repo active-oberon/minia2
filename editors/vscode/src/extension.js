@@ -1,6 +1,6 @@
 // The whole extension: point VS Code at `ob lsp`, which is where every feature actually lives.
 const vscode = require('vscode');
-const { LanguageClient, TransportKind } = require('vscode-languageclient/node');
+const { LanguageClient } = require('vscode-languageclient/node');
 
 let client;
 
@@ -27,10 +27,12 @@ function serverOptions(config) {
 	if (stdlib !== '') env.A2_STDLIB_SRC = substitute(stdlib);
 	if (syms !== '') env.A2_SYMS = substitute(syms);
 
+	// No `transport` field on purpose: setting it to stdio makes the client append a --stdio flag of
+	// its own to the command line, and `ob` exits with "unknown option: --stdio". Left out, the client
+	// speaks over the pipes it already opened, which is what `ob lsp` expects.
 	const run = {
 		command: substitute(resolveCommand(config)),
 		args: (config.get('server.args') || ['lsp', '--live']).map(substitute),
-		transport: TransportKind.stdio,
 		options: { env }
 	};
 	return { run, debug: run };

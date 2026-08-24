@@ -30,6 +30,11 @@ scope=$(node -p "JSON.parse(require('fs').readFileSync('$ext/syntaxes/activeober
 declared=$(node -p "require('$ext/package.json').contributes.grammars[0].scopeName")
 [ "$scope" = "$declared" ] || { echo "[FAIL] grammar scope $scope, package.json says $declared" >&2; exit 1; }
 
+# TransportKind.stdio makes the client append --stdio to the command, and `ob` refuses it -- the
+# server then dies five times and VS Code gives up. Cheap to state, expensive to rediscover.
+! grep -q 'TransportKind' "$ext/src/extension.js" || {
+	echo "[FAIL] the client sets a transport, which appends --stdio to the ob command line" >&2; exit 1; }
+
 out=$(mktemp -d)
 vsix=$("$ext/package.sh" "$out")
 [ -s "$vsix" ] || { echo "[FAIL] no .vsix was built" >&2; rm -rf "$out"; exit 1; }
