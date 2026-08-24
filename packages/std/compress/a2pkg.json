@@ -6,8 +6,11 @@
   "status": "stable",
   "description": "DEFLATE/zlib primitives (inflate + deflate, buffers, stream readers/writers) and gzip. Container formats (ZIP) live in std/archive.",
   "provides": [
+    "BWHCompressor",
     "GZip",
     "Inflate",
+    "MoveToFront",
+    "OZip3",
     "Zlib",
     "ZlibBuffers",
     "ZlibDeflate",
@@ -20,5 +23,7 @@
     "std/math": "*",
     "std/system": "*"
   },
-  "residual": []
+  "residual": [
+    "MoveToFront, BWHCompressor and OZip3 entered 2026-08-24, unclaimed until then: the Burrows-Wheeler family and a file-compression command over the primitives already here."
+  ]
 }

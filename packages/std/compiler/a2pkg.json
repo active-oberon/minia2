@@ -55,8 +55,12 @@
     "FoxTextualSymbolFile",
     "FoxTranspilerBackend",
     "I386Decoder",
-    "Linker",
     "LSP",
+    "Linker",
+    "ModuleParser",
+    "Release",
+    "TestSuite",
+    "UnixBinary",
     "Versioning"
   ],
   "graphical": [
@@ -64,7 +68,10 @@
     "Decoder",
     "FoxA2Interface",
     "FoxTest",
-    "I386Decoder"
+    "I386Decoder",
+    "ModuleParser",
+    "Release",
+    "TestSuite"
   ],
   "requires": {
     "std/base": "*",
@@ -78,6 +85,9 @@
     "Only Active Oberon since 2026-08-16. What used to sit here and does not: the Oberon-2 compiler (attic/oberon2, 26 modules), the ActiveCells# front end (attic/activecells-sharp), the TRM and interpreter back ends, and the 32-bit ARM back end. Fox is a framework with pluggable front ends and back ends, so being in the tree said nothing about being ours.",
     "FoxArrayBase and FoxArrayBaseOptimized moved to std/math: generated code calls them, the compiler does not, so they are the runtime of math arrays rather than part of the compiler.",
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
-    "Fifteen members are outside the import closure of the compiler itself and stay on purpose. The disassembler family (Decoder, AMD64Decoder, I386Decoder, FoxDisassembler) is what a differential test of the assemblers would be written against -- the same shape that found everything on AArch64 -- and I386Decoder stays with its family rather than being exiled for decoding a target this tree does not build. The textual intermediate code (assembler, parser, object file, linker) is our own IR in its readable form. FoxProgTools, FoxProfiler, FoxTestBackend and FoxA2Interface are ours and unused; being unused is a reason to test them, not to disown them."
+    "Fifteen members are outside the import closure of the compiler itself and stay on purpose. The disassembler family (Decoder, AMD64Decoder, I386Decoder, FoxDisassembler) is what a differential test of the assemblers would be written against -- the same shape that found everything on AArch64 -- and I386Decoder stays with its family rather than being exiled for decoding a target this tree does not build. The textual intermediate code (assembler, parser, object file, linker) is our own IR in its readable form. FoxProgTools, FoxProfiler, FoxTestBackend and FoxA2Interface are ours and unused; being unused is a reason to test them, not to disown them.",
+    "TestSuite (negelef) entered 2026-08-24 beside FoxTest, and marked graphical: it reads its cases through TextUtilities, which belongs to std/gui, so it cannot be in the payload until something gives it a plain-text path. ocp's ModuleTestingSym is the module that asked for it.",
+    "UnixBinary (GF, 'build Unix programs') entered 2026-08-24: it writes the host executable, which puts it beside the linker rather than in the system package.",
+    "ModuleParser and Release entered 2026-08-24: reading a module's text and assembling a release are both compiler-side work. All of these turned out to reach the window system (the check named them), so they are marked graphical and stay out of the payload."
   ]
 }

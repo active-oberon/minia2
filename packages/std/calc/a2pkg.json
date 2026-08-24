@@ -4,7 +4,7 @@
   "context": "A2",
   "headless": true,
   "status": "draft",
-  "description": "Numerical calculus: Gauss/Gr\u00fcnwald/Diethelm quadrature and differentiation kernels over std/math + std/numerics.",
+  "description": "Numerical calculus: Gauss/Grünwald/Diethelm quadrature and differentiation kernels over std/math + std/numerics.",
   "provides": [
     "CalcConvolution",
     "CalcD1",
@@ -14,7 +14,8 @@
     "CalcDiethelm",
     "CalcFn",
     "CalcGauss",
-    "CalcGrunwald"
+    "CalcGrunwald",
+    "MathMitLef"
   ],
   "requires": {
     "std/data": "*",
@@ -23,6 +24,7 @@
   },
   "residual": [
     "This closes the MathMitLef -> CalcGauss forward-pointer from std/numerics: MathMitLef (Mittag-Leffler) belongs here or in a numerics-special layer that requires std/calc.",
-    "Verify the std/data edge (CalcFn) before marking stable."
+    "Verify the std/data edge (CalcFn) before marking stable.",
+    "MathMitLef entered 2026-08-24 -- the FORWARD note in std/numerics named this package for it."
   ]
 }

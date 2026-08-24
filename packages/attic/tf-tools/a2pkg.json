@@ -1,0 +1,22 @@
+{
+  "name": "attic/tf-tools",
+  "tier": 8,
+  "context": "A2",
+  "headless": false,
+  "status": "in-tree",
+  "description": "Thomas Frey's own semantic tooling for Active Oberon: a type system and scope tools independent of the Fox front end, and the checker over them.",
+  "provides": [
+    "TFCheck",
+    "TFScopeTools",
+    "TFTypeSys"
+  ],
+  "requires": {
+    "std/archive": "*",
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Named 2026-08-24. A second, parallel semantic representation of the language, from before Fox: interesting as history and as a reading of the language, but nothing in the tree depends on it, so it stays out of the payload."
+  ]
+}

@@ -7,6 +7,7 @@
   "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
     "ComplexNumbers",
+    "Drand48",
     "FoxArrayBase",
     "FoxArrayBaseOptimized",
     "Math",
@@ -24,6 +25,7 @@
     "NbrRe32",
     "NbrRe64",
     "NbrStrings",
+    "NextPrime",
     "Random",
     "Shortreal"
   ],
@@ -33,6 +35,8 @@
     "std/system": "*"
   },
   "residual": [
-    "FoxArrayBase and FoxArrayBaseOptimized are the RUNTIME of math arrays: code the compiler generates calls them, no source names them. They live here rather than in std/compiler because their subject is arithmetic. FoxArrayBaseOptimized is x86 kernels and does not exist on AArch64; FoxArrayBase loads it by name if it is there."
+    "FoxArrayBase and FoxArrayBaseOptimized are the RUNTIME of math arrays: code the compiler generates calls them, no source names them. They live here rather than in std/compiler because their subject is arithmetic. FoxArrayBaseOptimized is x86 kernels and does not exist on AArch64; FoxArrayBase loads it by name if it is there.",
+    "Drand48 entered 2026-08-24: the libc random generator's algorithm, beside Random.",
+    "NextPrime entered 2026-08-24 the same way: BWHCompressor needs it and nobody had claimed it."
   ]
 }

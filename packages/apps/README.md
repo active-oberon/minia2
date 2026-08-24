@@ -42,3 +42,11 @@ Some zero-fan-in modules are genuinely reusable and should be **kept**, not trea
 apps — pending a home decision (likely std/base or a std/util):
 `In`, `Out`, `CommandLine`, `Stopwatch`, `Base64`, `Checksum`, `Drand48`, `JSON`,
 `DiffLib`, `MoveToFront`, `BitStreams`, `RAWPrinter`, `Localization`.
+
+## 2026-08-24: this list is now backed by manifests
+
+Every module of `source/` is claimed by a package as of 2026-08-24 (745 of 745, checked by
+`docker/gen-headless-core.sh --check`), and the applications listed below are claimed too:
+`apps/perfmon` took the performance monitor and its plugins, `apps/desktop` took the rest. This file
+stays as the reading of *why* they are applications; the manifests are what the check reads. A
+program that earns its own package moves out of `apps/desktop`, the way perfmon did.

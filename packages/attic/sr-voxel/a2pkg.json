@@ -1,0 +1,45 @@
+{
+  "name": "attic/sr-voxel",
+  "tier": 8,
+  "context": "A2",
+  "headless": false,
+  "status": "in-tree",
+  "description": "The sr voxel and ray engine: volume textures, ray casting, the voxel spaces and the demos over them.",
+  "provides": [
+    "sr3DTexture",
+    "srBase",
+    "srE",
+    "srGL",
+    "srHex",
+    "srImage",
+    "srLifeVox",
+    "srM2Space",
+    "srM3Space",
+    "srM5Space",
+    "srM6Space",
+    "srMath",
+    "srRastermovie",
+    "srRayEngine",
+    "srRender",
+    "srRotaVox",
+    "srTexVox",
+    "srThermoCell",
+    "srTree",
+    "srVolShader",
+    "srVoxel",
+    "srVoxel2",
+    "srVoxel3",
+    "srVoxel4",
+    "srVoxel5",
+    "srvoxels"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/gui": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Named 2026-08-24. The same engine the published registry lists as community/sr (pending-gui): the sources are in this tree as well, so a package here is what keeps every module of source/ claimed. It needs the window system, so it is out of the payload either way."
+  ]
+}

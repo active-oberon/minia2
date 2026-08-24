@@ -559,6 +559,18 @@ tasks:
         else
           echo "[SKIP] no a2-registry clone at $registry -- nothing to compare the catalogue with"
         fi
+      # And every module of a community package's upstream directory is either shipped or excluded
+      # on purpose. That half cannot be checked from here -- the sources live in the a2oberon
+      # clone -- so it is skipped without both clones, like the line above.
+      - |
+        set -eo pipefail
+        registry="${A2_REGISTRY:-{{.CURRENT_DIR}}/../a2-registry}"
+        upstream="${A2OBERON:-{{.CURRENT_DIR}}/../a2oberon}"
+        if [ -f "$registry/tools/check-ocp.py" ] && [ -d "$upstream/ocp" ]; then
+          A2OBERON="$upstream" python3 "$registry/tools/check-ocp.py"
+        else
+          echo "[SKIP] the community packages need both the a2-registry and the a2oberon clone"
+        fi
 
   ob:
     desc: "`ob` written in Active Oberon -- linked with the compiler inside, and made to answer for itself"
