@@ -8,3 +8,4 @@ target
 .codex
 __pycache__/
 *.pyc
+.claude
