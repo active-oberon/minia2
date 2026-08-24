@@ -275,6 +275,13 @@ else
 fi
 rm -rf "$obwork"
 install -m 755 "$root/tests/a64-device-suite.sh" "$out/run.sh"
+# The version, in the file `ob version` reads (Ob.Mod ReadVersion). The other two bundles have
+# written it since they existed; this one never did, so every AArch64 and Android install answered
+# "A2 (Active Oberon) SDK -- minia2" with no version at all, and there was no way to tell from the
+# phone which release was on it. Found on a phone, 2026-08-24.
+version="${A2_SDK_VERSION:-$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+printf '%s\n' "$version" > "$out/VERSION"
+
 # The examples the other two bundles carry. `ob run examples/Radio.Mod` is the reason: on a phone
 # it is the one program here that a person uses rather than tests, and it needs no display.
 mkdir -p "$out/examples"
