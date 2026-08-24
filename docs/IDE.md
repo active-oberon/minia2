@@ -230,7 +230,7 @@ Set these before launching the editor (the ftplugin reads them):
 
 | Variable | Purpose |
 |----------|---------|
-| `A2_STDLIB_SRC` | Path to a full A2 source tree (e.g. `$HOME/Projects/A2/a2oberon/source`). Enables **go-to-definition into standard-library modules** from any project. |
+| `A2_STDLIB_SRC` | Path to a full A2 source tree (e.g. `$HOME/Projects/A2/a2oberon/source`). Enables **go-to-definition into standard-library modules** from any project. Read directly by `ob lsp` from the tarball SDK; with the image the editor config turns it into a `/libsrc` mount. |
 | `A2_SYMS` | Path to your project's **prebuilt symbol directory** (e.g. `$HOME/Projects/A2/a2oberon/target/Linux64/bin`). Imports then resolve from real build artifacts instead of on-demand compilation — recommended for large trees, and it fixes modules whose source lives in a platform-prefixed file. Must match the server target (`.SymUu` = Linux64). Read directly by `ob lsp` from the tarball SDK; with the image the editor config turns it into a `/psym` mount. |
 | `A2_OB` | Path to the tarball SDK's `ob`. Set it and the editor config starts the language server directly instead of `docker run`. |
 
