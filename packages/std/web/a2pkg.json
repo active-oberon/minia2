@@ -6,12 +6,27 @@
   "status": "draft",
   "description": "XML stack (parser/scanner/DOM objects) and the Configuration settings module built on it.",
   "provides": [
+    "CSS2",
+    "CSS2Parser",
+    "CSS2Properties",
+    "CSS2Scanner",
     "Configuration",
+    "DynamicWebpage",
+    "DynamicWebpagePlugin",
+    "HTMLParser",
+    "HTMLScanner",
+    "JSON",
+    "RegisterRFW",
+    "WebCGI",
+    "WebComplex",
+    "WebFTPServer",
+    "WebSSMPPlugin",
+    "WebStd",
     "XML",
+    "XMLGeneratorSchema",
     "XMLObjects",
-    "XMLScanner",
     "XMLParser",
-    "JSON"
+    "XMLScanner"
   ],
   "requires": {
     "std/base": "*",
@@ -21,6 +36,11 @@
   "residual": [
     "This is the XML/config core only; the HTTP stack lives in std/net and HTML/CSS/DynamicWebpage rendering is a separate future std/html pass.",
     "Configuration is a high-fan-in HUB (pulled by net, media, archive, gfx, gui): its placement here fixes the tier-2 boundary those packages depend through.",
-    "Verify XML* import closure vs std/text before marking stable."
+    "Verify XML* import closure vs std/text before marking stable.",
+    "HTML and CSS entered 2026-08-24, named by no package before: HTMLScanner + HTMLParser (into an XML tree) and CSS2 + CSS2Scanner + CSS2Parser all compile headless. CSS2Properties does not and is marked graphical: it resolves properties into WMGraphics colours and fonts, so its subject really is the window system.",
+    "The Web* family entered 2026-08-24, unclaimed until then: CGI, the standard plugin set, the FTP server, SSMP, dynamic pages and the XML schema generator. RegisterRFW is a CGI form saver -- an example rather than library, kept here because it belongs to nothing else."
+  ],
+  "graphical": [
+    "CSS2Properties"
   ]
 }

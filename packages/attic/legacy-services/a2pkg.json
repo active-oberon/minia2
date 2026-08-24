@@ -1,0 +1,21 @@
+{
+  "name": "attic/legacy-services",
+  "tier": 8,
+  "context": "A2",
+  "headless": false,
+  "status": "in-tree",
+  "description": "Network services of another era, kept because they are in the tree and they work: a Fidonet client and a stock-quote server.",
+  "provides": [
+    "Fido",
+    "QuoteServer"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/net": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Named 2026-08-24. Both compile headless; neither belongs in a payload. They were two of the 144 modules that used to ride into the image because they were 'not graphics'."
+  ]
+}

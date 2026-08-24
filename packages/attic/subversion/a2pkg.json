@@ -1,0 +1,33 @@
+{
+  "name": "attic/subversion",
+  "tier": 8,
+  "context": "A2",
+  "headless": false,
+  "status": "in-tree",
+  "description": "A Subversion client over WebDAV/DeltaV: the HTTP authentication, the XML of the DeltaV methods, the working-copy bookkeeping and the command line above them.",
+  "provides": [
+    "OdAuth",
+    "OdAuthBase",
+    "OdClient",
+    "OdCond",
+    "OdUtil",
+    "OdVCSBase",
+    "OdXml",
+    "SVNAdmin",
+    "SVNArgument",
+    "SVNOutput",
+    "SVNUtil",
+    "SVNWebDAV"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/net": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/web": "*"
+  },
+  "residual": [
+    "Named 2026-08-24 out of the unclaimed half of source/: twelve modules that nobody had claimed and that turn out to be one thing -- Od* is the WebDAV/DeltaV half (OdXml builds the DeltaV method bodies), SVN* (rstoll) the Subversion half above it.",
+    "In the tree, not in the payload: it compiles headless, but an SDK has no business carrying a version-control client. Moved here rather than deleted because it is a working client and the only one this system has."
+  ]
+}

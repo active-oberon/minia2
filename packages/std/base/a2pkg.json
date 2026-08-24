@@ -7,9 +7,11 @@
   "description": "The library that needs no host: strings and their pool, streams and number conversion, dates, bit sets, options, locks, pipes, the plugin registry, and the small collections.",
   "provides": [
     "BIT",
+    "Base64",
     "BitSets",
-    "Channels",
+    "BitStreams",
     "CRC",
+    "Channels",
     "Dates",
     "Diagnostics",
     "DynamicStrings",
@@ -21,10 +23,13 @@
     "Pipes",
     "Plugins",
     "RealConversions",
+    "ReleaseThreadPool",
+    "StreamUtilities",
     "Streams",
     "StringPool",
     "Strings",
     "TFClasses",
+    "TFStringPool",
     "UTF8Strings",
     "WMEvents"
   ],
@@ -38,6 +43,9 @@
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
     "Members were selected as high-fan-in AND low-fan-out (true foundation). High-fan-in HUBS were deliberately excluded because they also fan out into higher tiers and belong there, not in base: Configuration/Localization (pull XML -> std/web), Codecs (pull Raster -> std/gfx, SoundDevices), Repositories/Models (pull XML + WMEvents -> std/web + std/gui), Types (pull Texts -> std/text).",
     "Candidate additions pending confirmation they stay runtime-only: none outstanding in this batch.",
-    "Channels is a parametric module: it is instantiated in an import (Channels(Event)) and therefore must be in the library as a symbol file before anything can instantiate it. A module beside the program cannot be."
+    "Channels is a parametric module: it is instantiated in an import (Channels(Event)) and therefore must be in the library as a symbol file before anything can instantiate it. A module beside the program cannot be.",
+    "Base64 entered 2026-08-24: Streams and nothing else, which is what this package is for. It was named by no package at all.",
+    "BitStreams and StreamUtilities (Hunziker) entered 2026-08-24: reading and writing below the byte, and stream helpers -- Streams and nothing else, which is what this package is for.",
+    "ReleaseThreadPool (staubesv, a pool with job dependencies) and TFStringPool entered 2026-08-24. Both are library over Strings and locks despite their names, which is why they are here and not with the release tooling or the TF tools."
   ]
 }

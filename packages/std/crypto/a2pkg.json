@@ -7,6 +7,7 @@
   "description": "Ciphers (AES/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA3/Keccak), public-key (RSA/DSA/DH), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
   "provides": [
     "ASN1",
+    "Checksum",
     "CryptoAES",
     "CryptoARC4",
     "CryptoBase64",
@@ -35,6 +36,7 @@
     "CryptoStreams",
     "CryptoTwofish",
     "CryptoUtils",
+    "DES",
     "X509"
   ],
   "requires": {
@@ -43,5 +45,7 @@
     "std/runtime": "*",
     "std/system": "*"
   },
-  "residual": []
+  "residual": [
+    "DES and Checksum entered 2026-08-24, unclaimed until then: DES belongs beside the other ciphers, and Checksum (GF) is the md5/sha1/sha3 command over the hashes already here."
+  ]
 }

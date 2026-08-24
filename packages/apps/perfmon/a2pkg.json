@@ -1,0 +1,45 @@
+{
+  "name": "apps/perfmon",
+  "tier": 9,
+  "context": "A2",
+  "headless": false,
+  "status": "in-tree",
+  "description": "The performance monitor: the application, its tabs and components, the alert machinery, and a plugin per thing worth watching -- CPU, memory, heap, disks, network, processes, messages, module variables, the servers.",
+  "provides": [
+    "Performance",
+    "WMPerfMon",
+    "WMPerfMonAlerts",
+    "WMPerfMonAlertsUtils",
+    "WMPerfMonComponents",
+    "WMPerfMonPluginCpu",
+    "WMPerfMonPluginDisks",
+    "WMPerfMonPluginEvents",
+    "WMPerfMonPluginExample",
+    "WMPerfMonPluginFTPServer",
+    "WMPerfMonPluginHTTPServer",
+    "WMPerfMonPluginHeap",
+    "WMPerfMonPluginMemory",
+    "WMPerfMonPluginMessages",
+    "WMPerfMonPluginModVars",
+    "WMPerfMonPluginNetwork",
+    "WMPerfMonPluginPerfMon",
+    "WMPerfMonPluginProcesses",
+    "WMPerfMonPluginQuoteServer",
+    "WMPerfMonPluginSerials",
+    "WMPerfMonPluginVNCServer",
+    "WMPerfMonPlugins",
+    "WMPerfMonTabAlerts",
+    "WMPerfMonTabSystem"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/gui": "*",
+    "std/net": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Named 2026-08-24 out of packages/apps/README.md's list of candidates: twenty-odd modules that are one application, and the first of that list to become a manifest.",
+    "An application, so out of the payload; a plugin here is a module the monitor loads by name, which is why they are all named rather than left to a closure."
+  ]
+}
