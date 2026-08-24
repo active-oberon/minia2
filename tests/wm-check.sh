@@ -37,7 +37,7 @@ expected="$root/tests/wm-expected.txt"
 
 # Where what is compiled here goes, and where it is loaded from -- and this is not a detail.
 #
-# The runtime's own search path is bin, source, data, work, in that order, and the loader takes the
+# The runtime's own search path is work, bin, source, data, in that order, and the loader takes the
 # first answer. bin holds an object file for every module of the system, WindowManager among them. So
 # a check that compiles a module out of source/ into the working directory and then runs it does not
 # run what it compiled: it compiles, throws the result somewhere further down the path, and loads the

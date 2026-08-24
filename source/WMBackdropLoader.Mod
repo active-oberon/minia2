@@ -71,7 +71,7 @@ TYPE
 				FindSender(sender(WMStandardComponents.Button), index);
 				IF index >= 0 THEN
 					look := lookList.GetItem(index);
-					Strings.Concat("WMBackdrop.AddBackdropImage ", look.file, s);
+					Strings.Concat("WMBackdrop.SetBackdropImage ", look.file, s);
 					Strings.Concat(s, " ? ? ? ?", cmd);
 					Commands.Call(cmd, {}, res, msg);
 					IF res # 0 THEN KernelLog.Enter; KernelLog.String(msg); KernelLog.Exit END

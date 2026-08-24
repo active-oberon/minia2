@@ -3,7 +3,7 @@ MODULE WMBackdrop;	(** AUTHOR "TF"; PURPOSE "Backdrop images"; *)
 (* 03-04-03	RG: Context menu support added *)
 
 IMPORT
-	Kernel, Files, KernelLog, Streams, Modules, Commands, Options, Strings, WMRectangles, Raster, WMMessages,
+	Configuration, Kernel, Files, KernelLog, Streams, Modules, Commands, Options, Strings, WMRectangles, Raster,
 	WMWindowManager, WMGraphics, TFClasses, WMPopups, WMComponents, WMRestorable, WMDialogs, XML;
 
 CONST
@@ -128,26 +128,6 @@ TYPE
 			windowList.Remove(SELF)
 		END HandleRemove;
 
-		PROCEDURE Handle*(VAR x: WMMessages.Message);
-		VAR configuration : XML.Element; value : SIGNED32;
-		BEGIN
-			IF (x.msgType = WMMessages.MsgExt) & (x.ext # NIL) THEN
-				IF (x.ext IS WMRestorable.Storage) THEN
-					NEW(configuration); configuration.SetName("Configuration");
-					WMRestorable.StoreString(configuration, "Image", picname);
-					IF changeable THEN value := interval; ELSE value := 0; END;
-					WMRestorable.StoreLongint(configuration, "ChangeInterval", value);
-					WMRestorable.StoreBoolean(configuration, "Fullscreen", fullscreen);
-					WMRestorable.StoreLongint(configuration, "FullscreenX", fullscreenX);
-					WMRestorable.StoreLongint(configuration, "FullscreenY", fullscreenY);
-					WMRestorable.StoreLongint(configuration, "FullscreenW", fullscreenW);
-					WMRestorable.StoreLongint(configuration, "FullscreenH", fullscreenH);
-					x.ext(WMRestorable.Storage).Add("Backdrop", "WMBackdrop.Restore", SELF, configuration)
-				ELSE Handle^(x)
-				END
-			ELSE Handle^(x)
-			END
-		END Handle;
 
 		PROCEDURE Change(sender, data: ANY);
 		VAR index: SIZE; img : WMGraphics.Image;
@@ -458,7 +438,24 @@ BEGIN
 		manager.Remove(ptr(WMWindowManager.Window))
 	END;
 	windowList.Unlock;
+	windowList.Clear
 END Cleanup;
+
+(* SetBackdropImage replaces the backdrop instead of stacking one more on it, and keeps the choice over a restart. *)
+PROCEDURE SetBackdropImage*(context : Commands.Context); (** [Options] imagename ~ *)
+VAR rest, cmd, msg : ARRAY 256 OF CHAR; res : INTEGER;
+BEGIN
+	context.arg.Ln(rest); Strings.TrimWS(rest);
+	Cleanup;
+	cmd := "WMBackdrop.AddBackdropImage "; Strings.Append(cmd, rest);
+	Commands.Call(cmd, {}, res, msg);
+	IF res # Commands.Ok THEN
+		context.error.String(msg); context.error.Ln;
+		RETURN
+	END;
+	cmd := "WMBackdrop.SetBackdropImage "; Strings.Append(cmd, rest);
+	Configuration.Put("Autostart.Desktop wallpaper", cmd, res)
+END SetBackdropImage;
 
 PROCEDURE RemoveAll*;
 BEGIN
