@@ -208,7 +208,9 @@ speaking JSON-RPC over stdio. It provides:
   add **`--live`** to also re-check on change (the client debounces).
 - **hover** — type, kind and doc-comment of the symbol under the cursor (resolves
   across modules: hovering `KernelLog.Int` shows its real signature). Works on
-  use-sites inside procedures and object/record methods.
+  use-sites inside procedures and object/record methods. On a name in `IMPORT`, it
+  shows the resolved module and the path to its readable source instead of the
+  compiler's internal `ImportType` marker.
 - **go-to-definition** — jumps to the declaration. Same-file, and **across modules**:
   a symbol from another project module opens that module's source (a sibling in the
   mounted directory); a standard-library symbol opens its source too when you expose a
@@ -316,8 +318,8 @@ vim.lsp.start({
   name = "ob", cmd = cmd, root_dir = dir, init_options = init,
   flags = { debounce_text_changes = 500 },   -- live, but only after you pause typing
 })
--- keymaps: K = hover, gd / <C-]> / Ctrl-Click = go to definition
-vim.keymap.set("n", "K",  vim.lsp.buf.hover, { buffer = true })
+-- keymaps: gh = hover, gd / <C-]> / Ctrl-Click = go to definition
+vim.keymap.set("n", "gh", vim.lsp.buf.hover, { buffer = true })
 vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = true })
 ```
 Drop `--live` and the `flags` line for on-open/save-only. `vim.diagnostic.config`

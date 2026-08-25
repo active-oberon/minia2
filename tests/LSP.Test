@@ -462,7 +462,16 @@ positive: the helpers these tests are written with
 		Line(s, 0, "");
 		Line(s, 0, "IMPORT LspLib;");
 		Line(s, 0, "");
-		Line(s, 0, "VAR total*: SIGNED32;");
+		Line(s, 0, "TYPE");
+		Line(s, 1, "Holder = OBJECT");
+		Line(s, 2, "VAR p: LspLib.Point;");
+		Line(s, 2, "PROCEDURE Move;");
+		Line(s, 2, "BEGIN");
+		Line(s, 3, "LOOP LspLib.Shift(p, 1, 2); EXIT END");
+		Line(s, 2, "END Move;");
+		Line(s, 1, "END Holder;");
+		Line(s, 0, "");
+		Line(s, 0, "VAR total*: SIGNED32; holder: Holder;");
 		Line(s, 0, "");
 		Line(s, 1, "PROCEDURE Sum;");
 		Line(s, 1, "VAR i: SIGNED32;");
@@ -479,7 +488,7 @@ positive: the helpers these tests are written with
 		Line(s, 1, "END Other;");
 		Line(s, 0, "");
 		Line(s, 0, "BEGIN");
-		Line(s, 1, "Sum; Other");
+		Line(s, 1, "NEW(holder); holder.Move; Sum; Other");
 		Line(s, 0, "END LspMain.")
 	END Main;
 
@@ -626,28 +635,35 @@ positive: a module opens with no diagnostics, and a broken one is diagnosed wher
 		T.Project(s, lib, main);
 		T.Broken(broken); s.Open("file://lsp/Broken.Mod", broken);
 		s.Run(FALSE);
-		ASSERT(T.Count(s.Published(T.LibUri, 0)) = 0);
-		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0);
+		ASSERT(T.Count(s.Published(T.LibUri, 0)) = 0, 101);
+		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0, 102);
 		d := T.Item(s.Published("file://lsp/Broken.Mod", 0), 0);
-		ASSERT(d # NIL);
-		ASSERT(T.Number(T.Field(d, "severity")) = 1);
-		ASSERT(T.Is(T.Field(d, "source"), "oberon"));
-		ASSERT(T.Str(T.Field(d, "message")) # NIL);
-		ASSERT(T.Starts(d, broken, "nosuch", 0))
+		ASSERT(d # NIL, 103);
+		ASSERT(T.Number(T.Field(d, "severity")) = 1, 104);
+		ASSERT(T.Is(T.Field(d, "source"), "oberon"), 105);
+		ASSERT(T.Str(T.Field(d, "message")) # NIL, 106);
+		ASSERT(T.Starts(d, broken, "nosuch", 0), 107)
 	END Test.
 
-positive: hover answers about a call into another module, and about a local
+positive: hover answers about an imported module, a call into it, and a local
 
 	MODULE Test;
 	IMPORT T := LSPTestShared, JSON;
-	VAR s: T.Session; lib, main: T.Text; p: T.Text; call, local: SIGNED32; r: JSON.Value;
+	VAR s: T.Session; lib, main: T.Text; p: T.Text; imported, call, local: SIGNED32; r: JSON.Value;
 	BEGIN
 		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "IMPORT LspLib", 7, "", p);
+		imported := s.Request("textDocument/hover", p);
 		T.DocAt(T.MainUri, main, "LspLib.Add", 8, "", p);
 		call := s.Request("textDocument/hover", p);
 		T.DocAt(T.MainUri, main, "i := 0", 0, "", p);
 		local := s.Request("textDocument/hover", p);
 		s.Run(FALSE);
+		r := s.Answer(imported);
+		ASSERT(T.IndexOf(T.Str(T.Field2(r, "contents", "value"))^, "module LspLib", 0) = 0, 201);
+		ASSERT(T.IndexOf(T.Str(T.Field2(r, "contents", "value"))^, "source: ", 0) > 0, 202);
+		ASSERT(T.IndexOf(T.Str(T.Field2(r, "contents", "value"))^, "LspLib.Mod", 0) > 0, 203);
+		ASSERT(T.Starts(r, main, "IMPORT LspLib", 7), 204);
 		r := s.Answer(call);
 		ASSERT(T.Is(T.Field2(r, "contents", "value"),
 			"procedure Add : PROCEDURE(a: SIGNED32; b: SIGNED32): SIGNED32"));
@@ -673,6 +689,21 @@ positive: go-to-definition crosses into the other module, and works inside one p
 		ASSERT(T.Starts(r, lib, "PROCEDURE Add*", 10));
 		r := s.Answer(near);
 		ASSERT(T.Starts(r, main, "VAR i: SIGNED32", 4))
+	END Test.
+
+positive: go-to-definition works from inside an object method
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; id: SIGNED32; r: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "LspLib.Shift", 8, "", p);
+		id := s.Request("textDocument/definition", p);
+		s.Run(FALSE);
+		r := s.Answer(id);
+		ASSERT(T.Is(T.Field(r, "uri"), T.LibUri));
+		ASSERT(T.Starts(r, lib, "PROCEDURE Shift*", 10))
 	END Test.
 
 positive: the outline lists what a module declares, and nests a record's fields under it
@@ -1045,10 +1076,10 @@ positive: a change is not diagnosed, a save is, and closing withdraws what was s
 		s.Save(T.MainUri, edited);
 		s.Close(T.MainUri);
 		s.Run(FALSE);
-		ASSERT(s.Publishes(T.MainUri) = 3);             (* open, save, close -- the change is not one *)
-		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0);
-		ASSERT(T.Number(T.Field(T.Item(s.Published(T.MainUri, 1), 0), "severity")) = 1);
-		ASSERT(T.Count(s.Published(T.MainUri, 2)) = 0)
+		ASSERT(s.Publishes(T.MainUri) = 3, 301);             (* open, save, close -- the change is not one *)
+		ASSERT(T.Count(s.Published(T.MainUri, 0)) = 0, 302);
+		ASSERT(T.Number(T.Field(T.Item(s.Published(T.MainUri, 1), 0), "severity")) = 1, 303);
+		ASSERT(T.Count(s.Published(T.MainUri, 2)) = 0, 304)
 	END Test.
 
 positive: in live mode the change itself is diagnosed
