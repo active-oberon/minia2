@@ -155,21 +155,27 @@ the package.
 
 Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 
+Here `<leader>` is one Space key. For example, `<leader>df` means press `Space`, then
+`d`, then `f` (without another Space). The file tree has one shortcut, `<C-n>`, which
+opens or closes it; NvChad's redundant global `<leader>e` tree-focus mapping is disabled.
+
 | Key | Action |
 |-----|--------|
-| `K` | Hover (type / signature / doc) |
+| `gh` | Toggle hover (type / signature / doc; an import shows its module and source path). The popup never takes keyboard focus and also closes when the cursor moves. |
 | `gd`, `<C-]>`, `Ctrl-Click` | Go to definition |
 | `gr` | Find references (Telescope picker / quickfix) |
 | `g0` | Document outline as a picker (Telescope / loclist) — type to filter |
 | `gO` | Document outline as a **side panel** ([outline.nvim](https://github.com/hedyhli/outline.nvim)) — the tree as the server sends it |
 | `<leader>rr` | Compile and run the current module (`ob run %`) — output in the pager, `Enter` returns |
 | `<leader>rb` | Compile only, binary to `/tmp/<Module>` (`ob build`) |
-| `<leader>ra` | Rename (NVChad default) |
+| `<leader>ra` | Rename the symbol under the cursor |
 | `<leader>fm` | Format buffer (NVChad default), or `:lua vim.lsp.buf.format()` |
-| `<leader>ca` | Code actions (NVChad default), or `:lua vim.lsp.buf.code_action()` |
+| `<leader>ca` | Code actions (Normal or Visual mode), or `:lua vim.lsp.buf.code_action()` |
 | *(auto)* | Completion (nvim-cmp); manual trigger `<C-Space>` |
-| `:lua vim.lsp.buf.signature_help()` | Signature help (bind a key if you like) |
-| `[d` / `]d`, `<leader>e` | Diagnostics navigation / float (NVChad defaults) |
+| `<C-S>` in Insert mode, or `:lua vim.lsp.buf.signature_help()` | Signature help |
+| `[d` / `]d` | Previous / next diagnostic |
+| `<leader>df` | Full diagnostic for the current line (or an explicit “none” message) |
+| `<leader>ds` | All diagnostics in the location list (NvChad default) |
 | `za` / `zA` | Fold or unfold what the cursor is in (`zA` takes the nested folds with it) |
 | `zc` / `zo`, `zC` / `zO` | Close / open one fold, or all of them under the cursor |
 | `zM` / `zR` | Close everything / open everything |
@@ -202,9 +208,8 @@ being checked, not a word that happens to be a keyword.
 
 `:Inspect` on a word says which groups it got, which is the quickest way to see whether the server
 sent the modifier at all. A colour change needs only `:e` — it is client-side. A **new `ob` binary**
-needs the server restarted, and there is no `:LspRestart` to reach for: nvim-lspconfig 2.x dropped
-its `Lsp*` commands and this client is started by the ftplugin with `vim.lsp.start` rather than by
-lspconfig, so nothing registers one. Hence `:ObRestart`.
+needs the server restarted. Neovim 0.12 has the built-in `:lsp restart ob`; `:ObRestart` wraps it
+and also starts the server again if the old client has already stopped or crashed.
 Folding is vim's own set of keys; the server only supplies the ranges. A file opens unfolded
 (`foldlevel = 99` in the ftplugin — set it to `0` there if you would rather start folded). On a
 67-line module `zM` leaves 13 lines: the header, the constants, the object and one line per

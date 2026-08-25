@@ -230,11 +230,12 @@ TYPE
 		END WSeq;
 
 		PROCEDURE WStmt (s: SyntaxTree.Statement);
-		VAR i: SIZE; cp: SyntaxTree.CasePart;
+		VAR i: SIZE; cp: SyntaxTree.CasePart; wp: SyntaxTree.WithPart;
 		BEGIN
 			IF s = NIL THEN RETURN END;
 			WITH s:
 				  SyntaxTree.Assignment DO WExpr(s.left); WExpr(s.right)
+				| SyntaxTree.DeclarationStatement DO WList(s.initializers)
 				| SyntaxTree.CommunicationStatement DO WExpr(s.left); WExpr(s.right)
 				| SyntaxTree.ProcedureCallStatement DO WExpr(s.call)
 				| SyntaxTree.IfStatement DO
@@ -243,10 +244,18 @@ TYPE
 						WExpr(s.GetElsifPart(i).condition); WSeq(s.GetElsifPart(i).statements)
 					END;
 					WSeq(s.elsePart)
+				| SyntaxTree.WithStatement DO
+					WExpr(s.variable);
+					FOR i := 0 TO s.WithParts()-1 DO
+						wp := s.GetWithPart(i); WType(wp.type); WSeq(wp.statements)
+					END;
+					WSeq(s.elsePart)
 				| SyntaxTree.WhileStatement DO WExpr(s.condition); WSeq(s.statements)
 				| SyntaxTree.RepeatStatement DO WExpr(s.condition); WSeq(s.statements)
 				| SyntaxTree.ForStatement DO WExpr(s.variable); WExpr(s.from); WExpr(s.to); WExpr(s.by); WSeq(s.statements)
-				| SyntaxTree.ReturnStatement DO WExpr(s.returnValue)
+				| SyntaxTree.LoopStatement DO WSeq(s.statements)
+				| SyntaxTree.ExitableBlock DO WSeq(s.statements)
+				| SyntaxTree.ReturnStatement DO WExpr(s.returnValue); WExpr(s.assignmentOperator)
 				| SyntaxTree.AwaitStatement DO WExpr(s.condition)
 				| SyntaxTree.CaseStatement DO
 					WExpr(s.variable);
@@ -265,9 +274,10 @@ TYPE
 		   annotations of its symbols (variables, fields, parameters, procedure
 		   signatures, declared types' base/element types); (2) walk procedure/method
 		   bodies. This covers module procedures, nested procedures, AND members
-		   declared inside OBJECT/RECORD types (whose scopes are nested scopes). *)
+		   declared inside OBJECT/RECORD types. *)
 		PROCEDURE WScope (scope: SyntaxTree.Scope);
-		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol; dnm: ARRAY 128 OF CHAR;
+		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol; proc: SyntaxTree.Procedure;
+			i: SIZE; dnm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF scope = NIL THEN RETURN END;
 			sym := scope.firstSymbol;
@@ -287,12 +297,34 @@ TYPE
 				END;
 				sym := sym.nextSymbol
 			END;
+			(* Record/object method scopes need their own edge. Prefer the checker's
+			   resolved method list; fall back to the parser's declaration list so a
+			   partly-written object remains navigable. *)
+			IF scope IS SyntaxTree.RecordScope THEN
+				proc := scope.firstProcedure;
+				IF proc # NIL THEN
+					WHILE proc # NIL DO
+						IF proc.procedureScope # NIL THEN WScope(proc.procedureScope) END;
+						proc := proc.nextProcedure
+					END
+				ELSIF scope.procedures # NIL THEN
+					FOR i := 0 TO scope.procedures.Length()-1 DO
+						proc := scope.procedures.GetProcedure(i);
+						IF (proc # NIL) & (proc.procedureScope # NIL) THEN WScope(proc.procedureScope) END
+					END
+				END
+			END;
 			WITH scope: SyntaxTree.ProcedureScope DO
 				IF scope.body # NIL THEN WSeq(scope.body.statements) END
 			ELSE
 			END;
 			ns := scope.firstScope;
-			WHILE ns # NIL DO WScope(ns); ns := ns.nextScope END
+			WHILE ns # NIL DO
+				(* Procedure scopes of records were visited through firstProcedure above;
+				   do not emit their references/tokens twice if a checker also linked them. *)
+				IF ~(scope IS SyntaxTree.RecordScope) OR ~(ns IS SyntaxTree.ProcedureScope) THEN WScope(ns) END;
+				ns := ns.nextScope
+			END
 		END WScope;
 
 		PROCEDURE Traverse (module: SyntaxTree.Module);
@@ -344,7 +376,8 @@ TYPE
 	VAR target: ARRAY 128 OF CHAR; found: SyntaxTree.Symbol;
 
 		PROCEDURE Scan (scope: SyntaxTree.Scope);
-		VAR sym: SyntaxTree.Symbol; ns: SyntaxTree.Scope; nm: ARRAY 128 OF CHAR;
+		VAR sym: SyntaxTree.Symbol; proc: SyntaxTree.Procedure; ns: SyntaxTree.Scope;
+			i: SIZE; nm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF (scope = NIL) OR (found # NIL) THEN RETURN END;
 			sym := scope.firstSymbol;
@@ -352,6 +385,18 @@ TYPE
 				sym.GetName(nm);
 				IF (nm = target) & (sym.position.line > 0) THEN found := sym; RETURN END;
 				sym := sym.nextSymbol
+			END;
+			(* Inline declarations can be absent from firstSymbol in a freshly checked
+			   source module even though they are exported in its .SymUu. The parser's
+			   procedure list retains every spelling and its reliable source position. *)
+			IF (found = NIL) & (scope.procedures # NIL) THEN
+				FOR i := 0 TO scope.procedures.Length()-1 DO
+					proc := scope.procedures.GetProcedure(i);
+					IF proc # NIL THEN
+						proc.GetName(nm);
+						IF (nm = target) & (proc.position.line > 0) THEN found := proc; RETURN END
+					END
+				END
 			END;
 			ns := scope.firstScope;
 			WHILE (ns # NIL) & (found = NIL) DO Scan(ns); ns := ns.nextScope END
@@ -1177,17 +1222,30 @@ VAR
 	END FindDeclPos;
 
 	(* textDocument/hover result, or NIL if nothing under the offset. *)
-	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64): JSON.Value;
-	VAR module: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
+	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	VAR module, imported: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
 		nm: ARRAY 128 OF CHAR; kd: ARRAY 16 OF CHAR; ts: Strings.String; lf: ARRAY 2 OF CHAR;
-		val: ARRAY 1024 OF CHAR; contents, range, result: JSON.Object; line, char: SIGNED32;
+		val, fn: ARRAY 1024 OF CHAR; contents, range, result: JSON.Object; line, char: SIGNED32;
 	BEGIN
 		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
 		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
-		sym := f.foundSym; sym.GetName(nm); Kind(sym, kd); ts := TypeStr(sym);
-		COPY(kd, val); Strings.Append(val, " "); Strings.Append(val, nm);
-		IF ts # NIL THEN Strings.Append(val, " : "); Strings.Append(val, ts^) END;
-		IF sym.comment # NIL THEN lf[0] := LF; lf[1] := 0X; Strings.Append(val, lf); Strings.Append(val, sym.comment.source^) END;
+		sym := f.foundSym; lf[0] := LF; lf[1] := 0X;
+		(* An import's `type` is the compiler marker ImportType. It is useful to the
+		   checker but meaningless in an editor, where the real module and its readable
+		   source are the useful answer. Use the module's name rather than a local alias. *)
+		IF sym IS SyntaxTree.Import THEN
+			imported := sym(SyntaxTree.Import).module;
+			IF imported # NIL THEN imported.GetName(nm) ELSE sym.GetName(nm) END;
+			COPY("module ", val); Strings.Append(val, nm);
+			IF ModSourceFile(uri, nm, fn) THEN
+				Strings.Append(val, lf); Strings.Append(val, "source: "); Strings.Append(val, fn)
+			END
+		ELSE
+			sym.GetName(nm); Kind(sym, kd); ts := TypeStr(sym);
+			COPY(kd, val); Strings.Append(val, " "); Strings.Append(val, nm);
+			IF ts # NIL THEN Strings.Append(val, " : "); Strings.Append(val, ts^) END;
+			IF sym.comment # NIL THEN Strings.Append(val, lf); Strings.Append(val, sym.comment.source^) END
+		END;
 		contents := JSON.NewObject();
 		contents.Set("kind", JSON.NewString("plaintext"));
 		contents.Set("value", JSON.NewString(val));
@@ -2460,7 +2518,7 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
-							IF doc # NIL THEN res := HoverAt(doc.text, PosToOffset(doc.text, line, char)) END
+							IF doc # NIL THEN res := HoverAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/definition" THEN
