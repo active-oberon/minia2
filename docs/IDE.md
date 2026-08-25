@@ -156,8 +156,10 @@ the package.
 Buffer-local in `.Mod` files (plus your config-manager's own LSP maps):
 
 Here `<leader>` is one Space key. For example, `<leader>df` means press `Space`, then
-`d`, then `f` (without another Space). The file tree has one shortcut, `<C-n>`, which
-opens or closes it; NvChad's redundant global `<leader>e` tree-focus mapping is disabled.
+`d`, then `f` (without another Space). The file tree keeps its NvChad defaults: `<C-n>`
+opens or closes it, `<leader>e` puts the cursor in it. Under Termux, set the app's
+new-session shortcut to something other than `ctrl + n` — the app takes that key
+before the terminal, and Neovim never sees it.
 
 | Key | Action |
 |-----|--------|
