@@ -906,6 +906,40 @@ positive: completion outside a qualified name offers the language's own words
 		ASSERT(T.ItemWith(items, "label", "AWAIT") # NIL)
 	END Test.
 
+positive: a library import resolves, whatever architecture the server was built for
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, uses, p: T.Text; id: SIGNED32; items: JSON.Value;
+	BEGIN
+		(*	Every other case here imports a fixture and nothing else, so until this one nothing
+			asked the server to resolve a module out of the library -- and the suite drives
+			LSP.Run directly, so what it resolves against is whatever the module's own default
+			target says. That default was the Linux64 suffix written out as a literal, so under
+			`ob test -t a64`, where the library beside it is .SymU8, no library import resolved at
+			all and no case noticed. The default now comes from the build. *)
+		T.Project(s, lib, main);
+		uses := "";
+		T.Line(uses, 0, "MODULE LspUsesLib;");
+		T.Line(uses, 0, "IMPORT Files;");
+		T.Line(uses, 1, "PROCEDURE Open* (CONST name: ARRAY OF CHAR): Files.File;");
+		T.Line(uses, 1, "BEGIN");
+		T.Line(uses, 2, "RETURN Files.Old(name)");
+		T.Line(uses, 1, "END Open;");
+		T.Line(uses, 0, "END LspUsesLib.");
+		s.Open("file://lsp/LspUsesLib.Mod", uses);
+		T.DocAt("file://lsp/LspUsesLib.Mod", uses, "Files.Old(name)", 6,
+			',"context":{"triggerKind":2,"triggerCharacter":"."}', p);
+		id := s.Request("textDocument/completion", p);
+		s.Run(FALSE);
+		items := s.Answer(id);
+		ASSERT(T.Count(items) > 0, 170);                  (* nothing resolved -> nothing to offer *)
+		ASSERT(T.ItemWith(items, "label", "Old") # NIL, 171);
+		ASSERT(T.ItemWith(items, "label", "New") # NIL, 172);
+		(* and the module checks clean, which is the stronger half: an unresolved import is an error *)
+		ASSERT(T.Count(s.Published("file://lsp/LspUsesLib.Mod", 0)) = 0, 173)
+	END Test.
+
 positive: signature help names the procedure, its parameters, and which one is being typed
 
 	MODULE Test;
@@ -1160,11 +1194,12 @@ positive: an import nothing names can be removed, and one that is used is left a
 			surgery -- the comma has to go with the name, or the list stops being one. Both edits
 			are queued before the one Run: `exit` ends the session, so a case gets one.
 
-			The spare import is a fixture of this case's own and not a library module. Under
-			`ob test -t a64` the server looks for `.SymUu` while the library beside it is `.SymU8`,
-			so a library import resolves to nothing there, nothing is marked used, and the case
-			offered to remove the import that IS used -- which is how the A64 suites caught it. A
-			module whose source is in the directory is built from source on either architecture. *)
+			The spare import is a fixture of this case's own and not a library module, so the case
+			says nothing about what the payload happens to ship. It was a library module once, and
+			the A64 suites failed on it: the server's default symbol suffix was the Linux64 one
+			whatever it ran on, so no library import resolved, nothing was marked used, and the
+			case saw an offer to remove the import that IS used. The default is derived from the
+			build now (LSP.Mod's body), and the fixture stays because it is the tighter test. *)
 		spare := "";
 		T.Line(spare, 0, "MODULE LspSpare;");
 		T.Line(spare, 0, "END LspSpare.");

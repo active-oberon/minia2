@@ -543,13 +543,22 @@ else
 	winout="$work/win-sdk"
 	if "$root/tests/win-bundle.sh" "$build" -o "$winout" --no-tar > "$work/win-bundle.log" 2>&1; then
 		runsdk() { ( cd "$winout" && WINEDEBUG=-all env -u A2SDK timeout 900 wine "$@" 2>&1 | grep -v "Authorization required" ); }
-		case "$(runsdk ob.exe version)" in
+		# Captured once and reported from the capture. Re-running the command inside the FAIL
+		# branch printed a SECOND, healthy run under a failure label -- which is what a cold wine
+		# prefix produces: the first invocation after a rebuild is slow enough to say nothing, the
+		# next one works, and the message then contradicted itself.
+		winsaid="$(runsdk ob.exe version)"
+		case "$winsaid" in
 			*"targets : win64"*) echo "ok    the Windows bundle knows what it is and what it targets" ;;
-			*) echo "FAIL  windows bundle version: $(runsdk ob.exe version | tr '\n' ' ')"; fail=1 ;;
+			*) echo "FAIL  windows bundle version: $(printf '%s' "$winsaid" | tr '\n' ' ')"; fail=1 ;;
 		esac
-		case "$(runsdk ob.exe run examples/Hello.Mod)" in
+		# examples/Hello.Mod with a forward slash on purpose: it is what every document here writes
+		# and what a user types, and until 2026-08-26 ob.exe resolved it, found it, and then could
+		# not open it -- reported as "no MODULE header" about a file that opens with MODULE.
+		winsaid="$(runsdk ob.exe run examples/Hello.Mod)"
+		case "$winsaid" in
 			*"Hello from A2"*) echo "ok    the Windows bundle compiles and runs a module" ;;
-			*) echo "FAIL  windows bundle run: $(runsdk ob.exe run examples/Hello.Mod | tr '\n' ' ')"; fail=1 ;;
+			*) echo "FAIL  windows bundle run: $(printf '%s' "$winsaid" | tr '\n' ' ')"; fail=1 ;;
 		esac
 		# The output is kept: this used to be `>/dev/null 2>&1 || true`, and then a wine that was
 		# merely slow to start -- which is what the first wine of a session after a rebuild is --

@@ -3176,6 +3176,17 @@ VAR
 	BEGIN Serve(context, TRUE) END RunLive;
 
 BEGIN
-	(* what the two literals used to say, for a caller that never sets a target *)
+	(*	The target this module was built for, which is the only sensible default for a caller that
+		names none. `ob lsp` sets it from its own host settings (sdk/Ob.Mod), but the test suite
+		drives Run directly -- and with ".SymUu" written in here it looked for Linux64 symbol files
+		whatever it was running on, so under the AArch64 suites no library import resolved at all
+		and nothing said so. The three cases and their spelling are sdk/Ob.Mod:29's; the names come
+		from the platform the compiler was given (Compiler.Mod:601 for Win64, :609 for UnixA64). *)
+#IF WIN THEN
+	SetTarget(".SymWw", "Win64")
+#ELSIF ARM64 THEN
+	SetTarget(".SymU8", "UnixA64")
+#ELSE
 	SetTarget(".SymUu", "Unix64")
+#END
 END LSP.

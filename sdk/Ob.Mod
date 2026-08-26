@@ -568,7 +568,7 @@ BEGIN
 		DieOn("cannot create the output directory: ", output); RETURN
 	END;
 	IF ~ObHost.RealPath(output, work) THEN DieOn("no such directory: ", output); RETURN END;
-	IF ~ModuleName(absolute, name) THEN DieOn("no MODULE header in ", source); RETURN END;
+	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
 	IF ~PrepareIn(work) THEN RETURN END;
 	BuildSiblings(work, CompilerPlatform, ObjectExtension, SymbolExtension);
 	IF ~CompileFile(absolute, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE) THEN
@@ -646,7 +646,7 @@ BEGIN
 	END;
 	IF ~NextArgument(procedure) OR (procedure = "") THEN procedure := "Do" END;
 	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
-	IF ~ModuleName(absolute, name) THEN DieOn("no MODULE header in ", source); RETURN END;
+	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	IF ~PrepareIn(scratch) THEN RETURN END;
 	BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension);
@@ -813,7 +813,7 @@ BEGIN
 		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [Proc]"); RETURN
 	END;
 	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
-	IF ~ModuleName(absolute, name) THEN DieOn("no MODULE header in ", source); RETURN END;
+	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
 	IF ~TargetSettings(target, compilerPlatform, objectExtension, symbolExtension,
 			linkOptions, suffix, boot) THEN RETURN END;
 	IF ~TargetLibrary(target, library) THEN RETURN END;
@@ -1094,7 +1094,7 @@ END LintVerb;
 PROCEDURE DocumentModule(CONST file, scratch, output: ARRAY OF CHAR): BOOLEAN;
 VAR name, page, source, destination: Path;
 BEGIN
-	IF ~ModuleName(file, name) THEN DieOn("no MODULE header in ", file); RETURN FALSE END;
+	IF ~ModuleName(file, name) THEN DieOn("cannot read a MODULE header from ", file); RETURN FALSE END;
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddSearchPath(scratch)
 			OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
 	COPY(name, page); Strings.Append(page, ".html");
