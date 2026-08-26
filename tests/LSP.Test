@@ -615,6 +615,8 @@ positive: initialize announces every provider, with the triggers and the token l
 		ASSERT(T.True(T.Field(caps, "codeActionProvider")));
 		ASSERT(T.True(T.Field(caps, "foldingRangeProvider")));
 		ASSERT(T.True(T.Field(caps, "workspaceSymbolProvider")));
+		ASSERT(T.True(T.Field(caps, "typeDefinitionProvider")));
+		ASSERT(T.True(T.Field(caps, "documentHighlightProvider")));
 		ASSERT(T.Number(T.Field(caps, "textDocumentSync")) = 1);
 		ASSERT(T.Is(T.Item(T.Field2(caps, "completionProvider", "triggerCharacters"), 0), "."));
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
@@ -705,6 +707,58 @@ positive: go-to-definition works from inside an object method
 		r := s.Answer(id);
 		ASSERT(T.Is(T.Field(r, "uri"), T.LibUri));
 		ASSERT(T.Starts(r, lib, "PROCEDURE Shift*", 10))
+	END Test.
+
+positive: go-to-type-definition answers the type, in this file and in the other one
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; own, other, basic: SIGNED32; a: JSON.Value;
+	BEGIN
+		(*	The jump go-to-definition cannot make: on a variable it answers the variable, and what
+			one wants next is the type. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "NEW(holder)", 4, "", p);        (* holder: Holder, this file *)
+		own := s.Request("textDocument/typeDefinition", p);
+		T.DocAt(T.MainUri, main, "LspLib.Shift(p, 1, 2)", 13, "", p);   (* p: LspLib.Point *)
+		other := s.Request("textDocument/typeDefinition", p);
+		T.DocAt(T.MainUri, main, "total := total + i", 0, "", p);  (* SIGNED32 is declared nowhere *)
+		basic := s.Request("textDocument/typeDefinition", p);
+		s.Run(FALSE);
+		a := s.Answer(own);
+		ASSERT(T.Is(T.Field(a, "uri"), T.MainUri), 130);
+		ASSERT(T.Starts(a, main, "Holder = OBJECT", 0), 131);
+		a := s.Answer(other);
+		ASSERT(T.Is(T.Field(a, "uri"), T.LibUri), 132);
+		ASSERT(T.Starts(a, lib, "Point* = RECORD", 0), 133);
+		(* a basic type has no declaration to open, and saying null beats opening the wrong line *)
+		ASSERT(T.IsNull(s.Answer(basic)), 134)
+	END Test.
+
+positive: the name under the cursor is highlighted where it is used, and only there
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, p: T.Text; local, wide: SIGNED32; a: JSON.Value;
+	BEGIN
+		(*	The same collection find-all-references makes, minus the sweep over the project: this
+			one is about the buffer, and a client asks for it whenever the cursor stops. *)
+		T.Project(s, lib, main);
+		T.DocAt(T.MainUri, main, "i := 0", 0, "", p);
+		local := s.Request("textDocument/documentHighlight", p);
+		T.DocAt(T.MainUri, main, "total := LspLib.Add", 0, "", p);
+		wide := s.Request("textDocument/documentHighlight", p);
+		s.Run(FALSE);
+		a := s.Answer(local);
+		ASSERT(T.Count(a) = 4, 140);                              (* Sum's own i, four times *)
+		ASSERT(T.Anywhere(a, main, "VAR i: SIGNED32", 4), 141);
+		ASSERT(~T.Anywhere(a, main, "i := 99", 0), 142);          (* Other's i is another i *)
+		ASSERT(T.Number(T.Field(T.Item(a, 0), "kind")) = 1, 143); (* Text *)
+		a := s.Answer(wide);
+		ASSERT(T.Count(a) = 4, 144);                              (* total: its declaration and three uses *)
+		ASSERT(T.Anywhere(a, main, "VAR total*: SIGNED32", 4), 145);
+		ASSERT(T.Item(a, 0) # NIL);
+		ASSERT(T.Field(T.Item(a, 0), "uri") = NIL, 146)           (* a highlight is a range, not a location *)
 	END Test.
 
 positive: the outline lists what a module declares, and nests a record's fields under it

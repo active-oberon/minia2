@@ -215,6 +215,13 @@ speaking JSON-RPC over stdio. It provides:
   a symbol from another project module opens that module's source (a sibling in the
   mounted directory); a standard-library symbol opens its source too when you expose a
   source tree (see *stdlib jumps* below).
+- **go-to-type-definition** — the jump go-to-definition cannot make: on a variable it
+  answers the variable, this answers where its *type* is declared, in this module or in
+  another one. A pointer to a named record answers the record; a basic or anonymous type
+  is declared nowhere and answers null.
+- **document highlight** — every use of the name under the cursor in the open file, which
+  is find-all-references without the sweep over the project. A local is collected by its
+  own scope, so a sibling procedure's same-named local is not highlighted with it.
 - **document symbols** — a hierarchical outline of the module: types with their fields
   and methods as children, plus procedures, variables and constants. Powers the
   editor's outline/breadcrumbs (the equivalent of PET's module-tree side panel).

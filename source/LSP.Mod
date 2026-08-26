@@ -2082,6 +2082,85 @@ VAR
 		RETURN result
 	END RenameAt;
 
+	(* ---- go to the type, and highlight the name ---- *)
+
+	(*	textDocument/typeDefinition: not where the name under the cursor is declared, but where its
+		TYPE is. On `VAR w: Streams.Writer` this lands on Streams' declaration of Writer -- the jump
+		go-to-definition cannot make, because that one is about the variable. A pointer to a named
+		record answers the record; a basic or anonymous type is declared nowhere and answers null. *)
+	PROCEDURE TypeDefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	VAR module, owner: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; t, base: SyntaxTree.Type;
+		td: SyntaxTree.TypeDeclaration; nm, mname: ARRAY 128 OF CHAR; line, char: SIGNED32;
+		targetUri: Strings.String;
+	BEGIN
+		module := Analyze(text); IF module = NIL THEN RETURN NIL END;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN NIL END;
+		sym := f.foundSym;
+		IF sym IS SyntaxTree.TypeDeclaration THEN t := sym(SyntaxTree.TypeDeclaration).declaredType
+		ELSE t := sym.type
+		END;
+		IF t = NIL THEN RETURN NIL END;
+		t := t.resolvedType; IF t = NIL THEN RETURN NIL END;
+		IF (t.typeDeclaration = NIL) & (t IS SyntaxTree.PointerType) THEN
+			base := t(SyntaxTree.PointerType).pointerBase;
+			IF base # NIL THEN t := base.resolvedType END
+		END;
+		IF t = NIL THEN RETURN NIL END;
+		td := t.typeDeclaration;
+		IF (td = NIL) OR (td.scope = NIL) OR (td.scope.ownerModule = NIL) THEN RETURN NIL END;
+		owner := td.scope.ownerModule; td.GetName(nm);
+		IF owner = module THEN
+			IF td.position.line <= 0 THEN RETURN NIL END;
+			targetUri := uri;
+			line := SIGNED32(td.position.line) - 1;
+			char := SIGNED32(td.position.start - td.position.linepos)
+		ELSE
+			(* another module: a position read back from a .SymUu is not reliable, so the real
+			   coordinates come from that module's own source -- as go-to-definition does *)
+			owner.GetName(mname);
+			targetUri := SourceUriFor(uri, mname);
+			IF targetUri = NIL THEN RETURN NIL END;
+			IF ~FindDeclPos(uri, mname, nm, line, char) THEN RETURN NIL END
+		END;
+		RETURN Location(targetUri, line, char, SIGNED32(Strings.Length(nm)))
+	END TypeDefinitionAt;
+
+	(*	textDocument/documentHighlight: every use of the symbol under the cursor in THIS file. The
+		collection find-all-references does, without the sweep over the project: a highlight is
+		about the buffer, and a client asks for one whenever the cursor stops moving. Kind is Text
+		throughout -- the syntax tree records that a symbol is written to, not which use did it. *)
+	PROCEDURE DocumentHighlights (text: Strings.String; offset: SIGNED64): JSON.Value;
+	VAR module: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; arr: JSON.Array;
+		name, owner: ARRAY 128 OF CHAR; kind, i, line, char: SIGNED32; narrow: SyntaxTree.Scope;
+		range, one: JSON.Object;
+	BEGIN
+		arr := JSON.NewArray();
+		module := Analyze(text); IF module = NIL THEN RETURN arr END;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN arr END;
+		sym := f.foundSym;
+		IF (sym.scope = NIL) OR (sym.scope.ownerModule = NIL) THEN RETURN arr END;
+		sym.GetName(name); sym.scope.ownerModule.GetName(owner); kind := f.KindOf(sym);
+		(* a local is collected by its own scope, or a sibling procedure's same-named local joins in *)
+		IF (sym.scope IS SyntaxTree.ModuleScope) OR (sym.scope IS SyntaxTree.RecordScope) THEN
+			narrow := NIL
+		ELSE
+			narrow := sym.scope
+		END;
+		f.CollectRefs(module, name, owner, kind, narrow);
+		i := 0;
+		WHILE i < f.refN DO
+			OffsetToPos(text, f.refOff[i], line, char);
+			range := JSON.NewObject();
+			range.Set("start", Position(line, char));
+			range.Set("end", Position(line, char + f.refLen[i]));
+			one := JSON.NewObject(); one.Set("range", range);
+			one.Set("kind", JSON.NewNumber(1));   (* Text *)
+			arr.Add(one);
+			INC(i)
+		END;
+		RETURN arr
+	END DocumentHighlights;
+
 	(* ---- workspace symbols ---- *)
 
 	PROCEDURE Lower (ch: CHAR): CHAR;
@@ -2684,6 +2763,8 @@ VAR
 						caps.Set("codeActionProvider", JSON.NewBool(TRUE));
 						caps.Set("foldingRangeProvider", JSON.NewBool(TRUE));
 						caps.Set("workspaceSymbolProvider", JSON.NewBool(TRUE));
+						caps.Set("typeDefinitionProvider", JSON.NewBool(TRUE));
+						caps.Set("documentHighlightProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -2748,6 +2829,26 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/typeDefinition" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := TypeDefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/documentHighlight" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := DocumentHighlights(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/documentSymbol" THEN

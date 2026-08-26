@@ -139,6 +139,8 @@ the package.
 | **Diagnostics** | Syntax + semantic errors/warnings on open & save (`--live` also re-checks as you type, debounced). Full message shown inline. |
 | **Hover** | Type, kind and doc-comment of the symbol under the cursor, resolved across modules (`KernelLog.Int` → its real signature). Readable type names (`Streams.Writer`, `SIGNED32`). |
 | **Go-to-definition** | Jumps to the declaration — same-file *and* cross-module (project modules resolve to a sibling; stdlib with `$A2_STDLIB_SRC`). Works from statement use-sites and declaration-site type annotations. |
+| **Go-to-type-definition** | The jump go-to-definition cannot make: on a variable it answers the variable, this answers where its *type* is declared — same file or another module. A pointer to a named record answers the record; a basic or anonymous type is declared nowhere and answers null. Bound to `gy` below. |
+| **Document highlight** | Every use of the name under the cursor in the open file — find-all-references without the project sweep. A local is collected by its own scope, so the same-named local of a sibling procedure is not highlighted with it. This one is a *request*, so the config asks for it on `CursorHold` and clears it on `CursorMoved`; if nothing lights up, the colourscheme has no `LspReferenceText` / `Read` / `Write` (check with `:hi LspReferenceText`) — a theme setting, not a server one. |
 | **Document symbols** | Hierarchical module outline — types with their fields & methods, procedures, variables, constants — **in the order the file is in**, with a `*` on what the module exports and the imports collapsed under one `IMPORT (n)` node. Operators carry their parameter types, so three declarations of `=` are three distinct rows. `CONST` and `VAR` are deliberately *not* grouped: a name has to stay findable by typing it in a fuzzy symbol search. (This is PET's Program Structure panel; a client that prefers alphabetical sorts it itself, which is why the server sends source order — the reverse is not recoverable.) **A picker flattens and sorts all of that away**, so use the side panel (`gO`) to see it. |
 | **Completion** | After `Mod.` → the module's exported symbols; after `var.` → the fields/methods of its record/object type (incl. inherited); otherwise keywords + imports + this module's declarations. With kind + signature. |
 | **Signature help** | While typing a call, shows the parameter list and highlights the active argument (`Mod.Proc(`, `proc(`, `obj.Method(`). |
@@ -168,6 +170,7 @@ before the terminal, and Neovim never sees it.
 | `gh` | Toggle hover (type / signature / doc; an import shows its module and source path). The popup never takes keyboard focus and also closes when the cursor moves. |
 | `gd`, `<C-]>`, `Ctrl-Click` | Go to definition |
 | `gr` | Find references (Telescope picker / quickfix) |
+| `gy` | Go to the **type** of the name under the cursor (`gd` answers the name itself) |
 | `g0` | Document outline as a picker (Telescope / loclist) — type to filter |
 | `gO` | Document outline as a **side panel** ([outline.nvim](https://github.com/hedyhli/outline.nvim)) — the tree as the server sends it |
 | `<leader>rr` | Compile and run the current module (`ob run %`) — output in the pager, `Enter` returns |
