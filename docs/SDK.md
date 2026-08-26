@@ -228,15 +228,20 @@ speaking JSON-RPC over stdio. It provides:
 - **find references** — every use-site of the symbol under the cursor, plus its
   declaration. Project-wide for module-level symbols and record/object members (scans
   the sibling modules that mention the owner), current-file only for locals.
+- **workspace symbols** — the editor's project-wide symbol box (`Ctrl-T` in VS Code):
+  a case-insensitive substring of a declaration's name, matched against every module
+  beside the open one, records and objects included. Parse-only per file, so it costs a
+  parse and not a check; an empty query answers nothing rather than the whole tree.
 - **semantic tokens** — resolved identifiers are classified (namespace, type,
   function, method, variable, parameter, property, enumMember) so the editor can
   colour by *meaning* on top of syntax highlighting (a field vs a local vs a
   parameter). Editors with built-in LSP semantic-token support pick this up
   automatically.
-- **rename** — renames a module-level symbol (type, procedure, module variable,
-  constant) and every use of it across the project as one WorkspaceEdit. Locals and
-  record/object members are declined (their name+module+kind identity isn't unique
-  enough to rename safely yet).
+- **rename** — a module-level symbol (type, procedure, module variable, constant) is
+  renamed with every use of it across the project, as one WorkspaceEdit; a
+  procedure-local or parameter is renamed within its own scope, which is all of it —
+  nothing outside the file can name it. Record/object members are declined: their
+  name+module+kind identity isn't unique enough to rewrite other files with.
 - **formatting** — reprints the whole module in Fox's canonical style, preserving the
   IMPORT list and comments. Only syntactically-valid files are formatted; the output
   is verified to re-parse.

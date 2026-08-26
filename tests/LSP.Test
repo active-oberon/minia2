@@ -614,6 +614,7 @@ positive: initialize announces every provider, with the triggers and the token l
 		ASSERT(T.True(T.Field(caps, "documentFormattingProvider")));
 		ASSERT(T.True(T.Field(caps, "codeActionProvider")));
 		ASSERT(T.True(T.Field(caps, "foldingRangeProvider")));
+		ASSERT(T.True(T.Field(caps, "workspaceSymbolProvider")));
 		ASSERT(T.Number(T.Field(caps, "textDocumentSync")) = 1);
 		ASSERT(T.Is(T.Item(T.Field2(caps, "completionProvider", "triggerCharacters"), 0), "."));
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
@@ -1021,6 +1022,44 @@ positive: renaming an exported procedure rewrites its call in the other file
 		(*	A record field is refused rather than done by name: its key is only
 			(name, module, kind), which is too loose to rewrite other files with. *)
 		ASSERT(T.IsNull(s.Answer(field)))
+	END Test.
+
+positive: workspace/symbol finds a declaration in the other file, whatever the query's casing
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main: T.Text; shift, move, mod, empty: SIGNED32; a, item: JSON.Value;
+	BEGIN
+		(*	The request names no document at all: the project is the directory the open ones are
+			in, and the most recently opened is the anchor. *)
+		T.Project(s, lib, main);
+		shift := s.Request("workspace/symbol", '{"query":"shift"}');
+		move := s.Request("workspace/symbol", '{"query":"Move"}');
+		mod := s.Request("workspace/symbol", '{"query":"lsplib"}');
+		empty := s.Request("workspace/symbol", '{"query":""}');
+		s.Run(FALSE);
+		a := s.Answer(shift);
+		ASSERT(T.Count(a) = 1, 110);
+		item := T.Item(a, 0);
+		ASSERT(T.Is(T.Field(item, "name"), "Shift*"));            (* the outline's own spelling *)
+		ASSERT(T.Number(T.Field(item, "kind")) = 12);             (* Function *)
+		ASSERT(T.Is(T.Field2(item, "location", "uri"), T.LibUri));
+		ASSERT(T.At(T.Field(T.Field2(item, "location", "range"), "start"), lib, "PROCEDURE Shift*", 10));
+		ASSERT(T.Is(T.Field(item, "containerName"), "LspLib"));
+		(* a method of an object comes back under the object it belongs to *)
+		a := s.Answer(move);
+		ASSERT(T.Count(a) = 1, 111);
+		item := T.Item(a, 0);
+		ASSERT(T.Number(T.Field(item, "kind")) = 6);              (* Method *)
+		ASSERT(T.Is(T.Field2(item, "location", "uri"), T.MainUri));
+		ASSERT(T.Is(T.Field(item, "containerName"), "Holder"));
+		(*	The module itself is findable. Its name in the other file's IMPORT list is not a
+			declaration and must not be answered with -- a project of hundreds of modules would
+			otherwise answer every query with its own import lists. *)
+		a := s.Answer(mod);
+		ASSERT(T.Count(a) = 1, 112);
+		ASSERT(T.Is(T.Field2(T.Item(a, 0), "location", "uri"), T.LibUri));
+		ASSERT(T.Count(s.Answer(empty)) = 0, 113)                 (* the whole project is no answer *)
 	END Test.
 
 positive: formatting reprints the module and leaves no line ending in a blank
