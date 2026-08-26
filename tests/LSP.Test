@@ -419,7 +419,7 @@ positive: the helpers these tests are written with
 	(**	A module that uses it. `i` is declared in Sum and again in Other, and the two are
 		unrelated: every check that names `i` is there to see the server keep them apart. *)
 	(* One line of a fixture, indented with that many tabs. *)
-	PROCEDURE Line (VAR s: ARRAY OF CHAR; indent: SIGNED32; CONST t: ARRAY OF CHAR);
+	PROCEDURE Line* (VAR s: ARRAY OF CHAR; indent: SIGNED32; CONST t: ARRAY OF CHAR);
 	VAR one: ARRAY 2 OF CHAR; i: SIGNED32;
 	BEGIN
 		one[1] := 0X;
@@ -548,6 +548,18 @@ positive: the helpers these tests are written with
 		RETURN ReadFile(name)
 	END Source;
 
+	(**	A fixture of the case's own, written where the two shared ones are, and its URI. Needed
+		because the sweeps over a project read FILES: a module a sweep has to see cannot live in a
+		buffer alone. Written last in the file, so nothing after it inherits the extra modules. *)
+	PROCEDURE Extra* (CONST module: ARRAY OF CHAR; CONST text: ARRAY OF CHAR; VAR uri: ARRAY OF CHAR);
+	VAR name: ARRAY 320 OF CHAR;
+	BEGIN
+		Setup;
+		COPY(module, name); Strings.Append(name, ".Mod");
+		WriteFile(name, text);
+		COPY("file://", uri); Strings.Append(uri, Dir); Strings.Append(uri, name)
+	END Extra;
+
 	PROCEDURE Command (CONST command, argument: ARRAY OF CHAR);
 	VAR ctx: Commands.Context; arg, in: Streams.StringReader;
 		sink: Streams.Buffer; w: Streams.Writer; res: INTEGER; ignoreMsg: ARRAY 256 OF CHAR;
@@ -617,6 +629,7 @@ positive: initialize announces every provider, with the triggers and the token l
 		ASSERT(T.True(T.Field(caps, "workspaceSymbolProvider")));
 		ASSERT(T.True(T.Field(caps, "typeDefinitionProvider")));
 		ASSERT(T.True(T.Field(caps, "documentHighlightProvider")));
+		ASSERT(T.True(T.Field(caps, "implementationProvider")));
 		ASSERT(T.Number(T.Field(caps, "textDocumentSync")) = 1);
 		ASSERT(T.Is(T.Item(T.Field2(caps, "completionProvider", "triggerCharacters"), 0), "."));
 		ASSERT(T.Is(T.Item(T.Field2(caps, "signatureHelpProvider", "triggerCharacters"), 0), "("));
@@ -1376,4 +1389,59 @@ positive: folding tells a procedure type from a procedure, and finds comments an
 		ASSERT(EndOf(r, 11) = -1);
 		ASSERT(EndOf(r, 13) = -1);
 		ASSERT(T.Count(r) = 5)
+	END Test.
+
+positive: what extends a type, and what overrides its method, in the other file
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, base, kid, p: T.Text; baseUri, kidUri: ARRAY 320 OF CHAR;
+		extends, overrides, plain: SIGNED32; a: JSON.Value;
+	BEGIN
+		(*	Two fixtures of this case's own: the base in one file, the subtype in another, because
+			the answer has to come out of the sweep and not out of the open buffer. This case is
+			last in the file on purpose -- the extra modules stay in the directory after it. *)
+		base := "";
+		T.Line(base, 0, "MODULE LspShapes;");
+		T.Line(base, 0, "TYPE");
+		T.Line(base, 1, "Shape* = OBJECT");
+		T.Line(base, 2, "PROCEDURE Area* (): SIGNED32;");
+		T.Line(base, 2, "BEGIN");
+		T.Line(base, 3, "RETURN 0");
+		T.Line(base, 2, "END Area;");
+		T.Line(base, 1, "END Shape;");
+		T.Line(base, 0, "END LspShapes.");
+		kid := "";
+		T.Line(kid, 0, "MODULE LspSquare;");
+		T.Line(kid, 0, "IMPORT LspShapes;");
+		T.Line(kid, 0, "TYPE");
+		T.Line(kid, 1, "Square* = OBJECT (LspShapes.Shape)");
+		T.Line(kid, 2, "VAR side: SIGNED32;");
+		T.Line(kid, 2, "PROCEDURE Area* (): SIGNED32;");
+		T.Line(kid, 2, "BEGIN");
+		T.Line(kid, 3, "RETURN side * side");
+		T.Line(kid, 2, "END Area;");
+		T.Line(kid, 1, "END Square;");
+		T.Line(kid, 0, "END LspSquare.");
+		T.Extra("LspShapes", base, baseUri);
+		T.Extra("LspSquare", kid, kidUri);
+		T.Project(s, lib, main);
+		s.Open(baseUri, base);
+		T.DocAt(baseUri, base, "Shape* = OBJECT", 0, "", p);
+		extends := s.Request("textDocument/implementation", p);
+		T.DocAt(baseUri, base, "PROCEDURE Area*", 10, "", p);
+		overrides := s.Request("textDocument/implementation", p);
+		T.DocAt(baseUri, base, "RETURN 0", 7, "", p);      (* a constant implements nothing *)
+		plain := s.Request("textDocument/implementation", p);
+		s.Run(FALSE);
+		a := s.Answer(extends);
+		ASSERT(T.Count(a) = 1, 150);                       (* the base itself is not an answer *)
+		ASSERT(T.Is(T.Field(T.Item(a, 0), "uri"), kidUri), 151);
+		ASSERT(T.Starts(T.Item(a, 0), kid, "Square* = OBJECT", 0), 152);
+		(* on a method it is the override that is wanted, not the type that carries it *)
+		a := s.Answer(overrides);
+		ASSERT(T.Count(a) = 1, 153);
+		ASSERT(T.Is(T.Field(T.Item(a, 0), "uri"), kidUri), 154);
+		ASSERT(T.Starts(T.Item(a, 0), kid, "PROCEDURE Area*", 10), 155);
+		ASSERT(T.Count(s.Answer(plain)) = 0, 156)
 	END Test.

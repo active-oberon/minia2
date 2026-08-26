@@ -219,6 +219,11 @@ speaking JSON-RPC over stdio. It provides:
   answers the variable, this answers where its *type* is declared, in this module or in
   another one. A pointer to a named record answers the record; a basic or anonymous type
   is declared nowhere and answers null.
+- **go-to-implementation** — on a type, every type in the project that extends it (the
+  base chain is followed, so a grandchild counts); on a method, which of those types
+  overrides it. Module-level types only, which is where a hierarchy in Active Oberon
+  lives, and the sweep is gated as find-all-references is: a subtype's file has to name
+  the module the base is in.
 - **document highlight** — every use of the name under the cursor in the open file, which
   is find-all-references without the sweep over the project. A local is collected by its
   own scope, so a sibling procedure's same-named local is not highlighted with it.
