@@ -477,6 +477,14 @@ reported as having none rather than run as an empty file. The harvest is one com
 all the sources named, because the backend creates its file when the options are parsed and
 appends to it per module.
 
+A harvested case that fails is reported a second time as `<file>:<line>: FAIL <Module>.<Proc>`,
+which any editor's `errorformat` reads — so running the tests of the open buffer and landing on
+the failing one needs no adapter per editor. The line is the `{TEST}` procedure's **declaration**,
+not the statement that failed: what a trap prints after the procedure name is a code offset from
+its start (`Reflection.WriteProc0`), and the reference section carries no line table to turn one
+into a line. Together with `-r` below — `ob test Foo.Mod -r ThatOneTest` — that is "run the test
+under the cursor, jump to it when it fails".
+
 `--report FILE` writes one JSON document with the counts and an entry per case
 (`{"status": "ok|failed|known|fixed|skipped", "file": …, "kind": …, "name": …}`), which is
 what CI keeps as an artifact. `--github` prints an Actions annotation per failing case, so
