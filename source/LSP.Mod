@@ -519,16 +519,42 @@ TYPE
 		   button beside it for the other -- so the symbols of a scope are gathered and put back in
 		   source order here. A client that prefers alphabetical still sorts; the reverse is not
 		   possible, because the position is lost once the order is gone. *)
+		(* One place that admits a declaration and drops a repeat: the checker's list and the
+		   parser's lists overlap once a module has been through both. *)
+		PROCEDURE Take (VAR syms: ARRAY OF SyntaxTree.Symbol; VAR n: SIGNED32; sym: SyntaxTree.Symbol);
+		VAR j: SIGNED32; nm: ARRAY 128 OF CHAR;
+		BEGIN
+			IF (sym = NIL) OR (n >= LEN(syms)) OR (sym.position.line <= 0) THEN RETURN END;
+			sym.GetName(nm);
+			IF nm[0] = "@" THEN RETURN END;
+			j := 0;
+			WHILE (j < n) & (syms[j].position.start # sym.position.start) DO INC(j) END;
+			IF j = n THEN syms[n] := sym; INC(n) END
+		END Take;
+
 		PROCEDURE Gather (scope: SyntaxTree.Scope; VAR syms: ARRAY OF SyntaxTree.Symbol): SIGNED32;
-		VAR sym, t: SyntaxTree.Symbol; n, i, j: SIGNED32; nm: ARRAY 128 OF CHAR;
+		VAR sym, t: SyntaxTree.Symbol; con: SyntaxTree.Constant; td: SyntaxTree.TypeDeclaration;
+			var: SyntaxTree.Variable; n, i, j: SIGNED32; k: SIZE;
 		BEGIN
 			n := 0;
 			IF scope = NIL THEN RETURN 0 END;
 			sym := scope.firstSymbol;
-			WHILE (sym # NIL) & (n < LEN(syms)) DO
-				sym.GetName(nm);
-				IF (nm[0] # "@") & (sym.position.line > 0) THEN syms[n] := sym; INC(n) END;
-				sym := sym.nextSymbol
+			WHILE sym # NIL DO Take(syms, n, sym); sym := sym.nextSymbol END;
+			(*	The parser files a declaration under its own kind and leaves firstSymbol empty --
+				only the checker fills that. A parse-only outline, which is what workspace/symbol
+				can afford over a whole project, would otherwise be empty, so the parser's lists
+				are read as well and the same declaration dropped by position. *)
+			con := scope.firstConstant;
+			WHILE con # NIL DO Take(syms, n, con); con := con.nextConstant END;
+			td := scope.firstTypeDeclaration;
+			WHILE td # NIL DO Take(syms, n, td); td := td.nextTypeDeclaration END;
+			var := scope.firstVariable;
+			WHILE var # NIL DO Take(syms, n, var); var := var.nextVariable END;
+			IF scope.procedures # NIL THEN
+				k := 0;
+				WHILE k < scope.procedures.Length() DO
+					Take(syms, n, scope.procedures.GetProcedure(k)); INC(k)
+				END
 			END;
 			i := 1;
 			WHILE i < n DO                                  (* insertion sort by source offset *)
@@ -2056,6 +2082,108 @@ VAR
 		RETURN result
 	END RenameAt;
 
+	(* ---- workspace symbols ---- *)
+
+	PROCEDURE Lower (ch: CHAR): CHAR;
+	BEGIN
+		IF (ch >= "A") & (ch <= "Z") THEN RETURN CHR(ORD(ch) + 32) ELSE RETURN ch END
+	END Lower;
+
+	(* Contains, case-folded: a symbol box matches what was typed, not how it was cased. *)
+	PROCEDURE ContainsFold (CONST s, sub: ARRAY OF CHAR): BOOLEAN;
+	VAR i, j, slen, sublen: SIZE;
+	BEGIN
+		slen := Strings.Length(s); sublen := Strings.Length(sub);
+		IF sublen = 0 THEN RETURN TRUE END;
+		i := 0;
+		WHILE i + sublen <= slen DO
+			j := 0; WHILE (j < sublen) & (Lower(s[i+j]) = Lower(sub[j])) DO INC(j) END;
+			IF j = sublen THEN RETURN TRUE END;
+			INC(i)
+		END;
+		RETURN FALSE
+	END ContainsFold;
+
+	(*	One module's outline (DocumentSymbol tree) flattened into the SymbolInformation[] that
+		workspace/symbol answers with, keeping only the names that match. Recursive, so a field
+		and a method are findable and not just the top level; the parent's name goes out as
+		containerName, which is what a client shows beside the row.
+
+		The IMPORT group is skipped whole: its children are other modules' names, and a project
+		of 768 modules would answer every query with its own import lists. *)
+	PROCEDURE FlattenSymbols (nodes: JSON.Value; uri: Strings.String; CONST query, container: ARRAY OF CHAR;
+		out: JSON.Array);
+	VAR arr: JSON.Array; i: SIZE; o, si, loc: JSON.Object; nm: Strings.String;
+		kind: SIGNED32; name: ARRAY 256 OF CHAR;
+	BEGIN
+		IF (nodes = NIL) OR ~(nodes IS JSON.Array) THEN RETURN END;
+		arr := nodes(JSON.Array); i := 0;
+		WHILE i < arr.length DO
+			o := AsObject(arr.At(i));
+			(* kind Namespace=3 is the IMPORT group and nothing else *)
+			IF (o # NIL) & GetStr(o, "name", nm) & GetInt(o, "kind", kind) & (kind # 3) THEN
+				IF ContainsFold(nm^, query) THEN
+					loc := JSON.NewObject();
+					loc.Set("uri", JSON.NewString(uri^));
+					loc.Set("range", o.Get("range"));
+					si := JSON.NewObject();
+					si.Set("name", JSON.NewString(nm^));
+					si.Set("kind", o.Get("kind"));
+					si.Set("location", loc);
+					IF container[0] # 0X THEN si.Set("containerName", JSON.NewString(container)) END;
+					out.Add(si)
+				END;
+				COPY(nm^, name);
+				FlattenSymbols(o.Get("children"), uri, query, name, out)
+			END;
+			INC(i)
+		END
+	END FlattenSymbols;
+
+	(*	workspace/symbol: the declarations of every module beside the open document, filtered by
+		the query. Parse-only per file, as formatting is: a symbol box must not pay for the checker
+		resolving every import of every module, and a declaration's name and position are in the
+		parse tree already.
+
+		ponytail: the project is re-parsed per query, gated by the query appearing in the file text
+		at all -- a cached index is the upgrade if a big tree ever feels slow. *)
+	PROCEDURE WorkspaceSymbols (CONST query: ARRAY OF CHAR; anchor: Strings.String): JSON.Value;
+	CONST MaxSymbols = 512;   (* a two-letter query matches thousands; a picker shows dozens *)
+	VAR arr: JSON.Array; en: Files.Enumerator; fn: ARRAY 256 OF CHAR; flags: SET;
+		tm, dt: SIGNED32; sz: Files.Size; mask, prefix, readName: ARRAY 1024 OF CHAR;
+		modName: ARRAY 128 OF CHAR; ftext, sibUri: Strings.String; doc: Document;
+		o: Outliner; module: SyntaxTree.Module;
+	BEGIN
+		arr := JSON.NewArray();
+		(* an empty query means the whole project, which is neither useful in a picker nor cheap *)
+		IF (query[0] = 0X) OR (anchor = NIL) THEN RETURN arr END;
+		SiblingMask(anchor, mask, prefix);
+		NEW(en); en.Open(mask, {});
+		WHILE en.HasMoreEntries() & (arr.length < MaxSymbols) DO
+			IF en.GetEntry(fn, flags, tm, dt, sz) THEN
+				ModuleBaseName(fn, modName);
+				sibUri := SiblingUri(anchor, modName);
+				IF (modName[0] # 0X) & (sibUri # NIL) THEN
+					doc := FindDoc(sibUri^);   (* the buffer wins: a name just typed is findable *)
+					IF doc # NIL THEN ftext := doc.text
+					ELSE
+						COPY(prefix, readName); Strings.Append(readName, modName);
+						Strings.Append(readName, ".Mod");
+						ftext := ReadFile(readName)
+					END;
+					IF (ftext # NIL) & ContainsFold(ftext^, query) THEN
+						module := ParsedModule(ftext);
+						IF module # NIL THEN
+							NEW(o); FlattenSymbols(o.Module(module), sibUri, query, "", arr)
+						END
+					END
+				END
+			END
+		END;
+		en.Close;
+		RETURN arr
+	END WorkspaceSymbols;
+
 	(* ---- formatting ---- *)
 
 	(* Remove the printer's "(*unresolved*)" markers (present because we print a
@@ -2465,6 +2593,7 @@ VAR
 						caps.Set("documentFormattingProvider", JSON.NewBool(TRUE));
 						caps.Set("codeActionProvider", JSON.NewBool(TRUE));
 						caps.Set("foldingRangeProvider", JSON.NewBool(TRUE));
+						caps.Set("workspaceSymbolProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -2537,6 +2666,15 @@ VAR
 						IF (td # NIL) & GetStr(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DocumentSymbols(doc.text) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "workspace/symbol" THEN
+						(*	The request names no document, and the project is the directory the
+							open ones are in -- so the most recently opened document is the anchor.
+							Nothing open means nothing to search. *)
+						res := NIL;
+						IF (params # NIL) & GetStr(params, "query", sopt) & (documents # NIL) THEN
+							res := WorkspaceSymbols(sopt^, documents.uri)
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/completion" THEN
