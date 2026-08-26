@@ -147,7 +147,7 @@ the package.
 | **Workspace symbols** | The project-wide symbol box — `Ctrl-T` in VS Code; in Neovim `:lua vim.lsp.buf.workspace_symbol()` or Telescope's `lsp_dynamic_workspace_symbols` (no default key, so bind it if you want one). A case-insensitive substring of the name, matched against every module beside the open one, fields and methods included; each row carries the type or object it belongs to. Parse-only per file — it costs a parse, not a check — and an empty query answers nothing rather than the whole tree. |
 | **Rename** | A module-level symbol (type, procedure, module variable, constant) is renamed with every use across the project; a local or parameter within its own scope, which is all of it. Record/object members are still declined. |
 | **Formatting** | Reprints the module in Fox's canonical style, preserving the IMPORT list and comments. Only syntactically-valid files. |
-| **Code actions** | *Import &lt;M&gt;* quickfix for an undeclared module qualifier; *Comment / Uncomment* the selection. |
+| **Code actions** | *Import &lt;M&gt;* quickfix for an undeclared module qualifier; *Remove unused import &lt;M&gt;* — put the cursor anywhere in the `IMPORT` clause and one is offered per import nothing names (the comma leaves with the name, and the last import takes the whole clause with it); *Comment / Uncomment* the selection. |
 | **Folding** | Procedures, records and objects, statement blocks, `REPEAT`/`UNTIL`, the `IMPORT` list and multi-line comments. Not the module itself — it is the file, and folding it would leave one line. Worked out from the tokens, so it keeps working while the file does not parse. |
 
 ---
