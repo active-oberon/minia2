@@ -147,6 +147,7 @@ the package.
 | **Workspace symbols** | The project-wide symbol box — `Ctrl-T` in VS Code; in Neovim `:lua vim.lsp.buf.workspace_symbol()` or Telescope's `lsp_dynamic_workspace_symbols` (no default key, so bind it if you want one). A case-insensitive substring of the name, matched against every module beside the open one, fields and methods included; each row carries the type or object it belongs to. Parse-only per file — it costs a parse, not a check — and an empty query answers nothing rather than the whole tree. |
 | **Rename** | A module-level symbol (type, procedure, module variable, constant) is renamed with every use across the project; a local or parameter within its own scope, which is all of it. Record/object members are still declined. |
 | **Formatting** | Reprints the module in Fox's canonical style, preserving the IMPORT list and comments. Only syntactically-valid files. |
+| **Tests from the buffer** | `{TEST}` procedures run with `<leader>rt` / `<leader>rT` (below). No neotest adapter and none needed for this: `ob test` reports a failing harvested test a second time as `<file>:<line>: FAIL <Module>.<Proc>`, so a plain `errorformat` puts it in the quickfix list — and the same line works in any editor. The line is the test's **declaration**, not the failing statement: a trap prints a code offset after the procedure name, and the reference section has no line table to turn one into a line. The trap itself is in the run's output. |
 | **Code actions** | *Import &lt;M&gt;* quickfix for an undeclared module qualifier; *Remove unused import &lt;M&gt;* — put the cursor anywhere in the `IMPORT` clause and one is offered per import nothing names (the comma leaves with the name, and the last import takes the whole clause with it); *Comment / Uncomment* the selection. |
 | **Folding** | Procedures, records and objects, statement blocks, `REPEAT`/`UNTIL`, the `IMPORT` list and multi-line comments. Not the module itself — it is the file, and folding it would leave one line. Worked out from the tokens, so it keeps working while the file does not parse. |
 
@@ -171,6 +172,8 @@ before the terminal, and Neovim never sees it.
 | `gO` | Document outline as a **side panel** ([outline.nvim](https://github.com/hedyhli/outline.nvim)) — the tree as the server sends it |
 | `<leader>rr` | Compile and run the current module (`ob run %`) — output in the pager, `Enter` returns |
 | `<leader>rb` | Compile only, binary to `/tmp/<Module>` (`ob build`) |
+| `<leader>rt` | Run this module's `{TEST}` procedures (`ob test %`). A failing one lands in the quickfix list at its declaration; a green run only echoes the count |
+| `<leader>rT` | Run just the `{TEST}` procedure the cursor is in — the nearest one at or above it (`ob test % -r <name>`) |
 | `<leader>ra` | Rename the symbol under the cursor |
 | `<leader>fm` | Format buffer (NVChad default), or `:lua vim.lsp.buf.format()` |
 | `<leader>ca` | Code actions (Normal or Visual mode), or `:lua vim.lsp.buf.code_action()` |

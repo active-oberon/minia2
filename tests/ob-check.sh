@@ -190,6 +190,19 @@ case "$LAST_OUTPUT" in
 	*"2 case(s), 1 passed, 1 failed"*) echo "ok    the harvested invariant passed and the broken one failed" ;;
 	*) echo "FAIL  harvest said: $(printf '%s' "$LAST_OUTPUT" | tr '\n' ' ' | tail -c 120)"; fail=1 ;;
 esac
+# A failing harvested test is reported a second time as <file>:<line>: FAIL <case>, so that any
+# editor's errorformat can jump to it -- the declaration line, because what a trap reports after
+# the procedure name is a code offset and there is no line table to turn it into a line.
+case "$LAST_OUTPUT" in
+	*"SelfBad.Mod:3: FAIL SelfBad.Invariant"*) echo "ok    the failing invariant is reported at its line" ;;
+	*) echo "FAIL  no jumpable line: $(printf '%s' "$LAST_OUTPUT" | grep -i 'selfbad' | tr '\n' ' ')"; fail=1 ;;
+esac
+# -r, which is how an editor runs the one test under the cursor
+check "test -r runs only the case it names" 1 "$ob" test SelfOk.Mod SelfBad.Mod -r SelfBad
+case "$LAST_OUTPUT" in
+	*"1 case(s), 0 passed, 1 failed"*) echo "ok    -r ran the one test asked for" ;;
+	*) echo "FAIL  -r said: $(printf '%s' "$LAST_OUTPUT" | tr '\n' ' ' | tail -c 120)"; fail=1 ;;
+esac
 check "test says so when a source has no {TEST}" 0 "$ob" test Hello.Mod
 case "$LAST_OUTPUT" in
 	*"no {TEST} procedure"*) echo "ok    a source without invariants is reported, not run" ;;

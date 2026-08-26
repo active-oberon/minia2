@@ -1613,6 +1613,10 @@ TYPE
 	(* Which case last declared a module, while a file is being planned. *)
 	Declaration = POINTER TO RECORD next: Declaration; name: Path; case: TestCase END;
 
+	(* A source whose `{TEST}` procedures were harvested, by module name, so that a failure can
+	   say where the test it ran is written. *)
+	TestSource = POINTER TO RECORD next: TestSource; module, path: Path END;
+
 	(* A piece of one file: the cases to report on, the earlier ones to replay first, and whether the
 	   file's cases execute or only compile. *)
 	Chunk = POINTER TO RECORD
@@ -1654,6 +1658,7 @@ VAR
 	caseRecords, lastCaseRecord: CaseRecord;
 	testVerbose, testGithub: BOOLEAN;
 	testFilter, testReport, testScratch, testSelf: Path;
+	testSources: TestSource;				(* the sources this run harvested, for TestOrigin *)
 	caseLimit, sinceCollection: SIGNED32;
 	blocks: POINTER TO ARRAY OF Block;		(* one per chunk, in the order the chunks were planned *)
 	declarations: ARRAY DeclarationTableSize OF Declaration;
@@ -1884,6 +1889,63 @@ PROCEDURE Tell(job: Job; CONST text: ARRAY OF CHAR);
 BEGIN job.writer.String(text); EndLine(job.writer)
 END Tell;
 
+PROCEDURE IsWordChar(character: CHAR): BOOLEAN;
+BEGIN
+	RETURN ((character >= 'a') & (character <= 'z')) OR ((character >= 'A') & (character <= 'Z'))
+		OR ((character >= '0') & (character <= '9')) OR (character = '_')
+END IsWordChar;
+
+PROCEDURE RememberSource(CONST module, path: ARRAY OF CHAR);
+VAR entry: TestSource;
+BEGIN
+	NEW(entry); COPY(module, entry.module); COPY(path, entry.path);
+	entry.next := testSources; testSources := entry
+END RememberSource;
+
+(*
+	`<file>:<line>` of the `{TEST}` procedure a failing harvested case ran, in the shape every
+	editor already parses -- which is the whole point: an adapter per editor is not needed for a
+	line an errorformat can read.
+
+	The DECLARATION line, not the statement that failed. What a trap reports after the procedure
+	name is a code offset from its start (Reflection.WriteProc0), not a line, and there is no line
+	table in the reference section to turn one into the other; a test whose name lands under the
+	cursor is what an editor can offer today. FALSE for a case out of a `.Test` file: it has no
+	source module to point at.
+*)
+PROCEDURE TestOrigin(CONST case: ARRAY OF CHAR; VAR where: ARRAY OF CHAR): BOOLEAN;
+VAR entry: TestSource; module, procedure: Path; dot, at, after: SIZE; number: SIGNED32;
+	handle: Files.File; reader: Streams.Reader; line: ARRAY 1024 OF CHAR;
+BEGIN
+	dot := Strings.Pos(".", case);
+	IF dot <= 0 THEN RETURN FALSE END;
+	Strings.Copy(case, 0, dot, module);
+	Strings.Copy(case, dot + 1, Strings.Length(case) - dot - 1, procedure);
+	IF procedure = "" THEN RETURN FALSE END;
+	entry := testSources;
+	WHILE (entry # NIL) & (entry.module # module) DO entry := entry.next END;
+	IF entry = NIL THEN RETURN FALSE END;
+	reader := Source(entry.path, handle);
+	IF reader = NIL THEN RETURN FALSE END;
+	number := 0;
+	WHILE reader.res = Streams.Ok DO
+		reader.Ln(line); INC(number);
+		at := Strings.Pos(procedure, line);
+		(* the whole name, not a prefix of a longer one: Invariant is not InvariantTwo *)
+		IF (at >= 0) & (Strings.Pos("{TEST}", line) >= 0) THEN
+			after := at + Strings.Length(procedure);
+			IF ((at = 0) OR ~IsWordChar(line[at-1])) & ~IsWordChar(line[after]) THEN
+				handle.Close;
+				COPY(entry.path, where); Strings.AppendChar(where, ':');
+				Strings.AppendInt(where, number);
+				RETURN TRUE
+			END
+		END
+	END;
+	handle.Close;
+	RETURN FALSE
+END TestOrigin;
+
 PROCEDURE RecordCase(job: Job; CONST status, kind, name: ARRAY OF CHAR);
 VAR record: CaseRecord;
 BEGIN
@@ -1969,7 +2031,12 @@ BEGIN
 				Strings.Append(line, "  (did not come back)")
 			END
 		END;
-		Tell(job, line); ShowCaseLog(job);
+		Tell(job, line);
+		IF TestOrigin(job.current.name, key) THEN                (* an editor jumps from this one *)
+			line := key; Strings.Append(line, ": FAIL ");
+			Strings.Append(line, job.current.name); Tell(job, line)
+		END;
+		ShowCaseLog(job);
 		RecordCase(job, "failed", job.current.kind, job.current.name);
 		Annotate(job, "error", job.current.kind, job.current.name)
 	END
@@ -2778,6 +2845,7 @@ VAR argument, target, expect, write, entry, path, line: Path;
 	handle: ADDRESS; jobs: SIGNED32; chunks, lastChunk: Chunk;
 BEGIN
 	testVerbose := FALSE; testFilter := ""; testReport := ""; expect := ""; write := "";
+	testSources := NIL;
 	COPY(HostTarget, target); jobs := 1;
 	testGithub := ObHost.Env("GITHUB_ACTIONS", line) & (line = "true");
 	NEW(files, 256); count := 0; NEW(sources, 256); sourceCount := 0;
@@ -2871,6 +2939,9 @@ BEGIN
 			INC(index)
 		END;
 		sourceCount := harvestable;
+		FOR index := 0 TO sourceCount-1 DO
+			IF ModuleName(sources[index]^, entry) THEN RememberSource(entry, sources[index]^) END
+		END;
 		IF sourceCount = 0 THEN
 			Say("ob test: none of the sources compiled -- nothing to harvest");
 			DiscardScratch(testScratch); RETURN
@@ -2990,7 +3061,9 @@ BEGIN
 	Say("  ob help                            this text");
 	Say("");
 	Say("ob test -j N runs N test files at a time; -t names another architecture.");
-	Say("ob test File.Mod runs the {TEST} procedures of that module, harvested by the compiler.")
+	Say("ob test -r <text> runs only the cases whose name contains <text> (case-insensitive).");
+	Say("ob test File.Mod runs the {TEST} procedures of that module, harvested by the compiler;");
+	Say("a failing one is reported again as <file>:<line>: FAIL <case>, for an editor to jump to.")
 END Help;
 
 (* --- entry ------------------------------------------------------------------------------- *)
