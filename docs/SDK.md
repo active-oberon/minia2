@@ -263,6 +263,14 @@ speaking JSON-RPC over stdio. It provides:
   with the name; the last import takes its whole clause), and **Comment / Uncomment**
   the current selection.
 
+**Symbols follow the source.** A module's symbols are rebuilt when its `.Mod` is newer
+than its `.SymUu`, not merely when the symbol file is missing. Until 2026-08-26 only
+absence counted, so a module edited after its symbols were built stayed as its importers
+had first seen it for the rest of the session — add an exported procedure to one module
+and the module next to it could not see it. This is also the whole of what
+`workspace/didChangeWatchedFiles` was wanted for here, and it needs no watching: an edit
+made outside the editor changes the same timestamp as one made inside it.
+
 **Project-aware.** The server ships every standard-library symbol (`.SymUu`), and if
 you mount your project sources at `/work` it resolves your own modules too — building
 any missing dependency's symbols on demand from its `.Mod` source (imports resolve

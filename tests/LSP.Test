@@ -560,6 +560,18 @@ positive: the helpers these tests are written with
 		COPY("file://", uri); Strings.Append(uri, Dir); Strings.Append(uri, name)
 	END Extra;
 
+	(**	Stamp a fixture well into the future, so that "newer than its symbol file" is not a
+		question of how fast the machine is. A2 packs the date as mday + (mon+1)*32 + year*512
+		(years since 1900) and the time as sec + min*64 + hour*4096. *)
+	PROCEDURE Future* (CONST module: ARRAY OF CHAR);
+	VAR handle: Files.File; name: ARRAY 320 OF CHAR;
+	BEGIN
+		COPY(module, name); Strings.Append(name, ".Mod");
+		handle := Files.Old(name);
+		ASSERT(handle # NIL, 105);                        (* 105: the fixture is not on disk *)
+		Files.SetDate(handle, 12 * 4096, 130 * 512 + 1 * 32 + 1)   (* 2030-01-01 12:00 *)
+	END Future;
+
 	PROCEDURE Command (CONST command, argument: ARRAY OF CHAR);
 	VAR ctx: Commands.Context; arg, in: Streams.StringReader;
 		sink: Streams.Buffer; w: Streams.Writer; res: INTEGER; ignoreMsg: ARRAY 256 OF CHAR;
@@ -1389,6 +1401,41 @@ positive: folding tells a procedure type from a procedure, and finds comments an
 		ASSERT(EndOf(r, 11) = -1);
 		ASSERT(EndOf(r, 13) = -1);
 		ASSERT(T.Count(r) = 5)
+	END Test.
+
+positive: a module edited after its symbols were built is seen again, not as it first was
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR one, two: T.Session; lib, main, grown, p: T.Text; uri: ARRAY 320 OF CHAR;
+		before, after, id: SIGNED32;
+	BEGIN
+		(*	The defect this holds down: symbols were rebuilt only when absent, so a project module
+			edited after its .SymUu was written stayed as its importers had first seen it for the
+			rest of the session. Two sessions, because a file has to change between them -- one
+			session queues its whole conversation before the server ever runs.
+
+			This case is last but one in the file: it leaves a grown LspLib.Mod behind. *)
+		T.Project(one, lib, main);
+		T.DocAt(T.MainUri, main, "LspLib.Add", 7, ',"context":{"triggerKind":2,"triggerCharacter":"."}', p);
+		before := one.Request("textDocument/completion", p);
+		one.Run(FALSE);
+		ASSERT(T.ItemWith(one.Answer(before), "label", "Add") # NIL, 160);
+		ASSERT(T.ItemWith(one.Answer(before), "label", "Twice") = NIL, 161);
+
+		(*	The same module with one more exported procedure, written back over the fixture and
+			stamped unmistakably newer. One line, because a fixture edit is a string splice and
+			an Oberon string literal holds no newline. *)
+		T.Edited(lib, "END LspLib.",
+			"PROCEDURE Twice* (a: SIGNED32): SIGNED32; BEGIN RETURN 2 * a END Twice; END LspLib.", grown);
+		T.Extra("LspLib", grown, uri);
+		T.Future("LspLib");
+
+		NEW(two); id := two.Start(); two.Open(T.MainUri, main);
+		T.DocAt(T.MainUri, main, "LspLib.Add", 7, ',"context":{"triggerKind":2,"triggerCharacter":"."}', p);
+		after := two.Request("textDocument/completion", p);
+		two.Run(FALSE);
+		ASSERT(T.ItemWith(two.Answer(after), "label", "Twice") # NIL, 162)
 	END Test.
 
 positive: what extends a type, and what overrides its method, in the other file
