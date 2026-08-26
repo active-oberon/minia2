@@ -130,11 +130,21 @@ END Env;
 (** An absolute path. Windows has no realpath; GetFullPathName is what there is, and it does not
 	resolve a link -- which costs nothing here, because the one caller that needs a link followed
 	is ExecutablePath, and GetModuleFileName answers that directly. *)
+(*	A path as the file system will take it. The forward slash is normalised away first: it is what
+	a user types and what every document here writes, `GetFileAttributes` accepts it, and under wine
+	`GetFullPathName` hands it back untouched -- so the name resolved fine, existed fine, and then
+	could not be opened, which read as "no MODULE header in examples/Hello.Mod" about a file whose
+	first word is MODULE. *)
 PROCEDURE RealPath*(CONST path: ARRAY OF CHAR; VAR resolved: ARRAY OF CHAR): BOOLEAN;
-VAR buffer: Path;
+VAR buffer, native: Path; index: SIZE;
 BEGIN
-	IF ~Exists(path) THEN resolved := ""; RETURN FALSE END;
-	IF Kernel32.GetFullPathName(path, LEN(buffer), buffer, 0) = 0 THEN resolved := ""; RETURN FALSE END;
+	COPY(path, native); index := 0;
+	WHILE native[index] # 0X DO
+		IF native[index] = '/' THEN native[index] := Separator END;
+		INC(index)
+	END;
+	IF ~Exists(native) THEN resolved := ""; RETURN FALSE END;
+	IF Kernel32.GetFullPathName(native, LEN(buffer), buffer, 0) = 0 THEN resolved := ""; RETURN FALSE END;
 	COPY(buffer, resolved); RETURN TRUE
 END RealPath;
 
