@@ -2161,6 +2161,180 @@ VAR
 		RETURN arr
 	END DocumentHighlights;
 
+	(* ---- what extends this, and what overrides it ---- *)
+
+	(*	The record scope a type declaration carries -- where its fields and methods are -- pointer
+		or not. The Outliner has its own copy of this: it lives in the type section and cannot call
+		a procedure declared after it. *)
+	PROCEDURE RecordScopeOfDecl (td: SyntaxTree.TypeDeclaration): SyntaxTree.Scope;
+	VAR t: SyntaxTree.Type;
+	BEGIN
+		IF td = NIL THEN RETURN NIL END;
+		t := td.declaredType; IF t = NIL THEN RETURN NIL END;
+		t := t.resolvedType; IF t = NIL THEN RETURN NIL END;
+		IF t IS SyntaxTree.PointerType THEN
+			t := t(SyntaxTree.PointerType).pointerBase;
+			IF t = NIL THEN RETURN NIL END;
+			t := t.resolvedType; IF t = NIL THEN RETURN NIL END
+		END;
+		IF t IS SyntaxTree.RecordType THEN RETURN t(SyntaxTree.RecordType).recordScope END;
+		RETURN NIL
+	END RecordScopeOfDecl;
+
+	(*	The type declaration a record scope belongs to. An OBJECT's declaration hangs off the
+		POINTER the parser returns for it, not off the record, so both are tried. *)
+	PROCEDURE OwnerDeclOf (scope: SyntaxTree.Scope): SyntaxTree.TypeDeclaration;
+	VAR record: SyntaxTree.RecordType;
+	BEGIN
+		IF (scope = NIL) OR ~(scope IS SyntaxTree.RecordScope) THEN RETURN NIL END;
+		record := scope(SyntaxTree.RecordScope).ownerRecord;
+		IF record = NIL THEN RETURN NIL END;
+		IF record.typeDeclaration # NIL THEN RETURN record.typeDeclaration END;
+		IF record.pointerType # NIL THEN RETURN record.pointerType.typeDeclaration END;
+		RETURN NIL
+	END OwnerDeclOf;
+
+	(* The declaration of the type this one extends, or NIL. *)
+	PROCEDURE BaseDeclOf (td: SyntaxTree.TypeDeclaration): SyntaxTree.TypeDeclaration;
+	VAR t, base: SyntaxTree.Type; scope: SyntaxTree.Scope;
+	BEGIN
+		scope := RecordScopeOfDecl(td);
+		IF (scope = NIL) OR (scope(SyntaxTree.RecordScope).ownerRecord = NIL) THEN RETURN NIL END;
+		base := scope(SyntaxTree.RecordScope).ownerRecord.baseType;
+		IF base = NIL THEN RETURN NIL END;
+		t := base.resolvedType; IF t = NIL THEN RETURN NIL END;
+		IF t IS SyntaxTree.PointerType THEN
+			IF t.typeDeclaration # NIL THEN RETURN t.typeDeclaration END;
+			t := t(SyntaxTree.PointerType).pointerBase;
+			IF t = NIL THEN RETURN NIL END;
+			t := t.resolvedType; IF t = NIL THEN RETURN NIL END
+		END;
+		IF (t.typeDeclaration = NIL) & (t IS SyntaxTree.RecordType)
+			& (t(SyntaxTree.RecordType).pointerType # NIL) THEN
+			RETURN t(SyntaxTree.RecordType).pointerType.typeDeclaration
+		END;
+		RETURN t.typeDeclaration
+	END BaseDeclOf;
+
+	(*	Does this type's base chain reach the type called `name` in module `owner`? Compared by
+		name and owning module, not by identity: every file is analysed on its own, so the base a
+		subtype resolved to is a different object from the declaration the cursor is on. *)
+	PROCEDURE ExtendsType (td: SyntaxTree.TypeDeclaration; CONST name, owner: ARRAY OF CHAR): BOOLEAN;
+	CONST MaxDepth = 32;   (* a broken tree can be cyclic; a real hierarchy is not this deep *)
+	VAR nm, onm: ARRAY 128 OF CHAR; depth: SIGNED32;
+	BEGIN
+		depth := 0; td := BaseDeclOf(td);
+		WHILE (td # NIL) & (depth < MaxDepth) DO
+			td.GetName(nm);
+			IF (td.scope # NIL) & (td.scope.ownerModule # NIL) THEN
+				td.scope.ownerModule.GetName(onm);
+				IF (nm = name) & (onm = owner) THEN RETURN TRUE END
+			END;
+			td := BaseDeclOf(td); INC(depth)
+		END;
+		RETURN FALSE
+	END ExtendsType;
+
+	PROCEDURE AddDeclLoc (arr: JSON.Array; sym: SyntaxTree.Symbol; uri: Strings.String);
+	VAR nm: ARRAY 128 OF CHAR; line, char: SIGNED32; loc: JSON.Object;
+	BEGIN
+		IF (sym = NIL) OR (uri = NIL) OR (sym.position.line <= 0) THEN RETURN END;
+		sym.GetName(nm);
+		line := SIGNED32(sym.position.line) - 1;
+		char := SIGNED32(sym.position.start - sym.position.linepos);
+		IF LocExists(arr, uri^, line, char) THEN RETURN END;
+		loc := Location(uri, line, char, SIGNED32(Strings.Length(nm)));
+		arr.Add(loc)
+	END AddDeclLoc;
+
+	(*	Every module-level type of `module` that extends (name, owner) -- or, when `method` is
+		named, that type's own declaration of that method. Positions are this analysis's own, so
+		they are reliable; only module-level types are considered, which is where a hierarchy in
+		Active Oberon lives. *)
+	PROCEDURE AddImplementations (arr: JSON.Array; module: SyntaxTree.Module; uri: Strings.String;
+		CONST name, owner, method: ARRAY OF CHAR);
+	VAR td: SyntaxTree.TypeDeclaration; scope: SyntaxTree.Scope; sym: SyntaxTree.Symbol;
+		proc: SyntaxTree.Procedure; nm: ARRAY 128 OF CHAR; i: SIZE;
+	BEGIN
+		IF (module = NIL) OR (module.moduleScope = NIL) THEN RETURN END;
+		td := module.moduleScope.firstTypeDeclaration;
+		WHILE td # NIL DO
+			IF (td.position.line > 0) & ExtendsType(td, name, owner) THEN
+				IF method = "" THEN
+					AddDeclLoc(arr, td, uri)
+				ELSE
+					scope := RecordScopeOfDecl(td);
+					IF scope # NIL THEN
+						sym := scope.firstSymbol;
+						WHILE sym # NIL DO
+							sym.GetName(nm);
+							IF (nm = method) & (sym IS SyntaxTree.Procedure) THEN AddDeclLoc(arr, sym, uri) END;
+							sym := sym.nextSymbol
+						END;
+						(* the parser's list too, for the same reason Gather reads it *)
+						IF scope.procedures # NIL THEN
+							i := 0;
+							WHILE i < scope.procedures.Length() DO
+								proc := scope.procedures.GetProcedure(i);
+								IF proc # NIL THEN
+									proc.GetName(nm);
+									IF nm = method THEN AddDeclLoc(arr, proc, uri) END
+								END;
+								INC(i)
+							END
+						END
+					END
+				END
+			END;
+			td := td.nextTypeDeclaration
+		END
+	END AddImplementations;
+
+	(*	textDocument/implementation: what extends the type under the cursor, across the project --
+		and on a method, which of those types overrides it. The same sweep find-all-references
+		makes, gated the same way: a subtype's file has to name the module the base lives in. *)
+	PROCEDURE ImplementationsAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	VAR module, fm: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol; arr: JSON.Array;
+		td: SyntaxTree.TypeDeclaration; name, owner, method, modName: ARRAY 128 OF CHAR;
+		mask, prefix, readName: ARRAY 1024 OF CHAR; en: Files.Enumerator; fn: ARRAY 256 OF CHAR;
+		flags: SET; tm, dt: SIGNED32; sz: Files.Size; ftext, sibUri: Strings.String;
+	BEGIN
+		arr := JSON.NewArray();
+		module := Analyze(text); IF module = NIL THEN RETURN arr END;
+		NEW(f); IF ~f.Find(module, offset) THEN RETURN arr END;
+		sym := f.foundSym; method := "";
+		IF sym IS SyntaxTree.TypeDeclaration THEN
+			td := sym(SyntaxTree.TypeDeclaration)
+		ELSIF (sym IS SyntaxTree.Procedure) & (sym.scope # NIL) & (sym.scope IS SyntaxTree.RecordScope) THEN
+			sym.GetName(method); td := OwnerDeclOf(sym.scope)
+		ELSE
+			RETURN arr                      (* neither a type nor a method: nothing implements it *)
+		END;
+		IF (td = NIL) OR (td.scope = NIL) OR (td.scope.ownerModule = NIL) THEN RETURN arr END;
+		td.GetName(name); td.scope.ownerModule.GetName(owner);
+		AddImplementations(arr, module, uri, name, owner, method);
+
+		SiblingMask(uri, mask, prefix);
+		NEW(en); en.Open(mask, {});
+		WHILE en.HasMoreEntries() DO
+			IF en.GetEntry(fn, flags, tm, dt, sz) THEN
+				ModuleBaseName(fn, modName);
+				sibUri := SiblingUri(uri, modName);
+				IF (modName[0] # 0X) & (sibUri # NIL) & (sibUri^ # uri^) THEN
+					COPY(prefix, readName); Strings.Append(readName, modName);
+					Strings.Append(readName, ".Mod");
+					ftext := ReadFile(readName);
+					IF (ftext # NIL) & Contains(ftext, owner) THEN
+						fm := Analyze(ftext);
+						IF fm # NIL THEN AddImplementations(arr, fm, sibUri, name, owner, method) END
+					END
+				END
+			END
+		END;
+		en.Close;
+		RETURN arr
+	END ImplementationsAt;
+
 	(* ---- workspace symbols ---- *)
 
 	PROCEDURE Lower (ch: CHAR): CHAR;
@@ -2765,6 +2939,7 @@ VAR
 						caps.Set("workspaceSymbolProvider", JSON.NewBool(TRUE));
 						caps.Set("typeDefinitionProvider", JSON.NewBool(TRUE));
 						caps.Set("documentHighlightProvider", JSON.NewBool(TRUE));
+						caps.Set("implementationProvider", JSON.NewBool(TRUE));
 						result := JSON.NewObject();
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
@@ -2839,6 +3014,16 @@ VAR
 							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := TypeDefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
+						END;
+						Respond(out, req.Get("id"), res)
+					ELSIF method^ = "textDocument/implementation" THEN
+						td := AsObject(params.Get("textDocument"));
+						pos := AsObject(params.Get("position"));
+						res := NIL;
+						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
+							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+							doc := FindDoc(uri^);
+							IF doc # NIL THEN res := ImplementationsAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/documentHighlight" THEN
