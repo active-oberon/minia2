@@ -572,6 +572,14 @@ positive: the helpers these tests are written with
 		Files.SetDate(handle, 12 * 4096, 130 * 512 + 1 * 32 + 1)   (* 2030-01-01 12:00 *)
 	END Future;
 
+	(** Take a fixture of the case's own away again, so no later case in the job inherits it. *)
+	PROCEDURE Discard* (CONST module: ARRAY OF CHAR);
+	VAR name: ARRAY 320 OF CHAR; res: INTEGER;
+	BEGIN
+		COPY(module, name); Strings.Append(name, ".Mod");
+		Files.Delete(name, res)
+	END Discard;
+
 	PROCEDURE Command (CONST command, argument: ARRAY OF CHAR);
 	VAR ctx: Commands.Context; arg, in: Streams.StringReader;
 		sink: Streams.Buffer; w: Streams.Writer; res: INTEGER; ignoreMsg: ARRAY 256 OF CHAR;
@@ -1145,14 +1153,24 @@ positive: an import nothing names can be removed, and one that is used is left a
 
 	MODULE Test;
 	IMPORT T := LSPTestShared, JSON;
-	VAR s: T.Session; lib, main, listed, alone, p: T.Text; two, one, line, char: SIGNED32;
-		a, act, edit: JSON.Value;
+	VAR s: T.Session; lib, main, spare, listed, alone, p: T.Text; uri: ARRAY 320 OF CHAR;
+		two, one, line, char: SIGNED32; a, act, edit: JSON.Value;
 	BEGIN
 		(*	The checker already knows which import nothing resolved to; the work here is the text
 			surgery -- the comma has to go with the name, or the list stops being one. Both edits
-			are queued before the one Run: `exit` ends the session, so a case gets one. *)
+			are queued before the one Run: `exit` ends the session, so a case gets one.
+
+			The spare import is a fixture of this case's own and not a library module. Under
+			`ob test -t a64` the server looks for `.SymUu` while the library beside it is `.SymU8`,
+			so a library import resolves to nothing there, nothing is marked used, and the case
+			offered to remove the import that IS used -- which is how the A64 suites caught it. A
+			module whose source is in the directory is built from source on either architecture. *)
+		spare := "";
+		T.Line(spare, 0, "MODULE LspSpare;");
+		T.Line(spare, 0, "END LspSpare.");
 		T.Project(s, lib, main);
-		T.Edited(main, "IMPORT LspLib;", "IMPORT LspLib, Files;", listed);
+		T.Extra("LspSpare", spare, uri);
+		T.Edited(main, "IMPORT LspLib;", "IMPORT LspLib, LspSpare;", listed);
 		s.Change(T.MainUri, listed);
 		T.DocRange(T.MainUri, listed, "IMPORT LspLib", 0, 6, p);   (* the cursor in the clause *)
 		two := s.Request("textDocument/codeAction", p);
@@ -1160,27 +1178,28 @@ positive: an import nothing names can be removed, and one that is used is left a
 			is not a module. LspLib is unresolved in this second edit, so the file does not check;
 			a code action is still the right answer, and the import the checker adds for the
 			dangling qualifier has no source position, which is what keeps it out of the count. *)
-		T.Edited(main, "IMPORT LspLib;", "IMPORT Files;", alone);
+		T.Edited(main, "IMPORT LspLib;", "IMPORT LspSpare;", alone);
 		s.Change(T.MainUri, alone);
-		T.DocRange(T.MainUri, alone, "IMPORT Files", 0, 6, p);
+		T.DocRange(T.MainUri, alone, "IMPORT LspSpare", 0, 6, p);
 		one := s.Request("textDocument/codeAction", p);
 		s.Run(FALSE);
+		T.Discard("LspSpare");
 
 		a := s.Answer(two);
-		act := T.ItemWith(a, "title", "Remove unused import Files");
+		act := T.ItemWith(a, "title", "Remove unused import LspSpare");
 		ASSERT(act # NIL, 120);
 		(* LspLib is named twice in the file, so it is not on offer *)
 		ASSERT(T.ItemWith(a, "title", "Remove unused import LspLib") = NIL, 121);
 		edit := T.Item(T.Field(T.Field2(act, "edit", "changes"), T.MainUri), 0);
-		ASSERT(T.Starts(edit, listed, ", Files", 0), 122);         (* the comma goes with it *)
-		ASSERT(T.At(T.Field2(edit, "range", "end"), listed, ", Files;", 7), 123);
+		ASSERT(T.Starts(edit, listed, ", LspSpare", 0), 122);      (* the comma goes with it *)
+		ASSERT(T.At(T.Field2(edit, "range", "end"), listed, ", LspSpare;", 10), 123);
 		ASSERT(T.Is(T.Field(edit, "newText"), ""));
 
-		act := T.ItemWith(s.Answer(one), "title", "Remove unused import Files");
+		act := T.ItemWith(s.Answer(one), "title", "Remove unused import LspSpare");
 		ASSERT(act # NIL, 124);
 		edit := T.Item(T.Field(T.Field2(act, "edit", "changes"), T.MainUri), 0);
-		ASSERT(T.Starts(edit, alone, "IMPORT Files", 0), 125);
-		ASSERT(T.Where(alone, "IMPORT Files", 0, line, char), 126);
+		ASSERT(T.Starts(edit, alone, "IMPORT LspSpare", 0), 125);
+		ASSERT(T.Where(alone, "IMPORT LspSpare", 0, line, char), 126);
 		ASSERT(T.Number(T.Field(T.Field2(edit, "range", "end"), "line")) = line + 1, 127);
 		ASSERT(T.Number(T.Field(T.Field2(edit, "range", "end"), "character")) = 0, 128)
 	END Test.
