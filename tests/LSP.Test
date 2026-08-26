@@ -1062,6 +1062,50 @@ positive: workspace/symbol finds a declaration in the other file, whatever the q
 		ASSERT(T.Count(s.Answer(empty)) = 0, 113)                 (* the whole project is no answer *)
 	END Test.
 
+positive: an import nothing names can be removed, and one that is used is left alone
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, listed, alone, p: T.Text; two, one, line, char: SIGNED32;
+		a, act, edit: JSON.Value;
+	BEGIN
+		(*	The checker already knows which import nothing resolved to; the work here is the text
+			surgery -- the comma has to go with the name, or the list stops being one. Both edits
+			are queued before the one Run: `exit` ends the session, so a case gets one. *)
+		T.Project(s, lib, main);
+		T.Edited(main, "IMPORT LspLib;", "IMPORT LspLib, Files;", listed);
+		s.Change(T.MainUri, listed);
+		T.DocRange(T.MainUri, listed, "IMPORT LspLib", 0, 6, p);   (* the cursor in the clause *)
+		two := s.Request("textDocument/codeAction", p);
+		(*	The last import goes with its whole clause and the line it sat on -- a bare "IMPORT ;"
+			is not a module. LspLib is unresolved in this second edit, so the file does not check;
+			a code action is still the right answer, and the import the checker adds for the
+			dangling qualifier has no source position, which is what keeps it out of the count. *)
+		T.Edited(main, "IMPORT LspLib;", "IMPORT Files;", alone);
+		s.Change(T.MainUri, alone);
+		T.DocRange(T.MainUri, alone, "IMPORT Files", 0, 6, p);
+		one := s.Request("textDocument/codeAction", p);
+		s.Run(FALSE);
+
+		a := s.Answer(two);
+		act := T.ItemWith(a, "title", "Remove unused import Files");
+		ASSERT(act # NIL, 120);
+		(* LspLib is named twice in the file, so it is not on offer *)
+		ASSERT(T.ItemWith(a, "title", "Remove unused import LspLib") = NIL, 121);
+		edit := T.Item(T.Field(T.Field2(act, "edit", "changes"), T.MainUri), 0);
+		ASSERT(T.Starts(edit, listed, ", Files", 0), 122);         (* the comma goes with it *)
+		ASSERT(T.At(T.Field2(edit, "range", "end"), listed, ", Files;", 7), 123);
+		ASSERT(T.Is(T.Field(edit, "newText"), ""));
+
+		act := T.ItemWith(s.Answer(one), "title", "Remove unused import Files");
+		ASSERT(act # NIL, 124);
+		edit := T.Item(T.Field(T.Field2(act, "edit", "changes"), T.MainUri), 0);
+		ASSERT(T.Starts(edit, alone, "IMPORT Files", 0), 125);
+		ASSERT(T.Where(alone, "IMPORT Files", 0, line, char), 126);
+		ASSERT(T.Number(T.Field(T.Field2(edit, "range", "end"), "line")) = line + 1, 127);
+		ASSERT(T.Number(T.Field(T.Field2(edit, "range", "end"), "character")) = 0, 128)
+	END Test.
+
 positive: formatting reprints the module and leaves no line ending in a blank
 
 	MODULE Test;

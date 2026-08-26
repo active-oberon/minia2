@@ -2485,13 +2485,76 @@ VAR
 		RETURN MakeAction(title, uri, MakeEdit(il, ic, il, ic, Strings.NewString(nt)))
 	END AddImportAction;
 
+	(*	The stretch of text one import occupies, alias and all: the symbol's position is the local
+		name -- the "WM" of "WM := WMWindowManager" -- and the module name follows it. FALSE when
+		the position does not land on that very name, which is how an import the checker added
+		itself (SYSTEM, the runtime) is told from one the file declares. *)
+	PROCEDURE ImportSpan (text: Strings.String; imp: SyntaxTree.Import; VAR from, to: SIZE): BOOLEAN;
+	VAR k, i: SIZE; nm: ARRAY 128 OF CHAR;
+	BEGIN
+		IF imp.position.line <= 0 THEN RETURN FALSE END;
+		from := SIZE(imp.position.start); to := from;
+		imp.GetName(nm); i := 0;
+		WHILE nm[i] # 0X DO
+			IF text[from + i] # nm[i] THEN RETURN FALSE END;
+			INC(i)
+		END;
+		WHILE IsIdentChar(text[to]) DO INC(to) END;
+		k := to; WHILE (text[k] = " ") OR (text[k] = 09X) DO INC(k) END;
+		IF (text[k] = ":") & (text[k+1] = "=") THEN
+			INC(k, 2);
+			WHILE (text[k] = " ") OR (text[k] = 09X) DO INC(k) END;
+			WHILE IsIdentChar(text[k]) DO INC(k) END;
+			to := k
+		END;
+		RETURN to > from
+	END ImportSpan;
+
+	(*	Cut an import out and leave a list behind: with the comma before it, or with the comma
+		after it when it is the first, or -- when it was the only one -- the whole IMPORT clause
+		and the line it sat on. *)
+	PROCEDURE RemoveImportEdit (text, uri: Strings.String; imp: SyntaxTree.Import; only: BOOLEAN): JSON.Object;
+	VAR from, to, j, k: SIZE; sl, sc, el, ec: SIGNED32; title, nm: ARRAY 160 OF CHAR;
+	BEGIN
+		IF ~ImportSpan(text, imp, from, to) THEN RETURN NIL END;
+		imp.GetName(nm);
+		IF only THEN
+			j := IndexOf(text, "IMPORT", 0); IF j < 0 THEN RETURN NIL END;
+			k := IndexOf(text, ";", j); IF k < 0 THEN RETURN NIL END;
+			from := j; to := k + 1;
+			WHILE (text[to] = " ") OR (text[to] = 09X) DO INC(to) END;
+			IF text[to] = CR THEN INC(to) END;
+			IF text[to] = LF THEN INC(to) END
+		ELSE
+			j := from;
+			WHILE (j > 0) & ((text[j-1] = " ") OR (text[j-1] = 09X) OR (text[j-1] = CR) OR (text[j-1] = LF)) DO
+				DEC(j)
+			END;
+			IF (j > 0) & (text[j-1] = ",") THEN
+				from := j - 1
+			ELSE
+				k := to;
+				WHILE (text[k] = " ") OR (text[k] = 09X) OR (text[k] = CR) OR (text[k] = LF) DO INC(k) END;
+				IF text[k] # "," THEN RETURN NIL END;   (* neither in a list nor alone: leave it be *)
+				to := k + 1;
+				WHILE (text[to] = " ") OR (text[to] = 09X) DO INC(to) END
+			END
+		END;
+		OffsetToPos(text, from, sl, sc); OffsetToPos(text, to, el, ec);
+		COPY("Remove unused import ", title); Strings.Append(title, nm);
+		RETURN MakeAction(title, uri, MakeEdit(sl, sc, el, ec, Strings.NewString("")))
+	END RemoveImportEdit;
+
 	(* textDocument/codeAction: add-import quickfixes for undeclared qualifiers in the
-	   supplied diagnostics, plus comment/uncomment of a non-empty selection. *)
+	   supplied diagnostics, removal of an import nothing names, and comment/uncomment
+	   of a non-empty selection. *)
 	PROCEDURE CodeActions (text, uri: Strings.String; diags: JSON.Array;
 		sl, sc, el, ec: SIGNED32): JSON.Value;
 	VAR actions: JSON.Array; i: SIZE; d, dr, dstart: JSON.Object; mv, lv, cv: JSON.Value;
 		dl, dc: SIGNED32; mod, seen: ARRAY 1024 OF CHAR; act: JSON.Object;
 		o1, o2, k: SIZE; buf: Streams.Buffer; w: Streams.Writer; wrapped: BOOLEAN;
+		impKw, impEnd, cur, f1, f2: SIZE; live: SIGNED32;
+		m: SyntaxTree.Module; imp: SyntaxTree.Import;
 	BEGIN
 		actions := JSON.NewArray(); seen[0] := 0X;
 		IF diags # NIL THEN
@@ -2519,6 +2582,33 @@ VAR
 					END
 				END;
 				INC(i)
+			END
+		END;
+		(*	An import nothing names. The checker already answers this -- it marks a symbol used
+			when it resolves a name to it -- so there is nothing to count here. Offered only with
+			the cursor in the IMPORT clause: that is where one looks for it, and it keeps the
+			checker off every other code-action request, which a client sends per cursor move. *)
+		impKw := IndexOf(text, "IMPORT", 0);
+		IF impKw >= 0 THEN
+			impEnd := IndexOf(text, ";", impKw);
+			cur := SIZE(PosToOffset(text, sl, sc));
+			IF (impEnd > impKw) & (cur >= impKw) & (cur <= impEnd) THEN
+				m := Analyze(text);
+				IF m # NIL THEN
+					live := 0; imp := m.moduleScope.firstImport;
+					WHILE imp # NIL DO
+						IF ImportSpan(text, imp, f1, f2) THEN INC(live) END;
+						imp := imp.nextImport
+					END;
+					imp := m.moduleScope.firstImport;
+					WHILE imp # NIL DO
+						IF ~imp.used THEN
+							act := RemoveImportEdit(text, uri, imp, live = 1);
+							IF act # NIL THEN actions.Add(act) END
+						END;
+						imp := imp.nextImport
+					END
+				END
 			END
 		END;
 		(* comment / uncomment a non-empty selection *)
