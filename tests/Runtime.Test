@@ -170,6 +170,31 @@ positive: one index per string, and the string back again
 		ASSERT(s = "")
 	END Test.
 
+positive: a file remembers the date it was given
+
+	MODULE Test;
+	IMPORT Files;
+	VAR handle: Files.File; writer: Files.Writer; time, date: SIGNED32;
+	BEGIN
+		(*	`Files.SetDate` hands the kernel a `struct utimbuf`, which is two `time_t` -- eight
+			bytes each on a 64-bit Unix. `Unix.UnixFiles.Mod` declared them `SIGNED32`, so the
+			kernel read sixteen bytes out of an eight-byte record and stamped the file with the
+			epoch whatever date it was given. Nothing in the tree noticed until the language
+			server needed to know whether a source was newer than its symbol file.
+
+			A2 packs the date as mday + (mon+1)*32 + year*512, years since 1900, and the time as
+			sec + min*64 + hour*4096 -- both monotonic, which is what makes them comparable. *)
+		handle := Files.New("DateStamp.Bin"); ASSERT(handle # NIL);
+		Files.OpenWriter(writer, handle, 0); writer.String("x"); writer.Update;
+		Files.Register(handle);
+		handle := Files.Old("DateStamp.Bin"); ASSERT(handle # NIL);
+		Files.SetDate(handle, 12 * 4096 + 34 * 64 + 56, 130 * 512 + 3 * 32 + 17);
+		handle := Files.Old("DateStamp.Bin"); ASSERT(handle # NIL);
+		Files.GetDate(handle, time, date);
+		ASSERT(date = 130 * 512 + 3 * 32 + 17);          (* 2030-03-17 *)
+		ASSERT(time = 12 * 4096 + 34 * 64 + 56)          (* 12:34:56 *)
+	END Test.
+
 positive: bit manipulation, and the unsigned arithmetic it carries in signed words
 
 	MODULE Test;

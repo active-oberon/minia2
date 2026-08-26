@@ -826,14 +826,32 @@ VAR
 		ignore := Compiler.Modules(modFile, reader, 0, diag, log, opts, importCache)
 	END CompileToSym;
 
+	(*	Was `a` written after `b`? A2 packs the date as mday + (mon+1)*32 + year*512 and the time as
+		sec + min*64 + hour*4096 (Unix.UnixFiles.Mod:713), both monotonic, so comparing the numbers
+		is comparing the moments. FALSE when either file is missing: the caller then falls back to
+		asking whether the symbols exist at all. *)
+	PROCEDURE NewerThan (CONST a, b: ARRAY OF CHAR): BOOLEAN;
+	VAR fa, fb: Files.File; ta, da, tb, db: SIGNED32;
+	BEGIN
+		fa := Files.Old(a); IF fa = NIL THEN RETURN FALSE END;
+		fb := Files.Old(b); IF fb = NIL THEN RETURN FALSE END;
+		Files.GetDate(fa, ta, da); Files.GetDate(fb, tb, db);
+		RETURN (da > db) OR ((da = db) & (ta > tb))
+	END NewerThan;
+
 	PROCEDURE EnsureSymbols (CONST name: ARRAY OF CHAR);
 	VAR modFile, symFile, iname: ARRAY 256 OF CHAR; reader: Streams.Reader;
 		diag: Diagnostics.DiagnosticsList; scanner: FoxScanner.Scanner; parser: FoxParser.Parser;
 		module: SyntaxTree.Module; imp: SyntaxTree.Import;
 	BEGIN
 		COPY(name, symFile); Strings.Append(symFile, symbolSuffix);
-		IF FileExists(symFile) THEN RETURN END;           (* already have symbols *)
 		COPY(name, modFile); Strings.Append(modFile, ".Mod");
+		(*	Symbols that exist are not enough: they have to be no older than the source they came
+			from. Until this was checked, a module edited after its symbols were built stayed as its
+			importers had first seen it for the rest of the session -- add an exported procedure to
+			one module and the module next to it could not see it. That is also the whole of what
+			watching the file system was wanted for here. *)
+		IF FileExists(symFile) & ~NewerThan(modFile, symFile) THEN RETURN END;
 		reader := FoxBasic.GetFileReader(modFile);
 		IF reader = NIL THEN RETURN END;                  (* no source -> leave unresolved *)
 		NEW(diag);

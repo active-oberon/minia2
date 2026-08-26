@@ -717,7 +717,11 @@ TYPE
 
 				PROCEDURE SetDate*( t, d: SIGNED32 );
 				TYPE
-					Time = RECORD actime, modtime: SIGNED32 END;
+					(* struct utimbuf is two time_t, and time_t is the C long -- 8 bytes here, not 4.
+					   With SIGNED32 the kernel read 16 bytes out of an 8-byte record and stamped
+					   every file with the epoch, whatever date it was given. Timeval above spells
+					   time_t the same way. *)
+					Time = RECORD actime, modtime: LONGINTEGER END;
 				VAR
 					tm: Unix.Tm;  buf: Time;  r: SIGNED32;  path: Filename;
 				BEGIN {EXCLUSIVE}
