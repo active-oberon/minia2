@@ -26,6 +26,7 @@
     "PrevalenceSystem (Luc Blaeser's persistent object system) and ContextualDependency entered 2026-08-24: persistence and the component framework's dependency rules are this package's subject.",
     "FNHistories (Fabian Nart) entered 2026-08-24: an unbounded general-purpose history is a data structure, and this package is where they live.",
     "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. In: TFClasses from std/base. Out: CSV to std/encoding.",
-    "Out on 2026-08-27: 14 module(s) to lib/data-legacy. the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."
+    "Out on 2026-08-27: 14 module(s) to lib/data-legacy. the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload.",
+    "There were three generations of containers here, not two, and the third was in the registry: community/generics is MODULE G(TYPE T, CONST L) by the same author as GenericCollections, with the same Container/Stack/Queue/DEQue/Vector. It is marked superseded there as of 2026-08-27. The rule this package now holds to: one official set of containers, and it is this one."
   ]
 }
