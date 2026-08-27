@@ -1,0 +1,25 @@
+{
+  "name": "std/encoding",
+  "tier": 3,
+  "context": "A2",
+  "headless": true,
+  "status": "draft",
+  "description": "Turning values into bytes and back: JSON, CSV, Base64, CRC.",
+  "provides": [
+    "Base64",
+    "CRC",
+    "CSV",
+    "JSON"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Created 2026-08-27. In: JSON from std/web, CSV from std/data, Base64 and CRC from std/base -- one subject that was spread over three packages. JSON is here rather than in the registry, which is where the Rust border would put it, because ob reads a2pkg.json: it is SDK infrastructure, not a convenience. CryptoBase64 does not come: it duplicates Base64, nothing imports either, and the shorter one that does not pull crypto wins.",
+    "XML came from lib/web on 2026-08-27, once the payload showed why: Configuration imports it and std/system imports Configuration. It is a shared type, not a web feature.",
+    "CSV and the XML stack were both here, both left, and one came back. The cycle was real: CSV imports Files and Configuration imports XML, so holding both made std/encoding and std/system import each other -- `std/encoding and std/system import each other and neither declares it in cycle`. Fan-in settled which half to move: std reached Configuration only through FSTools, FileHandlers and Localization, which nothing imports, so those three went to apps/system-tools and XML stayed in lib/web. With std/system no longer reaching XML, CSV is safe here again, and it belongs here: tests/CSV.Test is part of the SDK's own suite, and keeping JSON in std while CSV sat in the registry was a line nobody could explain."
+  ]
+}

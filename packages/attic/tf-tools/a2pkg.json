@@ -11,7 +11,7 @@
     "TFTypeSys"
   ],
   "requires": {
-    "std/archive": "*",
+    "lib/archive": "*",
     "std/base": "*",
     "std/runtime": "*",
     "std/system": "*"

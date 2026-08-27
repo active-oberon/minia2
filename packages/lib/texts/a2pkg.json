@@ -1,0 +1,25 @@
+{
+  "name": "lib/texts",
+  "tier": 4,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "The rich-text piece-list model and the Unicode character database that reads its tables through it.",
+  "provides": [
+    "Texts",
+    "UnicodeBidirectionality",
+    "UnicodeProperties"
+  ],
+  "requires": {
+    "lib/gui": "*",
+    "lib/web": "*",
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Split out of std/text on 2026-08-27. Texts reaches WMEvents and FP1616 (the window manager) and the XML stack; UnicodeProperties and UnicodeBidirectionality reach it plus Codecs. None of the three can travel in a headless SDK, and the string layer they were filed with can.",
+    "Known tail, worth a code fix rather than a manifest one: Texts still rides into the payload because FoxTest imports CompilerInterface and that imports Texts. So `ob test` drags the rich-text model, WMEvents and FP1616 into a headless SDK. Cutting that one import is the cheapest 3 modules the payload will ever lose."
+  ]
+}

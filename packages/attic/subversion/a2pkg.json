@@ -20,11 +20,11 @@
     "SVNWebDAV"
   ],
   "requires": {
+    "lib/web": "*",
     "std/base": "*",
     "std/net": "*",
     "std/runtime": "*",
-    "std/system": "*",
-    "std/web": "*"
+    "std/system": "*"
   },
   "residual": [
     "Named 2026-08-24 out of the unclaimed half of source/: twelve modules that nobody had claimed and that turn out to be one thing -- Od* is the WebDAV/DeltaV half (OdXml builds the DeltaV method bodies), SVN* (rstoll) the Subversion half above it.",

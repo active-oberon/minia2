@@ -1,0 +1,30 @@
+{
+  "name": "lib/compress",
+  "tier": 4,
+  "context": "A2",
+  "headless": false,
+  "status": "stable",
+  "description": "DEFLATE/zlib primitives (inflate + deflate, buffers, stream readers/writers) and gzip. Container formats (ZIP) live in std/archive.",
+  "provides": [
+    "BWHCompressor",
+    "GZip",
+    "Inflate",
+    "MoveToFront",
+    "OZip3",
+    "Zlib",
+    "ZlibBuffers",
+    "ZlibDeflate",
+    "ZlibInflate",
+    "ZlibReaders",
+    "ZlibWriters"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/math": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "MoveToFront, BWHCompressor and OZip3 entered 2026-08-24, unclaimed until then: the Burrows-Wheeler family and a file-compression command over the primitives already here.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ]
+}

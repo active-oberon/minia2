@@ -4,37 +4,21 @@
   "context": "A2",
   "headless": true,
   "status": "draft",
-  "description": "The library that needs no host: strings and their pool, streams and number conversion, dates, bit sets, options, locks, pipes, the plugin registry, and the small collections.",
+  "description": "The library that needs no host: streams and number conversion, bit sets and bit streams, events and channels, locks and pipes, the plugin registry.",
   "provides": [
     "BIT",
-    "Base64",
     "BitSets",
     "BitStreams",
-    "CRC",
     "Channels",
-    "Dates",
     "Diagnostics",
-    "DynamicStrings",
     "Events",
-    "FP1616",
-    "Inputs",
     "Locks",
-    "Options",
     "Pipes",
     "Plugins",
     "RealConversions",
     "ReleaseThreadPool",
     "StreamUtilities",
-    "Streams",
-    "StringPool",
-    "Strings",
-    "TFClasses",
-    "TFStringPool",
-    "UTF8Strings",
-    "WMEvents"
-  ],
-  "graphical": [
-    "Inputs"
+    "Streams"
   ],
   "requires": {
     "std/runtime": "*"
@@ -46,6 +30,8 @@
     "Channels is a parametric module: it is instantiated in an import (Channels(Event)) and therefore must be in the library as a symbol file before anything can instantiate it. A module beside the program cannot be.",
     "Base64 entered 2026-08-24: Streams and nothing else, which is what this package is for. It was named by no package at all.",
     "BitStreams and StreamUtilities (Hunziker) entered 2026-08-24: reading and writing below the byte, and stream helpers -- Streams and nothing else, which is what this package is for.",
-    "ReleaseThreadPool (staubesv, a pool with job dependencies) and TFStringPool entered 2026-08-24. Both are library over Strings and locks despite their names, which is why they are here and not with the release tooling or the TF tools."
+    "ReleaseThreadPool (staubesv, a pool with job dependencies) and TFStringPool entered 2026-08-24. Both are library over Strings and locks despite their names, which is why they are here and not with the release tooling or the TF tools.",
+    "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. Out: the string family and Texts to std/text, Dates to std/time, Base64 and CRC to std/encoding, Options to std/system (it is about the host's command line), TFClasses to std/data. Options and TFClasses had to leave: they import Strings, so keeping them here would make base and text a cross-package cycle.",
+    "Out on 2026-08-27: FP1616, Inputs and WMEvents to lib/gui -- they are the window manager's tail, and this package is the one that needs no host. Plugins stays: Network imports it."
   ]
 }

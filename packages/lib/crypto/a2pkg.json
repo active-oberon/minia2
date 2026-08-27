@@ -1,0 +1,52 @@
+{
+  "name": "lib/crypto",
+  "tier": 4,
+  "context": "A2",
+  "headless": false,
+  "status": "stable",
+  "description": "Ciphers (AES/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA3/Keccak), public-key (RSA/DSA/DH), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
+  "provides": [
+    "ASN1",
+    "Checksum",
+    "CryptoAES",
+    "CryptoARC4",
+    "CryptoBase64",
+    "CryptoBigNumbers",
+    "CryptoBlowfish",
+    "CryptoCAST",
+    "CryptoCSPRNG",
+    "CryptoCiphers",
+    "CryptoDES",
+    "CryptoDES3",
+    "CryptoDSA",
+    "CryptoDiffieHellman",
+    "CryptoFortuna",
+    "CryptoFortunaRng",
+    "CryptoHMAC",
+    "CryptoHashes",
+    "CryptoIDEA",
+    "CryptoKeccakF1600",
+    "CryptoKeccakSponge",
+    "CryptoMD5",
+    "CryptoPrimes",
+    "CryptoRSA",
+    "CryptoSHA1",
+    "CryptoSHA256",
+    "CryptoSHA3",
+    "CryptoStreams",
+    "CryptoTwofish",
+    "CryptoUtils",
+    "DES",
+    "X509"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/math": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "DES and Checksum entered 2026-08-24, unclaimed until then: DES belongs beside the other ciphers, and Checksum (GF) is the md5/sha1/sha3 command over the hashes already here.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ]
+}

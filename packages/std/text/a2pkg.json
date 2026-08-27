@@ -1,21 +1,25 @@
 {
   "name": "std/text",
-  "tier": 4,
+  "tier": 1,
   "context": "A2",
   "headless": true,
   "status": "draft",
-  "description": "Rich text model and Unicode text utilities: the Texts piece-list model, TextUtilities (load/store/convert), UTF-8 helpers.",
+  "description": "Text: the string family and its pool, UTF-8, and number conversion into and out of strings.",
   "provides": [
-    "Texts"
+    "DynamicStrings",
+    "StringPool",
+    "Strings",
+    "TFStringPool",
+    "UTF8Strings"
   ],
   "requires": {
     "std/base": "*",
-    "std/runtime": "*",
-    "std/system": "*",
-    "std/web": "*"
+    "std/runtime": "*"
   },
   "residual": [
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
-    "Created to satisfy std/compiler / std/net / std/media requires. The question this line used to ask -- whether Texts/TextUtilities stay runtime-only -- is answered: they do not, both reach WMEvents, which is why they are under `graphical`. UTF8Strings is the only member the headless SDK carries."
+    "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. In: Strings, UTF8Strings, DynamicStrings, StringPool, TFStringPool from std/base; UnicodeProperties and UnicodeBidirectionality from std/ime. RealConversions did NOT come: Streams imports it, so it stays in std/base and the dependency runs text -> base only.",
+    "UnicodeProperties and UnicodeBidirectionality are graphical; Texts is not, which the gate had to tell me. They read their tables through Texts AND Codecs, and it is Codecs that reaches the window system. Making them headless means giving them a reader that is not the rich-text model -- the same work as regenerating the tables from the UCD.",
+    "Out on 2026-08-27: Texts, UnicodeProperties and UnicodeBidirectionality to lib/texts. Texts is the rich-text piece-list model -- an editor's document, not the string layer -- and it is what dragged WMEvents, FP1616 and the whole XML stack into the payload. The two Unicode modules follow it because they read their tables through it. The character database belongs in std/text; this implementation of it does not, and the way back is to regenerate the tables from the UCD with a plain reader."
   ]
 }

@@ -1,0 +1,23 @@
+{
+  "name": "std/time",
+  "tier": 3,
+  "context": "A2",
+  "headless": true,
+  "status": "draft",
+  "description": "Time: the calendar and its formatting, the high-resolution counter, the stopwatch, and timers.",
+  "provides": [
+    "ActiveTimers",
+    "Dates",
+    "PrecisionTimer",
+    "Stopwatch",
+    "UpTime"
+  ],
+  "requires": {
+    "std/runtime": "*",
+    "std/text": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Created 2026-08-27. In: Dates from std/base, the clocks from std/system. Clock stays in std/runtime -- the kernel needs it before any library does. Missing and worth adding: monotonic time and a timezone database; the calendar itself (Dates) is already complete."
+  ]
+}

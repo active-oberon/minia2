@@ -32,8 +32,8 @@
     "WMPerfMonTabSystem"
   ],
   "requires": {
+    "lib/gui": "*",
     "std/base": "*",
-    "std/gui": "*",
     "std/net": "*",
     "std/runtime": "*",
     "std/system": "*"

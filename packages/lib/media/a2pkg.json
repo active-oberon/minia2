@@ -1,0 +1,44 @@
+{
+  "name": "lib/media",
+  "tier": 6,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "Audio/video/image codecs: MP3, DivX/MPEG video (+ IDCT, tables), WAV, GIF, AVI container, a codec registry and sound-device abstraction.",
+  "provides": [
+    "AVI",
+    "AnimationCodec",
+    "DivXDecoder",
+    "DivXHelper",
+    "DivXTypes",
+    "GIFCodec",
+    "IDCT",
+    "MP3Decoder",
+    "MPEGTables",
+    "MPEGUtilities",
+    "MPEGVideoDecoder",
+    "PictCodec",
+    "PictImages",
+    "WAVCodec"
+  ],
+  "requires": {
+    "lib/gui": "*",
+    "lib/sound": "*",
+    "lib/web": "*",
+    "std/base": "*",
+    "std/math": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Not in the headless SDK: the codecs render through Raster, and the four that do not are of no use without the ones that do. The codecs render through Raster and the four that do not are of no use without the ones that do, so the package stays home whole.",
+    "Re-homed from misc: the media codecs (MP3Decoder, DivX*, MPEG*, WAVCodec, GIFCodec) that had zero fan-in in this tree but are library, not apps.",
+    "UNPLACED: Raster + WM* (WMGraphics/WMRectangles/WMWindowManager) — the players/viewers need the GUI/raster stack. Split codec cores (headless-usable) from the interactive players (MP3Player, WAVRecorder, MPEG viewer) which go to an apps area; the cores then need only std/gfx (Raster) once that package exists.",
+    "Codecs (the registry hub) pulls Archives -> std/archive; confirm during hub triage.",
+    "SoundDevices left for std/sound 2026-08-24: it is the speaker, not a codec, and it was the one module here that a headless payload could carry.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ],
+  "cycle": [
+    "lib/gui"
+  ]
+}

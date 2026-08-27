@@ -1,0 +1,37 @@
+{
+  "name": "lib/data-legacy",
+  "tier": 8,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "The older answer to data: the pre-generic collections (DataLists/Queues/Stacks/Trees, TFClasses), persistence (PersistentObjects, PrevalenceSystem, DataIO), and the SQL/ODBC bindings.",
+  "provides": [
+    "Attributes",
+    "ContextualDependency",
+    "Data",
+    "DataIO",
+    "DataLists",
+    "DataQueues",
+    "DataStacks",
+    "DataTrees",
+    "FNHistories",
+    "ODBC",
+    "PersistentObjects",
+    "PrevalenceSystem",
+    "SQL",
+    "TFClasses"
+  ],
+  "requires": {
+    "lib/numerics": "*",
+    "lib/web": "*",
+    "std/base": "*",
+    "std/compiler": "*",
+    "std/math": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Split out of std/data on 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload.",
+    "CSV passed through on 2026-08-27 and went back to std/encoding: the SDK's own suite tests it (tests/CSV.Test), so the payload has to carry it."
+  ]
+}

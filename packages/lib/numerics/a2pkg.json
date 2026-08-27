@@ -1,0 +1,30 @@
+{
+  "name": "lib/numerics",
+  "tier": 4,
+  "context": "A2",
+  "headless": false,
+  "status": "stable",
+  "description": "Advanced / special functions over the std/math number types: cube root, error/gamma functions, real & complex series, rational/real/integer numeric routines.",
+  "provides": [
+    "MathCbrt",
+    "MathCplx",
+    "MathCplxSeries",
+    "MathErf",
+    "MathGamma",
+    "MathInt",
+    "MathRat",
+    "MathRe",
+    "MathReSeries",
+    "DataErrors"
+  ],
+  "requires": {
+    "std/math": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "RESOLVED: the DataErrors->Beep->X11 blocker was cut in DataErrors.Mod (removed the Beep import + Kernel.Timer and the beep-on-error/warning loops; errors still logged to Error.Log). Verified: DataErrors now compiles headless. All 9 advanced modules resolve to std/math + DataErrors only.",
+    "FORWARD: MathMitLef (-> CalcGauss, std/calc) and Shortreal (-> FoxArrayBase, std/compiler) are math-family modules parked until the calc/compiler passes place them.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ]
+}

@@ -8,6 +8,24 @@ It is the authoritative statement of *which module belongs to which package* and
 Manifests here declare packages by the module names they **provide**; the source
 files are not (yet) physically moved. A manifest is a plain `a2pkg.json`.
 
+## The four top-level directories
+
+- **`std/`** — the standard library: what other packages talk to each other through, plus
+  what those types are built from. 12 packages, 144 modules. `docs/STDLIB.md` states the
+  rule and records what moved out on 2026-08-27 and why.
+- **`lib/`** — library that is not standard: crypto, compression, archives, the web
+  framework, graphics and the window manager, drivers, disks, media, sound, the numeric
+  extras, the network clients. Every one of them is a leaf `ob get` can deliver, so none
+  of them is in the SDK payload (`headless` false). Sources still live in `source/`; when
+  a package's sources move to a2-registry it becomes `community/<name>` there and leaves
+  here.
+- **`apps/`** — programs, not library: fan-in zero and/or a `Commands.Context` command.
+- **`attic/`** — the tree's other languages and unsupported corners, kept so the diff
+  against vanilla ETH stays narrow.
+
+`sync-std.py` in a2-registry carries `std/*` and `attic/*` to the published catalogue.
+`lib/*` and `apps/*` are not carried: their sources are here, not there.
+
 ## Tiers
 
 Dependencies may only point **downward** (same tier or lower). An upward edge is a
