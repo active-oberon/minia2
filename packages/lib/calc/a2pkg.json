@@ -1,0 +1,31 @@
+{
+  "name": "lib/calc",
+  "tier": 9,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "Numerical calculus: Gauss/Grünwald/Diethelm quadrature and differentiation kernels over std/math + std/numerics.",
+  "provides": [
+    "CalcConvolution",
+    "CalcD1",
+    "CalcD2",
+    "CalcD3",
+    "CalcD4",
+    "CalcDiethelm",
+    "CalcFn",
+    "CalcGauss",
+    "CalcGrunwald",
+    "MathMitLef"
+  ],
+  "requires": {
+    "lib/numerics": "*",
+    "std/data": "*",
+    "std/math": "*"
+  },
+  "residual": [
+    "This closes the MathMitLef -> CalcGauss forward-pointer from std/numerics: MathMitLef (Mittag-Leffler) belongs here or in a numerics-special layer that requires std/calc.",
+    "Verify the std/data edge (CalcFn) before marking stable.",
+    "MathMitLef entered 2026-08-24 -- the FORWARD note in std/numerics named this package for it.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ]
+}

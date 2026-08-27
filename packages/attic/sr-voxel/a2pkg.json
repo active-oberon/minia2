@@ -34,8 +34,8 @@
     "srvoxels"
   ],
   "requires": {
+    "lib/gui": "*",
     "std/base": "*",
-    "std/gui": "*",
     "std/runtime": "*",
     "std/system": "*"
   },

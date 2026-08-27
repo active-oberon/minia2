@@ -117,8 +117,8 @@
     "YMF754Util"
   ],
   "requires": {
+    "lib/gui": "*",
     "std/base": "*",
-    "std/gui": "*",
     "std/net": "*",
     "std/runtime": "*",
     "std/system": "*"

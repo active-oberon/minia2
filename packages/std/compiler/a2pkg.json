@@ -74,12 +74,12 @@
     "TestSuite"
   ],
   "requires": {
+    "lib/gui": "*",
+    "lib/web": "*",
     "std/base": "*",
-    "std/gui": "*",
     "std/runtime": "*",
     "std/system": "*",
-    "std/text": "*",
-    "std/web": "*"
+    "std/text": "*"
   },
   "residual": [
     "Only Active Oberon since 2026-08-16. What used to sit here and does not: the Oberon-2 compiler (attic/oberon2, 26 modules), the ActiveCells# front end (attic/activecells-sharp), the TRM and interpreter back ends, and the 32-bit ARM back end. Fox is a framework with pluggable front ends and back ends, so being in the tree said nothing about being ours.",

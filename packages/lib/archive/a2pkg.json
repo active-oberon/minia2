@@ -1,0 +1,29 @@
+{
+  "name": "lib/archive",
+  "tier": 5,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "ZIP container formats: archive reader/writer, zip-backed file system, zip CLI tool, standalone unzip.",
+  "provides": [
+    "Archives",
+    "Tar",
+    "Unzip",
+    "Zip",
+    "ZipFS",
+    "ZipTool"
+  ],
+  "requires": {
+    "lib/compress": "*",
+    "lib/web": "*",
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Split out of std/compress: Archives -> Configuration -> XML, so the container/config-aware layer is tier 2 (needs std/web) while the zlib core stayed tier 1. Confirm std/web is the right home for Configuration/XML during the hub-triage pass.",
+    "ZipTool is a CLI command; may migrate to an apps area rather than a library package.",
+    "Tar entered 2026-08-24: named by no package, and a tar archive is this package's subject as much as a zip is. Compiles headless as it stands.",
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+  ]
+}

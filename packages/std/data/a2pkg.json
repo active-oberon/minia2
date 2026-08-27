@@ -6,31 +6,17 @@
   "status": "draft",
   "description": "Data structures and persistence: generic collections/sort, lists/queues/stacks/trees, the Models/Repositories/Types object framework, CSV, persistent objects, versioning.",
   "provides": [
-    "Attributes",
-    "CSV",
-    "ContextualDependency",
-    "Data",
-    "DataIO",
-    "DataLists",
-    "DataQueues",
-    "DataStacks",
-    "DataTrees",
-    "FNHistories",
     "GenericCollections",
-    "GenericSort",
-    "ODBC",
-    "PersistentObjects",
-    "PrevalenceSystem",
-    "SQL"
+    "GenericSort"
   ],
   "requires": {
+    "lib/numerics": "*",
+    "lib/web": "*",
     "std/base": "*",
     "std/compiler": "*",
     "std/math": "*",
-    "std/numerics": "*",
     "std/runtime": "*",
-    "std/system": "*",
-    "std/web": "*"
+    "std/system": "*"
   },
   "residual": [
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
@@ -38,6 +24,8 @@
     "OPEN: a data member reaches std/compiler (likely PersistentObjects via reflection/fingerprints). Confirm and either accept the edge or isolate it before stable.",
     "SQL here is the interface; watch for Bohdan's native SQL engine (Pager/BTree/SQLScan/SQLParse) as a future std/sql package.",
     "PrevalenceSystem (Luc Blaeser's persistent object system) and ContextualDependency entered 2026-08-24: persistence and the component framework's dependency rules are this package's subject.",
-    "FNHistories (Fabian Nart) entered 2026-08-24: an unbounded general-purpose history is a data structure, and this package is where they live."
+    "FNHistories (Fabian Nart) entered 2026-08-24: an unbounded general-purpose history is a data structure, and this package is where they live.",
+    "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. In: TFClasses from std/base. Out: CSV to std/encoding.",
+    "Out on 2026-08-27: 14 module(s) to lib/data-legacy. the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."
   ]
 }

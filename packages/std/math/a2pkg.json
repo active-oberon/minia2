@@ -6,7 +6,6 @@
   "status": "stable",
   "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
-    "ComplexNumbers",
     "Drand48",
     "FoxArrayBase",
     "FoxArrayBaseOptimized",
@@ -14,18 +13,6 @@
     "Math32",
     "Math64",
     "MathL",
-    "NbrCplx",
-    "NbrInt",
-    "NbrInt16",
-    "NbrInt32",
-    "NbrInt64",
-    "NbrInt8",
-    "NbrRat",
-    "NbrRe",
-    "NbrRe32",
-    "NbrRe64",
-    "NbrStrings",
-    "NextPrime",
     "Random",
     "Shortreal"
   ],
@@ -37,6 +24,7 @@
   "residual": [
     "FoxArrayBase and FoxArrayBaseOptimized are the RUNTIME of math arrays: code the compiler generates calls them, no source names them. They live here rather than in std/compiler because their subject is arithmetic. FoxArrayBaseOptimized is x86 kernels and does not exist on AArch64; FoxArrayBase loads it by name if it is there.",
     "Drand48 entered 2026-08-24: the libc random generator's algorithm, beside Random.",
-    "NextPrime entered 2026-08-24 the same way: BWHCompressor needs it and nobody had claimed it."
+    "NextPrime entered 2026-08-24 the same way: BWHCompressor needs it and nobody had claimed it.",
+    "Out on 2026-08-27: 13 module(s) to lib/numbers. the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."
   ]
 }

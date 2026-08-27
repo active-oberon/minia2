@@ -1,0 +1,31 @@
+{
+  "name": "lib/numbers",
+  "tier": 4,
+  "context": "A2",
+  "headless": false,
+  "status": "draft",
+  "description": "Arbitrary-precision and rational numbers: the Nbr* family, complex numbers, and the primes beside them.",
+  "provides": [
+    "ComplexNumbers",
+    "NbrCplx",
+    "NbrInt",
+    "NbrInt16",
+    "NbrInt32",
+    "NbrInt64",
+    "NbrInt8",
+    "NbrRat",
+    "NbrRe",
+    "NbrRe32",
+    "NbrRe64",
+    "NbrStrings",
+    "NextPrime"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*"
+  },
+  "residual": [
+    "Split out of std/math on 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."
+  ]
+}
