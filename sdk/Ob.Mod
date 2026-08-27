@@ -438,26 +438,96 @@ END ToInteger;
 	later in the round fails and succeeds next time. Modules that never compile are left alone --
 	if the user's module needed one, its own diagnostics say which import is missing.
 *)
-PROCEDURE BuildSiblings(CONST work, platform, objectExtension, symbolExtension: ARRAY OF CHAR);
+(* One directory's worth: compile every module whose symbol file is not in `work` yet. Returns
+   whether anything was compiled, so the caller can go round again -- a module compiles only once
+   the modules it imports have. *)
+PROCEDURE BuildDirectory(CONST directory, work, platform, objectExtension, symbolExtension: ARRAY OF CHAR): BOOLEAN;
 VAR enumerator: Files.Enumerator; mask, file, name, symbol: Path;
 	flags: SET; time, date: SIGNED32; size: Files.Size; changed: BOOLEAN;
 BEGIN
-	Join(project, "*.Mod", mask);
-	REPEAT
-		changed := FALSE;
-		NEW(enumerator); enumerator.Open(mask, {});
-		WHILE enumerator.GetEntry(file, flags, time, date, size) DO
-			IF ModuleName(file, name) THEN
-				Join(work, name, symbol); Strings.Append(symbol, symbolExtension);
-				IF ~ObHost.Exists(symbol)
-						& CompileFile(file, platform, objectExtension, symbolExtension, FALSE) THEN
-					changed := TRUE
-				END
+	changed := FALSE;
+	Join(directory, "*.Mod", mask);
+	NEW(enumerator); enumerator.Open(mask, {});
+	WHILE enumerator.GetEntry(file, flags, time, date, size) DO
+		IF ModuleName(file, name) THEN
+			Join(work, name, symbol); Strings.Append(symbol, symbolExtension);
+			IF ~ObHost.Exists(symbol)
+					& CompileFile(file, platform, objectExtension, symbolExtension, FALSE) THEN
+				changed := TRUE
 			END
-		END;
-		enumerator.Close
+		END
+	END;
+	enumerator.Close;
+	RETURN changed
+END BuildDirectory;
+
+(* The same, for every package `ob get` vendored under .a2pkg/. A package ships sources, not symbol
+   files, so putting its directory on the search path is not enough: the compiler looks for symbols
+   there and finds none. They have to be compiled, and this is where. *)
+PROCEDURE BuildPackages(CONST root, work, platform, objectExtension, symbolExtension: ARRAY OF CHAR;
+	depth: SIGNED32): BOOLEAN;
+VAR handle: ADDRESS; entry, path, manifest: Path; changed: BOOLEAN;
+BEGIN
+	changed := FALSE;
+	handle := ObHost.OpenDirectory(root);
+	IF handle = 0 THEN RETURN FALSE END;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF (entry # ".") & (entry # "..") THEN
+			Join(root, entry, path);
+			Join(path, "a2pkg.json", manifest);
+			IF ObHost.Exists(manifest)
+					& BuildDirectory(path, work, platform, objectExtension, symbolExtension) THEN
+				changed := TRUE
+			END;
+			IF (depth > 0)
+					& BuildPackages(path, work, platform, objectExtension, symbolExtension, depth-1) THEN
+				changed := TRUE
+			END
+		END
+	END;
+	ObHost.CloseDirectory(handle);
+	RETURN changed
+END BuildPackages;
+
+PROCEDURE BuildSiblings(CONST work, platform, objectExtension, symbolExtension: ARRAY OF CHAR);
+VAR vendor: Path; changed: BOOLEAN;
+BEGIN
+	Join(project, ".a2pkg", vendor);
+	REPEAT
+		changed := BuildDirectory(project, work, platform, objectExtension, symbolExtension);
+		IF BuildPackages(vendor, work, platform, objectExtension, symbolExtension, 2) THEN changed := TRUE END
 	UNTIL ~changed
 END BuildSiblings;
+
+(* ob get vendors a package under .a2pkg/<owner>/<name>, and a package directory may itself hold
+   package directories, which is why this recurses the way ScanPackages does. Without it `ob get`
+   fetches sources that `ob build` then cannot find: the verb's search path is the standard library,
+   the project and the scratch, and nothing told the compiler where the vendored ones are. *)
+PROCEDURE AddPackagePaths(CONST root: ARRAY OF CHAR; depth: SIGNED32): BOOLEAN;
+VAR handle: ADDRESS; entry, path, manifest: Path; ok: BOOLEAN;
+BEGIN
+	handle := ObHost.OpenDirectory(root);
+	IF handle = 0 THEN RETURN TRUE END;	(* a project with no packages is the common case, not an error *)
+	ok := TRUE;
+	WHILE ObHost.NextEntry(handle, entry) DO
+		IF (entry # ".") & (entry # "..") THEN
+			Join(root, entry, path);
+			Join(path, "a2pkg.json", manifest);
+			IF ObHost.Exists(manifest) THEN ok := AddSearchPath(path) & ok END;
+			IF depth > 0 THEN ok := AddPackagePaths(path, depth-1) & ok END
+		END
+	END;
+	ObHost.CloseDirectory(handle);
+	RETURN ok
+END AddPackagePaths;
+
+(* Every package `ob get` installed, on the search path -- after the project, so a module beside
+   the program still wins over one that came from the registry. *)
+PROCEDURE AddVendored(): BOOLEAN;
+VAR vendor: Path;
+BEGIN
+	Join(project, ".a2pkg", vendor); RETURN AddPackagePaths(vendor, 2)
+END AddVendored;
 
 (*
 	Search paths every verb wants: the standard library, the user's own directory, and where this
@@ -466,7 +536,7 @@ END BuildSiblings;
 *)
 PROCEDURE PrepareIn(CONST work: ARRAY OF CHAR): BOOLEAN;
 BEGIN
-	RETURN AddSearchPath(lib) & AddSearchPath(project) & AddSearchPath(work) & SetWorkPath(work)
+	RETURN AddSearchPath(lib) & AddSearchPath(project) & AddVendored() & AddSearchPath(work) & SetWorkPath(work)
 END PrepareIn;
 
 (* --- verbs ------------------------------------------------------------------------------- *)
@@ -841,7 +911,7 @@ BEGIN
 	(* lib is on the path even for a cross build: the backend and the frontend are loaded by name
 	   when the compiler runs, and what runs here is this machine's code whatever is being built *)
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(library) OR ~AddSearchPath(project)
-			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
+			OR ~AddVendored() OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
 		DiscardScratch(scratch); RETURN
 	END;
 	BuildSiblings(scratch, compilerPlatform, objectExtension, symbolExtension);
@@ -1095,8 +1165,8 @@ PROCEDURE DocumentModule(CONST file, scratch, output: ARRAY OF CHAR): BOOLEAN;
 VAR name, page, source, destination: Path;
 BEGIN
 	IF ~ModuleName(file, name) THEN DieOn("cannot read a MODULE header from ", file); RETURN FALSE END;
-	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddSearchPath(scratch)
-			OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddVendored()
+			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
 	COPY(name, page); Strings.Append(page, ".html");
 	IF ~CompileForDocumentation(file, page) THEN RETURN FALSE END;
 	Join(scratch, page, source); Join(output, page, destination);
@@ -1172,7 +1242,7 @@ BEGIN
 	END;
 
 	(* the siblings are compiled once, here, rather than by each of the children in turn *)
-	IF AddSearchPath(lib) & AddSearchPath(project) & AddSearchPath(scratch) & SetWorkPath(scratch) THEN
+	IF AddSearchPath(lib) & AddSearchPath(project) & AddVendored() & AddSearchPath(scratch) & SetWorkPath(scratch) THEN
 		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension)
 	END;
 
@@ -2814,7 +2884,7 @@ BEGIN
 	   code whatever is being compiled. The two libraries cannot be confused for each other -- a
 	   target is its object and symbol file extensions. *)
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(testLibrary) OR ~AddSearchPath(project)
-			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
+			OR ~AddVendored() OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
 		failed := TRUE
 	ELSE
 		Join(scratch, "TesterInput.txt", source);
@@ -2915,7 +2985,7 @@ BEGIN
 	IF ~ObHost.ExecutablePath(testSelf) THEN Die("cannot find my own binary"); RETURN END;
 	IF ~ScratchDirectory(testScratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	IF AddSearchPath(lib) & AddSearchPath(testLibrary) & AddSearchPath(project)
-			& AddSearchPath(testScratch) & SetWorkPath(testScratch) THEN
+			& AddVendored() & AddSearchPath(testScratch) & SetWorkPath(testScratch) THEN
 		BuildSiblings(testScratch, testPlatform, testObject, testSymbol)
 	END;
 	(* Only now, because the image is linked into the scratch directory. *)
