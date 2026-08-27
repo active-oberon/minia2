@@ -989,21 +989,8 @@ VAR
 		RETURN v
 	END ReadMessage;
 
-	(* ---- helpers to extract fields ---- *)
-
-	PROCEDURE GetStr (o: JSON.Object; CONST key: ARRAY OF CHAR; VAR s: Strings.String): BOOLEAN;
-	VAR v: JSON.Value;
-	BEGIN
-		IF o = NIL THEN RETURN FALSE END;
-		v := o.Get(key);
-		IF (v # NIL) & (v IS JSON.String) THEN s := v(JSON.String).value; RETURN TRUE END;
-		RETURN FALSE
-	END GetStr;
-
-	PROCEDURE AsObject (v: JSON.Value): JSON.Object;
-	BEGIN
-		IF (v # NIL) & (v IS JSON.Object) THEN RETURN v(JSON.Object) ELSE RETURN NIL END
-	END AsObject;
+	(* Field extraction lives in JSON.Mod now -- GetStr, GetInt and AsObject were written here
+	   first and sdk/Ob.Mod had its own copy of the same. *)
 
 	(* textDocument uri + text from params (didOpen has textDocument.text;
 	   didChange has contentChanges[0].text with full sync). *)
@@ -1034,15 +1021,6 @@ VAR
 	END Respond;
 
 	(* ---- hover / go-to-definition (frontend + checker, then AST lookup) ---- *)
-
-	PROCEDURE GetInt (o: JSON.Object; CONST key: ARRAY OF CHAR; VAR n: SIGNED32): BOOLEAN;
-	VAR v: JSON.Value;
-	BEGIN
-		IF o = NIL THEN RETURN FALSE END;
-		v := o.Get(key);
-		IF (v # NIL) & (v IS JSON.Number) THEN n := SIGNED32(ENTIER(v(JSON.Number).value)); RETURN TRUE END;
-		RETURN FALSE
-	END GetInt;
 
 	(* LSP 0-based (line, character) -> byte offset in text *)
 	PROCEDURE PosToOffset (text: Strings.String; line, char: SIGNED32): SIGNED64;
@@ -1820,10 +1798,10 @@ VAR
 		WHILE i < arr.length DO
 			v := arr.At(i);
 			IF (v # NIL) & (v IS JSON.Object) THEN
-				o := v(JSON.Object); r := AsObject(o.Get("range"));
+				o := v(JSON.Object); r := JSON.AsObject(o.Get("range"));
 				v := o.Get("uri");
 				IF (v # NIL) & (v IS JSON.String) & (v(JSON.String).value^ = uri) & (r # NIL) THEN
-					st := AsObject(r.Get("start"));
+					st := JSON.AsObject(r.Get("start"));
 					IF st # NIL THEN
 						lv := st.Get("line"); cv := st.Get("character");
 						IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number)
@@ -2003,9 +1981,9 @@ VAR
 		WHILE i < earr.length DO
 			v := earr.At(i);
 			IF (v # NIL) & (v IS JSON.Object) THEN
-				o := v(JSON.Object); r := AsObject(o.Get("range"));
+				o := v(JSON.Object); r := JSON.AsObject(o.Get("range"));
 				IF r # NIL THEN
-					st := AsObject(r.Get("start"));
+					st := JSON.AsObject(r.Get("start"));
 					IF st # NIL THEN
 						lv := st.Get("line"); cv := st.Get("character");
 						IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number)
@@ -2390,9 +2368,9 @@ VAR
 		IF (nodes = NIL) OR ~(nodes IS JSON.Array) THEN RETURN END;
 		arr := nodes(JSON.Array); i := 0;
 		WHILE i < arr.length DO
-			o := AsObject(arr.At(i));
+			o := JSON.AsObject(arr.At(i));
 			(* kind Namespace=3 is the IMPORT group and nothing else *)
-			IF (o # NIL) & GetStr(o, "name", nm) & GetInt(o, "kind", kind) & (kind # 3) THEN
+			IF (o # NIL) & JSON.GetString(o, "name", nm) & JSON.GetInteger(o, "kind", kind) & (kind # 3) THEN
 				IF ContainsFold(nm^, query) THEN
 					loc := JSON.NewObject();
 					loc.Set("uri", JSON.NewString(uri^));
@@ -2831,12 +2809,12 @@ VAR
 		IF diags # NIL THEN
 			i := 0;
 			WHILE i < diags.length DO
-				d := AsObject(diags.At(i));
+				d := JSON.AsObject(diags.At(i));
 				IF d # NIL THEN
 					mv := d.Get("message");
 					IF (mv # NIL) & (mv IS JSON.String) & Contains(mv(JSON.String).value, "ndeclared") THEN
-						dr := AsObject(d.Get("range"));
-						IF dr # NIL THEN dstart := AsObject(dr.Get("start")) ELSE dstart := NIL END;
+						dr := JSON.AsObject(d.Get("range"));
+						IF dr # NIL THEN dstart := JSON.AsObject(dr.Get("start")) ELSE dstart := NIL END;
 						IF dstart # NIL THEN
 							lv := dstart.Get("line"); cv := dstart.Get("character");
 							IF (lv # NIL) & (lv IS JSON.Number) & (cv # NIL) & (cv IS JSON.Number) THEN
@@ -2915,10 +2893,10 @@ VAR
 		LOOP
 			msg := ReadMessage(in, alive);
 			IF (msg = NIL) & ~alive THEN EXIT END;   (* end of input, or a header past saving *)
-			req := AsObject(msg);                    (* NIL for a message we skipped: read on *)
+			req := JSON.AsObject(msg);                    (* NIL for a message we skipped: read on *)
 			IF req # NIL THEN
-				IF GetStr(req, "method", method) THEN
-					params := AsObject(req.Get("params"));
+				IF JSON.GetString(req, "method", method) THEN
+					params := JSON.AsObject(req.Get("params"));
 					IF method^ = "initialize" THEN
 						caps := JSON.NewObject();
 						caps.Set("textDocumentSync", JSON.NewNumber(1));   (* full sync *)
@@ -2962,8 +2940,8 @@ VAR
 						result.Set("capabilities", caps);
 						(* optional: host dir of extracted stdlib sources, for cross-module
 						   go-to-definition into the standard library *)
-						initOpts := AsObject(params.Get("initializationOptions"));
-						IF (initOpts # NIL) & GetStr(initOpts, "stdlibSrc", sopt) THEN
+						initOpts := JSON.AsObject(params.Get("initializationOptions"));
+						IF (initOpts # NIL) & JSON.GetString(initOpts, "stdlibSrc", sopt) THEN
 							COPY(sopt^, stdlibSrcHost)
 						END;
 						Respond(out, req.Get("id"), result)
@@ -2974,8 +2952,8 @@ VAR
 					ELSIF method^ = "exit" THEN
 						EXIT
 					ELSIF method^ = "textDocument/didOpen" THEN
-						td := AsObject(params.Get("textDocument"));
-						IF (td # NIL) & GetStr(td, "uri", uri) & GetStr(td, "text", text) THEN
+						td := JSON.AsObject(params.Get("textDocument"));
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & JSON.GetString(td, "text", text) THEN
 							PutDoc(uri^, text^); PublishFor(out, uri)
 						END
 					ELSIF method^ = "textDocument/didChange" THEN
@@ -2983,81 +2961,81 @@ VAR
 						   keystroke: compiling per change is too heavy and produces
 						   flickering/stale transient errors. Diagnostics refresh on
 						   open and on save (below). *)
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						changes := params.Get("contentChanges");
-						IF (td # NIL) & GetStr(td, "uri", uri) & (changes # NIL) & (changes IS JSON.Array) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (changes # NIL) & (changes IS JSON.Array) THEN
 							arr := changes(JSON.Array); first := arr.At(0);
-							IF (first # NIL) & GetStr(AsObject(first), "text", text) THEN
+							IF (first # NIL) & JSON.GetString(JSON.AsObject(first), "text", text) THEN
 								PutDoc(uri^, text^);
 								IF live THEN PublishFor(out, uri) END
 							END
 						END
 					ELSIF method^ = "textDocument/didSave" THEN
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						(* didSave may carry the saved text; use it if present *)
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
-							IF GetStr(params, "text", text) THEN PutDoc(uri^, text^) END;
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
+							IF JSON.GetString(params, "text", text) THEN PutDoc(uri^, text^) END;
 							PublishFor(out, uri)
 						END
 					ELSIF method^ = "textDocument/didClose" THEN
-						td := AsObject(params.Get("textDocument"));
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+						td := JSON.AsObject(params.Get("textDocument"));
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
 							RemoveDoc(uri^); PublishFor(out, uri)   (* empty diagnostics *)
 						END
 					ELSIF method^ = "textDocument/hover" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := HoverAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/definition" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/typeDefinition" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := TypeDefinitionAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/implementation" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := ImplementationsAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/documentHighlight" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DocumentHighlights(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/documentSymbol" THEN
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := DocumentSymbols(doc.text) END
 						END;
@@ -3067,85 +3045,85 @@ VAR
 							open ones are in -- so the most recently opened document is the anchor.
 							Nothing open means nothing to search. *)
 						res := NIL;
-						IF (params # NIL) & GetStr(params, "query", sopt) & (documents # NIL) THEN
+						IF (params # NIL) & JSON.GetString(params, "query", sopt) & (documents # NIL) THEN
 							res := WorkspaceSymbols(sopt^, documents.uri)
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/completion" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := CompletionAt(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/signatureHelp" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := SignatureHelpAt(doc.text, PosToOffset(doc.text, line, char)) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/references" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := ReferencesAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/semanticTokens/full" THEN
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := SemanticTokens(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/rename" THEN
-						td := AsObject(params.Get("textDocument"));
-						pos := AsObject(params.Get("position"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (pos # NIL)
-							& GetInt(pos, "line", line) & GetInt(pos, "character", char)
-							& GetStr(params, "newName", sopt) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (pos # NIL)
+							& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char)
+							& JSON.GetString(params, "newName", sopt) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := RenameAt(doc.text, PosToOffset(doc.text, line, char), uri, sopt) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/formatting" THEN
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := Formatting(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/foldingRange" THEN
-						td := AsObject(params.Get("textDocument"));
+						td := JSON.AsObject(params.Get("textDocument"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) THEN
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) THEN
 							doc := FindDoc(uri^);
 							IF doc # NIL THEN res := FoldingRanges(doc.text) END
 						END;
 						Respond(out, req.Get("id"), res)
 					ELSIF method^ = "textDocument/codeAction" THEN
-						td := AsObject(params.Get("textDocument"));
-						rng := AsObject(params.Get("range"));
-						ctx := AsObject(params.Get("context"));
+						td := JSON.AsObject(params.Get("textDocument"));
+						rng := JSON.AsObject(params.Get("range"));
+						ctx := JSON.AsObject(params.Get("context"));
 						res := NIL;
-						IF (td # NIL) & GetStr(td, "uri", uri) & (rng # NIL) THEN
-							pos := AsObject(rng.Get("start")); endO := AsObject(rng.Get("end"));
+						IF (td # NIL) & JSON.GetString(td, "uri", uri) & (rng # NIL) THEN
+							pos := JSON.AsObject(rng.Get("start")); endO := JSON.AsObject(rng.Get("end"));
 							IF (pos # NIL) & (endO # NIL)
-								& GetInt(pos, "line", line) & GetInt(pos, "character", char)
-								& GetInt(endO, "line", line2) & GetInt(endO, "character", char2) THEN
+								& JSON.GetInteger(pos, "line", line) & JSON.GetInteger(pos, "character", char)
+								& JSON.GetInteger(endO, "line", line2) & JSON.GetInteger(endO, "character", char2) THEN
 								doc := FindDoc(uri^);
 								IF doc # NIL THEN
 									diagsArr := NIL;

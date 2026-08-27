@@ -256,6 +256,42 @@ positive: malformed documents are rejected
 		ASSERT(JSONTestShared.Rejects("nul"))
 	END Test.
 
+positive: reading fields out of an object
+
+	MODULE Test;
+	IMPORT JSON, Strings;
+	VAR v: JSON.Value; o: JSON.Object; s: Strings.String; n: SIGNED32; buf: ARRAY 32 OF CHAR;
+	BEGIN
+		ASSERT(JSON.Parse('{"name":"ob","tier":3,"nested":{"k":"v"},"list":[1,2],"null":null}', v));
+		o := JSON.AsObject(v); ASSERT(o # NIL);
+		ASSERT(JSON.GetString(o, "name", s) & (s^ = "ob"));
+		ASSERT(JSON.GetText(o, "name", buf) & (buf = "ob"));
+		ASSERT(JSON.GetInteger(o, "tier", n) & (n = 3));
+		ASSERT(JSON.GetObject(o, "nested") # NIL);
+		ASSERT(JSON.GetArray(o, "list") # NIL);
+		ASSERT(JSON.GetArray(o, "list").length = 2)
+	END Test.
+
+positive: absent, null and wrong-typed fields all answer FALSE, and NIL is safe
+
+	MODULE Test;
+	IMPORT JSON, Strings;
+	VAR v: JSON.Value; o: JSON.Object; s: Strings.String; n: SIGNED32;
+	BEGIN
+		ASSERT(JSON.Parse('{"name":"ob","tier":3,"null":null}', v));
+		o := JSON.AsObject(v);
+		ASSERT(~JSON.GetString(o, "absent", s));      (* not there *)
+		ASSERT(~JSON.GetString(o, "null", s));        (* there, but null *)
+		ASSERT(~JSON.GetString(o, "tier", s));        (* there, but a number *)
+		ASSERT(~JSON.GetInteger(o, "name", n));       (* there, but a string *)
+		ASSERT(JSON.GetObject(o, "name") = NIL);      (* there, but not an object *)
+		ASSERT(JSON.GetArray(o, "name") = NIL);
+		ASSERT(~JSON.GetString(NIL, "name", s));      (* reading a field of nothing *)
+		ASSERT(JSON.GetObject(NIL, "name") = NIL);
+		ASSERT(JSON.AsObject(NIL) = NIL);
+		ASSERT(JSON.AsArray(NIL) = NIL)
+	END Test.
+
 negative: the harness itself would notice a wrong expectation
 
 	MODULE Test;
