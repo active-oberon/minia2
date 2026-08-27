@@ -1412,15 +1412,6 @@ BEGIN
 	RETURN TRUE
 END WriteJsonFile;
 
-PROCEDURE JsonText(object: JSON.Object; CONST key: ARRAY OF CHAR; VAR value: ARRAY OF CHAR): BOOLEAN;
-VAR member: JSON.Value;
-BEGIN
-	IF object = NIL THEN RETURN FALSE END;
-	member := object.Get(key);
-	IF (member = NIL) OR ~(member IS JSON.String) THEN RETURN FALSE END;
-	COPY(member(JSON.String).value^, value); RETURN TRUE
-END JsonText;
-
 (* The commit a fresh clone is standing on, read out of .git rather than off git's own output:
    a tag or a detached clone puts the hash straight into HEAD, a branch puts a ref there and the
    hash in the file it names. *)
@@ -1565,8 +1556,8 @@ BEGIN
 		DieOn("package not in registry: ", name); RETURN
 	END;
 	entry := packages.Get(name)(JSON.Object);
-	IF ~JsonText(entry, "path", path) THEN DieOn("registry entry has no path: ", name); RETURN END;
-	IF ~JsonText(entry, "status", status) THEN status := "unknown" END;
+	IF ~JSON.GetText(entry, "path", path) THEN DieOn("registry entry has no path: ", name); RETURN END;
+	IF ~JSON.GetText(entry, "status", status) THEN status := "unknown" END;
 	Join(registry, path, line);
 	IF ~ObHost.Exists(line) THEN
 		DieOn("no installable source yet for ", name); RETURN
@@ -1578,7 +1569,7 @@ BEGIN
 	version2 := "0.0.0";
 	Join(destination, "a2pkg.json", path);
 	IF ReadJsonFile(path, manifest) THEN
-		IF ~JsonText(manifest, "version", version2) THEN version2 := "0.0.0" END
+		IF ~JSON.GetText(manifest, "version", version2) THEN version2 := "0.0.0" END
 	END;
 	IF version # "" THEN COPY(version, version2) END;
 	RecordDependency(name, version2, "registry");

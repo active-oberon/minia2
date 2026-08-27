@@ -402,4 +402,59 @@ PROCEDURE NewObject* (): Object;
 VAR x: Object;
 BEGIN NEW(x); RETURN x END NewObject;
 
+(* --- reading a value out of an object ---------------------------------------------------
+	Every caller wrote these: LSP.Mod had GetStr, GetInt and AsObject, sdk/Ob.Mod had JsonText and
+	the same `IS JSON.Object` dance around it. A member is absent, or null, or of another type than
+	the reader hoped -- that is three answers to distinguish and one line to write, so it belongs
+	here rather than in each reader. NIL objects are allowed through: reading a field of something
+	that was not there is the common case, not an error. *)
+
+PROCEDURE AsObject* (v: Value): Object;
+BEGIN
+	IF (v # NIL) & (v IS Object) THEN RETURN v(Object) ELSE RETURN NIL END
+END AsObject;
+
+PROCEDURE AsArray* (v: Value): Array;
+BEGIN
+	IF (v # NIL) & (v IS Array) THEN RETURN v(Array) ELSE RETURN NIL END
+END AsArray;
+
+PROCEDURE GetObject* (o: Object; CONST key: ARRAY OF CHAR): Object;
+BEGIN
+	IF o = NIL THEN RETURN NIL ELSE RETURN AsObject(o.Get(key)) END
+END GetObject;
+
+PROCEDURE GetArray* (o: Object; CONST key: ARRAY OF CHAR): Array;
+BEGIN
+	IF o = NIL THEN RETURN NIL ELSE RETURN AsArray(o.Get(key)) END
+END GetArray;
+
+(** The string itself, shared -- do not modify what comes back. *)
+PROCEDURE GetString* (o: Object; CONST key: ARRAY OF CHAR; VAR s: Strings.String): BOOLEAN;
+VAR v: Value;
+BEGIN
+	IF o = NIL THEN RETURN FALSE END;
+	v := o.Get(key);
+	IF (v # NIL) & (v IS String) THEN s := v(String).value; RETURN TRUE END;
+	RETURN FALSE
+END GetString;
+
+(** A copy, for a caller that has a buffer rather than a pointer. *)
+PROCEDURE GetText* (o: Object; CONST key: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+VAR s: Strings.String;
+BEGIN
+	IF ~GetString(o, key, s) THEN RETURN FALSE END;
+	COPY(s^, text); RETURN TRUE
+END GetText;
+
+(** JSON has one number type; this is the integer a caller expects to find there. *)
+PROCEDURE GetInteger* (o: Object; CONST key: ARRAY OF CHAR; VAR n: SIGNED32): BOOLEAN;
+VAR v: Value;
+BEGIN
+	IF o = NIL THEN RETURN FALSE END;
+	v := o.Get(key);
+	IF (v # NIL) & (v IS Number) THEN n := SIGNED32(ENTIER(v(Number).value)); RETURN TRUE END;
+	RETURN FALSE
+END GetInteger;
+
 END JSON.
