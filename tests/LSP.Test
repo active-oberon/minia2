@@ -742,6 +742,40 @@ positive: go-to-definition works from inside an object method
 		ASSERT(T.Starts(r, lib, "PROCEDURE Shift*", 10))
 	END Test.
 
+positive: an aliased import answers on the module name, not only on the alias
+
+	MODULE Test;
+	IMPORT T := LSPTestShared, JSON;
+	VAR s: T.Session; lib, main, doc, p: T.Text; onName, onAlias, hover: SIGNED32; r: JSON.Value;
+	BEGIN
+		T.Project(s, lib, main);
+		(*	`IMPORT LL := LspLib` is the form the shared fixture has not got, and it is the whole of
+			the case: an import is declared under its alias, so a span the length of the alias was all
+			that could be asked about -- the module name after `:=` answered null, in every client. *)
+		doc := "";
+		T.Line(doc, 0, "MODULE LspMain;");
+		T.Line(doc, 0, "IMPORT LL := LspLib;");
+		T.Line(doc, 0, "BEGIN");
+		T.Line(doc, 1, "IF LL.Add(1, 2) = 3 THEN END");
+		T.Line(doc, 0, "END LspMain.");
+		s.Change(T.MainUri, doc);
+		T.DocAt(T.MainUri, doc, "LspLib;", 2, "", p);
+		onName := s.Request("textDocument/definition", p);
+		hover := s.Request("textDocument/hover", p);
+		T.DocAt(T.MainUri, doc, "LL :=", 1, "", p);
+		onAlias := s.Request("textDocument/definition", p);
+		s.Run(FALSE);
+		r := s.Answer(onName);
+		ASSERT(~T.IsNull(r), 1);   (* null here is the defect itself, and a trap would hide it *)
+		ASSERT(T.Is(T.Field(r, "uri"), T.LibUri), 1);
+		ASSERT(T.Starts(r, lib, "MODULE LspLib", 7), 2);
+		r := s.Answer(hover);
+		ASSERT(T.IndexOf(T.Str(T.Field2(r, "contents", "value"))^, "module LspLib", 0) = 0, 3);
+		r := s.Answer(onAlias);
+		ASSERT(T.Is(T.Field(r, "uri"), T.LibUri), 4);
+		ASSERT(T.Starts(r, lib, "MODULE LspLib", 7), 5)
+	END Test.
+
 positive: go-to-type-definition answers the type, in this file and in the other one
 
 	MODULE Test;

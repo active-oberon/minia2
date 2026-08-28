@@ -3470,6 +3470,11 @@ TYPE
 			nextImport-: Import;
 			module-: Module;
 			moduleName-: Identifier;
+			(*	Where `moduleName` stands in the source, which is not `position`: an import is
+				declared under its alias, so `IMPORT RC := RealConversions` puts `position` on `RC`
+				and leaves the module name -- the longer half, and the one a reader points at --
+				addressable by nothing. Equal to `position` when there is no alias. *)
+			modulePosition-: Position;
 			context-: Identifier;
 			direct-: BOOLEAN; (* direct import *)
 			parameters-: ExpressionList;
@@ -3481,6 +3486,7 @@ TYPE
 			module := NIL;
 			context := invalidIdentifier;
 			SELF.moduleName := moduleName;
+			modulePosition := position;
 			type := importType;
 			parameters := NIL;
 		END InitImport;
@@ -3494,6 +3500,11 @@ TYPE
 		BEGIN
 			SELF.module := module;
 		END SetModule;
+
+		PROCEDURE SetModulePosition*(position: Position);
+		BEGIN
+			SELF.modulePosition := position;
+		END SetModulePosition;
 
 		PROCEDURE SetDirect*(d: BOOLEAN);
 		BEGIN

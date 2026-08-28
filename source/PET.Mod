@@ -22,6 +22,9 @@ MODULE PET; (** AUTHOR "TF, PL"; PURPOSE "Programmer's Editing Tool"; *)
  *	CTRL-U:		Unload module opened in current  page
  *	CTRL-D:	Diff current tab to file
  *
+ *	CTRL-G:	Go to the declaration of the name under the cursor (language server, same process)
+ *	CTRL-K:	What the name under the cursor is, written to the log
+ *
  *	CTRL-DEL	Delete end-of-line whitespace in current page
  *
  *	ALT-INS	Uncomment selected code of commented
@@ -49,7 +52,8 @@ IMPORT
 	WMComponents, WMRectangles, WMMessages, WMDialogs, WMDiagnostics,
 	WMTextView, WMEditors, Strings, TextUtilities, Texts,
 	WMWindowManager, WMGrids, WMMacros, WMPopups, WMDropTarget,
-	PETTrees, Configuration, Codecs, WMTabComponents, UndoManager, WMSearchComponents, Kernel;
+	PETTrees, Configuration, Codecs, WMTabComponents, UndoManager, WMSearchComponents, Kernel,
+	LSP, JSON, UTF8Strings;
 
 CONST
 	WindowWidth = 800; WindowHeight = 600;
@@ -916,6 +920,64 @@ TYPE
 			IF ~logEdit.visible.Get() THEN logEdit.visible.Set(TRUE) END;
 		END OpenLogEditor;
 
+		(* Say it in the log -- one channel for both server answers, and a hover is several lines. *)
+		PROCEDURE Say(CONST msg : ARRAY OF CHAR);
+		VAR tw : TextUtilities.TextWriter;
+		BEGIN
+			ClearLog;
+			NEW(tw, logEdit.text); tw.String(msg); tw.Update;
+			logPanel.visible.Set(TRUE); logEdit.visible.Set(TRUE);
+		END Say;
+
+		(* The text as the server reads it, and the caret as a byte offset into that image. *)
+		PROCEDURE ServerText(VAR offset : SIGNED64) : Strings.String;
+		VAR s : Strings.String;
+		BEGIN
+			s := FlatText(editor.text);
+			offset := UTF8Strings.OffsetOfIndex(s^, editor.tv.cursor.GetPosition());
+			RETURN s;
+		END ServerText;
+
+		(* file:// URI of the open document; a name with no directory in it means the working
+			directory, which is what the server falls back to. *)
+		PROCEDURE DocumentUri() : Strings.String;
+		VAR s : ARRAY 1024 OF CHAR;
+		BEGIN
+			COPY("file://", s); Strings.Append(s, filename);
+			RETURN Strings.NewString(s);
+		END DocumentUri;
+
+		(* CTRL-G: LSP.DefinitionAt on the caret, and PET opens what it names -- other modules included. *)
+		PROCEDURE GoToDeclaration;
+		VAR text, uri, target : Strings.String; offset : SIGNED64;
+			location, start : JSON.Object; line, char : SIGNED32; file : Filename;
+		BEGIN
+			text := ServerText(offset); uri := DocumentUri();
+			location := JSON.AsObject(LSP.DefinitionAt(text, offset, uri));
+			IF location = NIL THEN Say("no declaration for the name under the cursor"); RETURN END;
+			start := JSON.GetObject(JSON.GetObject(location, "range"), "start");
+			IF ~JSON.GetString(location, "uri", target)
+				OR ~JSON.GetInteger(start, "line", line)
+				OR ~JSON.GetInteger(start, "character", char) THEN
+				Say("the server answered without a position"); RETURN;
+			END;
+			StripScheme(target^, file);
+			IF Files.Old(file) = NIL THEN Say("no source file for the declaration"); RETURN END;
+			owner.GotoPosition(file, line, char);
+		END GoToDeclaration;
+
+		(* CTRL-K: LSP.HoverAt on the caret -- kind, name, type, and the declaration comment. *)
+		PROCEDURE ShowHover;
+		VAR text, uri, value : Strings.String; offset : SIGNED64; result : JSON.Object;
+		BEGIN
+			text := ServerText(offset); uri := DocumentUri();
+			result := JSON.AsObject(LSP.HoverAt(text, offset, uri));
+			IF (result # NIL) & JSON.GetString(JSON.GetObject(result, "contents"), "value", value) THEN
+				Say(value^);
+			ELSE
+				Say("nothing under the cursor");
+			END;
+		END ShowHover;
 
 		PROCEDURE HandleShortcut(ucs : SIZE; flags : SET; keysym : SIZE) : BOOLEAN;
 		VAR pos : SIZE;
@@ -1012,6 +1074,10 @@ TYPE
 				END;
 			ELSIF (keysym = 04H) & ControlKeyDown(flags) THEN (* CTRL-D *)
 				HandleDiff;
+			ELSIF (keysym = 07H) & ControlKeyDown(flags) THEN (* CTRL-G *)
+				GoToDeclaration;
+			ELSIF (keysym = 0BH) & ControlKeyDown(flags) THEN (* CTRL-K *)
+				ShowHover;
 			ELSIF (keysym = 30H) & ControlKeyDown(flags) THEN (* CTRL- 0 *)
 				IF (focus = EditorFocus) THEN
 					editor.tv.cursor.SetPosition(0);
@@ -1585,6 +1651,23 @@ TYPE
 				RecordCurrentPos
 			END
 		END GotoFile;
+
+		(* Open <filename> at a position that came from outside the file. The server counts lines and
+			byte offsets in the UTF-8 image, PET's caret counts characters of the text, so the image
+			does the arithmetic and UTF8Strings maps the answer back. GotoFile already recorded the
+			jump, so its entry is corrected rather than a second one added. *)
+		PROCEDURE GotoPosition(CONST filename : ARRAY OF CHAR; line, char : SIGNED32);
+		VAR flat : Strings.String; pos : SIZE;
+		BEGIN
+			GotoFile(filename, 0);
+			IF (currentPage # NIL) THEN
+				flat := FlatText(currentPage.editor.text);
+				pos := UTF8Strings.IndexOfOffset(flat^, LSP.PosToOffset(flat, line, char));
+				currentPage.editor.tv.cursor.SetPosition(pos);
+				IF (currentPage.tree # NIL) THEN currentPage.tree.SelectNodeByPos(pos) END;
+				browseTOS.pos := pos;
+			END;
+		END GotoPosition;
 
 		PROCEDURE GotoDefinition(info : PETTrees.ExternalDefinitionInfo);
 		VAR page : PETPanel; i : SIGNED32;
@@ -2889,6 +2972,32 @@ BEGIN (* caller holds module lock *)
 	scratchText := LoadText(ScratchTextFilename);
 	scratchText.onTextChanged.Add(ScratchModified);
 END LoadScratchText;
+
+(* The path in a file:// URI, which is the name PET opens files by. The length is measured and not
+	assumed: Strings.Copy copies as many characters as it is told, so a count taken from the
+	destination reads past the end of a shorter source. *)
+PROCEDURE StripScheme(CONST uri : ARRAY OF CHAR; VAR file : ARRAY OF CHAR);
+CONST Scheme = "file://";
+VAR i, length : SIZE;
+BEGIN
+	i := 0;
+	WHILE (Scheme[i] # 0X) & (uri[i] = Scheme[i]) DO INC(i) END;
+	IF Scheme[i] # 0X THEN i := 0 END;
+	length := Strings.Length(uri) - i;
+	IF length > LEN(file) - 1 THEN length := LEN(file) - 1 END;
+	Strings.Copy(uri, i, length, file);
+END StripScheme;
+
+(* The UTF-8 image of <text>, which is the form the language server reads. Four bytes a character
+	is the most any of them encodes to, so nothing is ever cut in half. *)
+PROCEDURE FlatText(text : Texts.Text) : Strings.String;
+VAR s : Strings.String; length : SIZE;
+BEGIN
+	text.AcquireRead; length := text.GetLength(); text.ReleaseRead;
+	NEW(s, length * 4 + 1);
+	TextUtilities.SubTextToStr(text, 0, length, s^);
+	RETURN s;
+END FlatText;
 
 PROCEDURE StoreText(CONST filename : ARRAY OF CHAR; text : Texts.Text);
 VAR res : INTEGER;

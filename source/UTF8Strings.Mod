@@ -153,6 +153,20 @@ BEGIN
 	RETURN i
 END OffsetOfIndex;
 
+(** Return the index of the UTF-8 character at byte offset ofs, the inverse of OffsetOfIndex.  An offset past the end of the string gives the number of characters in it, and a negative one gives 0.  A tool that holds both a text and its UTF-8 image needs this direction: the image is what a compiler or a language server counts in, the index is what the text is addressed by. *)
+
+PROCEDURE IndexOfOffset*(CONST str: ARRAY OF CHAR; ofs: SIZE): SIZE;
+VAR i, idx: SIZE; ch: Char32;
+BEGIN
+	i := 0; idx := 0;
+	WHILE i < ofs DO
+		ch := LONG(ORD(str[i]));
+		IF ch = 0 THEN RETURN idx END;
+		INC(i, LONG(ORD(CodeLength[ch]))); INC(idx)
+	END;
+	RETURN idx
+END IndexOfOffset;
+
 (** -- String manipulation. -- *)
 
 (** Return the number of UTF-8 characters in str, excluding the terminating 0X. *)
