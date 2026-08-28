@@ -731,3 +731,25 @@ positive: UTF8 write + Raw read
 	
 	
 	
+
+# -------------------------
+# Index and offset are two ways of addressing the same string, and a tool that holds a text
+# and its UTF-8 image needs both directions (source/PET.Mod: the caret against the server).
+# -------------------------
+
+positive: IndexOfOffset inverts OffsetOfIndex across a multibyte character
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR str: ARRAY 8 OF CHAR; i: SIZE;
+	BEGIN
+		str[0] := 61X; str[1] := (0D0X); str[2] := (096X); str[3] := 62X; str[4] := 0X;
+		ASSERT(UTF8Strings.Length(str) = 3);
+		FOR i := 0 TO 3 DO
+			ASSERT(UTF8Strings.IndexOfOffset(str, UTF8Strings.OffsetOfIndex(str, i)) = i);
+		END;
+		ASSERT(UTF8Strings.OffsetOfIndex(str, 2) = 3);
+		ASSERT(UTF8Strings.IndexOfOffset(str, 3) = 2);
+		ASSERT(UTF8Strings.IndexOfOffset(str, 0) = 0);
+		ASSERT(UTF8Strings.IndexOfOffset(str, -1) = 0);
+		ASSERT(UTF8Strings.IndexOfOffset(str, 99) = 3);
+	END Test.

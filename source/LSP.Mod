@@ -277,7 +277,7 @@ TYPE
 		   declared inside OBJECT/RECORD types. *)
 		PROCEDURE WScope (scope: SyntaxTree.Scope);
 		VAR ns: SyntaxTree.Scope; sym: SyntaxTree.Symbol; proc: SyntaxTree.Procedure;
-			i: SIZE; dnm: ARRAY 128 OF CHAR;
+			imp: SyntaxTree.Import; i: SIZE; dnm, mnm: ARRAY 128 OF CHAR;
 		BEGIN
 			IF scope = NIL THEN RETURN END;
 			sym := scope.firstSymbol;
@@ -287,6 +287,18 @@ TYPE
 				sym.GetName(dnm);
 				IF (dnm[0] # "@") & (sym.position.line > 0) THEN
 					Hit(sym, sym.position.start, Strings.Length(dnm), sym.position.start, Strings.Length(dnm))
+				END;
+				(*	An import is declared under its alias, so the span above is the alias and nothing
+					else: on `IMPORT RC := RealConversions` the module name -- the half a reader
+					actually points at -- answered null in every client. It is a second site of the
+					same symbol, and the parser now says where it is. *)
+				IF (sym IS SyntaxTree.Import) & (sym.position.line > 0) THEN
+					imp := sym(SyntaxTree.Import);
+					FoxBasic.GetString(imp.moduleName, mnm);
+					IF (imp.modulePosition.start # sym.position.start) & (mnm[0] # 0X) THEN
+						Hit(sym, imp.modulePosition.start, Strings.Length(mnm),
+							imp.modulePosition.start, Strings.Length(mnm))
+					END
 				END;
 				WITH sym:
 					  SyntaxTree.Variable DO WType(sym.type)
@@ -1023,7 +1035,7 @@ VAR
 	(* ---- hover / go-to-definition (frontend + checker, then AST lookup) ---- *)
 
 	(* LSP 0-based (line, character) -> byte offset in text *)
-	PROCEDURE PosToOffset (text: Strings.String; line, char: SIGNED32): SIGNED64;
+	PROCEDURE PosToOffset* (text: Strings.String; line, char: SIGNED32): SIGNED64;
 	VAR i: SIZE; l, c: SIGNED32;
 	BEGIN
 		IF text = NIL THEN RETURN 0 END;
@@ -1244,7 +1256,7 @@ VAR
 	END FindDeclPos;
 
 	(* textDocument/hover result, or NIL if nothing under the offset. *)
-	PROCEDURE HoverAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	PROCEDURE HoverAt* (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
 	VAR module, imported: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
 		nm: ARRAY 128 OF CHAR; kd: ARRAY 16 OF CHAR; ts: Strings.String; lf: ARRAY 2 OF CHAR;
 		val, fn: ARRAY 1024 OF CHAR; contents, range, result: JSON.Object; line, char: SIGNED32;
@@ -1352,7 +1364,7 @@ VAR
 	(* textDocument/definition Location. Resolves declarations in the current file
 	   AND in other modules: the imported symbol's position (line/start/linepos) is
 	   preserved in the .SymUu, so we point at the owning module's source file. *)
-	PROCEDURE DefinitionAt (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
+	PROCEDURE DefinitionAt* (text: Strings.String; offset: SIGNED64; uri: Strings.String): JSON.Value;
 	VAR module, owner, imported: SyntaxTree.Module; f: Finder; sym: SyntaxTree.Symbol;
 		nm, mname: ARRAY 128 OF CHAR; line, char: SIGNED32; targetUri: Strings.String;
 	BEGIN

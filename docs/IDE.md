@@ -130,6 +130,26 @@ Syntax highlighting comes with it — the same word lists as our Pygments lexer,
 colours match what the documentation and the website show. `task vscode` builds and checks
 the package.
 
+### 1e. PET, A2's own editor
+
+Inside A2 there is no client and no server: **PET calls the same engine in its own process**.
+`source/LSP.Mod` and `source/PET.Mod` are modules of one tree, both in Active Oberon, so there
+is no JSON-RPC to start, no path to configure and nothing to install — the editor is talking to
+the compiler that is already loaded.
+
+| Key | What it does |
+|-----|--------------|
+| `CTRL-G` | Go to the declaration of the name under the cursor. Other modules included: the file opens in a tab of its own, and the toolbar back arrow walks the jump back, because the jump is recorded like PET's own. |
+| `CTRL-K` | What the name under the cursor is — kind, name, type and its doc comment — in the log panel. |
+
+The Program Structure panel is still PET's own parser (`PETModuleTree.Mod`), not the server's
+outline; replacing it is a separate step and would gain the user nothing today.
+
+Two coordinate systems meet here, and that is the whole of the plumbing: the server counts
+lines and byte offsets in the UTF-8 image of the text, PET's caret counts characters of a
+`Texts.Text`. `UTF8Strings.OffsetOfIndex` and `IndexOfOffset` translate, so a file with
+non-ASCII comments lands on the right character rather than a few columns off.
+
 ---
 
 ## 2. Features

@@ -2341,6 +2341,7 @@ TYPE
 					aliased := Optional( Scanner.Becomes );
 					IF aliased THEN name := Identifier(idPosition) ELSE name := alias END;
 					import := SyntaxTree.NewImport( position, alias, name, TRUE );
+					IF aliased THEN import.SetModulePosition(idPosition) END;
 					IF Optional(Scanner.LeftParenthesis) THEN
 						expressions := SyntaxTree.NewExpressionList();
 						expressions.AddExpression(Expression());
