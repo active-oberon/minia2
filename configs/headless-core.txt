@@ -14,6 +14,7 @@ CompilerInterface
 Configuration
 DNS
 Dates
+DebugMap
 Debugging
 Diagnostics
 Drand48

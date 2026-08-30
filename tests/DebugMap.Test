@@ -1,0 +1,121 @@
+# Tests for source/DebugMap.Mod -- the line table the compiler keeps for a debugger.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test DebugTestShared;System.Load Test"
+#
+# A case compiles its own fixture, in this process and with --debug, because that is the whole
+# mechanism: the map is filled while the backend still has the module, and it is filled nowhere
+# else. The harness compiles a case without --debug, so a case cannot be its own fixture.
+#
+# Lines are never written down as numbers. A hand-counted line is wrong exactly when the fixture
+# is edited, so the cases compare lines against each other instead.
+
+positive: the helpers these tests are written with
+
+	MODULE DebugTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Compile a fixture with --debug in this process" *)
+
+	IMPORT Compiler, DebugMap, Diagnostics, Modules, Streams, SyntaxTree := FoxSyntaxTree, SYSTEM;
+
+	TYPE
+		Text* = ARRAY 1024 OF CHAR;
+
+	VAR
+		fixture-: Modules.Module;
+
+	(** Line appends one line of fixture source, indented by tabs. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST line: ARRAY OF CHAR);
+	VAR i, j: SIZE;
+	BEGIN
+		i := 0; WHILE text[i] # 0X DO INC(i) END;
+		j := 0; WHILE line[j] # 0X DO text[i] := line[j]; INC(i); INC(j) END;
+		text[i] := 0AX; text[i + 1] := 0X
+	END Line;
+
+	(**	Compile builds a module in this process, the way ob test itself does it, but with --debug:
+		no platform is named, so the compiler infers this system's own -- the fixture has to be
+		loadable here. *)
+	PROCEDURE Compile* (CONST name, source: ARRAY OF CHAR): BOOLEAN;
+	VAR optionReader, reader: Streams.StringReader; options: Compiler.CompilerOptions;
+		diagnostics: Diagnostics.DiagnosticsList; importCache: SyntaxTree.ModuleScope;
+		buffer: Streams.Buffer; log: Streams.Writer; done: BOOLEAN;
+	BEGIN
+		DebugMap.Forget;
+		Streams.OpenStringReader(optionReader, "--debug");
+		NEW(diagnostics); NEW(buffer, 1024); log := buffer.GetWriter();
+		IF ~Compiler.GetOptions(optionReader, log, diagnostics, options) THEN RETURN FALSE END;
+		NEW(reader, LEN(source)); reader.Set(source);
+		importCache := NIL;
+		done := Compiler.Modules(name, reader, 0, diagnostics, log, options, importCache);
+		log.Update;
+		RETURN done
+	END Compile;
+
+	(** Load brings the fixture in, so that its procedures have addresses to ask about. *)
+	PROCEDURE Load* (CONST name: ARRAY OF CHAR): BOOLEAN;
+	VAR res: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		fixture := Modules.ThisModule(name, res, message);
+		RETURN fixture # NIL
+	END Load;
+
+	(** Body is the address of the fixture's module body. *)
+	PROCEDURE Body* (): ADDRESS;
+	BEGIN
+		RETURN SYSTEM.VAL(ADDRESS, fixture.body)
+	END Body;
+
+	END DebugTestShared.
+
+positive: a module compiled with --debug leaves a line table for each of its procedures
+
+	MODULE Test;
+	IMPORT T := DebugTestShared, DebugMap;
+	VAR source: T.Text; d: DebugMap.Procedure; i: SIZE;
+	BEGIN
+		source := "";
+		T.Line(source, "MODULE DbgOne;");
+		T.Line(source, "PROCEDURE Twice* (n: SIGNED32): SIGNED32;");
+		T.Line(source, "VAR m: SIGNED32;");
+		T.Line(source, "BEGIN");
+		T.Line(source, "	m := n + n;");
+		T.Line(source, "	RETURN m");
+		T.Line(source, "END Twice;");
+		T.Line(source, "END DbgOne.");
+		ASSERT(T.Compile("DbgOne", source), 1);
+		d := DebugMap.Find("DbgOne.Twice");
+		ASSERT(d # NIL, 2);                       (* NIL means the labels never reached the map *)
+		ASSERT(LEN(d.sites) >= 2, 3);             (* two statements, so at least two sites *)
+		FOR i := 1 TO LEN(d.sites) - 1 DO
+			ASSERT(d.sites[i].offset >= d.sites[i - 1].offset, 4);   (* ascending, but two labels can share an offset *)
+			ASSERT(d.sites[i].position >= d.sites[i - 1].position, 5)  (* a loop jumps back, so the source may too *)
+		END;
+		ASSERT(d.sites[0].line > 0, 6);           (* --debug implies --lineNumbers *)
+		ASSERT(DebugMap.Find("DbgOne.NoSuchProcedure") = NIL, 7)
+	END Test.
+
+positive: PositionOf answers where the code under a PC was written
+
+	MODULE Test;
+	IMPORT T := DebugTestShared, DebugMap;
+	VAR source: T.Text; name: DebugMap.Name; line, twice, thrice: SIGNED32; position: SIGNED64;
+	BEGIN
+		source := "";
+		T.Line(source, "MODULE DbgTwo;");
+		T.Line(source, "VAR total*: SIGNED32;");
+		T.Line(source, "PROCEDURE Twice* (n: SIGNED32): SIGNED32;");
+		T.Line(source, "BEGIN RETURN n + n");
+		T.Line(source, "END Twice;");
+		T.Line(source, "PROCEDURE Thrice* (n: SIGNED32): SIGNED32;");
+		T.Line(source, "BEGIN RETURN n + n + n");
+		T.Line(source, "END Thrice;");
+		T.Line(source, "BEGIN total := Twice(1) + Thrice(1)");
+		T.Line(source, "END DbgTwo.");
+		ASSERT(T.Compile("DbgTwo", source), 1);
+		ASSERT(T.Load("DbgTwo"), 2);
+		ASSERT(DebugMap.PositionOf(T.Body(), name, line, position), 3);
+		ASSERT(name = "DbgTwo", 4);               (* the fixture was compiled from a string, so it is its own source name *)
+		twice := DebugMap.Find("DbgTwo.Twice").sites[0].line;
+		thrice := DebugMap.Find("DbgTwo.Thrice").sites[0].line;
+		ASSERT(thrice > twice, 5);                (* Thrice is written below Twice *)
+		ASSERT(line > thrice, 6);                 (* and the module body below both *)
+		ASSERT(~DebugMap.PositionOf(0, name, line, position), 7)
+	END Test.

@@ -9,6 +9,7 @@
     "AMD64Decoder",
     "Compiler",
     "CompilerInterface",
+    "DebugMap",
     "Decoder",
     "FoxA2Interface",
     "FoxA64Assembler",

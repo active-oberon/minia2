@@ -14281,7 +14281,7 @@ TYPE
 					Global.GetModuleName(import.module, name);
 					IF ~exports.ContainsName(name) THEN
 						exports.AddName(name);
-						NEW(implementationEmitter,system,checker,supportedInstruction, supportedImmediate, Compiler.FindPC IN flags, builtinsModuleName, SELF);
+						NEW(implementationEmitter,system,checker,supportedInstruction, supportedImmediate, (flags * {Compiler.FindPC, Compiler.Debug} # {}), builtinsModuleName, SELF);
 						NEW(declarationEmitter,system,implementationEmitter,SELF,Compiler.ForceModuleBodies IN flags,trace & (Compiler.Info IN flags));
 						NEW(meta, implementationEmitter, declarationEmitter,simpleMetaData);
 						declarationEmitter.Module(import.module,module);
@@ -14303,7 +14303,7 @@ TYPE
 			Global.GetModuleName(x, name);
 			module.exports.AddName(name);
 			module.SetModuleName(name);
-			NEW(implementationEmitter,system,checker,supportedInstruction, supportedImmediate, Compiler.FindPC IN flags, builtinsModuleName, SELF);
+			NEW(implementationEmitter,system,checker,supportedInstruction, supportedImmediate, (flags * {Compiler.FindPC, Compiler.Debug} # {}), builtinsModuleName, SELF);
 			NEW(declarationEmitter,system,implementationEmitter,SELF,Compiler.ForceModuleBodies IN flags,trace & (Compiler.Info IN flags));
 			NEW(meta, implementationEmitter, declarationEmitter,simpleMetaData);
 
