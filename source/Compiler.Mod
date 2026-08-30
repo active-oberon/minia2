@@ -15,6 +15,7 @@ CONST
 	TraceError* = 3;
 	Info* = 4;
 	FindPC* = 5;
+	Debug* = 6; (* keep the line table the backend otherwise drops -- DebugMap harvests it *)
 	Warnings*=7;
 	ForceModuleBodies*=8;
 	SingleModule*=9;
@@ -213,6 +214,7 @@ TYPE
 						END;
 					END;
 					generatedModule := options.backend.ProcessSyntaxTreeModule(module);
+					IF (Generated # NIL) & (generatedModule # NIL) THEN Generated(generatedModule) END;
 					IF options.backend.error THEN
 						FinalMessage(TRUE, " could not be compiled (backend errors).");
 						RETURN FALSE
@@ -302,6 +304,7 @@ TYPE
 		options.Add(0X,"singleModule",Options.Flag);
 		options.Add(0X, "symbolFile", Options.String);
 		options.Add(0X, "objectFile", Options.String);
+		options.Add(0X,"debug", Options.Flag);
 		options.Add("w","warnings", Options.Flag);
 		options.Add(0X,"hardware", Options.String);
 		options.Add(0X,"documentation", Options.String);
@@ -429,6 +432,7 @@ TYPE
 			IF options.GetFlag("traceError") THEN INCL(compilerOptions.flags, TraceError) END;
 			IF options.GetFlag("info") THEN INCL(compilerOptions.flags,Info) END;
 			IF options.GetString("findPC",compilerOptions.findPC) THEN INCL(compilerOptions.flags,FindPC) END;
+			IF options.GetFlag("debug") THEN INCL(compilerOptions.flags, Debug); INCL(compilerOptions.flags, UseLineNumbers) END;
 			IF options.GetFlag("warnings") THEN INCL(compilerOptions.flags, Warnings) END;
 			IF options.GetFlag("singleModule") THEN INCL(compilerOptions.flags,SingleModule) END;
 			IF options.GetFlag("oberon07") THEN INCL(compilerOptions.flags, Oberon07) END;
@@ -541,6 +545,9 @@ TYPE
 	END CompileReader;
 
 	VAR
+		(** Generated is called with each module the backend produced, while its line table is still alive. *)
+		Generated*: PROCEDURE {DELEGATE} (module: Formats.GeneratedModule);
+
 		platforms: Options.Defaults;
 		defaultPlatform: ARRAY 32 OF CHAR;
 

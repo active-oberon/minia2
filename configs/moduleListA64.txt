@@ -294,6 +294,7 @@ NewHTTPClient.Mod
 CSV.Mod
 JSON.Mod
 LSP.Mod
+DebugMap.Mod
 Channels.Mod
 TerminalCodes.Mod
 Unix.Terminal.Mod
