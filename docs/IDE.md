@@ -91,7 +91,8 @@ Neovim runtime files. They live in the dotfiles repo
   ```lua
   vim.filetype.add({ extension = { Mod = "oberon" } })
   ```
-- `after/ftplugin/oberon.lua` — starts the LSP client, wires the buffer-local keymaps,
+- `after/ftplugin/oberon.lua` — turns on tree-sitter highlighting (§1g), starts the LSP
+  client, wires the buffer-local keymaps,
   turns on inline diagnostics and turns on **folding** when the server offers it.
   It prefers the tarball SDK — `$A2_OB`, else `ob` on `PATH` — and falls back to
   `docker … minia2-sdk lsp --live`, mounting the file's directory at `/work`. Prefer the
@@ -210,7 +211,9 @@ Neovim needs no plugin for it — `nvim-treesitter` installs parsers, it does no
 editors/tree-sitter/install-nvim.sh     # builds oberon.so into ~/.local/share/nvim/site/parser
 ```
 
-…then once, in your config (this is not in the dotfiles repo yet):
+That is all: `after/ftplugin/oberon.lua` already calls `pcall(vim.treesitter.start)`, and it
+is a `pcall` on purpose — the config has to keep working on a machine where the parser was
+never built. Without the ftplugin, one autocommand does the same:
 
 ```lua
 vim.api.nvim_create_autocmd("FileType", {
