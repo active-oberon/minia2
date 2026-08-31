@@ -7,9 +7,13 @@
 # read back with our own JSON.
 #
 # A conversation with a debugger is not a script, though. An editor asks for a stack only after it
-# has been told the program stopped, and so does this: the Wire below holds back the second half of
-# the input until a "stopped" event has come out. A case that queued everything at once would race
-# the program it launched and read an empty stack half the time.
+# has been told the program stopped, and so does this: the Wire below feeds its input in three
+# parts, releasing each when one more "stopped" event has come out. A case that queued everything
+# at once would race the program it launched and read an empty stack half the time.
+#
+# A breakpoint needs a line table, and the harness compiles a case without --debug, so the cases
+# that set one compile their own fixture in this process -- the same trick tests/DebugMap.Test uses,
+# and for the same reason.
 #
 # The trap dump these cases print is theirs: a program that traps is what is being debugged here.
 
@@ -17,10 +21,15 @@ positive: the helpers these tests are written with
 
 	MODULE DAPTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Drive the debug adapter in this process" *)
 
-	IMPORT Commands, Objects, Streams, Strings, JSON, DAP;
+	IMPORT Commands, Compiler, DebugMap, Diagnostics, Objects, Streams, Strings,
+		SyntaxTree := FoxSyntaxTree, JSON, DAP;
 
 	CONST
 		CR = 0DX; LF = 0AX;
+
+	VAR
+		sumLine-, incLine-: SIGNED32;   (* the lines of the fixture worth stopping on *)
+		written: SIGNED32;
 
 	TYPE
 		Text* = ARRAY 4096 OF CHAR;
@@ -29,30 +38,40 @@ positive: the helpers these tests are written with
 			the input is released by what appears in the transcript. *)
 		Wire* = OBJECT
 		VAR
-			input: Text; split, position: SIZE;
+			input: Text; split: ARRAY 3 OF SIZE; position: SIZE;
 			transcript-: ARRAY 32768 OF CHAR; length: SIZE;
-			open: BOOLEAN;
+			stops: SIGNED32;
 			message-: ARRAY 64 OF JSON.Value; count-: SIGNED32;
 
-			PROCEDURE &Init* (CONST head, tail: ARRAY OF CHAR);
+			PROCEDURE &Init* (CONST head, tail, rest: ARRAY OF CHAR);
 			BEGIN
-				COPY(head, input); split := Strings.Length(input);
-				Strings.Append(input, tail);
-				position := 0; length := 0; transcript[0] := 0X; open := FALSE; count := 0
+				COPY(head, input); split[0] := Strings.Length(input);
+				Strings.Append(input, tail); split[1] := Strings.Length(input);
+				Strings.Append(input, rest); split[2] := Strings.Length(input);
+				position := 0; length := 0; transcript[0] := 0X; stops := 0; count := 0
 			END Init;
+
+			(* How much of the input is readable: one part more for every stop reported. *)
+			PROCEDURE Limit (): SIZE;
+			BEGIN
+				IF stops >= 2 THEN RETURN split[2]
+				ELSIF stops = 1 THEN RETURN split[1]
+				ELSE RETURN split[0]
+				END
+			END Limit;
 
 			PROCEDURE Await;
 			BEGIN {EXCLUSIVE}
-				AWAIT(open)
+				AWAIT(position < Limit())
 			END Await;
 
 			(** The reader the adapter reads its requests from. *)
 			PROCEDURE Receive* (VAR buf: ARRAY OF CHAR; ofs, size, min: SIZE; VAR len: SIZE; VAR res: INTEGER);
 			VAR limit: SIZE;
 			BEGIN
-				(* nothing is held back when there is no tail to hold *)
-				IF (position >= split) & (split < Strings.Length(input)) & ~open THEN Await END;
-				IF open THEN limit := Strings.Length(input) ELSE limit := split END;
+				(* nothing is held back when nothing is left to hold *)
+				IF (position >= Limit()) & (Limit() < split[2]) THEN Await END;
+				limit := Limit();
 				IF position >= limit THEN len := 0; res := Streams.EOF; RETURN END;
 				len := 0;
 				WHILE (len < size) & (position + len < limit) DO
@@ -70,7 +89,7 @@ positive: the helpers these tests are written with
 				END;
 				transcript[length] := 0X;
 				res := Streams.Ok;
-				IF ~open & Contains(transcript, '"event":"stopped"') THEN open := TRUE END
+				stops := Occurrences(transcript, '"event":"stopped"')
 			END Send;
 
 			(** Everything that came back, once the conversation is over. *)
@@ -110,6 +129,23 @@ positive: the helpers these tests are written with
 				END;
 				RETURN NIL
 			END Event;
+
+			(** The body of the n-th event of this name, counting from 0, or NIL. *)
+			PROCEDURE Nth* (CONST name: ARRAY OF CHAR; n: SIGNED32): JSON.Object;
+			VAR i, seen: SIGNED32; object: JSON.Object; kind, event: Strings.String;
+			BEGIN
+				seen := 0;
+				FOR i := 0 TO count - 1 DO
+					object := JSON.AsObject(message[i]);
+					IF (object # NIL) & JSON.GetString(object, "type", kind) & (kind^ = "response") THEN
+						(* a response is not an event *)
+					ELSIF (object # NIL) & JSON.GetString(object, "event", event) & (event^ = name) THEN
+						IF seen = n THEN RETURN JSON.AsObject(object.Get("body")) END;
+						INC(seen)
+					END
+				END;
+				RETURN NIL
+			END Nth;
 
 			PROCEDURE Seen* (CONST name: ARRAY OF CHAR): BOOLEAN;
 			VAR i: SIGNED32; object: JSON.Object; kind, event: Strings.String;
@@ -153,6 +189,20 @@ positive: the helpers these tests are written with
 		RETURN FALSE
 	END Contains;
 
+	(** How many times a pattern appears. *)
+	PROCEDURE Occurrences* (CONST text, pattern: ARRAY OF CHAR): SIGNED32;
+	VAR i, j: SIZE; n: SIGNED32;
+	BEGIN
+		i := 0; n := 0;
+		WHILE text[i] # 0X DO
+			j := 0;
+			WHILE (pattern[j] # 0X) & (text[i + j] = pattern[j]) DO INC(j) END;
+			IF pattern[j] = 0X THEN INC(n) END;
+			INC(i)
+		END;
+		RETURN n
+	END Occurrences;
+
 	(* The next framed body in a transcript, from `position`. *)
 	PROCEDURE NextBody* (CONST text: ARRAY OF CHAR; VAR position: SIZE; VAR body: Strings.String): BOOLEAN;
 	CONST prefix = "Content-Length:";
@@ -191,7 +241,7 @@ positive: the helpers these tests are written with
 
 	(** The launcher a case gives the adapter instead of the compiler. *)
 	PROCEDURE Crash* (CONST program, procedure: ARRAY OF CHAR; out: Streams.Writer;
-			VAR message: ARRAY OF CHAR): BOOLEAN;
+			ready: DAP.Ready; VAR message: ARRAY OF CHAR): BOOLEAN;
 	VAR ignore: SIGNED32;
 	BEGIN
 		out.String("running "); out.String(program); out.Ln; out.Update;
@@ -202,12 +252,89 @@ positive: the helpers these tests are written with
 
 	(** A program that ends the way most programs do. *)
 	PROCEDURE Quiet* (CONST program, procedure: ARRAY OF CHAR; out: Streams.Writer;
-			VAR message: ARRAY OF CHAR): BOOLEAN;
+			ready: DAP.Ready; VAR message: ARRAY OF CHAR): BOOLEAN;
 	BEGIN
 		out.String("done"); out.Ln; out.Update;
 		COPY("", message);
 		RETURN TRUE
 	END Quiet;
+
+	(*	--- the fixture the breakpoint cases debug ------------------------------------------
+		A line is never written down as a number: it is recorded while the source is built, so
+		editing the fixture cannot make a case wrong. *)
+
+	PROCEDURE Say (VAR text: ARRAY OF CHAR; CONST line: ARRAY OF CHAR);
+	BEGIN
+		Strings.Append(text, line); Strings.AppendChar(text, 0AX); INC(written)
+	END Say;
+
+	(**	Build writes a program with a loop in it, under the name the case asked for -- a name of
+		its own per case, because a module already loaded is not compiled again. *)
+	PROCEDURE Build* (CONST name: ARRAY OF CHAR; VAR text: ARRAY OF CHAR);
+	VAR line: Text;
+	BEGIN
+		text := ""; written := 0;
+		line := "MODULE "; Strings.Append(line, name); Strings.AppendChar(line, ";");
+		Say(text, line);
+		Say(text, "IMPORT Commands;");
+		Say(text, "PROCEDURE Count* (n: SIGNED32): SIGNED32;");
+		Say(text, "VAR i, sum: SIGNED32;");
+		Say(text, "BEGIN");
+		Say(text, "	sum := 0;");
+		Say(text, "	i := 0;");
+		Say(text, "	WHILE i < n DO");
+		sumLine := written + 1;
+		Say(text, "		sum := sum + i;");
+		incLine := written + 1;
+		Say(text, "		INC(i)");
+		Say(text, "	END;");
+		Say(text, "	RETURN sum");
+		Say(text, "END Count;");
+		Say(text, "PROCEDURE Do* (context: Commands.Context);");
+		Say(text, "BEGIN");
+		Say(text, 'context.out.String("sum="); context.out.Int(Count(5), 0); context.out.Ln;');
+		Say(text, "	context.out.Update");
+		Say(text, "END Do;");
+		line := "END "; Strings.Append(line, name); Strings.AppendChar(line, ".");
+		Say(text, line)
+	END Build;
+
+	(*	Compile builds the fixture in this process and with --debug, the way tests/DebugMap.Test
+		does: the line table is filled while the backend still holds the module, and nowhere else. *)
+	PROCEDURE Compile (CONST name, source: ARRAY OF CHAR): BOOLEAN;
+	VAR optionReader, reader: Streams.StringReader; options: Compiler.CompilerOptions;
+		diagnostics: Diagnostics.DiagnosticsList; importCache: SyntaxTree.ModuleScope;
+		buffer: Streams.Buffer; log: Streams.Writer;
+	BEGIN
+		DebugMap.Forget;
+		Streams.OpenStringReader(optionReader, "--debug");
+		NEW(diagnostics); NEW(buffer, 1024); log := buffer.GetWriter();
+		IF ~Compiler.GetOptions(optionReader, log, diagnostics, options) THEN RETURN FALSE END;
+		NEW(reader, LEN(source)); reader.Set(source);
+		importCache := NIL;
+		RETURN Compiler.Modules(name, reader, 0, diagnostics, log, options, importCache)
+	END Compile;
+
+	(**	The launcher a breakpoint case gives the adapter: it does what `ob dap` does, minus the
+		search paths -- compile with --debug, load the module, say so, and only then start the
+		program. The two activations are the whole point: a breakpoint can be written in between. *)
+	PROCEDURE Program* (CONST program, procedure: ARRAY OF CHAR; out: Streams.Writer;
+			ready: DAP.Ready; VAR message: ARRAY OF CHAR): BOOLEAN;
+	VAR source: Text; command: Text; context: Commands.Context; empty: Streams.StringReader;
+		result: INTEGER;
+	BEGIN
+		Build(program, source);
+		IF ~Compile(program, source) THEN COPY("the fixture did not compile", message); RETURN FALSE END;
+		NEW(empty, 1); empty.Set("");
+		NEW(context, NIL, empty, out, out, NIL);
+		COPY(program, command); Strings.AppendChar(command, ".");
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		IF result # Commands.Ok THEN RETURN FALSE END;
+		IF ready # NIL THEN ready END;
+		Strings.Append(command, "Do");
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		RETURN result = Commands.Ok
+	END Program;
 
 	(** Run one conversation to its end and collect what came back. *)
 	PROCEDURE Converse* (wire: Wire; launcher: DAP.Launcher);
@@ -246,7 +373,7 @@ positive: a program that traps stops the session on the frame that trapped
 		T.Request(tail, 3, "threads", "{}");
 		T.Request(tail, 4, "stackTrace", '{"threadId":1}');
 		T.Request(tail, 5, "disconnect", "{}");
-		NEW(wire, head, tail);
+		NEW(wire, head, tail, "");
 		T.Converse(wire, T.Crash);
 
 		ASSERT(wire.Seen("initialized"), 1);
@@ -282,7 +409,7 @@ positive: the variables of a frame are read off the stack that is being held
 		T.Request(tail, 4, "variables", '{"variablesReference":1000}');
 		T.Request(tail, 5, "evaluate", '{"frameId":0,"expression":"steps"}');
 		T.Request(tail, 6, "disconnect", "{}");
-		NEW(wire, head, tail);
+		NEW(wire, head, tail, "");
 		T.Converse(wire, T.Crash);
 
 		answer := wire.Answer(3);
@@ -325,7 +452,7 @@ positive: what the program writes is an output event, never the protocol stream
 		tail := "";
 		T.Request(tail, 3, "continue", '{"threadId":1}');
 		T.Request(tail, 4, "disconnect", "{}");
-		NEW(wire, head, tail);
+		NEW(wire, head, tail, "");
 		T.Converse(wire, T.Crash);
 
 		body := wire.Event("output");
@@ -349,9 +476,9 @@ positive: a launch without a program is refused, and an unknown request is still
 		head := "";
 		T.Request(head, 1, "initialize", '{"adapterID":"ob"}');
 		T.Request(head, 2, "launch", "{}");
-		T.Request(head, 3, "setBreakpoints", '{"breakpoints":[{"line":7}]}');
+		T.Request(head, 3, "modules", "{}");
 		T.Request(head, 4, "disconnect", "{}");
-		NEW(wire, head, "");
+		NEW(wire, head, "", "");
 		T.Converse(wire, T.Quiet);      (* nothing is launched, so nothing traps and no gate is needed *)
 
 		answer := wire.Answer(2);
@@ -361,10 +488,109 @@ positive: a launch without a program is refused, and an unknown request is still
 
 		answer := wire.Answer(3);
 		ASSERT(answer # NIL, 4);        (* a request we do not know is answered, so no client hangs *)
-		ASSERT(JSON.GetString(answer, "command", text) & (text^ = "setBreakpoints"), 5);
+		ASSERT(JSON.GetString(answer, "command", text) & (text^ = "modules"), 5);
 
 		answer := wire.Answer(1);
 		ASSERT(answer # NIL, 6);
 		ok := JSON.GetString(answer, "type", text) & (text^ = "response");
 		ASSERT(ok, 7)
+	END Test.
+
+positive: a breakpoint stops the program on the line the client asked for, and continuing runs it out
+
+	MODULE Test;
+	IMPORT T := DAPTestShared, JSON, Strings;
+	VAR wire: T.Wire; head, tail, lines: T.Text; body, frame, answer: JSON.Object;
+		frames, variables: JSON.Array; text: Strings.String; line, i: SIGNED32;
+		seenSum, seenI: BOOLEAN;
+	BEGIN
+		T.Build("DAPBreak", lines);                        (* only for the line numbers *)
+		head := "";
+		T.Request(head, 1, "initialize", '{"adapterID":"ob"}');
+		lines := '{"source":{"path":"DAPBreak"},"breakpoints":[{"line":';
+		Strings.AppendInt(lines, T.sumLine); Strings.Append(lines, "}]}");
+		T.Request(head, 2, "setBreakpoints", lines);
+		T.Request(head, 3, "launch", '{"program":"DAPBreak","procedure":"Do"}');
+		tail := "";
+		T.Request(tail, 4, "stackTrace", '{"threadId":1}');
+		T.Request(tail, 5, "variables", '{"variablesReference":1000}');
+		T.Request(tail, 6, "continue", '{"threadId":1}');
+		T.Request(tail, 7, "disconnect", "{}");
+		NEW(wire, head, tail, "");
+		T.Converse(wire, T.Program);
+
+		body := wire.Event("stopped");
+		ASSERT(body # NIL, 1);                             (* the breakpoint never fired *)
+		ASSERT(JSON.GetString(body, "reason", text) & (text^ = "breakpoint"), 2);
+
+		answer := wire.Answer(4);
+		ASSERT(answer # NIL, 3);
+		frames := JSON.GetArray(JSON.AsObject(answer.Get("body")), "stackFrames");
+		ASSERT((frames # NIL) & (frames.length > 0), 4);
+		frame := JSON.AsObject(frames.At(0));
+		ASSERT(JSON.GetString(frame, "name", text) & T.Contains(text^, "Count"), 5);
+		ASSERT(JSON.GetInteger(frame, "line", line), 6);
+		ASSERT(line = T.sumLine, 7);                       (* the line the client asked for, verbatim *)
+
+		answer := wire.Answer(5);
+		ASSERT(answer # NIL, 8);
+		variables := JSON.GetArray(JSON.AsObject(answer.Get("body")), "variables");
+		ASSERT(variables # NIL, 8);
+		seenSum := FALSE; seenI := FALSE;
+		FOR i := 0 TO SIGNED32(variables.length) - 1 DO
+			IF JSON.GetString(JSON.AsObject(variables.At(i)), "name", text) THEN
+				IF text^ = "sum" THEN seenSum := TRUE END;
+				IF text^ = "i" THEN seenI := TRUE END
+			END
+		END;
+		ASSERT(seenSum, 9);
+		ASSERT(seenI, 10);
+
+		(*	The program has to end up right: 0+1+2+3+4, computed by code we wrote an instruction
+			into and took it back out of five times over. *)
+		T.Settle(wire, '"event":"terminated"');
+		ASSERT(T.Contains(wire.transcript, "sum=10"), 11);
+		ASSERT(wire.Seen("terminated"), 12)
+	END Test.
+
+positive: a step from a breakpoint stops on the next statement
+
+	MODULE Test;
+	IMPORT T := DAPTestShared, JSON, Strings;
+	VAR wire: T.Wire; head, tail, rest, lines: T.Text; body, frame, answer: JSON.Object;
+		frames: JSON.Array; text: Strings.String; line: SIGNED32;
+	BEGIN
+		T.Build("DAPStep", lines);
+		head := "";
+		T.Request(head, 1, "initialize", '{"adapterID":"ob"}');
+		lines := '{"source":{"path":"DAPStep"},"breakpoints":[{"line":';
+		Strings.AppendInt(lines, T.sumLine); Strings.Append(lines, "}]}");
+		T.Request(head, 2, "setBreakpoints", lines);
+		T.Request(head, 3, "launch", '{"program":"DAPStep","procedure":"Do"}');
+		tail := "";
+		T.Request(tail, 4, "next", '{"threadId":1}');       (* released by the first stop *)
+		rest := "";
+		T.Request(rest, 5, "stackTrace", '{"threadId":1}'); (* released by the second *)
+		T.Request(rest, 6, "disconnect", "{}");
+		NEW(wire, head, tail, rest);
+		T.Converse(wire, T.Program);
+
+		body := wire.Nth("stopped", 0);
+		ASSERT(body # NIL, 1);
+		ASSERT(JSON.GetString(body, "reason", text) & (text^ = "breakpoint"), 2);
+		body := wire.Nth("stopped", 1);
+		ASSERT(body # NIL, 3);                             (* the step never landed *)
+		ASSERT(JSON.GetString(body, "reason", text) & (text^ = "step"), 4);
+
+		answer := wire.Answer(5);
+		ASSERT(answer # NIL, 5);
+		frames := JSON.GetArray(JSON.AsObject(answer.Get("body")), "stackFrames");
+		ASSERT((frames # NIL) & (frames.length > 0), 6);
+		frame := JSON.AsObject(frames.At(0));
+		ASSERT(JSON.GetString(frame, "name", text) & T.Contains(text^, "Count"), 7);
+		ASSERT(JSON.GetInteger(frame, "line", line), 8);
+		ASSERT(line = T.incLine, 9);                       (* one statement on from the breakpoint *)
+
+		T.Settle(wire, '"event":"terminated"');
+		ASSERT(T.Contains(wire.transcript, "sum=10"), 10)
 	END Test.

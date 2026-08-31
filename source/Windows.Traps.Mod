@@ -15,11 +15,18 @@ TYPE
 	(** What a debugger in this process is told when a trap is about to end an activity. *)
 	Handler* = PROCEDURE {DELEGATE} ( sig, trapno: SIGNED32;  pc, bp, sp, stackHigh: ADDRESS );
 
+	(**	What a debugger is asked when an exception could be a breakpoint it planted. TRUE means it
+		was one: the activity resumes at `pc`, which the debugger may have moved. *)
+	Resumer* = PROCEDURE {DELEGATE} ( VAR pc: ADDRESS;  bp, sp, stackHigh: ADDRESS ): BOOLEAN;
+
 VAR
 	(*	A debugger (DAP.Mod) reads the frames of the dying activity here, and holds it while it
 		does. Windows has no signal number, so it is told 0 and the halt code. NIL is the normal
 		case, and nothing but `ob dap` ever sets it -- this path is untested on Windows. *)
 	Trapped*: Handler;
+
+	(*	Asked before anything is printed: only the debugger knows which instructions it planted. *)
+	Breakpoint*: Resumer;
 
 	modes: ARRAY 25 OF CHAR;
 	flags: ARRAY 13 OF CHAR;
@@ -290,6 +297,14 @@ VAR
 		user := (int.CS MOD 4 > 0 (* Machine.KernelLevel*) );  SYSTEM.GET( int.SP, exchalt );
 
 		traceTrap := FALSE;
+
+		(*	Before the trap is a trap: a breakpoint the debugger planted is not an error. *)
+		IF (Breakpoint # NIL) & (t # NIL) THEN
+			pc := int.PC;
+			IF Breakpoint( pc, int.BP, int.SP, Objects.GetStackBottom( t ) ) THEN
+				int.PC := pc;  handled := TRUE;  RETURN
+			END
+		END;
 
 		Show( t, int, exc,  (* exc.halt # MAX(SIGNED16)+1*) TRUE );   (* Always show the trap info!*)
 

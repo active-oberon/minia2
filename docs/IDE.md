@@ -78,7 +78,7 @@ alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # interactive ver
 | `ob compile <File.Mod> [-o dir]` | just the `.GofUu` object file |
 | `obit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
 | `ob lsp [--live]` | the language server (editors spawn this) |
-| `ob dap` | the debug adapter: run a program, read where it trapped (§1f) |
+| `ob dap` | the debug adapter: breakpoints, stepping, and where it trapped (§1f) |
 
 ### 1c. Neovim
 
@@ -154,11 +154,14 @@ non-ASCII comments lands on the right character rather than a few columns off.
 ### 1f. Debugging (`ob dap`)
 
 `ob dap` speaks the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)
-over stdio, the way `ob lsp` speaks LSP. It runs the program in its own process and **stops it
-where it trapped**: the editor gets the call stack with file and line, the parameters and locals
-of every frame, and the trap dump in its debug console. This is post-mortem debugging — there
-are no breakpoints and no stepping yet, and what it answers about is a program that has already
-failed.
+over stdio, the way `ob lsp` speaks LSP. It runs the program in its own process and stops it —
+on a **breakpoint**, on a **step**, or **where it trapped**. At every stop the editor gets the
+call stack with file and line, the parameters and locals of every frame, and, for a trap, the
+dump in its debug console.
+
+A breakpoint is the instruction at that line replaced by one the processor traps on, put back
+whenever the program stands still, so what the editor reads is never the patch. A step is the
+same thing planted on every other statement of the procedure and on the place it returns to.
 
 Neovim, with [`mfussenegger/nvim-dap`](https://github.com/mfussenegger/nvim-dap):
 
@@ -172,16 +175,21 @@ dap.configurations.oberon = {
 ```
 
 `<F5>` on an open `.Mod` file compiles it with `--debug` and runs its `Do` (name another
-procedure with `procedure = …`). Nothing happens until it traps; when it does, the stack window
-fills, `<F10>`/`<F11>` are inert, and continuing lets the program die.
+procedure with `procedure = …`); `<F9>` sets a breakpoint, `<F10>` steps over, `<F12>` steps
+out. A trap stops the program too, and continuing from a trap lets it die — after the trap
+handler there is no stack left to go back to.
 
-Two things are worth knowing:
+Four things are worth knowing:
 
 - The line table lives only in the process that compiled the code (`source/DebugMap.Mod`), so
   `ob dap` debugs what it built itself. Attaching to a binary built earlier needs the table
   written into the object file, which is not done.
-- One thread: the activity that trapped. A program that traps on two activities at once reports
+- One thread: the activity that stopped. A program that stops on two activities at once reports
   the first.
+- A breakpoint in a module body is never reached: the body has already run by the time there is
+  code to write a breakpoint into.
+- Stepping into a call stops at the next statement of the caller instead — where a call goes is
+  in the instruction, and reading it would mean carrying a decoder.
 
 ---
 
@@ -323,6 +331,7 @@ export A2_SYMS="$HOME/Projects/A2/a2oberon/target/Linux64/bin"
   and record/object members are declined until scope-precise identity is added.
 - **Formatting** normalises to Fox's canonical style (its own indentation), so it
   changes hand-tuned layout.
-- **Debugging is post-mortem** (`ob dap`, §1f): a trapped program can be read, not driven —
-  no breakpoints, no stepping, one thread, and only code the same `ob` compiled.
+- **Debugging** (`ob dap`, §1f) has breakpoints, step-over and step-out, and reads a trapped
+  program; but one thread, no step-into, nothing in a module body, and only code the same `ob`
+  compiled.
 - GUI modules (window manager / raster) are out of scope of the headless image.

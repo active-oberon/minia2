@@ -10,7 +10,7 @@ produces) behind an `ob` CLI that feels like Go: `ob run` (compile+run), `ob bui
 (standalone native executable with the runtime baked in — Linux ELF or, via
 `-t win64` / `-t a64`, a Windows PE `.exe` or an AArch64 ELF), `ob compile`, and
 `ob lsp` (a language server with diagnostics for your editor) and `ob dap` (a debug
-adapter that stops a program where it trapped). See *Limitations* for the current scope.
+adapter with breakpoints and stepping). See *Limitations* for the current scope.
 
 **Docker is one way to have it, not the only one.** The same payload ships as a
 tarball for three hosts — `linux-amd64`, `linux-arm64`, `windows-amd64` — and `ob`
