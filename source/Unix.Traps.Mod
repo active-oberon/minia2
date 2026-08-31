@@ -16,7 +16,13 @@ TYPE
 
 	ExceptionHandler = RECORD  pc, fp, sp: ADDRESS  END;
 
+	(** What a debugger in this process is told when a trap is about to end an activity. *)
+	Handler* = PROCEDURE {DELEGATE} ( sig, trapno: SIGNED32;  pc, bp, sp, stackHigh: ADDRESS );
+
 VAR
+	(*	A debugger (DAP.Mod) reads the frames of the dying activity here, and holds it while it
+		does: after ExitTrap there is no stack left to look at. NIL is the normal case. *)
+	Trapped*: Handler;
 
 	trapHandlingLevel: SIGNED32;
 
@@ -302,6 +308,13 @@ VAR
 		FinishTrap( w, process);
 
 		UnlockTrap;
+
+		(*	Before the exception handler, not after: every command runs in a Commands.Runner, whose
+			body is {SAFE} and therefore always has one -- a debugger that waited for a trap without
+			a handler would never be told about a trap at all. *)
+		IF (Trapped # NIL) & (process # NIL) THEN
+			Trapped( sig, trapno, pc, bp, sp, Objects.GetStackBottom( process ) )
+		END;
 
 		IF handler.pc # 0 THEN
 			w.Ln;

@@ -457,4 +457,65 @@ BEGIN
 	RETURN FALSE
 END GetInteger;
 
+(* --- Content-Length framing ---------------------------------------------------------------
+	Every JSON-RPC server over a pipe frames its messages this way: LSP does, DAP does, and both
+	are spoken by this SDK. The frame is not JSON, but it is where JSON begins and ends on a
+	stream, and one copy of it is better than one per protocol. *)
+
+CONST CR = 0DX; LF = 0AX;
+
+(** WriteFrame sends one message, header and body, and flushes it. *)
+PROCEDURE WriteFrame* (w: Streams.Writer; v: Value);
+VAR body: Strings.String;
+BEGIN
+	body := ToString(v);
+	w.String("Content-Length: "); w.Int(Strings.Length(body^), 0);
+	w.Char(CR); w.Char(LF); w.Char(CR); w.Char(LF);
+	w.String(body^); w.Update
+END WriteFrame;
+
+PROCEDURE ContentLength (CONST line: ARRAY OF CHAR): SIGNED32;
+CONST prefix = "Content-Length:";
+VAR i, j: SIZE; n: SIGNED32;
+BEGIN
+	i := 0;
+	WHILE (prefix[i] # 0X) & (line[i] = prefix[i]) DO INC(i) END;
+	IF prefix[i] # 0X THEN RETURN -1 END;
+	WHILE (line[i] = " ") DO INC(i) END;
+	n := 0; j := i;
+	WHILE (line[j] >= "0") & (line[j] <= "9") DO n := n * 10 + (ORD(line[j]) - ORD("0")); INC(j) END;
+	RETURN n
+END ContentLength;
+
+(**	ReadFrame reads one framed message. `alive` says whether the stream is still usable: it is
+	FALSE only for end of input or a header we cannot make sense of, and TRUE with a NIL result
+	for a message whose body is not JSON -- the frame gave its length, so exactly that many bytes
+	were consumed and the next message is still where it should be. One bad message from an
+	editor is not a reason to drop the session. *)
+PROCEDURE ReadFrame* (in: Streams.Reader; VAR alive: BOOLEAN): Value;
+VAR line: ARRAY 256 OF CHAR; n, got: SIGNED32; len: SIZE;
+	buf: POINTER TO ARRAY OF CHAR; v: Value;
+BEGIN
+	alive := FALSE; n := -1;
+	LOOP
+		in.Ln(line);
+		IF (line[0] = 0X) THEN
+			IF in.res # Streams.Ok THEN RETURN NIL END;   (* EOF on the blank/again *)
+			EXIT   (* blank line ends the header block *)
+		END;
+		IF ContentLength(line) >= 0 THEN n := ContentLength(line) END
+	END;
+	IF n < 0 THEN RETURN NIL END;
+	NEW(buf, n + 1); got := 0;
+	WHILE got < n DO
+		in.Bytes(buf^, got, n - got, len);
+		IF len <= 0 THEN RETURN NIL END;
+		got := got + SIGNED32(len)
+	END;
+	buf[n] := 0X;
+	alive := TRUE;                                (* the frame was whole, whatever it held *)
+	IF ~Parse(buf^, v) THEN RETURN NIL END;
+	RETURN v
+END ReadFrame;
+
 END JSON.

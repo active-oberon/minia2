@@ -12,6 +12,7 @@ Commands
 Compiler
 CompilerInterface
 Configuration
+DAP
 DNS
 Dates
 DebugMap

@@ -1044,6 +1044,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	JSON.Mod # RFC 8259 JSON parser and serializer
 	LSP.Mod # Active Oberon language server (LSP over stdio)
 	DebugMap.Mod # PC to source position, kept from the compilation that wrote the code
+	DAP.Mod # debug adapter: a trapped program, read where it stopped (DAP over stdio)
 
 	# full-screen terminal programs: what a terminal sends and understands, and, one module
 	# up, the terminal as a device. Only the second is platform work, and only Unix has it

@@ -947,58 +947,16 @@ VAR
 
 	(* ---- JSON-RPC transport (Content-Length framed) ---- *)
 
+	(* The framing both this and the debug adapter speak lives in JSON.Mod. *)
+
 	PROCEDURE WriteMessage (out: Streams.Writer; msg: JSON.Value);
-	VAR body: Strings.String;
 	BEGIN
-		body := JSON.ToString(msg);
-		out.String("Content-Length: "); out.Int(Strings.Length(body^), 0);
-		out.Char(CR); out.Char(LF); out.Char(CR); out.Char(LF);
-		out.String(body^); out.Update
+		JSON.WriteFrame(out, msg)
 	END WriteMessage;
 
-	PROCEDURE ContentLength (CONST line: ARRAY OF CHAR): SIGNED32;
-	CONST prefix = "Content-Length:";
-	VAR i, j: SIZE; n: SIGNED32;
-	BEGIN
-		i := 0;
-		WHILE (prefix[i] # 0X) & (line[i] = prefix[i]) DO INC(i) END;
-		IF prefix[i] # 0X THEN RETURN -1 END;
-		WHILE (line[i] = " ") DO INC(i) END;
-		n := 0; j := i;
-		WHILE (line[j] >= "0") & (line[j] <= "9") DO n := n * 10 + (ORD(line[j]) - ORD("0")); INC(j) END;
-		RETURN n
-	END ContentLength;
-
-	(* Reads one framed message. `alive` says whether the stream is still usable: it is
-	   FALSE only for end of input or a header we cannot make sense of, and TRUE with a NIL
-	   result for a message whose body is not JSON -- the frame gave its length, so exactly
-	   that many bytes were consumed and the next message is still where it should be. One
-	   bad message from an editor is not a reason to drop the session. *)
 	PROCEDURE ReadMessage (in: Streams.Reader; VAR alive: BOOLEAN): JSON.Value;
-	VAR line: ARRAY 256 OF CHAR; n, got: SIGNED32; len: SIZE;
-		buf: POINTER TO ARRAY OF CHAR; v: JSON.Value; ok: BOOLEAN;
 	BEGIN
-		alive := FALSE; n := -1;
-		LOOP
-			in.Ln(line);
-			IF (line[0] = 0X) THEN
-				IF in.res # Streams.Ok THEN RETURN NIL END;   (* EOF on the blank/again *)
-				EXIT   (* blank line ends the header block *)
-			END;
-			IF ContentLength(line) >= 0 THEN n := ContentLength(line) END
-		END;
-		IF n < 0 THEN RETURN NIL END;
-		NEW(buf, n + 1); got := 0;
-		WHILE got < n DO
-			in.Bytes(buf^, got, n - got, len);
-			IF len <= 0 THEN RETURN NIL END;
-			got := got + SIGNED32(len)
-		END;
-		buf[n] := 0X;
-		alive := TRUE;                                (* the frame was whole, whatever it held *)
-		ok := JSON.Parse(buf^, v);
-		IF ~ok THEN RETURN NIL END;
-		RETURN v
+		RETURN JSON.ReadFrame(in, alive)
 	END ReadMessage;
 
 	(* Field extraction lives in JSON.Mod now -- GetStr, GetInt and AsObject were written here

@@ -11,7 +11,16 @@ CONST
 	(* Process termination halt codes *)
 	halt* = Objects.halt;  haltUnbreakable* = Objects.haltUnbreakable;
 
+TYPE
+	(** What a debugger in this process is told when a trap is about to end an activity. *)
+	Handler* = PROCEDURE {DELEGATE} ( sig, trapno: SIGNED32;  pc, bp, sp, stackHigh: ADDRESS );
+
 VAR
+	(*	A debugger (DAP.Mod) reads the frames of the dying activity here, and holds it while it
+		does. Windows has no signal number, so it is told 0 and the halt code. NIL is the normal
+		case, and nothing but `ob dap` ever sets it -- this path is untested on Windows. *)
+	Trapped*: Handler;
+
 	modes: ARRAY 25 OF CHAR;
 	flags: ARRAY 13 OF CHAR;
 	trapState: SIGNED32;
@@ -273,7 +282,7 @@ VAR
 
 	(* General exception handler. *)
 	PROCEDURE Exception( VAR int: Kernel32.Context;  VAR exc: Kernel32.ExceptionRecord;  VAR handled: BOOLEAN );
-	VAR t: Objects.Process;  user, traceTrap: BOOLEAN;   exchalt: SIGNED32;
+	VAR t: Objects.Process;  user, traceTrap: BOOLEAN;   exchalt: SIGNED32;  pc: ADDRESS;
 	BEGIN  (* interrupts off *)
 		t := Objects.CurrentProcess();
 		check := t;
@@ -283,6 +292,13 @@ VAR
 		traceTrap := FALSE;
 
 		Show( t, int, exc,  (* exc.halt # MAX(SIGNED16)+1*) TRUE );   (* Always show the trap info!*)
+
+		(*	Before the handlers, not after: every command runs in a Commands.Runner, whose body is
+			{SAFE} and therefore always has one. *)
+		IF (Trapped # NIL) & (t # NIL) THEN
+			IF int.PC = 0 THEN SYSTEM.GET( int.SP, pc ) ELSE pc := int.PC END;
+			Trapped( 0, exchalt, pc, int.BP, int.SP, Objects.GetStackBottom( t ) )
+		END;
 
 		IF exchalt = haltUnbreakable THEN Unbreakable( t, int, exc, handled )
 		ELSIF ~traceTrap THEN HandleException( int, exc, handled )
