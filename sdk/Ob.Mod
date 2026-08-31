@@ -709,7 +709,7 @@ END DiscardScratch;
 	into itself, which is the same mechanism `ob build` bakes into a binary and the same one that
 	took until 05.08.2026 to work on AArch64.
 *)
-PROCEDURE RunFile(CONST source, procedure: ARRAY OF CHAR; out: Streams.Writer;
+PROCEDURE RunFile(CONST source, procedure: ARRAY OF CHAR; out: Streams.Writer; ready: DAP.Ready;
 		VAR message: ARRAY OF CHAR): BOOLEAN;
 VAR absolute, scratch, name, command: Path; reader: Streams.StringReader;
 	context: Commands.Context; result: INTEGER; ran: BOOLEAN;
@@ -726,14 +726,26 @@ BEGIN
 	IF PrepareIn(scratch) THEN
 		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension);
 		IF CompileFile(absolute, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE) THEN
-			COPY(name, command); Strings.AppendChar(command, '.'); Strings.Append(command, procedure);
+			COPY(name, command); Strings.AppendChar(command, '.');
 			IF out = NIL THEN
+				Strings.Append(command, procedure);
 				Commands.Call(command, {Commands.Wait}, result, message)
 			ELSE
 				(* a caller that owns the terminal -- `ob dap` -- takes the program's output itself *)
 				NEW(reader, 1); reader.Set("");
 				NEW(context, StdIO.env.in, reader, out, out, NIL);
-				Commands.Activate(command, context, {Commands.Wait}, result, message)
+				(*	A command with no procedure name loads the module and starts nothing, which is
+					the one moment a debugger can write a breakpoint into code that exists but has
+					not run. The module body runs here, and with the same context, so its output is
+					the caller's too. *)
+				IF ready # NIL THEN
+					Commands.Activate(command, context, {Commands.Wait}, result, message);
+					IF result = Commands.Ok THEN ready END
+				END;
+				IF (ready = NIL) OR (result = Commands.Ok) THEN
+					Strings.Append(command, procedure);
+					Commands.Activate(command, context, {Commands.Wait}, result, message)
+				END
 			END;
 			ran := result = Commands.Ok
 		ELSE
@@ -751,7 +763,7 @@ BEGIN
 		Die("usage: ob run <File.Mod> [Proc]"); RETURN
 	END;
 	IF ~NextArgument(procedure) OR (procedure = "") THEN procedure := "Do" END;
-	IF ~RunFile(source, procedure, NIL, message) THEN
+	IF ~RunFile(source, procedure, NIL, NIL, message) THEN
 		IF message # "" THEN Die(message) ELSE failed := TRUE END
 	END
 END RunVerb;

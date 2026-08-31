@@ -457,6 +457,47 @@ case "$lsp_output" in
 	*) echo "FAIL  lsp reported no diagnostics"; fail=1 ;;
 esac
 
+echo "=== the debug adapter, over this process's own stdio"
+# The one path the DAP.Test cases cannot reach: the real binary, compiling a real file and
+# loading its module before it starts it -- which is the only moment a breakpoint can be
+# written into code that exists and has not run yet. One statement, so one stop: driving more
+# than that needs a client that waits for events, and tests/DAP.Test is where that lives.
+cat > "$project/Stop.Mod" <<'EOF'
+MODULE Stop;
+IMPORT Commands;
+PROCEDURE Do* (context: Commands.Context);
+VAR n: SIGNED32;
+BEGIN
+	n := 6 * 7;
+	context.out.String("answer="); context.out.Int(n, 0); context.out.Ln; context.out.Update
+END Do;
+END Stop.
+EOF
+dap_line="$(grep -n 'context.out.String' "$project/Stop.Mod" | cut -d: -f1)"
+dap_input() {
+	frame '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"ob"}}'
+	frame "{\"seq\":2,\"type\":\"request\",\"command\":\"setBreakpoints\",\"arguments\":{\"source\":{\"path\":\"$project/Stop.Mod\"},\"breakpoints\":[{\"line\":$dap_line}]}}"
+	frame "{\"seq\":3,\"type\":\"request\",\"command\":\"launch\",\"arguments\":{\"program\":\"$project/Stop.Mod\",\"procedure\":\"Do\"}}"
+	frame '{"seq":4,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+	frame '{"seq":5,"type":"request","command":"continue","arguments":{"threadId":1}}'
+	# stdin stays open while the program compiles, runs and stops: EOF is how a client says it
+	# is gone, and a client that goes before the program stops is asking about nothing.
+	sleep 10
+}
+dap_output="$( ( cd "$project" && dap_input | timeout 90 "$ob" dap 2>&1 ) || true)"
+case "$dap_output" in
+	*'"reason":"breakpoint"'*) echo "ok    dap stopped the program on the breakpoint" ;;
+	*) echo "FAIL  dap never stopped on the breakpoint"; echo "$dap_output" | head -c 600 | sed 's/^/        /'; fail=1 ;;
+esac
+case "$dap_output" in
+	*'"verified":true'*"\"line\":$dap_line"*) echo "ok    dap answered with the line it planted" ;;
+	*) echo "FAIL  dap verified no breakpoint on line $dap_line"; fail=1 ;;
+esac
+case "$dap_output" in
+	*'answer=42'*) echo "ok    the program ran out correctly once it was let go" ;;
+	*) echo "FAIL  the program did not finish after continue"; fail=1 ;;
+esac
+
 echo "=== the interactive shell"
 repl_output="$(printf 'System.Show hello from the repl~\nexit\n' | timeout 60 "$ob" repl 2>&1 || true)"
 case "$repl_output" in

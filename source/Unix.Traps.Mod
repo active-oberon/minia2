@@ -19,10 +19,19 @@ TYPE
 	(** What a debugger in this process is told when a trap is about to end an activity. *)
 	Handler* = PROCEDURE {DELEGATE} ( sig, trapno: SIGNED32;  pc, bp, sp, stackHigh: ADDRESS );
 
+	(**	What a debugger is asked when a trap could be a breakpoint it planted. TRUE means it was
+		one: the activity resumes at `pc`, which the debugger may have moved, and nothing of the
+		trap is printed. FALSE means the trap is the program's own. *)
+	Resumer* = PROCEDURE {DELEGATE} ( VAR pc: ADDRESS;  bp, sp, stackHigh: ADDRESS ): BOOLEAN;
+
 VAR
 	(*	A debugger (DAP.Mod) reads the frames of the dying activity here, and holds it while it
 		does: after ExitTrap there is no stack left to look at. NIL is the normal case. *)
 	Trapped*: Handler;
+
+	(*	A breakpoint is one instruction the processor traps on, so a debugger has to be asked before
+		anything else is done about a trap: only it knows whether the instruction was planted. *)
+	Breakpoint*: Resumer;
 
 	trapHandlingLevel: SIGNED32;
 
@@ -201,6 +210,17 @@ VAR
 	BEGIN
 		IF sig IN {1, 2, 14, 15} (* SIGHUP, SIGINT, SIGALRM, SIGTERM *) THEN
 			(* ignore *) RETURN
+		END;
+
+		(*	Before the trap is a trap: a breakpoint the debugger planted is not an error, and the
+			activity carries on where it left off once the debugger lets it. *)
+		IF (Breakpoint # NIL) & (sig = Unix.SIGTRAP) THEN
+			process := Objects.CurrentProcess( );
+			pc := mc.r_pc;
+			IF (process # NIL) & Breakpoint( pc, mc.r_bp, mc.r_sp, Objects.GetStackBottom( process ) ) THEN
+				Unix.ModifyContext( mc, pc, mc.r_bp, mc.r_sp );
+				RETURN  (*! to the program, one instruction earlier than the trap reported !! *)
+			END
 		END;
 
 		LockTrap;

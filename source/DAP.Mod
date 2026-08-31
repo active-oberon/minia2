@@ -11,28 +11,47 @@ MODULE DAP; (** AUTHOR "Andrii Puhachenko"; PURPOSE "The debug adapter: a progra
 	and the variables, all of them read out of a stack that is still standing, and lets the program
 	die when it detaches.
 
-	ponytail: no breakpoints, no stepping, one thread. A breakpoint is 0CCX written into the code
-	and the same handshake as here, which is worth doing the day this is not enough. Reading a
-	program that has already crashed is what an editor cannot do at all today. *)
+	A breakpoint is the same thing seen from the other end. The instruction at the line the editor
+	asks for is replaced by one the processor traps on, the trap handler hands the activity over
+	here, and it is held exactly as a trapped one is -- the difference being that this one is let
+	go again, with its own instruction back in place. Stepping needs no more than that: a step is a
+	breakpoint on every other statement of the procedure and on the place it returns to, so
+	whatever the program does next, it stops.
 
-IMPORT Commands, Streams, Strings, Trace, JSON, Modules, Reflection, DebugMap, Traps, SYSTEM;
+	ponytail: one thread, and a breakpoint in a module body is missed -- the body has run by the
+	time the code exists to patch. Stepping into a call stops at the next statement of the caller
+	instead, because that is where the spots are; following the call needs the callee's address,
+	which is a read of the instruction, which is a decoder we would rather not have. *)
+
+IMPORT Commands, Machine, Streams, Strings, Trace, JSON, Modules, Reflection, DebugMap, Traps, SYSTEM;
 
 CONST
 	TraceCapacity = 32 * 1024;   (* one trap dump, which is what the editor is shown of it *)
 	MaxFrames = 64;
 	LocalsBase = 1000;   (* variablesReference of frame i is LocalsBase + i, so it is never 0 *)
 	MaxValue = 1024;
+	MaxSpots = 256;      (* breakpoints and the step spots that go with them, together *)
 
 TYPE
 	Name* = ARRAY 256 OF CHAR;
+
+	(**	Ready is called by the launcher once the program's module is loaded and before the program
+		starts: the code exists, so this is the one moment a breakpoint can be written into it. *)
+	Ready* = PROCEDURE {DELEGATE};
 
 	(**	Launcher compiles the program and runs it, returning when it has ended. `ob dap` passes the
 		one that knows about search paths and --debug; a test passes its own. Whatever the program
 		writes goes to `out`, never to this process's stdout, which carries the protocol. *)
 	Launcher* = PROCEDURE {DELEGATE} (CONST program, procedure: ARRAY OF CHAR; out: Streams.Writer;
-		VAR message: ARRAY OF CHAR): BOOLEAN;
+		ready: Ready; VAR message: ARRAY OF CHAR): BOOLEAN;
 
 	Frame = RECORD pc, fp: ADDRESS END;
+
+	(* One planted instruction: where it is, what the program had there, and whose it is. *)
+	Spot = RECORD adr: ADDRESS; saved: SIGNED32; armed, wanted: BOOLEAN END;
+
+	(* One line the client asked for, and what became of it. *)
+	Wish = RECORD source: DebugMap.Name; line, actual: SIGNED32; adr: ADDRESS END;
 
 VAR
 	traced: ARRAY TraceCapacity OF CHAR;
@@ -50,11 +69,17 @@ TYPE
 		reason: Name;
 		stopped-, released, ended: BOOLEAN;
 		program, procedure: Name;
+		spots: ARRAY MaxSpots OF Spot; spotCount: SIGNED32;
+		wishes: ARRAY MaxSpots OF Wish; wishCount: SIGNED32;
+		armed: BOOLEAN;                 (* the wishes have been resolved once, so the code is patched *)
+		stepping: BOOLEAN;              (* the client asked for a step, so the next spot is reported *)
+		standing: ADDRESS;              (* the spot being stood on: it cannot be armed while we resume *)
 
 		PROCEDURE &Init* (writer: Streams.Writer; launcher: Launcher);
 		BEGIN
 			out := writer; launch := launcher; seq := 0; count := 0; stopped := FALSE;
-			released := FALSE; ended := FALSE
+			released := FALSE; ended := FALSE; spotCount := 0; wishCount := 0;
+			armed := FALSE; stepping := FALSE; standing := 0
 		END Init;
 
 		(* One message out. Two activities write here -- the server and the trapped program. *)
@@ -87,13 +112,10 @@ TYPE
 			Send(msg)
 		END Reply;
 
-		(*	Traps.Trapped, on the activity that is about to die. It walks the frames the way
-			Reflection.StackTraceBack does -- return address and dynamic link, one word apart --
-			tells the editor, and then stands still until the editor is done with it. *)
-		PROCEDURE Trapped (sig, trapno: SIGNED32; pc, bp, sp, stackHigh: ADDRESS);
-		VAR body: JSON.Object;
+		(*	Walk collects the frames of the activity that stopped, the way
+			Reflection.StackTraceBack does: return address and dynamic link, one word apart. *)
+		PROCEDURE Walk (pc, bp, sp, stackHigh: ADDRESS);
 		BEGIN
-			IF stopped THEN RETURN END;         (* a second trap has nowhere to be reported *)
 			low := sp; high := stackHigh;
 			count := 0;
 			WHILE (count < MaxFrames) & (bp # 0) & (bp >= low) & (bp <= high)
@@ -101,30 +123,243 @@ TYPE
 				frames[count].pc := pc; frames[count].fp := bp; INC(count);
 				SYSTEM.GET(bp + SIZEOF(ADDRESS), pc);   (* return address *)
 				SYSTEM.GET(bp, bp)                      (* dynamic link *)
-			END;
-			Cause(sig, trapno, reason);
+			END
+		END Walk;
+
+		(* One stopped event, which is the editor's cue to ask about the stack. *)
+		PROCEDURE Announce (CONST why, description: ARRAY OF CHAR);
+		VAR body: JSON.Object;
+		BEGIN
 			stopped := TRUE;
-			Dump;                               (* what the trap printed, before it is said to have stopped *)
+			Dump;                               (* what the program printed, before it is said to have stopped *)
 			body := JSON.NewObject();
-			body.Set("reason", JSON.NewString("exception"));
-			body.Set("description", JSON.NewString(reason));
-			body.Set("text", JSON.NewString(reason));
+			body.Set("reason", JSON.NewString(why));
+			IF description # "" THEN
+				body.Set("description", JSON.NewString(description));
+				body.Set("text", JSON.NewString(description))
+			END;
 			body.Set("threadId", JSON.NewNumber(1));
 			body.Set("allThreadsStopped", JSON.NewBool(TRUE));
-			Event("stopped", body);
+			Event("stopped", body)
+		END Announce;
+
+		(*	Traps.Trapped, on the activity that is about to die: it tells the editor where the
+			program ended up, and then stands still until the editor is done with it. *)
+		PROCEDURE Trapped (sig, trapno: SIGNED32; pc, bp, sp, stackHigh: ADDRESS);
+		BEGIN
+			IF stopped THEN RETURN END;         (* a second trap has nowhere to be reported *)
+			Disarm;                             (* the program is over: its code is its own again *)
+			Walk(pc, bp, sp, stackHigh);
+			Cause(sig, trapno, reason);
+			standing := 0;
+			Announce("exception", reason);
 			Hold
 		END Trapped;
 
-		(* The trapped activity waits here, so that its stack stays readable. *)
+		(*	Traps.Breakpoint, on the activity running the program. An instruction we did not plant
+			is a trap the program earned, and is left to the trap handler; one we did plant is a
+			place to stand still, and the program resumes on its own instruction afterwards. *)
+		PROCEDURE Break (VAR pc: ADDRESS; bp, sp, stackHigh: ADDRESS): BOOLEAN;
+		VAR at: ADDRESS; i: SIGNED32; ours: BOOLEAN;
+		BEGIN
+			at := Hit(pc);
+			i := At(at);
+			IF i < 0 THEN RETURN FALSE END;
+			pc := at;
+			IF ~spots[i].armed THEN
+				(*	One of ours, taken out of the code a moment ago -- the client detached, or asked
+					for other lines, while the program was running into this one. It carries on. *)
+				RETURN TRUE
+			END;
+			ours := ~spots[i].wanted;
+			Disarm;                             (* the code is the program's own while it stands still *)
+			Drop(FALSE);                        (* and the spots we planted for one resume are spent *)
+			IF ours & ~stepping THEN
+				(*	Planted for one reason only: to write the breakpoint just stepped off back in,
+					now that the program is no longer standing on it. *)
+				standing := 0; ArmAll; RETURN TRUE
+			END;
+			Walk(at, bp, sp, stackHigh);
+			standing := at;
+			IF ours THEN Announce("step", "") ELSE Announce("breakpoint", "") END;
+			Hold;
+			RETURN TRUE
+		END Break;
+
+		(* The stopped activity waits here, so that its stack stays readable. *)
 		PROCEDURE Hold;
 		BEGIN {EXCLUSIVE}
-			AWAIT(released)
+			AWAIT(released);
+			released := FALSE                   (* the next stop holds too, which is what stepping is *)
 		END Hold;
 
 		PROCEDURE Release;
 		BEGIN {EXCLUSIVE}
 			released := TRUE; stopped := FALSE
 		END Release;
+
+		(*	--- breakpoints ---------------------------------------------------------------------
+			The client asks for lines. A line is an address only once the module carrying it is
+			loaded, which is what Loaded below is called for; from there on a breakpoint is one
+			instruction written into the code and taken back out whenever the program stands
+			still, so that what the editor reads is never our own patch. *)
+
+		PROCEDURE At (adr: ADDRESS): SIGNED32;
+		VAR i: SIGNED32;
+		BEGIN
+			FOR i := 0 TO spotCount - 1 DO IF spots[i].adr = adr THEN RETURN i END END;
+			RETURN -1
+		END At;
+
+		PROCEDURE Add (adr: ADDRESS; wanted: BOOLEAN);
+		BEGIN
+			IF (adr = 0) OR (At(adr) >= 0) OR (spotCount >= MaxSpots) THEN RETURN END;
+			spots[spotCount].adr := adr; spots[spotCount].wanted := wanted;
+			spots[spotCount].armed := FALSE; INC(spotCount)
+		END Add;
+
+		PROCEDURE ArmAll;
+		VAR i: SIGNED32;
+		BEGIN
+			FOR i := 0 TO spotCount - 1 DO
+				IF ~spots[i].armed & (spots[i].adr # standing) THEN
+					Plant(spots[i].adr, spots[i].saved); spots[i].armed := TRUE
+				END
+			END
+		END ArmAll;
+
+		PROCEDURE Disarm;
+		VAR i: SIGNED32;
+		BEGIN
+			FOR i := 0 TO spotCount - 1 DO
+				IF spots[i].armed THEN Restore(spots[i].adr, spots[i].saved); spots[i].armed := FALSE END
+			END
+		END Disarm;
+
+		(* Forgets the spots we planted ourselves, or, with `all`, the client's as well. *)
+		PROCEDURE Drop (all: BOOLEAN);
+		VAR i, kept: SIGNED32;
+		BEGIN
+			kept := 0;
+			FOR i := 0 TO spotCount - 1 DO
+				IF ~all & spots[i].wanted THEN spots[kept] := spots[i]; INC(kept) END
+			END;
+			spotCount := kept
+		END Drop;
+
+		(* Wanted replaces the lines the client wants stopped on, which is what setBreakpoints means. *)
+		PROCEDURE Wanted (arguments: JSON.Object);
+		VAR source: JSON.Object; list: JSON.Array; i: SIZE; line: SIGNED32; path: DebugMap.Name;
+		BEGIN
+			wishCount := 0;
+			IF arguments = NIL THEN RETURN END;
+			path := "";
+			source := JSON.AsObject(arguments.Get("source"));
+			IF source # NIL THEN
+				IF JSON.GetText(source, "path", path) THEN END
+			END;
+			list := JSON.GetArray(arguments, "breakpoints");
+			IF list = NIL THEN RETURN END;
+			FOR i := 0 TO list.length - 1 DO
+				IF (wishCount < MaxSpots)
+						& JSON.GetInteger(JSON.AsObject(list.At(i)), "line", line) THEN
+					COPY(path, wishes[wishCount].source);
+					wishes[wishCount].line := line; wishes[wishCount].actual := 0;
+					wishes[wishCount].adr := 0;
+					INC(wishCount)
+				END
+			END
+		END Wanted;
+
+		(* What the client is told about one of the lines it asked for. *)
+		PROCEDURE Verdict (i: SIGNED32): JSON.Object;
+		VAR item, source: JSON.Object; name: DebugMap.Name;
+		BEGIN
+			item := JSON.NewObject();
+			item.Set("id", JSON.NewNumber(i));
+			item.Set("verified", JSON.NewBool(wishes[i].adr # 0));
+			IF wishes[i].actual # 0 THEN item.Set("line", JSON.NewNumber(wishes[i].actual))
+			ELSE item.Set("line", JSON.NewNumber(wishes[i].line))
+			END;
+			IF wishes[i].source # "" THEN
+				source := JSON.NewObject();
+				source.Set("path", JSON.NewString(wishes[i].source));
+				DebugMap.BaseName(wishes[i].source, name);
+				source.Set("name", JSON.NewString(name));
+				item.Set("source", source)
+			END;
+			RETURN item
+		END Verdict;
+
+		(*	Arm resolves every line into an address and writes the breakpoints in. `tell` is for the
+			one call that happens behind the client's back -- the program's module has just been
+			loaded, and the lines it asked for before there was any code are answered now. *)
+		PROCEDURE Arm (tell: BOOLEAN);
+		VAR i: SIGNED32; body: JSON.Object;
+		BEGIN
+			Disarm; Drop(TRUE);
+			FOR i := 0 TO wishCount - 1 DO
+				wishes[i].adr := DebugMap.AddressOf(wishes[i].source, wishes[i].line, wishes[i].actual);
+				Add(wishes[i].adr, TRUE)
+			END;
+			armed := TRUE;
+			ArmAll;
+			IF tell THEN
+				FOR i := 0 TO wishCount - 1 DO
+					body := JSON.NewObject();
+					body.Set("reason", JSON.NewString("changed"));
+					body.Set("breakpoint", Verdict(i));
+					Event("breakpoint", body)
+				END
+			END
+		END Arm;
+
+		(** Loaded is the Ready the launcher calls: the program's module is in, and it has not started. *)
+		PROCEDURE Loaded;
+		BEGIN
+			Arm(TRUE)
+		END Loaded;
+
+		(*	Where the program could be a moment from now: every other statement of the procedure it
+			is standing in, and the place its own frame returns to. One of them is reached whatever
+			the program does next, which is what makes a step out of a breakpoint. Continuing
+			plants the same spots for one reason -- to get the breakpoint being stood on back in. *)
+		PROCEDURE Steps (at: ADDRESS; leave: BOOLEAN);
+		VAR procedure: DebugMap.Procedure; name, file: DebugMap.Name; start, ret: ADDRESS;
+			line: SIGNED32; position: SIGNED64; i: SIZE;
+		BEGIN
+			IF count > 0 THEN
+				SYSTEM.GET(frames[0].fp + SIZEOF(ADDRESS), ret);
+				Add(ret, FALSE)
+			END;
+			IF leave THEN RETURN END;
+			Reflection.GetProcedureName(at, name, start);
+			IF start = 0 THEN RETURN END;
+			procedure := DebugMap.Find(name);
+			IF procedure = NIL THEN RETURN END;
+			IF ~DebugMap.PositionOf(at, file, line, position) THEN line := 0 END;
+			FOR i := 0 TO LEN(procedure.sites) - 1 DO
+				IF procedure.sites[i].line # line THEN     (* a second spot on this line is not a step *)
+					Add(start + procedure.sites[i].offset, FALSE)
+				END
+			END
+		END Steps;
+
+		(* Let the program go: on to the next breakpoint, or as far as the next statement. *)
+		PROCEDURE Resume (step, leave: BOOLEAN);
+		BEGIN
+			stepping := step;
+			IF stopped & (standing # 0) THEN Steps(standing, leave); ArmAll END;
+			Release
+		END Resume;
+
+		(*	Nothing of ours is left in the program's code once the client is gone. The addresses are
+			kept, disarmed: a program already on its way into one of them has to be told to carry on
+			rather than be reported as having trapped. *)
+		PROCEDURE Detach;
+		BEGIN
+			Disarm; standing := 0; stepping := FALSE
+		END Detach;
 
 		(* The program has ended, one way or the other. *)
 		PROCEDURE Finish (ok: BOOLEAN; CONST message: ARRAY OF CHAR);
@@ -201,7 +436,7 @@ TYPE
 						frame.Set("line", JSON.NewNumber(line));
 						source := JSON.NewObject();
 						source.Set("path", JSON.NewString(file));
-						BaseName(file, base);
+						DebugMap.BaseName(file, base);
 						source.Set("name", JSON.NewString(base));
 						frame.Set("source", source)
 					ELSE
@@ -295,6 +530,7 @@ TYPE
 					IF command^ = "initialize" THEN
 						body := JSON.NewObject();
 						body.Set("supportsConfigurationDoneRequest", JSON.NewBool(TRUE));
+						body.Set("supportsBreakpointLocationsRequest", JSON.NewBool(FALSE));
 						body.Set("supportsEvaluateForHovers", JSON.NewBool(TRUE));
 						body.Set("supportsTerminateRequest", JSON.NewBool(TRUE));
 						Reply(request, body, "");
@@ -349,15 +585,27 @@ TYPE
 						ELSE
 							Reply(request, NIL, "not a variable of this frame")
 						END
-					ELSIF (command^ = "continue") OR (command^ = "next") OR (command^ = "stepIn")
-							OR (command^ = "stepOut") THEN
-						(*	There is nowhere to continue to: the program trapped, and stepping is
-							the next thing to build. Letting it go is all that is left. *)
-						Release;
+					ELSIF command^ = "setBreakpoints" THEN
+						Wanted(arguments);
+						IF armed THEN Arm(FALSE) END;   (* the code is already in: patch it again *)
+						arr := JSON.NewArray();
+						FOR frame := 0 TO wishCount - 1 DO arr.Add(Verdict(frame)) END;
+						body := JSON.NewObject(); body.Set("breakpoints", arr);
+						Reply(request, body, "")
+					ELSIF command^ = "continue" THEN
+						Resume(FALSE, FALSE);
 						body := JSON.NewObject();
 						body.Set("allThreadsContinued", JSON.NewBool(TRUE));
 						Reply(request, body, "")
+					ELSIF (command^ = "next") OR (command^ = "stepIn") THEN
+						(* stepIn is next: where a call goes is in the instruction, not in the map *)
+						Resume(TRUE, FALSE);
+						Reply(request, NIL, "")
+					ELSIF command^ = "stepOut" THEN
+						Resume(TRUE, TRUE);
+						Reply(request, NIL, "")
 					ELSIF (command^ = "disconnect") OR (command^ = "terminate") THEN
+						Detach;
 						Release;
 						Reply(request, NIL, "");
 						EXIT
@@ -366,6 +614,7 @@ TYPE
 					END
 				END
 			END;
+			Detach;
 			Release;
 			message := ""
 		END Serve;
@@ -398,7 +647,7 @@ VAR message: Name; ok: BOOLEAN; out: Streams.Writer;
 BEGIN
 	message := "";
 	NEW(out, session.Write, 256);
-	ok := session.launch(session.program, session.procedure, out, message);
+	ok := session.launch(session.program, session.procedure, out, session.Loaded, message);
 	out.Update;
 	session.Finish(ok, message)
 END Run;
@@ -409,19 +658,45 @@ BEGIN
 	NEW(debuggee, session)
 END Start;
 
-(* The file a path ends in, which is the name an editor puts on a tab. *)
-PROCEDURE BaseName (CONST path: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
-VAR i, start: SIZE;
+(*	One instruction the processor traps on, in place of the program's own: INT 3 on the Intel
+	machines, one byte, where the trap reports the address after it; BRK on A64, a word, where it
+	reports the instruction itself and the caches have to be told -- writing code and then running
+	it is what Modules.Mod flushes for after it copies a section in. *)
+PROCEDURE Plant (adr: ADDRESS; VAR saved: SIGNED32);
+#IF ARM64 THEN
 BEGIN
-	i := 0; start := 0;
-	WHILE path[i] # 0X DO
-		IF (path[i] = "/") OR (path[i] = 5CX) THEN start := i + 1 END;
-		INC(i)
-	END;
-	i := 0;
-	WHILE (path[start + i] # 0X) & (i < LEN(name) - 1) DO name[i] := path[start + i]; INC(i) END;
-	name[i] := 0X
-END BaseName;
+	saved := SYSTEM.GET32(adr);
+	SYSTEM.PUT32(adr, SIGNED32(0D4200000H));                  (* BRK #0 *)
+	Machine.FlushDCacheRange(adr, 4)
+#ELSE
+VAR byte: CHAR;
+BEGIN
+	SYSTEM.GET(adr, byte); saved := ORD(byte);
+	SYSTEM.PUT(adr, 0CCX)                                      (* INT 3 *)
+#END
+END Plant;
+
+PROCEDURE Restore (adr: ADDRESS; saved: SIGNED32);
+#IF ARM64 THEN
+BEGIN
+	SYSTEM.PUT32(adr, saved);
+	Machine.FlushDCacheRange(adr, 4)
+#ELSE
+BEGIN
+	SYSTEM.PUT(adr, CHR(saved))
+#END
+END Restore;
+
+(* Where the planted instruction is, given the pc the trap reported. *)
+PROCEDURE Hit (pc: ADDRESS): ADDRESS;
+#IF ARM64 THEN
+BEGIN
+	RETURN pc
+#ELSE
+BEGIN
+	RETURN pc - 1
+#END
+END Hit;
 
 (*	Runs where a trap handler runs, so it allocates nothing and locks nothing: a fixed array and
 	an index (sdk/Ob.Mod does the same for the documentation backend). What does not fit is
@@ -492,7 +767,9 @@ BEGIN
 	NEW(session, context.out, launcher);
 	tracedLength := 0; previous := Trace.Char; Trace.Char := CaptureChar;
 	Traps.Trapped := session.Trapped;
+	Traps.Breakpoint := session.Break;
 	session.Serve(context.in);
+	Traps.Breakpoint := NIL;
 	Traps.Trapped := NIL;
 	Trace.Char := previous
 END Serve;
