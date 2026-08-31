@@ -1,0 +1,21 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "oberon",
+      "camelcase": "Oberon",
+      "scope": "source.oberon",
+      "path": ".",
+      "file-types": ["Mod"],
+      "highlights": ["queries/highlights.scm"],
+      "injection-regex": "^(active[-_]?)?oberon$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "BSD-2-Clause",
+    "description": "Active Oberon grammar for tree-sitter",
+    "authors": [{ "name": "Andrii Puhachenko" }],
+    "links": { "repository": "https://github.com/active-oberon/minia2" }
+  }
+}

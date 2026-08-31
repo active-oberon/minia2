@@ -510,6 +510,7 @@ tasks:
       - task: display
       - task: wm
       - task: terminal
+      - task: treesitter
 
   display:
     desc: What a display driver is handed -- the picture, checked without a screen
@@ -545,6 +546,17 @@ tasks:
       - |
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/vscode-check.sh
+
+  treesitter:
+    desc: The tree-sitter grammar -- it generates, its cases pass, and it parses the library
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/treesitter-check.sh || {
+          status=$?
+          [ "$status" -eq 2 ] || exit "$status"
+          [ -z "$TREESITTER_REQUIRE" ] || { echo "[FAIL] the grammar check needs the tree-sitter CLI, and TREESITTER_REQUIRE is set"; exit 1; }
+        }
 
   lsp-stdlib:
     desc: Go-to-definition into a library module, with the SDK run natively (not in the image)
