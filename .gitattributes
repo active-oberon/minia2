@@ -7,3 +7,10 @@
 
 # .Tool files are A2 command lists, not shell scripts.
 *.Tool linguist-detectable=false
+
+# tree-sitter generates these from grammar.js; committed so an editor can build the
+# grammar without the CLI, but they are not source.
+editors/tree-sitter/src/parser.c linguist-generated=true
+editors/tree-sitter/src/grammar.json linguist-generated=true
+editors/tree-sitter/src/node-types.json linguist-generated=true
+editors/tree-sitter/src/tree_sitter/** linguist-vendored=true

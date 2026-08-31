@@ -1,0 +1,450 @@
+================================================================================
+A module and its note
+================================================================================
+
+MODULE Hello;
+BEGIN
+END Hello.
+
+System.Free Hello ~
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (body)
+    (identifier))
+  (note))
+
+================================================================================
+Imports, one of them an instantiation
+================================================================================
+
+MODULE M;
+IMPORT Streams, C := Commands, Coll := GenericCollections(Strings.String, Less);
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (import_list
+      (import
+        (identifier))
+      (import
+        (identifier)
+        (identifier))
+      (import
+        (identifier)
+        (identifier)
+        (instantiation
+          (qualified_identifier
+            (identifier)
+            (identifier))
+          (qualified_identifier
+            (identifier)))))
+    (identifier)))
+
+================================================================================
+An object with a body and a method
+================================================================================
+
+MODULE M;
+TYPE
+	T* = OBJECT (Base)
+	VAR n: SIGNED32;
+		PROCEDURE & Init*(k: SIGNED32);
+		BEGIN n := k
+		END Init;
+	BEGIN {ACTIVE, PRIORITY(3)}
+		AWAIT n > 0
+	END T;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (type_section
+        (type_declaration
+          (identifier_definition
+            (identifier))
+          (object_type
+            (qualified_identifier
+              (identifier))
+            (declaration_sequence
+              (var_section
+                (variable_declaration
+                  (variable_name
+                    (identifier_definition
+                      (identifier)))
+                  (qualified_identifier
+                    (identifier))))
+              (procedure_declaration
+                (identifier_definition
+                  (identifier))
+                (formal_parameters
+                  (parameter_declaration
+                    (parameter_name
+                      (identifier))
+                    (qualified_identifier
+                      (identifier))))
+                (body
+                  (statement_sequence
+                    (assignment
+                      (identifier)
+                      (identifier))))
+                (identifier)))
+            (body
+              (flags
+                (flag
+                  (identifier))
+                (flag
+                  (identifier)
+                  (number)))
+              (statement_sequence
+                (await_statement
+                  (relation_expression
+                    (identifier)
+                    (number)))))
+            (identifier)))))
+    (identifier)))
+
+================================================================================
+A record holds fields first, then procedures
+================================================================================
+
+MODULE M;
+TYPE
+	R = RECORD
+		caller-: OBJECT;
+		a, b: SIGNED32;
+		PROCEDURE Sum(): SIGNED32;
+		BEGIN RETURN a + b
+		END Sum;
+	END;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (type_section
+        (type_declaration
+          (identifier_definition
+            (identifier))
+          (record_type
+            (variable_declaration
+              (variable_name
+                (identifier_definition
+                  (identifier)))
+              (object_type))
+            (variable_declaration
+              (variable_name
+                (identifier_definition
+                  (identifier)))
+              (variable_name
+                (identifier_definition
+                  (identifier)))
+              (qualified_identifier
+                (identifier)))
+            (procedure_declaration
+              (identifier_definition
+                (identifier))
+              (formal_parameters
+                (qualified_identifier
+                  (identifier)))
+              (body
+                (statement_sequence
+                  (return_statement
+                    (binary_expression
+                      (identifier)
+                      (identifier)))))
+              (identifier))))))
+    (identifier)))
+
+================================================================================
+A parameter default and an inferred variable
+================================================================================
+
+MODULE M;
+VAR guess := 0, size: SIZE;
+PROCEDURE Int*(VAR i: SIGNED32; hex := TRUE: BOOLEAN): BOOLEAN;
+BEGIN RETURN hex
+END Int;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (var_section
+        (variable_declaration
+          (variable_name
+            (identifier_definition
+              (identifier))
+            (number))
+          (variable_name
+            (identifier_definition
+              (identifier)))
+          (qualified_identifier)))
+      (procedure_declaration
+        (identifier_definition
+          (identifier))
+        (formal_parameters
+          (parameter_declaration
+            (parameter_name
+              (identifier))
+            (qualified_identifier
+              (identifier)))
+          (parameter_declaration
+            (parameter_name
+              (identifier))
+            (qualified_identifier
+              (identifier)))
+          (qualified_identifier
+            (identifier)))
+        (body
+          (statement_sequence
+            (return_statement
+              (identifier))))
+        (identifier)))
+    (identifier)))
+
+================================================================================
+The cascaded WITH
+================================================================================
+
+MODULE M;
+PROCEDURE P(t: ANY);
+BEGIN
+	WITH t:
+	| Streams.Writer DO t.Ln
+	| Streams.Reader DO t.SkipWhitespace
+	ELSE HALT(100)
+	END
+END P;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (procedure_declaration
+        (identifier_definition
+          (identifier))
+        (formal_parameters
+          (parameter_declaration
+            (parameter_name
+              (identifier))
+            (any_type)))
+        (body
+          (statement_sequence
+            (with_statement
+              (identifier)
+              (with_alternative
+                (qualified_identifier
+                  (identifier)
+                  (identifier))
+                (statement_sequence
+                  (call_statement
+                    (member_expression
+                      (identifier)
+                      (identifier)))))
+              (with_alternative
+                (qualified_identifier
+                  (identifier)
+                  (identifier))
+                (statement_sequence
+                  (call_statement
+                    (member_expression
+                      (identifier)
+                      (identifier)))))
+              (else_clause
+                (statement_sequence
+                  (call_statement
+                    (call_expression
+                      (identifier)
+                      (expression_list
+                        (number)))))))))
+        (identifier)))
+    (identifier)))
+
+================================================================================
+A conditional expression
+================================================================================
+
+MODULE M;
+VAR w: SIGNED32;
+BEGIN
+	w := GetWidth() IF style = 1 ELSE GetWidth() - 2
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (var_section
+        (variable_declaration
+          (variable_name
+            (identifier_definition
+              (identifier)))
+          (qualified_identifier
+            (identifier)))))
+    (body
+      (statement_sequence
+        (assignment
+          (identifier)
+          (conditional_expression
+            (call_expression
+              (identifier))
+            (relation_expression
+              (identifier)
+              (number))
+            (binary_expression
+              (call_expression
+                (identifier))
+              (number))))))
+    (identifier)))
+
+================================================================================
+Literals: a string built from pieces, a raw string, numbers
+================================================================================
+
+MODULE M;
+CONST
+	Header = "Size" 09X 09X "File";
+	Doc = \"<html a=\"b\"></html>"\;
+	Mask = 0FFH; Bits = 0b1010; Hex = 0x1F; Flt = 1.5E-3;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (const_section
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (string_concatenation
+            (string)
+            (character)
+            (character)
+            (string)))
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (escaped_string))
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (number))
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (number))
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (number))
+        (const_declaration
+          (identifier_definition
+            (identifier))
+          (number))))
+    (identifier)))
+
+================================================================================
+Conditional compilation keeps the first branch
+================================================================================
+
+MODULE M;
+PROCEDURE Hit (pc: ADDRESS): ADDRESS;
+#IF ARM64 THEN
+BEGIN
+	RETURN pc
+#ELSE
+BEGIN
+	RETURN pc - 1
+#END
+END Hit;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (procedure_declaration
+        (identifier_definition
+          (identifier))
+        (formal_parameters
+          (parameter_declaration
+            (parameter_name
+              (identifier))
+            (qualified_identifier))
+          (qualified_identifier))
+        (conditional_directive)
+        (body
+          (statement_sequence
+            (return_statement
+              (identifier))))
+        (inactive_branch)
+        (identifier)))
+    (identifier)))
+
+================================================================================
+An assembler body is text, ending at its own END
+================================================================================
+
+MODULE M;
+PROCEDURE Fast;
+CODE{ SYSTEM.MMX }
+	MOV EAX, 1		; not a comment the grammar reads
+	PXOR MMX7, MMX7
+END Fast;
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (declaration_sequence
+      (procedure_declaration
+        (identifier_definition
+          (identifier))
+        (body
+          (code_body))
+        (identifier)))
+    (identifier)))
+
+================================================================================
+Nested comments
+================================================================================
+
+MODULE M;
+(* outer (* inner *) still the comment *)
+END M.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (module
+    (identifier)
+    (comment)
+    (identifier)))

@@ -101,7 +101,8 @@ Neovim runtime files. They live in the dotfiles repo
   symbol kind on purpose: constants, variables and record fields are exactly what one looks
   for in an Oberon module, and aerial.nvim's default `filter_kind` would drop all three.
 - `syntax/oberon.vim` — syntax highlighting (keywords/types/builtins; `END` is coloured
-  by what it closes).
+  by what it closes). Superseded by the tree-sitter grammar where you have it (§1g), and
+  the fallback where you do not.
 
 Restart Neovim, open a `.Mod` file — the server starts automatically and you should see
 diagnostics, hover, completion, etc.
@@ -190,6 +191,39 @@ Four things are worth knowing:
   code to write a breakpoint into.
 - Stepping into a call stops at the next statement of the caller instead — where a call goes is
   in the instruction, and reading it would mean carrying a decoder.
+
+### 1g. tree-sitter
+
+`editors/tree-sitter` holds an Active Oberon grammar for
+[tree-sitter](https://tree-sitter.github.io/), transcribed from the EBNF that
+`source/FoxParser.Mod` carries above each production. It gives colouring that survives a
+file that does not compile — a regex `syntax/` file cannot see structure, and the language
+server needs the file to parse before it can say anything — plus the structural motions and
+selection an editor builds on a real syntax tree.
+
+It does not replace the server's **semantic tokens** (§2): which name is a type and which
+local is a parameter comes from the symbol table, and no grammar knows it.
+
+Neovim needs no plugin for it — `nvim-treesitter` installs parsers, it does not run them:
+
+```sh
+editors/tree-sitter/install-nvim.sh     # builds oberon.so into ~/.local/share/nvim/site/parser
+```
+
+…then once, in your config (this is not in the dotfiles repo yet):
+
+```lua
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "oberon",
+  callback = function() pcall(vim.treesitter.start) end,
+})
+```
+
+Helix, Zed and Emacs take the grammar by repository and subdirectory;
+`editors/tree-sitter/tree-sitter.json` declares the scope, the file types and where the
+queries are. `task treesitter` checks that the grammar generates, that its own cases pass,
+and that it still parses every module in `source/` — 768 of 770 today, with the two
+exceptions and the rest of the known limits listed in `editors/tree-sitter/README.md`.
 
 ---
 
