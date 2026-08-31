@@ -295,6 +295,7 @@ CSV.Mod
 JSON.Mod
 LSP.Mod
 DebugMap.Mod
+DAP.Mod
 Channels.Mod
 TerminalCodes.Mod
 Unix.Terminal.Mod

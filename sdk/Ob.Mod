@@ -18,7 +18,7 @@ MODULE Ob;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "The ob command line, in Acti
 *)
 
 IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
-	Shell, LSP, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
+	Shell, LSP, DAP, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
 	ObHost;
 
 CONST
@@ -48,6 +48,7 @@ TYPE
 VAR
 	out, error: Streams.Writer;
 	failed: BOOLEAN;
+	debugging: BOOLEAN;			(* `ob dap` compiles with --debug, so DebugMap gets the line table *)
 
 	sdk-, project-: Path;			(* the SDK this binary belongs to; the directory the user is in *)
 	lib-, libWin-, libA64-, libLinux-, libSym-: Path;
@@ -324,6 +325,7 @@ BEGIN
 	text := "-p="; Strings.Append(text, platform);
 	Strings.Append(text, " --objectFileExtension="); Strings.Append(text, objectExtension);
 	Strings.Append(text, " --symbolFileExtension="); Strings.Append(text, symbolExtension);
+	IF debugging THEN Strings.Append(text, " --debug") END;
 	Streams.OpenStringReader(optionReader, text);
 
 	NEW(diagnostics); NEW(logBuffer, 1024); log := logBuffer.GetWriter();
@@ -707,27 +709,51 @@ END DiscardScratch;
 	into itself, which is the same mechanism `ob build` bakes into a binary and the same one that
 	took until 05.08.2026 to work on AArch64.
 *)
+PROCEDURE RunFile(CONST source, procedure: ARRAY OF CHAR; out: Streams.Writer;
+		VAR message: ARRAY OF CHAR): BOOLEAN;
+VAR absolute, scratch, name, command: Path; reader: Streams.StringReader;
+	context: Commands.Context; result: INTEGER; ran: BOOLEAN;
+BEGIN
+	message := "";
+	IF ~ObHost.RealPath(source, absolute) THEN
+		COPY("no such file: ", message); Strings.Append(message, source); RETURN FALSE
+	END;
+	IF ~ModuleName(absolute, name) THEN
+		COPY("cannot read a MODULE header from ", message); Strings.Append(message, source); RETURN FALSE
+	END;
+	IF ~ScratchDirectory(scratch) THEN COPY("cannot create a scratch directory", message); RETURN FALSE END;
+	ran := FALSE;
+	IF PrepareIn(scratch) THEN
+		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension);
+		IF CompileFile(absolute, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE) THEN
+			COPY(name, command); Strings.AppendChar(command, '.'); Strings.Append(command, procedure);
+			IF out = NIL THEN
+				Commands.Call(command, {Commands.Wait}, result, message)
+			ELSE
+				(* a caller that owns the terminal -- `ob dap` -- takes the program's output itself *)
+				NEW(reader, 1); reader.Set("");
+				NEW(context, StdIO.env.in, reader, out, out, NIL);
+				Commands.Activate(command, context, {Commands.Wait}, result, message)
+			END;
+			ran := result = Commands.Ok
+		ELSE
+			COPY("the program did not compile", message)
+		END
+	END;
+	DiscardScratch(scratch);
+	RETURN ran
+END RunFile;
+
 PROCEDURE RunVerb;
-VAR source, absolute, scratch, name, command: Path; procedure: Path;
-	result: INTEGER; message: ARRAY 256 OF CHAR;
+VAR source, procedure: Path; message: ARRAY 256 OF CHAR;
 BEGIN
 	IF ~NextArgument(source) OR (source = "") THEN
 		Die("usage: ob run <File.Mod> [Proc]"); RETURN
 	END;
 	IF ~NextArgument(procedure) OR (procedure = "") THEN procedure := "Do" END;
-	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
-	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
-	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
-	IF ~PrepareIn(scratch) THEN RETURN END;
-	BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension);
-	IF CompileFile(absolute, CompilerPlatform, ObjectExtension, SymbolExtension, TRUE) THEN
-		COPY(name, command); Strings.AppendChar(command, '.'); Strings.Append(command, procedure);
-		Commands.Call(command, {Commands.Wait}, result, message);
-		IF result # Commands.Ok THEN Die(message) END
-	ELSE
-		failed := TRUE
-	END;
-	DiscardScratch(scratch)
+	IF ~RunFile(source, procedure, NIL, message) THEN
+		IF message # "" THEN Die(message) ELSE failed := TRUE END
+	END
 END RunVerb;
 
 (*
@@ -3091,6 +3117,20 @@ BEGIN
 END LspVerb;
 
 (*
+	The debug adapter, over this process's own standard input and output. It is the same shape as
+	`ob lsp` -- an editor on one end, a protocol in Content-Length frames on the other -- and it
+	compiles the program with --debug so that DebugMap can say which line a frame is standing on.
+*)
+PROCEDURE DapVerb;
+VAR argument: Path; context: Commands.Context;
+BEGIN
+	WHILE NextArgument(argument) DO DieOn("unknown option: ", argument); RETURN END;
+	debugging := TRUE;
+	NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
+	DAP.Serve(context, RunFile)
+END DapVerb;
+
+(*
 	The interactive shell, in the user's own directory. What the shell version had to do here --
 	write a configuration file naming lib and the project, and hand it to `oberon run` because
 	`oberon do` runs commands and exits -- is two search paths and a call.
@@ -3117,6 +3157,7 @@ BEGIN
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
+	Say("  ob dap                             the debug adapter: run a program, read where it trapped");
 	Say("  ob repl                            the interactive A2 shell, in this directory");
 	Say("  ob version                         print the SDK version banner");
 	Say("  ob help                            this text");
@@ -3142,6 +3183,7 @@ BEGIN
 	ELSIF verb = "doc-module" THEN DocModuleVerb
 	ELSIF verb = "lint" THEN LintVerb
 	ELSIF verb = "lsp" THEN LspVerb
+	ELSIF verb = "dap" THEN DapVerb
 	ELSIF verb = "repl" THEN ReplVerb
 	ELSIF (verb = "version") OR (verb = "--version") OR (verb = "-v") THEN Version
 	ELSIF (verb = "") OR (verb = "help") OR (verb = "-h") OR (verb = "--help") THEN Help

@@ -78,6 +78,7 @@ alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # interactive ver
 | `ob compile <File.Mod> [-o dir]` | just the `.GofUu` object file |
 | `obit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
 | `ob lsp [--live]` | the language server (editors spawn this) |
+| `ob dap` | the debug adapter: run a program, read where it trapped (§1f) |
 
 ### 1c. Neovim
 
@@ -149,6 +150,38 @@ Two coordinate systems meet here, and that is the whole of the plumbing: the ser
 lines and byte offsets in the UTF-8 image of the text, PET's caret counts characters of a
 `Texts.Text`. `UTF8Strings.OffsetOfIndex` and `IndexOfOffset` translate, so a file with
 non-ASCII comments lands on the right character rather than a few columns off.
+
+### 1f. Debugging (`ob dap`)
+
+`ob dap` speaks the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)
+over stdio, the way `ob lsp` speaks LSP. It runs the program in its own process and **stops it
+where it trapped**: the editor gets the call stack with file and line, the parameters and locals
+of every frame, and the trap dump in its debug console. This is post-mortem debugging — there
+are no breakpoints and no stepping yet, and what it answers about is a program that has already
+failed.
+
+Neovim, with [`mfussenegger/nvim-dap`](https://github.com/mfussenegger/nvim-dap):
+
+```lua
+local dap = require("dap")
+dap.adapters.ob = { type = "executable", command = os.getenv("A2_OB") or "ob", args = { "dap" } }
+dap.configurations.oberon = {
+  { type = "ob", request = "launch", name = "Run this module",
+    program = "${file}", procedure = "Do" },
+}
+```
+
+`<F5>` on an open `.Mod` file compiles it with `--debug` and runs its `Do` (name another
+procedure with `procedure = …`). Nothing happens until it traps; when it does, the stack window
+fills, `<F10>`/`<F11>` are inert, and continuing lets the program die.
+
+Two things are worth knowing:
+
+- The line table lives only in the process that compiled the code (`source/DebugMap.Mod`), so
+  `ob dap` debugs what it built itself. Attaching to a binary built earlier needs the table
+  written into the object file, which is not done.
+- One thread: the activity that trapped. A program that traps on two activities at once reports
+  the first.
 
 ---
 
@@ -290,4 +323,6 @@ export A2_SYMS="$HOME/Projects/A2/a2oberon/target/Linux64/bin"
   and record/object members are declined until scope-precise identity is added.
 - **Formatting** normalises to Fox's canonical style (its own indentation), so it
   changes hand-tuned layout.
+- **Debugging is post-mortem** (`ob dap`, §1f): a trapped program can be read, not driven —
+  no breakpoints, no stepping, one thread, and only code the same `ob` compiled.
 - GUI modules (window manager / raster) are out of scope of the headless image.
