@@ -6,7 +6,7 @@
 #
 # Neovim needs no plugin for this -- nvim-treesitter installs parsers, it does not run
 # them. The filetype comes from ftdetect (*.Mod -> oberon), the parser is found by that
-# same name, and `vim.treesitter.start()` in a FileType autocommand turns it on.
+# same name, and the `after/ftplugin/oberon.lua` from the dotfiles repo turns it on.
 
 set -eu
 
@@ -21,9 +21,13 @@ cp "$here/queries/"*.scm "$config/queries/oberon/"
 
 echo "installed: $site/parser/oberon.so"
 echo "queries:   $config/queries/oberon/"
-cat <<'LUA'
 
-Add this once, if it is not there already:
+# The ftplugin the documentation ships already starts it. Say so only when it does not,
+# because a line to add is worth printing and a line already there is noise.
+grep -qs 'vim\.treesitter\.start' "$config/after/ftplugin/oberon.lua" || cat <<'LUA'
+
+Nothing starts it yet. Either take after/ftplugin/oberon.lua from the dotfiles repo,
+or add this once:
 
   vim.api.nvim_create_autocmd("FileType", {
     pattern = "oberon",
