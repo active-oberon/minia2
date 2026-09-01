@@ -133,6 +133,21 @@ Syntax highlighting comes with it — the same word lists as our Pygments lexer,
 colours match what the documentation and the website show. `task vscode` builds and checks
 the package.
 
+**Debugging works here too**, and needed no code: `ob dap` is an ordinary debug adapter, so the
+extension declares a debugger of type `ob` and hands it the same command the server runs on, with
+`dap` for arguments (`activeOberon.debug.args`, the mirror of `server.args`; the Docker fallback
+needs the whole line there as well). `F5` on an open `.Mod` file with no `launch.json` at all runs
+that file's `Do` — the extension fills the configuration in from the active editor. A
+`launch.json` is only needed to name another procedure:
+
+```json
+{ "type": "ob", "request": "launch", "name": "Run this module",
+  "program": "${file}", "procedure": "Test" }
+```
+
+Breakpoints, stepping, the call stack and the variables of each frame are VS Code's own panels
+talking to §1f; the limits listed there are the same ones.
+
 ### 1e. PET, A2's own editor
 
 Inside A2 there is no client and no server: **PET calls the same engine in its own process**.
@@ -188,6 +203,10 @@ dump in its debug console.
 A breakpoint is the instruction at that line replaced by one the processor traps on, put back
 whenever the program stands still, so what the editor reads is never the patch. A step is the
 same thing planted on every other statement of the procedure and on the place it returns to.
+
+Three editors reach it: **Neovim** through `nvim-dap` below, **VS Code** through the extension's
+own debugger declaration (§1d), and **PET** without any of it, by calling the same `DAP.Core` in
+its own process (§1e).
 
 Neovim, with [`mfussenegger/nvim-dap`](https://github.com/mfussenegger/nvim-dap):
 

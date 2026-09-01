@@ -16,7 +16,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:oberon"
+    "onLanguage:oberon",
+    "onDebugResolve:ob"
   ],
   "main": "./src/extension.js",
   "contributes": {
@@ -85,6 +86,16 @@
           ],
           "default": "off",
           "description": "Log the traffic between VS Code and the server."
+        },
+        "activeOberon.debug.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "dap"
+          ],
+          "markdownDescription": "Arguments the debug adapter is started with, on the same command as the server (`activeOberon.server.path`). The Docker fallback needs the whole line here too: `[\"run\",\"--rm\",\"-i\",\"-v\",\"${workspaceFolder}:/work\",\"minia2-sdk\",\"dap\"]`. ${workspaceFolder} is substituted."
         }
       }
     },
@@ -126,7 +137,57 @@
           }
         }
       }
-    }
+    },
+    "debuggers": [
+      {
+        "type": "ob",
+        "label": "Active Oberon",
+        "languages": [
+          "oberon"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The .Mod file to compile with --debug and run.",
+                "default": "${file}"
+              },
+              "procedure": {
+                "type": "string",
+                "description": "The exported procedure to run. `ob run` defaults to Do.",
+                "default": "Do"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "ob",
+            "request": "launch",
+            "name": "Run this module",
+            "program": "${file}",
+            "procedure": "Do"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Active Oberon: run this module",
+            "description": "Compile the open file with --debug and run its Do",
+            "body": {
+              "type": "ob",
+              "request": "launch",
+              "name": "Run this module",
+              "program": "^\"\\${file}\"",
+              "procedure": "Do"
+            }
+          }
+        ]
+      }
+    ]
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
