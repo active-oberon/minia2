@@ -368,7 +368,7 @@ END M.
     (identifier)))
 
 ================================================================================
-Conditional compilation keeps the first branch
+Conditional compilation: one branch is parsed, the rest skipped whole
 ================================================================================
 
 MODULE M;
@@ -404,6 +404,7 @@ END M.
             (return_statement
               (identifier))))
         (inactive_branch)
+        (conditional_directive)
         (identifier)))
     (identifier)))
 
