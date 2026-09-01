@@ -25,6 +25,11 @@ MODULE PET; (** AUTHOR "TF, PL"; PURPOSE "Programmer's Editing Tool"; *)
  *	CTRL-G:	Go to the declaration of the name under the cursor (language server, same process)
  *	CTRL-K:	What the name under the cursor is, written to the log
  *
+ *	F9:			Breakpoint on the cursor's line, on or off
+ *	F5:			Run this page's module under the debugger, or let a stopped program go on
+ *	F10:		Step to the next statement
+ *	SHIFT-F5:	Let the program go for good, taking the breakpoints out of its code
+ *
  *	CTRL-DEL	Delete end-of-line whitespace in current page
  *
  *	ALT-INS	Uncomment selected code of commented
@@ -53,7 +58,7 @@ IMPORT
 	WMTextView, WMEditors, Strings, TextUtilities, Texts,
 	WMWindowManager, WMGrids, WMMacros, WMPopups, WMDropTarget,
 	PETTrees, Configuration, Codecs, WMTabComponents, UndoManager, WMSearchComponents, Kernel,
-	LSP, JSON, UTF8Strings;
+	LSP, JSON, UTF8Strings, DAP, DebugMap, Reflection, Traps;
 
 CONST
 	WindowWidth = 800; WindowHeight = 600;
@@ -108,6 +113,7 @@ CONST
 
 	MaxNbrOfTabs = 100;
 	MaxNbrOfCompilers = 16;
+	MaxBreakpoints = 64;   (* lines with a breakpoint, per page *)
 
 	WindowTitle = "Programmer's Editing Tool v2.1";
 
@@ -529,6 +535,9 @@ TYPE
 
 		positions : Positions;
 
+		breakpoints : ARRAY MaxBreakpoints OF SIGNED32;   (* 1-based lines, as the compiler counts them *)
+		nofBreakpoints : SIGNED32;
+
 		owner : Window;
 		settings: Settings;
 
@@ -776,7 +785,10 @@ TYPE
 				compiler := CompilerInterface.GetCompilerByName(compilerSettings.name);
 			END;
 			IF (compiler # NIL) THEN
-				compiler.CompileText(editor.text, "" (* filename*) , 0, pc, options, tw, diagnostics, errors);
+				(*	The file name is what the line table is keyed by (DebugMap keys sites by the
+					source the compiler was given), so a breakpoint on a line needs it. It also
+					makes the compiler's own messages name the file. *)
+				compiler.CompileText(editor.text, filename, 0, pc, options, tw, diagnostics, errors);
 			ELSE
 				tw.String("No compiler available for file '"); tw.String(filename); tw.String("'");
 				logPanel.visible.Set(TRUE);
@@ -979,6 +991,58 @@ TYPE
 			END;
 		END ShowHover;
 
+		(* The caret's line, counted from one, which is how the compiler and the map count. *)
+		PROCEDURE CaretLine() : SIGNED32;
+		VAR text : Strings.String; offset : SIGNED64; line, char : SIGNED32;
+		BEGIN
+			text := ServerText(offset);
+			LSP.OffsetToPos(text, offset, line, char);
+			RETURN line + 1
+		END CaretLine;
+
+		(* F9 on the caret's line. There is no gutter to mark, so the log says what happened. *)
+		PROCEDURE ToggleBreakpoint;
+		VAR line, i, j : SIGNED32; msg : ARRAY 64 OF CHAR; number : ARRAY 16 OF CHAR;
+		BEGIN
+			line := CaretLine();
+			i := 0;
+			WHILE (i < nofBreakpoints) & (breakpoints[i] # line) DO INC(i) END;
+			IF i < nofBreakpoints THEN
+				FOR j := i TO nofBreakpoints - 2 DO breakpoints[j] := breakpoints[j + 1] END;
+				DEC(nofBreakpoints);
+				msg := "breakpoint off, line ";
+			ELSIF nofBreakpoints < MaxBreakpoints THEN
+				breakpoints[nofBreakpoints] := line; INC(nofBreakpoints);
+				msg := "breakpoint on, line ";
+			ELSE
+				Say("no room for another breakpoint in this page"); RETURN
+			END;
+			Strings.IntToStr(line, number); Strings.Append(msg, number);
+			Say(msg)
+		END ToggleBreakpoint;
+
+		(*	Every line this page wants stopped on, by file: the core resolves lines per source, so
+			breakpoints in a module other than the one being run count too. *)
+		PROCEDURE Wanted (core : DAP.Core);
+		VAR i : SIGNED32;
+		BEGIN
+			FOR i := 0 TO nofBreakpoints - 1 DO core.Want(filename, breakpoints[i]) END
+		END Wanted;
+
+		(*	The module this file holds. In this tree the file name carries it after the last dot --
+			Unix.Traps.Mod is module Traps -- and the compiler is the one that would disagree. *)
+		PROCEDURE ModuleName (VAR module : ARRAY OF CHAR);
+		VAR i : SIZE;
+		BEGIN
+			COPY(name, module);
+			i := Strings.Length(module);
+			WHILE (i > 0) & (module[i - 1] # ".") DO DEC(i) END;
+			IF i > 0 THEN module[i - 1] := 0X END;                  (* without the extension *)
+			i := Strings.Length(module);
+			WHILE (i > 0) & (module[i - 1] # ".") DO DEC(i) END;
+			IF i > 0 THEN Strings.Delete(module, 0, i) END          (* without the platform prefix *)
+		END ModuleName;
+
 		PROCEDURE HandleShortcut(ucs : SIZE; flags : SET; keysym : SIZE) : BOOLEAN;
 		VAR pos : SIZE;
 
@@ -1127,6 +1191,12 @@ TYPE
 	KillerMsg = OBJECT
 	END KillerMsg;
 
+	(*	Posted by the debugger from the activity it is holding, so that the caret and the log are
+		moved by the sequencer that owns them and not from inside a trap handler. *)
+	StoppedMsg = OBJECT
+	VAR why, description : ARRAY 128 OF CHAR;
+	END StoppedMsg;
+
 	BrowseEntry = POINTER TO RECORD
 		prev, next : BrowseEntry;
 		filename : Filename;
@@ -1157,6 +1227,9 @@ TYPE
 		projectTextModified : BOOLEAN;
 
 		showTypeHierarchy, showImportedModules : BOOLEAN;
+
+		debug : DAP.Core;            (* one program under debug per window, or NIL *)
+		debugPage : PETPanel;        (* the page it was started from, where its stops are reported *)
 
 		windowInfo : WMWindowManager.WindowInfo;
 
@@ -1668,6 +1741,129 @@ TYPE
 				browseTOS.pos := pos;
 			END;
 		END GotoPosition;
+
+		(*	--- the debugger -----------------------------------------------------------------------
+			The same DAP.Core `ob dap` drives, driven from here instead: F9 marks a line, F5 runs the
+			page's module and then lets a held program go on, F10 steps, SHIFT-F5 lets go for good.
+			Where the program stopped is written to the log and put under the caret. *)
+
+		(*	The Core's Stopped, called on the activity being held inside the trap handler. Nothing
+			here may touch the window -- the caret and the log belong to the sequencer -- so it is
+			told by message and the work happens in ShowStop. *)
+		PROCEDURE DebugStopped (CONST why, description : ARRAY OF CHAR);
+		VAR m : WMMessages.Message; stop : StoppedMsg; ignore : BOOLEAN;
+		BEGIN
+			NEW(stop); COPY(why, stop.why); COPY(description, stop.description);
+			m.msgType := WMMessages.MsgExt; m.ext := stop;
+			IF sequencer # NIL THEN ignore := sequencer.Add(m) END
+		END DebugStopped;
+
+		(*	Where the program stands: the stack in the log, the line under the caret. The program is
+			held while this runs, which is what makes its stack safe to read. *)
+		PROCEDURE ShowStop (stop : StoppedMsg);
+		VAR file : DebugMap.Name; line : SIGNED32; position : SIGNED64; page : PETPanel;
+		BEGIN
+			page := debugPage;
+			IF (page = NIL) OR (debug = NIL) OR (debug.count = 0) THEN RETURN END;
+			page.logWriter.Ln; page.logWriter.String("stopped: "); page.logWriter.String(stop.why);
+			IF stop.description # "" THEN
+				page.logWriter.String(" -- "); page.logWriter.String(stop.description)
+			END;
+			page.logWriter.Ln;
+			Reflection.StackTraceBack(page.logWriter, debug.frames[0].pc, debug.frames[0].fp,
+				debug.low, debug.high, TRUE, FALSE);
+			page.logWriter.Update;
+			page.logPanel.visible.Set(TRUE); page.logEdit.visible.Set(TRUE);
+			IF DebugMap.PositionOf(debug.frames[0].pc, file, line, position) THEN
+				GotoPosition(file, line - 1, 0)     (* GotoPosition counts lines from zero, the map from one *)
+			END
+		END ShowStop;
+
+		(*	The command F5 runs: what is selected, if anything is, and the module's Do otherwise --
+			the same default `ob run` has. Reads the selection the way FindPC does. *)
+		PROCEDURE DebugCommand (page : PETPanel; VAR command : ARRAY OF CHAR);
+		VAR module : Filename; selection : Texts.Text; from, to : Texts.TextPosition; a, b : SIZE;
+		BEGIN
+			command := "";
+			IF Texts.GetLastSelection(selection, from, to) THEN
+				selection.AcquireRead;
+				a := MIN(from.GetPosition(), to.GetPosition());
+				b := MAX(from.GetPosition(), to.GetPosition());
+				TextUtilities.SubTextToStr(selection, a, b - a, command);
+				selection.ReleaseRead;
+				Strings.Trim(command, " ");
+				(*	The selection is the one A2 keeps globally, so it can be anything at all --
+					only something shaped like Module.Procedure is taken for a command. *)
+				IF (Strings.Pos(".", command) < 0) OR (Strings.Pos(" ", command) >= 0) THEN
+					command := ""
+				END
+			END;
+			IF command = "" THEN
+				page.ModuleName(module);
+				COPY(module, command); Strings.Append(command, ".Do")
+			END
+		END DebugCommand;
+
+		(*	F5. A held program is let go; otherwise the page is compiled with --debug, its module
+			loaded without being run, the breakpoints written into the code that now exists, and only
+			then the command started. There is no code to patch before the module is in, and no
+			second chance once it has begun. *)
+		PROCEDURE DebugRun;
+		VAR page : PETPanel; options : CompilerOptions; module, command : Filename;
+			ctx : Commands.Context; res : INTEGER; msg : ARRAY 128 OF CHAR; i : SIGNED32;
+		BEGIN
+			IF (debug # NIL) & debug.stopped THEN debug.Resume(FALSE, FALSE); RETURN END;
+			page := currentPage;
+			IF page = NIL THEN RETURN END;
+
+			optionsEdit.GetAsString(options);
+			Strings.Append(options, " --debug");     (* the line table is what the debugger reads *)
+			page.DoCompile(FALSE, "", options);
+
+			IF debug = NIL THEN
+				NEW(debug, DebugStopped);
+				(*	Only Breakpoint, never Trapped. Traps.Trapped would hold whatever activity
+					trapped, PET's own included, and an editor that hangs instead of opening A2's
+					trap window is worse than one that cannot debug posthumously. `ob dap` installs
+					both because that process exists for nothing else. *)
+				Traps.Breakpoint := debug.Break
+			END;
+			debugPage := page;
+
+			page.ModuleName(module);
+			COPY(module, command); Strings.Append(command, ".");
+			NEW(ctx, NIL, NIL, page.logWriter, page.errorWriter, page);
+			Commands.Activate(command, ctx, {}, res, msg);       (* the module, and nothing run yet *)
+			IF res # Commands.Ok THEN page.Say(msg); RETURN END;
+
+			debug.Forget;
+			FOR i := 0 TO MaxNbrOfTabs - 1 DO
+				IF pages[i] # NIL THEN pages[i].Wanted(debug) END
+			END;
+			debug.Arm;
+
+			DebugCommand(page, command);
+			page.logWriter.String("running "); page.logWriter.String(command); page.logWriter.Ln;
+			page.logWriter.Update;
+			Commands.Activate(command, ctx, {}, res, msg);
+			IF res # Commands.Ok THEN page.Say(msg) END
+		END DebugRun;
+
+		(* F10: as far as the next statement of the procedure being stood in. *)
+		PROCEDURE DebugStep;
+		BEGIN
+			IF (debug # NIL) & debug.stopped THEN debug.Resume(TRUE, FALSE) END
+		END DebugStep;
+
+		(*	SHIFT-F5: our instructions out of the program's code, and the held activity let go. The
+			hooks stay: a program already on its way into a spot has to be told to carry on. *)
+		PROCEDURE DebugStop;
+		BEGIN
+			IF debug = NIL THEN RETURN END;
+			debug.Detach;
+			debug.Release;
+			IF debugPage # NIL THEN debugPage.Say("debugger let go") END
+		END DebugStop;
 
 		PROCEDURE GotoDefinition(info : PETTrees.ExternalDefinitionInfo);
 		VAR page : PETPanel; i : SIGNED32;
@@ -2745,6 +2941,14 @@ TYPE
 				DisableUpdate; SelectPreviousTab; EnableUpdate;
 			ELSIF (keysym = 015H) & ControlKeyDown(flags) THEN (* CTRL-U *)
 				IF (currentPage # NIL) THEN UnloadModule; END;
+			ELSIF (keysym = Inputs.KsF9) & (flags * Inputs.Ctrl = {}) THEN (* F9 *)
+				IF (currentPage # NIL) THEN currentPage.ToggleBreakpoint END;
+			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Shift # {}) THEN (* SHIFT-F5 *)
+				DebugStop;
+			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Ctrl = {}) THEN (* F5 *)
+				DebugRun;
+			ELSIF (keysym = Inputs.KsF10) & (flags * Inputs.Ctrl = {}) THEN (* F10 *)
+				DebugStep;
 			(* relay hot key to current page *)
 			ELSIF (currentPage = NIL) OR ((currentPage # NIL) & (~currentPage.HandleShortcut(ucs, flags, keysym))) THEN
 				RETURN FALSE; (* Key not handled *)
@@ -2761,6 +2965,7 @@ TYPE
 				END;
 			ELSIF (m.msgType = WMMessages.MsgExt) & (m.ext # NIL) THEN
 				IF (m.ext IS KillerMsg) THEN Close
+				ELSIF (m.ext IS StoppedMsg) THEN ShowStop(m.ext(StoppedMsg))
 				ELSIF (m.ext IS WMRestorable.Storage) THEN
 					data := StorePages();
 					m.ext(WMRestorable.Storage).Add("PET", "PET.Restore", SELF, data)

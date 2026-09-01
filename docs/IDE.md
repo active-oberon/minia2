@@ -144,6 +144,30 @@ the compiler that is already loaded.
 |-----|--------------|
 | `CTRL-G` | Go to the declaration of the name under the cursor. Other modules included: the file opens in a tab of its own, and the toolbar back arrow walks the jump back, because the jump is recorded like PET's own. |
 | `CTRL-K` | What the name under the cursor is — kind, name, type and its doc comment — in the log panel. |
+| `F9` | Breakpoint on the cursor's line, on or off. |
+| `F5` | Run this page's module under the debugger — or, if a program is standing still, let it go on. |
+| `F10` | Step to the next statement. |
+| `SHIFT-F5` | Let the program go for good, taking the breakpoints out of its code. |
+
+**The debugger is the same `DAP.Core` `ob dap` drives** (§1f), with the protocol taken off it: the
+two hooks A2's trap handler calls, the `INT 3`/`BRK` planted in the code, the held activity whose
+stack stays readable. `ob dap` turns a stop into a `stopped` event; PET writes the stack to the log
+(through `Reflection.StackTraceBack`, which is what a trap dump is made of) and puts the caret on
+the line. **And the ceiling `ob dap` has is gone here:** the line table lives only in the process
+that compiled, so `ob dap` can debug only what it built — in PET the compiler is already loaded,
+which is the same reason the language server needs no transport.
+
+`F5` runs what is selected, if the selection looks like `Module.Procedure`, and `<Module>.Do`
+otherwise — the default `ob run` has. The module is loaded first and the breakpoints written into
+it before it starts: there is no code to write into until it is loaded, and no second chance once
+it has begun.
+
+What is deliberately missing: **no mark in the margin** (there is no gutter to draw in, so `F9`
+says what it did in the log) and **no variables panel** (the stack in the log carries the
+parameters and locals already, which is what `Reflection` writes). PET does not install
+`Traps.Trapped` either — holding whatever activity trapped would hang the editor instead of
+opening A2's trap window; only `Traps.Breakpoint` is installed, and it refuses traps that are not
+its own.
 
 The Program Structure panel is still PET's own parser (`PETModuleTree.Mod`), not the server's
 outline; replacing it is a separate step and would gain the user nothing today.
