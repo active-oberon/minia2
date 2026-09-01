@@ -25,10 +25,11 @@ MODULE PET; (** AUTHOR "TF, PL"; PURPOSE "Programmer's Editing Tool"; *)
  *	CTRL-G:	Go to the declaration of the name under the cursor (language server, same process)
  *	CTRL-K:	What the name under the cursor is, written to the log
  *
- *	F9:			Breakpoint on the cursor's line, on or off
- *	F5:			Run this page's module under the debugger, or let a stopped program go on
- *	F10:		Step to the next statement
- *	SHIFT-F5:	Let the program go for good, taking the breakpoints out of its code
+ *	ALT-F9:			Breakpoint on the cursor's line, on or off
+ *	ALT-F5:			Run this page's module under the debugger, or let a stopped program go on
+ *	ALT-F10:		Step to the next statement
+ *	ALT-SHIFT-F5:	Let the program go for good, taking the breakpoints out of its code
+ *				(ALT because the bare F-keys belong to the desktop -- see data/HotKeys.XML)
  *
  *	CTRL-DEL	Delete end-of-line whitespace in current page
  *
@@ -2941,13 +2942,17 @@ TYPE
 				DisableUpdate; SelectPreviousTab; EnableUpdate;
 			ELSIF (keysym = 015H) & ControlKeyDown(flags) THEN (* CTRL-U *)
 				IF (currentPage # NIL) THEN UnloadModule; END;
-			ELSIF (keysym = Inputs.KsF9) & (flags * Inputs.Ctrl = {}) THEN (* F9 *)
+			(*	ALT and not the bare key: data/HotKeys.XML claims F1..F7 and F10..F12 for the
+				desktop -- F5 switches the keyboard layout, F10 takes a screenshot -- and PET
+				itself owns every SHIFT-F* and CTRL-F* for cursor positions. ALT+F* is free (only
+				ALT+F4 is taken), so the numbers everyone knows are kept with one modifier. *)
+			ELSIF (keysym = Inputs.KsF9) & (flags * Inputs.Alt # {}) THEN (* ALT-F9 *)
 				IF (currentPage # NIL) THEN currentPage.ToggleBreakpoint END;
-			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Shift # {}) THEN (* SHIFT-F5 *)
+			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Alt # {}) & (flags * Inputs.Shift # {}) THEN (* ALT-SHIFT-F5 *)
 				DebugStop;
-			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Ctrl = {}) THEN (* F5 *)
+			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Alt # {}) THEN (* ALT-F5 *)
 				DebugRun;
-			ELSIF (keysym = Inputs.KsF10) & (flags * Inputs.Ctrl = {}) THEN (* F10 *)
+			ELSIF (keysym = Inputs.KsF10) & (flags * Inputs.Alt # {}) THEN (* ALT-F10 *)
 				DebugStep;
 			(* relay hot key to current page *)
 			ELSIF (currentPage = NIL) OR ((currentPage # NIL) & (~currentPage.HandleShortcut(ucs, flags, keysym))) THEN
