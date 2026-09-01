@@ -1,4 +1,5 @@
-// The whole extension: point VS Code at `ob lsp`, which is where every feature actually lives.
+// The whole extension: point VS Code at `ob lsp` and `ob dap`, which is where every feature
+// actually lives. Nothing is implemented here -- both are servers the SDK already ships.
 const vscode = require('vscode');
 const { LanguageClient } = require('vscode-languageclient/node');
 
@@ -38,6 +39,45 @@ function serverOptions(config) {
 	return { run, debug: run };
 }
 
+// `ob dap` is a debug adapter of the ordinary kind, so VS Code needs no code of ours to talk to
+// it: it is handed the same command the server runs on, with the debug arguments instead.
+function debugAdapterFactory() {
+	return {
+		createDebugAdapterDescriptor() {
+			const config = vscode.workspace.getConfiguration('activeOberon');
+			const env = Object.assign({}, process.env);
+			const stdlib = (config.get('stdlibSource') || '').trim();
+			const syms = (config.get('symbolDir') || '').trim();
+			if (stdlib !== '') env.A2_STDLIB_SRC = substitute(stdlib);
+			if (syms !== '') env.A2_SYMS = substitute(syms);
+			return new vscode.DebugAdapterExecutable(
+				substitute(resolveCommand(config)),
+				(config.get('debug.args') || ['dap']).map(substitute),
+				{ env }
+			);
+		}
+	};
+}
+
+// F5 with no launch.json at all: the open file is what the user means, and the SDK's own default
+// for which procedure to run is Do. Without this VS Code would ask for a configuration first.
+function debugConfigurationProvider() {
+	return {
+		resolveDebugConfiguration(folder, config) {
+			if (!config.type && !config.request && !config.name) {
+				const editor = vscode.window.activeTextEditor;
+				if (!editor || editor.document.languageId !== 'oberon') return undefined;
+				config.type = 'ob';
+				config.request = 'launch';
+				config.name = 'Run this module';
+				config.program = editor.document.fileName;
+			}
+			if (!config.procedure) config.procedure = 'Do';
+			return config;
+		}
+	};
+}
+
 function start() {
 	const config = vscode.workspace.getConfiguration('activeOberon');
 	client = new LanguageClient(
@@ -61,6 +101,8 @@ async function stop() {
 
 function activate(context) {
 	context.subscriptions.push(
+		vscode.debug.registerDebugAdapterDescriptorFactory('ob', debugAdapterFactory()),
+		vscode.debug.registerDebugConfigurationProvider('ob', debugConfigurationProvider()),
 		vscode.commands.registerCommand('activeOberon.restartServer', async () => {
 			await stop();
 			await start();

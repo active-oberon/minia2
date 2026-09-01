@@ -35,6 +35,16 @@ declared=$(node -p "require('$ext/package.json').contributes.grammars[0].scopeNa
 ! grep -q 'TransportKind' "$ext/src/extension.js" || {
 	echo "[FAIL] the client sets a transport, which appends --stdio to the ob command line" >&2; exit 1; }
 
+# The debugger has to be declared for the same type the extension registers a factory for, or F5
+# opens the "select a debugger" list and nothing says why. Two files, one string.
+declared=$(node -p "require('$ext/package.json').contributes.debuggers[0].type" 2>/dev/null)
+[ -n "$declared" ] || { echo "[FAIL] package.json declares no debugger" >&2; exit 1; }
+grep -q "registerDebugAdapterDescriptorFactory('$declared'" "$ext/src/extension.js" || {
+	echo "[FAIL] no adapter factory for the declared debugger type $declared" >&2; exit 1; }
+args=$(node -p "JSON.stringify(require('$ext/package.json').contributes.configuration.properties['activeOberon.debug.args'].default)")
+[ "$args" = '["dap"]' ] || {
+	echo "[FAIL] the debug adapter is started with $args, not the dap verb" >&2; exit 1; }
+
 out=$(mktemp -d)
 vsix=$("$ext/package.sh" "$out")
 [ -s "$vsix" ] || { echo "[FAIL] no .vsix was built" >&2; rm -rf "$out"; exit 1; }
