@@ -719,8 +719,8 @@ VAR
 		END
 	END RemoveDoc;
 
-	(* ---- byte offset -> LSP 0-based (line, character) ---- *)
-	PROCEDURE OffsetToPos (text: Strings.String; offset: SIGNED64; VAR line, char: SIGNED32);
+	(** ---- byte offset -> LSP 0-based (line, character); PET turns a caret into a line ---- *)
+	PROCEDURE OffsetToPos* (text: Strings.String; offset: SIGNED64; VAR line, char: SIGNED32);
 	VAR i: SIZE;
 	BEGIN
 		line := 0; char := 0; i := 0;
