@@ -1763,20 +1763,44 @@ TYPE
 			held while this runs, which is what makes its stack safe to read. *)
 		PROCEDURE ShowStop (stop : StoppedMsg);
 		VAR file : DebugMap.Name; line : SIGNED32; position : SIGNED64; page : PETPanel;
+			mark : SIZE; flat : Strings.String;
 		BEGIN
 			page := debugPage;
 			IF (page = NIL) OR (debug = NIL) OR (debug.count = 0) THEN RETURN END;
+
+			(*	Where this report starts, so the view can be put there afterwards: the log is
+				appended to, and what a person wants to read is the newest stop, not the oldest. *)
+			page.logEdit.text.AcquireRead;
+			mark := page.logEdit.text.GetLength();
+			page.logEdit.text.ReleaseRead;
+
 			page.logWriter.Ln; page.logWriter.String("stopped: "); page.logWriter.String(stop.why);
 			IF stop.description # "" THEN
 				page.logWriter.String(" -- "); page.logWriter.String(stop.description)
 			END;
 			page.logWriter.Ln;
+			(*	ponytail: the whole stack, which past the program's own frames is the machinery
+				that started it (Commands.Runner, Objects.Process). Reflection walks until the
+				frames stop making sense and takes no depth, so cutting it means counting the
+				program's frames here the way DAP.Session.Frames does. Not worth it while the
+				view starts at the report's own first line.  *)
 			Reflection.StackTraceBack(page.logWriter, debug.frames[0].pc, debug.frames[0].fp,
 				debug.low, debug.high, TRUE, FALSE);
 			page.logWriter.Update;
 			page.logPanel.visible.Set(TRUE); page.logEdit.visible.Set(TRUE);
-			IF DebugMap.PositionOf(debug.frames[0].pc, file, line, position) THEN
-				GotoPosition(file, line - 1, 0)     (* GotoPosition counts lines from zero, the map from one *)
+			page.logEdit.tv.cursor.SetPosition(mark);
+
+			IF ~DebugMap.PositionOf(debug.frames[0].pc, file, line, position) THEN RETURN END;
+			IF DebugMap.Same(page.filename, file) THEN
+				(*	The stop is in the page being debugged, which is where every stop of a step
+					is. Move its caret and nothing else -- GotoPosition would go through GotoFile,
+					and that matches an open tab by the exact spelling of its path, so a name the
+					compiler spelled differently opens a second tab on every stop. *)
+				flat := FlatText(page.editor.text);
+				page.editor.tv.cursor.SetPosition(
+					UTF8Strings.IndexOfOffset(flat^, LSP.PosToOffset(flat, line - 1, 0)));
+			ELSE
+				GotoPosition(file, line - 1, 0)     (* another module: opening it is the point *)
 			END
 		END ShowStop;
 

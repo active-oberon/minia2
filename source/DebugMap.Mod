@@ -123,7 +123,9 @@ BEGIN
 	name[i] := 0X
 END BaseName;
 
-PROCEDURE Same (CONST a, b: ARRAY OF CHAR): BOOLEAN;
+(** Same asks whether two paths name the same file, which is a question of their last part:
+	an editor sends what it opened, the compiler kept what it was given. *)
+PROCEDURE Same* (CONST a, b: ARRAY OF CHAR): BOOLEAN;
 VAR x, y: Name;
 BEGIN
 	BaseName(a, x); BaseName(b, y); RETURN x = y
