@@ -63,11 +63,16 @@ hand:
 
 ## Known limits
 
-- **Conditional compilation keeps the first branch.** With no `-D` definitions there is no
-  other defensible choice, and the branches hold code for different targets — sometimes
-  code that is deliberately not code at all (`#ELSE UNIMPLEMENTED #END`). The skipped text
-  becomes one `inactive_branch` node, coloured like a comment, the way an editor dims an
-  inactive `#ifdef`.
+- **Only one branch of a conditional is parsed, and it is the first one.** The later ones hold
+  code for other targets and, in a few modules, text that is deliberately not code
+  (`#ELSE UNIMPLEMENTED #END`, and one `=== error`); parsing them together puts an `ERROR`
+  node across the whole file. **This is a parsing choice, not a claim about which branch is
+  live** — and it is *not* the branch the compiler takes: with no `-D` definitions every
+  condition is false, so the compiler compiles the `#ELSE`. The language server agrees with the
+  compiler, resolves the symbols in that branch and marks its `SYSTEM` calls dangerous. So the
+  skipped text is left **uncoloured on purpose**: dimming it would say the wrong half is dead,
+  and the server is the one that knows. Evaluating the conditions here would mean carrying the
+  `-D` set the build was invoked with, which an editor does not have.
 - **Uppercase keywords only.** The scanner has a lowercase table, picked from the case of
   the opening `MODULE`; nothing in the tree uses it.
 - **`0.` is not a number.** A real literal needs a digit after the point, or `0..9` could

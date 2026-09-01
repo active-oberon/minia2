@@ -265,6 +265,12 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 ```
 
+One thing it deliberately does **not** do: colour the branch of a `#IF` it skipped. Only one
+branch can be parsed, and it takes the first — but that is not the branch the compiler takes,
+which with no `-D` definitions is the `#ELSE`. The server resolves the branch it compiles, so
+dimming the other one would claim the wrong half is dead. The skipped text is left plain and
+the semantic tokens are the only thing that speaks there.
+
 Helix, Zed and Emacs take the grammar by repository and subdirectory;
 `editors/tree-sitter/tree-sitter.json` declares the scope, the file types and where the
 queries are. `task treesitter` checks that the grammar generates, that its own cases pass,
