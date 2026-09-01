@@ -59,7 +59,7 @@ IMPORT
 	WMTextView, WMEditors, Strings, TextUtilities, Texts,
 	WMWindowManager, WMGrids, WMMacros, WMPopups, WMDropTarget,
 	PETTrees, Configuration, Codecs, WMTabComponents, UndoManager, WMSearchComponents, Kernel,
-	LSP, JSON, UTF8Strings, DAP, DebugMap, Reflection, Traps;
+	LSP, JSON, UTF8Strings, DAP, DebugMap, Traps;
 
 CONST
 	WindowWidth = 800; WindowHeight = 600;
@@ -1779,13 +1779,7 @@ TYPE
 				page.logWriter.String(" -- "); page.logWriter.String(stop.description)
 			END;
 			page.logWriter.Ln;
-			(*	ponytail: the whole stack, which past the program's own frames is the machinery
-				that started it (Commands.Runner, Objects.Process). Reflection walks until the
-				frames stop making sense and takes no depth, so cutting it means counting the
-				program's frames here the way DAP.Session.Frames does. Not worth it while the
-				view starts at the report's own first line.  *)
-			Reflection.StackTraceBack(page.logWriter, debug.frames[0].pc, debug.frames[0].fp,
-				debug.low, debug.high, TRUE, FALSE);
+			DAP.Report(debug, page.logWriter);
 			page.logWriter.Update;
 			page.logPanel.visible.Set(TRUE); page.logEdit.visible.Set(TRUE);
 			page.logEdit.tv.cursor.SetPosition(mark);

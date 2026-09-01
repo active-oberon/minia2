@@ -796,6 +796,50 @@ BEGIN
 	value[k] := 0X
 END Split;
 
+(**	Report writes where the program stands, as text: one line per frame of the program with the
+	file and line it is in, and under the innermost one the parameters and locals it holds. A
+	driver with no protocol -- PET -- needs exactly this and none of the JSON.
+
+	It stops at the first frame the line table knows nothing about, and that is not a
+	shortcoming: below the program's own frames is the machinery that started it
+	(Commands.Runner, Objects.BodyStarter), which was not compiled with --debug and has no
+	business in a report about the program. Reflection.StackTraceBack, which a trap dump is
+	made of, prints all of it and by byte offset rather than by line -- right for a post-mortem
+	on the console, wrong for an editor that has just put the caret on the line. *)
+PROCEDURE Report* (core: Core; w: Streams.Writer);
+VAR i: SIGNED32; procedure, file: Name; line: SIGNED32; position: SIGNED64;
+	start, base: ADDRESS; module: Modules.Module; refs: Modules.Bytes; offset, refpos: SIZE;
+BEGIN
+	FOR i := 0 TO core.count - 1 DO
+		IF ~DebugMap.PositionOf(core.frames[i].pc, file, line, position) THEN RETURN END;
+		Reflection.GetProcedureName(core.frames[i].pc, procedure, start);
+		DebugMap.BaseName(file, file);
+		w.String("  "); w.String(procedure);
+		w.String("  "); w.String(file); w.Char(":"); w.Int(line, 0); w.Ln;
+		IF i = 0 THEN
+			(*	The frame being stood in, read the way Session.Variables reads it -- the
+				difference is only that Reflection writes the lot in one call here, because
+				text is what is wanted and not a value per JSON object. *)
+			module := Modules.ThisModuleByAdr0(core.frames[i].pc);
+			IF module = NIL THEN RETURN END;
+			refs := module.refs;
+			refpos := Reflection.FindByAdr(refs, 0, core.frames[i].pc);
+			IF refpos < 0 THEN RETURN END;
+			offset := refpos;
+			IF Reflection.GetChar(refs, offset) # Reflection.sfProcedure THEN RETURN END;
+			Reflection.SkipSize(offset); Reflection.SkipString(refs, offset);
+			base := Reflection.GetAddress(refs, offset);   (* start *)
+			base := Reflection.GetAddress(refs, offset);   (* end *)
+			Reflection.SkipSet(offset);
+			Reflection.WriteVariables(w, refs, offset, core.frames[i].fp, core.low, core.high);
+			Reflection.SkipType(refs, offset);             (* the return type *)
+			IF Reflection.GetChar(refs, offset) = Reflection.sfScopeBegin THEN
+				Reflection.WriteVariables(w, refs, offset, core.frames[i].fp, core.low, core.high)
+			END
+		END
+	END
+END Report;
+
 (**	Serve one debug session over a context, which is how `ob dap` and the tests both drive it:
 	the requests come in on its input, the responses and events go out on its output. *)
 PROCEDURE Serve* (context: Commands.Context; launcher: Launcher);
