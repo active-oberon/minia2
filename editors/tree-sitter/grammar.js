@@ -363,8 +363,9 @@ module.exports = grammar({
       /'[^'\n]*'/,
     )),
 
-    // #IF … THEN / #ELSIF … THEN / #ELSE / #END — skipped like a comment: both
-    // branches are parsed as if they followed one another.
+    // #IF … THEN and #END, skipped the way a comment is. The branch after #ELSE or #ELSIF is
+    // swallowed by the scanner instead, so only one branch is parsed — see scanner.c for why
+    // that is a parsing choice and not a claim about which branch the compiler takes.
     conditional_directive: _ => token(choice(
       /#IF[ \t][^\n]*/,
       /#END[ \t]*;?/,

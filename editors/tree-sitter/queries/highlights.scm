@@ -44,8 +44,15 @@
 
 (comment) @comment @spell
 (note) @comment
-(inactive_branch) @comment
 (code_body) @string.special
+
+; inactive_branch is deliberately not captured. The grammar has to pick one branch of a
+; conditional to parse and picks the first, but that is NOT the branch the compiler takes:
+; with no -D definitions every condition is false, so the compiler -- and the language
+; server, which resolves symbols in it and marks the SYSTEM calls dangerous -- takes the
+; #ELSE. Colouring the skipped text like a comment would therefore claim the wrong half is
+; dead. Left plain, the grammar says nothing about it and the server's semantic tokens are
+; the only thing that speaks.
 
 ; ---- types ----
 

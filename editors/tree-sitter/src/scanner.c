@@ -131,9 +131,12 @@ static int read_directive(TSLexer *lexer) {
   return 0;
 }
 
-// With no -D definitions the first branch of a conditional is the live one, so
-// every later branch is skipped whole — those branches hold code for other
-// targets and, in a few modules, text that is not code at all.
+// One branch of a conditional has to be the one that is parsed, and this takes the first:
+// the later ones hold code for other targets and, in a few modules, text that is not code at
+// all, which would put an ERROR node across the whole file. It is a parsing choice and NOT a
+// claim about which branch is live — with no -D definitions every condition is false, so the
+// compiler takes the #ELSE. Nothing colours the skipped text for that reason: the language
+// server is what knows, and it resolves the branch it compiles.
 static bool scan_inactive_branch(TSLexer *lexer) {
   if (read_directive(lexer) != 3) return false;
 
