@@ -25,11 +25,11 @@ MODULE PET; (** AUTHOR "TF, PL"; PURPOSE "Programmer's Editing Tool"; *)
  *	CTRL-G:	Go to the declaration of the name under the cursor (language server, same process)
  *	CTRL-K:	What the name under the cursor is, written to the log
  *
- *	ALT-F9:			Breakpoint on the cursor's line, on or off
- *	ALT-F5:			Run this page's module under the debugger, or let a stopped program go on
- *	ALT-F10:		Step to the next statement
- *	ALT-SHIFT-F5:	Let the program go for good, taking the breakpoints out of its code
- *				(ALT because the bare F-keys belong to the desktop -- see data/HotKeys.XML)
+ *	F9:			Breakpoint on the cursor's line, on or off
+ *	F8:			Step to the next statement
+ *	ALT-F9:		Run this page's module under the debugger, or let a stopped program go on
+ *	ALT-F3:		Let the program go for good, taking the breakpoints out of its code
+ *				(these four are what the host WM, data/HotKeys.XML and PET itself leave free)
  *
  *	CTRL-DEL	Delete end-of-line whitespace in current page
  *
@@ -2942,18 +2942,23 @@ TYPE
 				DisableUpdate; SelectPreviousTab; EnableUpdate;
 			ELSIF (keysym = 015H) & ControlKeyDown(flags) THEN (* CTRL-U *)
 				IF (currentPage # NIL) THEN UnloadModule; END;
-			(*	ALT and not the bare key: data/HotKeys.XML claims F1..F7 and F10..F12 for the
-				desktop -- F5 switches the keyboard layout, F10 takes a screenshot -- and PET
-				itself owns every SHIFT-F* and CTRL-F* for cursor positions. ALT+F* is free (only
-				ALT+F4 is taken), so the numbers everyone knows are kept with one modifier. *)
+			(*	Three layers own the keyboard before we do, and between them they leave very
+				little. The host window manager takes ALT+F1, F2, F4..F8 and F10 (GNOME: close,
+				move, resize, maximize -- `gsettings list-recursively
+				org.gnome.desktop.wm.keybindings` says which). A2's own data/HotKeys.XML takes the
+				bare F1..F7 and F10..F12 -- F5 switches the keyboard layout, F10 takes a
+				screenshot. PET takes every SHIFT-F* and CTRL-F* for cursor positions. What is
+				left is the bare F8 and F9, and ALT+F3/F9/F11/F12; the two most-used actions get
+				the two bare keys. Bare F-keys reach here because HandlePositions above claims
+				them only with Shift or Ctrl held. *)
 			ELSIF (keysym = Inputs.KsF9) & (flags * Inputs.Alt # {}) THEN (* ALT-F9 *)
-				IF (currentPage # NIL) THEN currentPage.ToggleBreakpoint END;
-			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Alt # {}) & (flags * Inputs.Shift # {}) THEN (* ALT-SHIFT-F5 *)
-				DebugStop;
-			ELSIF (keysym = Inputs.KsF5) & (flags * Inputs.Alt # {}) THEN (* ALT-F5 *)
 				DebugRun;
-			ELSIF (keysym = Inputs.KsF10) & (flags * Inputs.Alt # {}) THEN (* ALT-F10 *)
+			ELSIF (keysym = Inputs.KsF9) & (flags = {}) THEN (* F9 *)
+				IF (currentPage # NIL) THEN currentPage.ToggleBreakpoint END;
+			ELSIF (keysym = Inputs.KsF8) & (flags = {}) THEN (* F8 *)
 				DebugStep;
+			ELSIF (keysym = Inputs.KsF3) & (flags * Inputs.Alt # {}) THEN (* ALT-F3 *)
+				DebugStop;
 			(* relay hot key to current page *)
 			ELSIF (currentPage = NIL) OR ((currentPage # NIL) & (~currentPage.HandleShortcut(ucs, flags, keysym))) THEN
 				RETURN FALSE; (* Key not handled *)

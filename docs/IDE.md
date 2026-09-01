@@ -159,15 +159,22 @@ the compiler that is already loaded.
 |-----|--------------|
 | `CTRL-G` | Go to the declaration of the name under the cursor. Other modules included: the file opens in a tab of its own, and the toolbar back arrow walks the jump back, because the jump is recorded like PET's own. |
 | `CTRL-K` | What the name under the cursor is — kind, name, type and its doc comment — in the log panel. |
-| `ALT-F9` | Breakpoint on the cursor's line, on or off. |
-| `ALT-F5` | Run this page's module under the debugger — or, if a program is standing still, let it go on. |
-| `ALT-F10` | Step to the next statement. |
-| `ALT-SHIFT-F5` | Let the program go for good, taking the breakpoints out of its code. |
+| `F9` | Breakpoint on the cursor's line, on or off. |
+| `F8` | Step to the next statement. |
+| `ALT-F9` | Run this page's module under the debugger — or, if a program is standing still, let it go on. |
+| `ALT-F3` | Let the program go for good, taking the breakpoints out of its code. |
 
-The numbers are the ones every debugger uses; the `ALT` is not decoration. `data/HotKeys.XML`
-binds the bare F-keys for the desktop — **F5 switches the keyboard layout and F10 takes a
-screenshot** — and PET itself owns every `SHIFT-F*` and `CTRL-F*` for storing and recalling
-cursor positions. `ALT+F*` is the one combination left free, `ALT+F4` aside.
+**Not the keys you expect, and not by choice.** Three layers own the keyboard before PET does:
+
+- the **host window manager** — GNOME takes `ALT+F1`, `F2`, `F4`…`F8` and `F10` for close, move,
+  resize and maximize (`gsettings list-recursively org.gnome.desktop.wm.keybindings` lists them);
+- **A2 itself** — `data/HotKeys.XML` binds the bare `F1`…`F7` and `F10`…`F12` for the desktop:
+  `F5` switches the keyboard layout, `F10` takes a screenshot;
+- **PET** — every `SHIFT-F*` and `CTRL-F*` stores or recalls a cursor position.
+
+What survives is the bare `F8` and `F9` plus `ALT+F3`, `F9`, `F11`, `F12`, so the two actions
+used most often get the two bare keys. `F9` for a breakpoint is the common convention anyway,
+and `F8` for a step is IntelliJ's.
 
 **The debugger is the same `DAP.Core` `ob dap` drives** (§1f), with the protocol taken off it: the
 two hooks A2's trap handler calls, the `INT 3`/`BRK` planted in the code, the held activity whose
