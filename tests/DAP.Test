@@ -606,7 +606,7 @@ positive: the core alone, driven the way PET drives it
 		be held by the very debugger under test. *)
 
 	MODULE Test;
-	IMPORT T := DAPTestShared, DAP, DebugMap, Objects, Streams, Traps;
+	IMPORT T := DAPTestShared, DAP, DebugMap, Objects, Streams, Strings, Traps;
 
 	TYPE
 		Watch = OBJECT
@@ -654,7 +654,8 @@ positive: the core alone, driven the way PET drives it
 		END Runner;
 
 	VAR
-		watch: Watch; runner: Runner; source: T.Text; buffer: Streams.Buffer;
+		watch: Watch; runner: Runner; source: T.Text; buffer, report: Streams.Buffer;
+		text: Strings.String;
 		firstWhy, stepWhy: ARRAY 32 OF CHAR; firstLine, stepLine, stops: SIGNED32;
 
 	(* Bounded, like T.Settle: waits for the stop to be reported, and gives up rather than hang. *)
@@ -683,6 +684,12 @@ positive: the core alone, driven the way PET drives it
 
 		Wait(1);
 		COPY(watch.why, firstWhy); firstLine := watch.line;
+
+		(*	The report a driver with no protocol shows: PET writes exactly this into its log. *)
+		NEW(report, 4096);
+		DAP.Report(watch.core, report.GetWriter());
+		text := report.GetString();
+
 		watch.core.Resume(TRUE, FALSE);                    (* F10 *)
 
 		Wait(2);
@@ -701,5 +708,13 @@ positive: the core alone, driven the way PET drives it
 		ASSERT(stepWhy = "step", 3);
 		ASSERT(stepLine = T.incLine, 4);                   (* one statement on *)
 		ASSERT(watch.ended, 5);                            (* the program ran out once let go *)
-		ASSERT(stops = 2, 6)
+		ASSERT(stops = 2, 6);
+
+		(*	The report names the procedure, the line the caret was put on, and the frame's own
+			variables -- and nothing of the machinery that started the program. *)
+		ASSERT(T.Contains(text^, "Count"), 7);
+		ASSERT(T.Contains(text^, "sum"), 8);
+		ASSERT(T.Contains(text^, "i"), 9);
+		ASSERT(~T.Contains(text^, "Commands.Runner"), 10);
+		ASSERT(~T.Contains(text^, "BodyStarter"), 11)
 	END Test.
