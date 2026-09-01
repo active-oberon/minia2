@@ -159,10 +159,15 @@ the compiler that is already loaded.
 |-----|--------------|
 | `CTRL-G` | Go to the declaration of the name under the cursor. Other modules included: the file opens in a tab of its own, and the toolbar back arrow walks the jump back, because the jump is recorded like PET's own. |
 | `CTRL-K` | What the name under the cursor is — kind, name, type and its doc comment — in the log panel. |
-| `F9` | Breakpoint on the cursor's line, on or off. |
-| `F5` | Run this page's module under the debugger — or, if a program is standing still, let it go on. |
-| `F10` | Step to the next statement. |
-| `SHIFT-F5` | Let the program go for good, taking the breakpoints out of its code. |
+| `ALT-F9` | Breakpoint on the cursor's line, on or off. |
+| `ALT-F5` | Run this page's module under the debugger — or, if a program is standing still, let it go on. |
+| `ALT-F10` | Step to the next statement. |
+| `ALT-SHIFT-F5` | Let the program go for good, taking the breakpoints out of its code. |
+
+The numbers are the ones every debugger uses; the `ALT` is not decoration. `data/HotKeys.XML`
+binds the bare F-keys for the desktop — **F5 switches the keyboard layout and F10 takes a
+screenshot** — and PET itself owns every `SHIFT-F*` and `CTRL-F*` for storing and recalling
+cursor positions. `ALT+F*` is the one combination left free, `ALT+F4` aside.
 
 **The debugger is the same `DAP.Core` `ob dap` drives** (§1f), with the protocol taken off it: the
 two hooks A2's trap handler calls, the `INT 3`/`BRK` planted in the code, the held activity whose
