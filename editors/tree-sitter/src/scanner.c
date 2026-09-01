@@ -143,15 +143,18 @@ static bool scan_inactive_branch(TSLexer *lexer) {
   int depth = 1;
   while (!lexer->eof(lexer)) {
     if (lexer->lookahead == '#') {
+      lexer->mark_end(lexer);            // in case this is the '#END' that closes us
       int directive = read_directive(lexer);
       if (directive == 1) {
         depth++;
       } else if (directive == 2) {
         depth--;
         if (depth == 0) {
-          while (lexer->lookahead == ' ' || lexer->lookahead == '\t') lexer->advance(lexer, false);
-          if (lexer->lookahead == ';') lexer->advance(lexer, false);  // '#END;' is one line
-          break;
+          // The '#END' is left outside the token, so it lexes as the directive it is and an
+          // editor can show where the conditional closes. The ';' some of them carry is part
+          // of that token's own pattern.
+          lexer->result_symbol = INACTIVE_BRANCH;
+          return true;
         }
       }
       continue;
