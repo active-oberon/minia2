@@ -93,6 +93,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "minia2 ${{ github.ref_name }}"
+          # The notes are a file in the tree rather than a tag message: they get reviewed in a
+          # diff like everything else, and a release whose notes nobody wrote says so loudly.
+          body_path: docs/RELEASE_NOTES.md
           files: |
             minia2-*-*.zip
             minia2-sdk-*.tar.gz

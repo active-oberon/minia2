@@ -7,9 +7,9 @@ Two things in one tree, from the same sources:
   It installs with `curl | sh`, needs no Docker, and cross-builds for all three
   targets. See [SDK](#sdk-the-toolchain-without-the-desktop) below.
 - **a slimmed, self-hosting A2 desktop for development** — kernel + Fox compiler +
-  window manager + PET IDE + the useful GUI tooling, with the obsolete parts of
-  upstream A2 removed (old Oberon subsystem, OberonAnts, games/demos, education
-  examples, test corpora, EFI boot, CJK/printer fonts).
+  window manager + PET IDE (with a debugger of its own) + the useful GUI tooling, with
+  the obsolete parts of upstream A2 removed (old Oberon subsystem, OberonAnts,
+  games/demos, education examples, test corpora, EFI boot, CJK/printer fonts).
 
 Carved from the full A2 tree: **762 source modules** (of ~1783 upstream) built into a
 graphical desktop. Not the ETH "minimal core" (that is a ~430-module console system) —
@@ -90,10 +90,19 @@ under `proot-distro` — and compiles there natively. Termux itself is Bionic, n
 it has a tarball of its own (`android-arm64`), and `install.sh` picks between the two by
 looking at which loader the machine has.
 
-`ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`.
+`ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`, `dap`.
 `ob test` takes `*.Test` files, or sources — then it runs the `{TEST}` procedures inside them.
 See [`docs/SDK.md`](docs/SDK.md) for all of them and
 [`docs/IDE.md`](docs/IDE.md) for editor setup.
+
+**Debugging** is `ob dap` — an ordinary debug adapter, so any editor that speaks the protocol
+drives it with no code of ours in between: breakpoints on a line, stepping, the call stack, and
+the parameters and locals of each frame. Neovim through `nvim-dap`, VS Code through the `.vsix`
+that ships beside the tarballs, and **PET, A2's own editor, through the same code with the
+protocol taken off it** — `F9`, `ALT-F9`, `F8`, `ALT-F3` there. A breakpoint is one instruction
+written into the program's code and taken back out whenever it stands still (`INT 3` on x86,
+`BRK #0` on AArch64), and the line table it needs is the one the backend already computed and
+used to throw away. See [`docs/IDE.md`](docs/IDE.md).
 
 ## Layout
 
