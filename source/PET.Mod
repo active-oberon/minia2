@@ -1744,8 +1744,8 @@ TYPE
 		END GotoPosition;
 
 		(*	--- the debugger -----------------------------------------------------------------------
-			The same DAP.Core `ob dap` drives, driven from here instead: F9 marks a line, F5 runs the
-			page's module and then lets a held program go on, F10 steps, SHIFT-F5 lets go for good.
+			The same DAP.Core `ob dap` drives, driven from here instead: F9 marks a line, ALT-F9 runs
+			the page's module and then lets a held program go on, F8 steps, ALT-F3 lets go for good.
 			Where the program stopped is written to the log and put under the caret. *)
 
 		(*	The Core's Stopped, called on the activity being held inside the trap handler. Nothing
@@ -1798,7 +1798,7 @@ TYPE
 			END
 		END ShowStop;
 
-		(*	The command F5 runs: what is selected, if anything is, and the module's Do otherwise --
+		(*	The command ALT-F9 runs: what is selected, if anything is, and the module's Do otherwise --
 			the same default `ob run` has. Reads the selection the way FindPC does. *)
 		PROCEDURE DebugCommand (page : PETPanel; VAR command : ARRAY OF CHAR);
 		VAR module : Filename; selection : Texts.Text; from, to : Texts.TextPosition; a, b : SIZE;
@@ -1823,7 +1823,7 @@ TYPE
 			END
 		END DebugCommand;
 
-		(*	F5. A held program is let go; otherwise the page is compiled with --debug, its module
+		(*	ALT-F9. A held program is let go; otherwise the page is compiled with --debug, its module
 			loaded without being run, the breakpoints written into the code that now exists, and only
 			then the command started. There is no code to patch before the module is in, and no
 			second chance once it has begun. *)
@@ -1868,13 +1868,13 @@ TYPE
 			IF res # Commands.Ok THEN page.Say(msg) END
 		END DebugRun;
 
-		(* F10: as far as the next statement of the procedure being stood in. *)
+		(* F8: as far as the next statement of the procedure being stood in. *)
 		PROCEDURE DebugStep;
 		BEGIN
 			IF (debug # NIL) & debug.stopped THEN debug.Resume(TRUE, FALSE) END
 		END DebugStep;
 
-		(*	SHIFT-F5: our instructions out of the program's code, and the held activity let go. The
+		(*	ALT-F3: our instructions out of the program's code, and the held activity let go. The
 			hooks stay: a program already on its way into a spot has to be told to carry on. *)
 		PROCEDURE DebugStop;
 		BEGIN
@@ -2964,7 +2964,7 @@ TYPE
 				little. The host window manager takes ALT+F1, F2, F4..F8 and F10 (GNOME: close,
 				move, resize, maximize -- `gsettings list-recursively
 				org.gnome.desktop.wm.keybindings` says which). A2's own data/HotKeys.XML takes the
-				bare F1..F7 and F10..F12 -- F5 switches the keyboard layout, F10 takes a
+				bare F1..F7 and F10..F12 -- F5 shows every desktop at once, F10 takes a
 				screenshot. PET takes every SHIFT-F* and CTRL-F* for cursor positions. What is
 				left is the bare F8 and F9, and ALT+F3/F9/F11/F12; the two most-used actions get
 				the two bare keys. Bare F-keys reach here because HandlePositions above claims

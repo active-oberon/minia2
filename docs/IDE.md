@@ -169,7 +169,7 @@ the compiler that is already loaded.
 - the **host window manager** — GNOME takes `ALT+F1`, `F2`, `F4`…`F8` and `F10` for close, move,
   resize and maximize (`gsettings list-recursively org.gnome.desktop.wm.keybindings` lists them);
 - **A2 itself** — `data/HotKeys.XML` binds the bare `F1`…`F7` and `F10`…`F12` for the desktop:
-  `F5` switches the keyboard layout, `F10` takes a screenshot;
+  `F1`…`F4` are the four desktops, `F5` shows all of them at once, `F10` takes a screenshot;
 - **PET** — every `SHIFT-F*` and `CTRL-F*` stores or recalls a cursor position.
 
 What survives is the bare `F8` and `F9` plus `ALT+F3`, `F9`, `F11`, `F12`, so the two actions
@@ -179,12 +179,15 @@ and `F8` for a step is IntelliJ's.
 **The debugger is the same `DAP.Core` `ob dap` drives** (§1f), with the protocol taken off it: the
 two hooks A2's trap handler calls, the `INT 3`/`BRK` planted in the code, the held activity whose
 stack stays readable. `ob dap` turns a stop into a `stopped` event; PET writes the stack to the log
-(through `Reflection.StackTraceBack`, which is what a trap dump is made of) and puts the caret on
-the line. **And the ceiling `ob dap` has is gone here:** the line table lives only in the process
-that compiled, so `ob dap` can debug only what it built — in PET the compiler is already loaded,
-which is the same reason the language server needs no transport.
+(through `DAP.Report`, a line per program frame and the innermost frame's variables) and puts the
+caret on the line. Not `Reflection.StackTraceBack`: that prints the whole stack, machinery
+included, and gives the position as a byte offset — right for a trap dump on a console, wrong for
+an editor that has already put the caret somewhere. **And the ceiling `ob dap` has is gone here:**
+the line table lives only in the process that compiled, so `ob dap` can debug only what it built —
+in PET the compiler is already loaded, which is the same reason the language server needs no
+transport.
 
-`F5` runs what is selected, if the selection looks like `Module.Procedure`, and `<Module>.Do`
+`ALT+F9` runs what is selected, if the selection looks like `Module.Procedure`, and `<Module>.Do`
 otherwise — the default `ob run` has. The module is loaded first and the breakpoints written into
 it before it starts: there is no code to write into until it is loaded, and no second chance once
 it has begun.
