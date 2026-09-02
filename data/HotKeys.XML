@@ -67,7 +67,8 @@
 	<HotKey name="Toggle visibility of navigation windows" keys="F7" command="WMNavigate.ToggleNavigation"/>
 	<HotKey name="Toggle visibility of navigation" keys="CTRL+1" command="WMNavigate.ToggleNavigation"/>
 	
-	<!-- Example: Move the window that has the keyboard focus relative to its current position -->
+	<!-- Example: Move the window that has the keyboard focus a whole view over. The view follows it,
+	     so the window and the focus it holds stay in front of you. F5 shows all four at once. -->
 	<HotKey name="MoveRight" keys="ALT+RIGHT" command="WMNavigate.MoveWindow -d 1 0"/>
 	<HotKey name="MoveLeft" keys="ALT+LEFT" command="WMNavigate.MoveWindow -d -1 0"/>
 	<HotKey name="MoveUp" keys="ALT+UP" command="WMNavigate.MoveWindow -d 0 -1"/>
@@ -105,7 +106,10 @@
 	
 	<HotKey name="BOLD" keys="CTRL+B" command="WMTextStyleTool.SetFontStyle BOLD"/>
 
-	<HotKey name="Close Windows" keys="CTRL+Q" command="System.Reboot"/>
+	<!-- Reboot leaves the process saying it wants to come back, and a2.sh starts it again; power
+	     down leaves for good. The name here used to say Close Windows, which is neither. -->
+	<HotKey name="Reboot" keys="CTRL+Q" command="System.Reboot"/>
+	<HotKey name="Power down" keys="CTRL+SHIFT+Q" command="System.PowerDown"/>
 	<HotKey name="Trace" keys="CTRL+T" command="TLHostData.ToggleTrace;WMKernelLog.Open"/>
 
 	
