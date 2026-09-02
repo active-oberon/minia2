@@ -158,6 +158,12 @@ that file's `Do` — the extension fills the configuration in from the active ed
   "program": "${file}", "procedure": "Test" }
 ```
 
+The gutter takes a breakpoint because `contributes.breakpoints` names the `oberon` language.
+That is a separate declaration from the debugger's own `languages`, which only says which debugger
+to offer for a file: without it a click in the gutter does nothing at all, `F5` runs the program to
+its end with nothing to stop it, and the step buttons never appear — they belong to a session that
+is standing still. Nothing on screen says why.
+
 Breakpoints, stepping, the call stack and the variables of each frame are VS Code's own panels
 talking to §1f; the limits listed there are the same ones.
 

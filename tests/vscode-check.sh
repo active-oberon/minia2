@@ -41,6 +41,21 @@ declared=$(node -p "require('$ext/package.json').contributes.debuggers[0].type" 
 [ -n "$declared" ] || { echo "[FAIL] package.json declares no debugger" >&2; exit 1; }
 grep -q "registerDebugAdapterDescriptorFactory('$declared'" "$ext/src/extension.js" || {
 	echo "[FAIL] no adapter factory for the declared debugger type $declared" >&2; exit 1; }
+# A gutter is inert in a language no contributes.breakpoints entry names, whatever the debugger
+# declares -- debuggers[].languages only says which debugger to offer for a file. Without this the
+# session runs to the end with nothing to stop it, and the step buttons never appear because they
+# belong to a stopped session. Nothing on screen says any of that.
+node -e "
+const m = require('$ext/package.json');
+const bp = (m.contributes.breakpoints || []).map(b => b.language);
+for (const want of m.contributes.debuggers[0].languages) {
+	if (!bp.includes(want)) {
+		console.error('[FAIL] contributes.breakpoints does not name ' + want + ', so its gutter cannot take a breakpoint');
+		process.exit(1);
+	}
+}
+" || exit 1
+
 args=$(node -p "JSON.stringify(require('$ext/package.json').contributes.configuration.properties['activeOberon.debug.args'].default)")
 [ "$args" = '["dap"]' ] || {
 	echo "[FAIL] the debug adapter is started with $args, not the dap verb" >&2; exit 1; }

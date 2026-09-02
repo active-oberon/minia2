@@ -141,6 +141,11 @@
         }
       }
     },
+    "breakpoints": [
+      {
+        "language": "oberon"
+      }
+    ],
     "debuggers": [
       {
         "type": "ob",
