@@ -133,6 +133,19 @@ Syntax highlighting comes with it — the same word lists as our Pygments lexer,
 colours match what the documentation and the website show. `task vscode` builds and checks
 the package.
 
+**Trust the folder.** The extension declares that it does not work in an untrusted one, with the
+reason in its manifest: the server compiles the modules of the folder it is opened on, which is
+running the compiler over whatever code the workspace supplies. In Restricted Mode VS Code
+disables the extension whole, the declaration of the `oberon` language with it — and then `.Mod`
+falls through to VS Code's built-in XML, which claims `.mod` for DTD modules and matches
+extensions without regard to case. A `MODULE` shown as XML with the status bar saying `XML` is
+that, and the banner at the top of the window is the fix.
+
+Trusted, the same collision is settled by `files.associations`, which the manifest sets as a
+default for `*.Mod`: a user association is consulted before any extension's list, so the tie
+against the built-in XML does not depend on which extension registered last. Lowercase `.mod` is
+left alone — it belongs to somebody else's DTDs.
+
 **Debugging works here too**, and needed no code: `ob dap` is an ordinary debug adapter, so the
 extension declares a debugger of type `ob` and hands it the same command the server runs on, with
 `dap` for arguments (`activeOberon.debug.args`, the mirror of `server.args`; the Docker fallback

@@ -120,6 +120,9 @@
       }
     ],
     "configurationDefaults": {
+      "files.associations": {
+        "*.Mod": "oberon"
+      },
       "[oberon]": {
         "editor.semanticHighlighting.enabled": true
       },
