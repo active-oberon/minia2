@@ -45,6 +45,14 @@ args=$(node -p "JSON.stringify(require('$ext/package.json').contributes.configur
 [ "$args" = '["dap"]' ] || {
 	echo "[FAIL] the debug adapter is started with $args, not the dap verb" >&2; exit 1; }
 
+# VS Code's own xml extension claims `.mod` for DTD modules and matches extensions without regard
+# to case, so `.Mod` is contested. A files.associations default settles it, because a user
+# association is read before any extension's extension list; without it the winner is whichever
+# extension registered last, and a MODULE opens as XML.
+assoc=$(node -p "require('$ext/package.json').contributes.configurationDefaults['files.associations']['*.Mod']" 2>/dev/null)
+[ "$assoc" = "oberon" ] || {
+	echo "[FAIL] no files.associations default for *.Mod -- the built-in XML can claim it" >&2; exit 1; }
+
 # Everything above compares strings between files. What F5 actually does is logic, and
 # tests/vscode-probe.js is where it gets run: the extension activated against a stubbed editor, the
 # configuration it resolves for a .Mod file with no launch.json, and the command it hands over
