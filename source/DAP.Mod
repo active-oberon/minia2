@@ -245,7 +245,14 @@ TYPE
 		BEGIN
 			IF count > 0 THEN
 				SYSTEM.GET(frames[0].fp + SIZEOF(ADDRESS), ret);
-				Add(ret, FALSE)
+				(*	Where the outermost procedure of the program returns to is not the program: it is
+					the machinery that started it -- Commands.Runner, Objects.BodyStarter -- and that
+					code is shared by every command in the system. A breakpoint written there is a
+					breakpoint every command in A2 runs into, which in a running desktop means the
+					debugger takes hold of the activity behind a hot key instead of the program. The
+					line table is the boundary, the same one DAP.Report stops at: what it has no
+					record of was compiled without --debug and is none of our business. *)
+				IF DebugMap.PositionOf(ret, file, line, position) THEN Add(ret, FALSE) END
 			END;
 			IF leave THEN RETURN END;
 			Reflection.GetProcedureName(at, name, start);
