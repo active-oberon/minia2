@@ -45,6 +45,21 @@ args=$(node -p "JSON.stringify(require('$ext/package.json').contributes.configur
 [ "$args" = '["dap"]' ] || {
 	echo "[FAIL] the debug adapter is started with $args, not the dap verb" >&2; exit 1; }
 
+# Everything above compares strings between files. What F5 actually does is logic, and
+# tests/vscode-probe.js is where it gets run: the extension activated against a stubbed editor, the
+# configuration it resolves for a .Mod file with no launch.json, and the command it hands over
+# spawned and asked to initialize. Exit 2 there means the `ob` it was given could not be spawned.
+probeob="$root/target/bundle/ob"
+[ -x "$probeob" ] || probeob=$(command -v ob || true)
+if [ -n "$probeob" ]; then
+	node "$root/tests/vscode-probe.js" "$probeob" || {
+		status=$?
+		[ "$status" = 2 ] || { echo "[FAIL] the extension does not hand VS Code a working debugger" >&2; exit 1; }
+	}
+else
+	echo "[SKIP] no ob to spawn -- the debugger side of the extension is unchecked"
+fi
+
 out=$(mktemp -d)
 vsix=$("$ext/package.sh" "$out")
 [ -s "$vsix" ] || { echo "[FAIL] no .vsix was built" >&2; rm -rf "$out"; exit 1; }
