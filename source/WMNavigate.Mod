@@ -1815,18 +1815,33 @@ END ToggleFullscreen;
 
 PROCEDURE MoveWindow*(context : Commands.Context);
 VAR options : Options.Options; window : WMWindowManager.Window; x, y : SIGNED32;
+	stepX, stepY, viewWidth, viewHeight : SIZE; whole : BOOLEAN;
 BEGIN {EXCLUSIVE}
 	NEW(options);
 	options.Add("d", "display", Options.Flag);
 	IF options.Parse(context.arg, context.error) THEN
 		IF context.arg.GetInteger(x, FALSE) & context.arg.GetInteger(y, FALSE) THEN
-			IF options.GetFlag("display") THEN
-				x := x * width;
-				y := y * height;
+			stepX := x; stepY := y;
+			whole := options.GetFlag("display") & (viewport # NIL);
+			IF whole THEN
+				(*	A whole view over, and the step is the view's own extent rather than the screen's:
+					a dense screen is shown zoomed, and then the two are not the same number. *)
+				viewWidth := ENTIER(viewport.range.r - viewport.range.l);
+				viewHeight := ENTIER(viewport.range.b - viewport.range.t);
+				stepX := x * viewWidth; stepY := y * viewHeight
+			ELSIF options.GetFlag("display") THEN
+				stepX := x * width; stepY := y * height
 			END;
 			window := manager.GetFocusOwner();
 			IF (window IS WMComponents.FormWindow) THEN
-				manager.SetWindowPos(window, window.bounds.l + x, window.bounds.t + y);
+				manager.SetWindowPos(window, window.bounds.l + stepX, window.bounds.t + stepY);
+				(*	The view follows the window. Without this the window leaves the view carrying the
+					keyboard focus with it, and a keyboard whose input lands somewhere nobody can see
+					reads as a keyboard that has stopped working -- which is what it was reported as. *)
+				IF whole THEN
+					viewport.SetRange(viewport.range.l + FLOAT32(stepX), viewport.range.t + FLOAT32(stepY),
+						FLOAT32(viewWidth), FLOAT32(viewHeight), TRUE)
+				END
 			END;
 		END;
 	END;
