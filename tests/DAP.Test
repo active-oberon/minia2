@@ -28,7 +28,7 @@ positive: the helpers these tests are written with
 		CR = 0DX; LF = 0AX;
 
 	VAR
-		sumLine-, incLine-: SIGNED32;   (* the lines of the fixture worth stopping on *)
+		sumLine-, incLine-, doLine-: SIGNED32;   (* the lines of the fixture worth stopping on *)
 		written: SIGNED32;
 
 	TYPE
@@ -292,6 +292,7 @@ positive: the helpers these tests are written with
 		Say(text, "END Count;");
 		Say(text, "PROCEDURE Do* (context: Commands.Context);");
 		Say(text, "BEGIN");
+		doLine := written + 1;                             (* the outermost procedure's own first line *)
 		Say(text, 'context.out.String("sum="); context.out.Int(Count(5), 0); context.out.Ln;');
 		Say(text, "	context.out.Update");
 		Say(text, "END Do;");
@@ -717,4 +718,97 @@ positive: the core alone, driven the way PET drives it
 		ASSERT(T.Contains(text^, "i"), 9);
 		ASSERT(~T.Contains(text^, "Commands.Runner"), 10);
 		ASSERT(~T.Contains(text^, "BodyStarter"), 11)
+	END Test.
+
+positive: a step out of the outermost procedure plants nothing in the machinery that started it
+
+	(*	The frame of the program's outermost procedure returns into Commands.Runner, and that code is
+		shared by every command in the system: a breakpoint written there is one every command in A2
+		runs into, so the debugger takes hold of the activity behind a hot key instead of the program.
+		This is that step -- from the last statement of Do, where there is nothing of the program left
+		to stop on -- and the program has to simply run out. *)
+
+	MODULE Test;
+	IMPORT T := DAPTestShared, DAP, DebugMap, Objects, Reflection, Streams, Traps;
+
+	TYPE
+		Watch = OBJECT
+		VAR
+			core-: DAP.Core;
+			stops-: SIGNED32;
+			ended*: BOOLEAN;
+			where-: ARRAY 4 OF ARRAY 128 OF CHAR;   (* the procedure each stop landed in *)
+
+			PROCEDURE Stopped* (CONST reason, description: ARRAY OF CHAR);
+			VAR name: ARRAY 128 OF CHAR; start: ADDRESS;
+			BEGIN
+				IF (core.count > 0) & (stops < LEN(where)) THEN
+					Reflection.GetProcedureName(core.frames[0].pc, name, start);
+					COPY(name, where[stops])
+				END;
+				INC(stops)
+			END Stopped;
+
+			PROCEDURE Ready*;
+			BEGIN core.Arm
+			END Ready;
+
+			PROCEDURE &Init*;
+			BEGIN stops := 0; ended := FALSE; NEW(core, SELF.Stopped)
+			END Init;
+		END Watch;
+
+		Runner = OBJECT
+		VAR watch: Watch; out: Streams.Writer; message: ARRAY 128 OF CHAR;
+
+			PROCEDURE &Init* (w: Watch; writer: Streams.Writer);
+			BEGIN watch := w; out := writer
+			END Init;
+
+		BEGIN {ACTIVE}
+			IF ~T.Program("DAPOut", "Do", out, watch.Ready, message) THEN END;
+			watch.ended := TRUE
+		END Runner;
+
+	VAR
+		watch: Watch; runner: Runner; source: T.Text; buffer: Streams.Buffer; i: SIGNED32;
+
+	PROCEDURE Wait (n: SIGNED32);
+	VAR spins: SIGNED32;
+	BEGIN
+		spins := 0;
+		WHILE (spins < 100000) & (watch.stops < n) DO Objects.Yield; INC(spins) END
+	END Wait;
+
+	PROCEDURE WaitEnd;
+	VAR spins: SIGNED32;
+	BEGIN
+		spins := 0;
+		WHILE (spins < 100000) & ~watch.ended DO Objects.Yield; INC(spins) END
+	END WaitEnd;
+
+	BEGIN
+		T.Build("DAPOut", source);
+		NEW(watch);
+		Traps.Breakpoint := watch.core.Break;
+		watch.core.Want("DAPOut", T.doLine);       (* a line of Do, the outermost procedure of the program *)
+
+		NEW(buffer, 4096);
+		NEW(runner, watch, buffer.GetWriter());
+
+		Wait(1);
+		watch.core.Resume(TRUE, FALSE);             (* F8: on to the next statement of Do *)
+		Wait(2);
+		watch.core.Resume(TRUE, FALSE);             (* F8: and there is no next statement *)
+		WaitEnd;
+
+		watch.core.Detach; watch.core.Release;
+		Traps.Breakpoint := NIL;
+
+		ASSERT(watch.stops = 2, 1);                 (* the two lines of Do, and nothing after them *)
+		ASSERT(watch.ended, 2);                     (* the program ran out rather than being held *)
+		FOR i := 0 TO LEN(watch.where) - 1 DO
+			ASSERT(~T.Contains(watch.where[i], "Commands.Runner"), 3);
+			ASSERT(~T.Contains(watch.where[i], "BodyStarter"), 4)
+		END
 	END Test.
