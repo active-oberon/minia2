@@ -3,8 +3,10 @@ MODULE Regex;
 	AUTHOR "Andrii Puhachenko";
 	PURPOSE "Regular expressions for Active Oberon, matched without backtracking";
 	LIMITATIONS
-		"- bytes, not characters: a pattern matches UTF-8 literally, but `.` counts one byte
-		   and a range like [a-z] cannot span a multi-byte character;
+		"- UTF-8 in, byte offsets out: Find and Group report where a match is in bytes, because
+		   that is what a caller indexes with; a byte that is not well-formed UTF-8 is matched
+		   as the character of that byte's value, so a broken string cannot stall the search;
+		 - simple case only: there is no case-insensitive flag yet;
 		 - no back references (a back reference is what makes matching exponential, and this
 		   engine trades it away on purpose);
 		 - {m,n} is written out into the program, so a count is capped at MaxRepeat;
@@ -21,7 +23,7 @@ MODULE Regex;
 	and a backtracking matcher cannot promise. Threads are ordered by preference, so the first
 	one to reach Match wins: that is leftmost-first, the semantics Perl and Go both print. *)
 
-IMPORT Strings;
+IMPORT Strings, Unicode, UTF8Strings;
 
 CONST
 	MaxGroups* = 9;		(** capturing groups, not counting group 0 -- the whole match *)
@@ -36,12 +38,21 @@ CONST
 	nStar = 6; nPlus = 7; nQuest = 8; nGroup = 9; nBol = 10; nEol = 11;
 
 TYPE
-	CharSet = ARRAY 256 OF BOOLEAN;
-	CharSets = POINTER TO ARRAY OF CharSet;
+	(*	A class is ranges of code points plus a set of general categories, either of which may
+		be empty, and a flag for [^...]. Ranges rather than a bitmap because the code space is
+		1114112 wide; categories because \p{L} is one bit here and a table lookup at run time. *)
+	Range = RECORD lo, hi: SIGNED32 END;
+	Ranges = POINTER TO ARRAY OF Range;
+	Class = RECORD
+		first, count: SIGNED32;		(* the class's slice of the shared range array *)
+		cats: SET;
+		negated: BOOLEAN
+	END;
+	Classes = POINTER TO ARRAY OF Class;
 
 	Instr = RECORD
 		op: SIGNED32;
-		ch: CHAR;
+		ch: SIGNED32;		(* the code point, for opChar *)
 		set: SIGNED32;		(* index into classes, for opClass *)
 		x, y: SIGNED32		(* branch targets for opSplit/opJmp, slot for opSave *)
 	END;
@@ -49,7 +60,7 @@ TYPE
 
 	Node = POINTER TO RECORD
 		kind: SIGNED32;
-		ch: CHAR;
+		ch: SIGNED32;
 		set: SIGNED32;
 		group: SIGNED32;
 		greedy: BOOLEAN;
@@ -72,8 +83,10 @@ TYPE
 	VAR
 		prog: Program;
 		nprog: SIGNED32;
-		classes: CharSets;
+		classes: Classes;
 		nclasses: SIGNED32;
+		ranges: Ranges;
+		nranges: SIGNED32;
 		ngroups-: SIGNED32;		(** capturing groups the pattern declares, not counting group 0 *)
 		nslots: SIGNED32;
 		caps: ARRAY 2 * (MaxGroups + 1) OF SIZE;
@@ -82,7 +95,7 @@ TYPE
 
 		PROCEDURE & InitRegexp;
 		BEGIN
-			nprog := 0; nclasses := 0; ngroups := 0; found := FALSE
+			nprog := 0; nclasses := 0; nranges := 0; ngroups := 0; found := FALSE
 		END InitRegexp;
 
 		PROCEDURE Lists;
@@ -128,9 +141,36 @@ TYPE
 			END
 		END Add;
 
+		PROCEDURE InClass(set, c: SIGNED32): BOOLEAN;
+		VAR i: SIGNED32; in: BOOLEAN;
+		BEGIN
+			in := FALSE;
+			i := classes[set].first;
+			WHILE (i < classes[set].first + classes[set].count) & ~in DO
+				in := (ranges[i].lo <= c) & (c <= ranges[i].hi);
+				INC(i)
+			END;
+			IF ~in & (classes[set].cats # {}) THEN in := Unicode.Category(c) IN classes[set].cats END;
+			RETURN in # classes[set].negated
+		END InClass;
+
+		(*	The character at pos and where the one after it starts. A byte that does not decode
+			is its own character: the alternative is a search that stops on bad input, and a
+			pattern matcher is exactly the tool a caller reaches for when the input is suspect. *)
+		PROCEDURE At(CONST s: ARRAY OF CHAR; pos, len: SIZE; VAR c: SIGNED32; VAR next: SIZE);
+		VAR i: SIZE; ucs: UTF8Strings.Char32;
+		BEGIN
+			i := pos;
+			IF UTF8Strings.DecodeChar(s, i, ucs) & (i > pos) & (i <= len) THEN
+				c := SIGNED32(ucs); next := i
+			ELSE
+				c := ORD(s[pos]); next := pos + 1
+			END
+		END At;
+
 		PROCEDURE Run(CONST s: ARRAY OF CHAR; start, len: SIZE): BOOLEAN;
 		VAR cap: ARRAY 2 * (MaxGroups + 1) OF SIZE;
-			i, k, pc: SIGNED32; pos: SIZE; c: CHAR; matched, step, cut: BOOLEAN; t: List;
+			i, k, pc, c: SIGNED32; pos, next: SIZE; matched, step, cut: BOOLEAN; t: List;
 		BEGIN
 			matched := FALSE; pos := start;
 			Clear(clist); Clear(nlist);
@@ -142,14 +182,14 @@ TYPE
 				IF clist.n = 0 THEN EXIT END;
 				Clear(nlist);
 				i := 0; cut := FALSE;
+				IF pos < len THEN At(s, pos, len, c, next) ELSE c := -1; next := pos + 1 END;
 				WHILE (i < clist.n) & ~cut DO
 					pc := clist.pc[i];
-					IF pos < len THEN c := s[pos] ELSE c := 0X END;
 					step := FALSE;
 					CASE prog[pc].op OF
 					  opChar: step := (pos < len) & (c = prog[pc].ch)
-					| opAny: step := (pos < len) & (c # 0AX)
-					| opClass: step := (pos < len) & classes[prog[pc].set][ORD(c)]
+					| opAny: step := (pos < len) & (c # 0AH)
+					| opClass: step := (pos < len) & InClass(prog[pc].set, c)
 					| opMatch:
 						FOR k := 0 TO nslots - 1 DO caps[k] := clist.cap[i * nslots + k] END;
 						matched := TRUE;
@@ -160,13 +200,13 @@ TYPE
 					IF step THEN
 						(* the thread's own slots, lifted out of the flat row store *)
 						FOR k := 0 TO nslots - 1 DO cap[k] := clist.cap[i * nslots + k] END;
-						Add(nlist, pc + 1, cap, pos + 1, len)
+						Add(nlist, pc + 1, cap, next, len)
 					END;
 					INC(i)
 				END;
 				t := clist; clist := nlist; nlist := t;
 				IF pos >= len THEN EXIT END;
-				INC(pos)
+				pos := next
 			END;
 			found := matched;
 			RETURN matched
@@ -300,13 +340,30 @@ TYPE
 		r: Regexp;
 		failed: BOOLEAN;
 		message: ARRAY 128 OF CHAR;
+		tlo, thi: ARRAY 8 OF SIGNED32;		(* the spans a shorthand stands for, before Pour *)
+		tn: SIGNED32;
 
 		PROCEDURE & InitParser(CONST pattern: ARRAY OF CHAR; re: Regexp);
 		BEGIN
 			len := Strings.Length(pattern);
 			NEW(pat, len + 1); COPY(pattern, pat^);
-			pos := 0; groups := 0; r := re; failed := FALSE; message := ""
+			pos := 0; groups := 0; tn := 0; r := re; failed := FALSE; message := ""
 		END InitParser;
+
+		(*	The next character of the pattern, decoded: a literal outside ASCII is one character
+			and not the two or three bytes it is written in. Everything the syntax itself uses is
+			ASCII, so Ch stays a byte. *)
+		PROCEDURE Rune(): SIGNED32;
+		VAR i: SIZE; ucs: UTF8Strings.Char32;
+		BEGIN
+			IF pos >= len THEN RETURN 0 END;
+			i := pos;
+			IF UTF8Strings.DecodeChar(pat^, i, ucs) & (i > pos) & (i <= len) THEN
+				pos := i; RETURN SIGNED32(ucs)
+			END;
+			i := pos; INC(pos);
+			RETURN ORD(pat[i])
+		END Rune;
 
 		PROCEDURE Fail(CONST msg: ARRAY OF CHAR);
 		VAR num: ARRAY 16 OF CHAR;
@@ -326,70 +383,167 @@ TYPE
 		PROCEDURE NewNode(kind: SIGNED32): Node;
 		VAR n: Node;
 		BEGIN
-			NEW(n); n.kind := kind; n.ch := 0X; n.set := -1; n.group := 0;
+			NEW(n); n.kind := kind; n.ch := 0; n.set := -1; n.group := 0;
 			n.greedy := TRUE; n.left := NIL; n.right := NIL;
 			RETURN n
 		END NewNode;
 
 		PROCEDURE NewClass(): SIGNED32;
-		VAR grown: CharSets; i, j: SIGNED32;
+		VAR grown: Classes; i: SIGNED32;
 		BEGIN
 			IF r.classes = NIL THEN NEW(r.classes, 8)
 			ELSIF r.nclasses = LEN(r.classes) THEN
 				NEW(grown, 2 * r.nclasses);
-				FOR i := 0 TO r.nclasses - 1 DO
-					FOR j := 0 TO 255 DO grown[i][j] := r.classes[i][j] END
-				END;
+				FOR i := 0 TO r.nclasses - 1 DO grown[i] := r.classes[i] END;
 				r.classes := grown
 			END;
-			FOR j := 0 TO 255 DO r.classes[r.nclasses][j] := FALSE END;
+			r.classes[r.nclasses].first := r.nranges;
+			r.classes[r.nclasses].count := 0;
+			r.classes[r.nclasses].cats := {};
+			r.classes[r.nclasses].negated := FALSE;
 			INC(r.nclasses);
 			RETURN r.nclasses - 1
 		END NewClass;
 
-		(* \d \w \s and their negations, as a set poured into an existing class *)
-		PROCEDURE Shorthand(c: CHAR; set: SIGNED32): BOOLEAN;
-		VAR i: SIGNED32; want: BOOLEAN;
-			PROCEDURE Put(from, to: CHAR);
-			VAR k: SIGNED32;
-			BEGIN
-				FOR k := ORD(from) TO ORD(to) DO r.classes[set][k] := want END
-			END Put;
+		(* Ranges go to the class being built, which is always the last one. *)
+		PROCEDURE AddRange(set, lo, hi: SIGNED32);
+		VAR grown: Ranges; i: SIGNED32;
 		BEGIN
-			want := (c >= "a");			(* lower case adds, upper case takes away *)
-			IF ~want THEN FOR i := 0 TO 255 DO r.classes[set][i] := TRUE END END;
+			IF r.ranges = NIL THEN NEW(r.ranges, 16)
+			ELSIF r.nranges = LEN(r.ranges) THEN
+				NEW(grown, 2 * r.nranges);
+				FOR i := 0 TO r.nranges - 1 DO grown[i] := r.ranges[i] END;
+				r.ranges := grown
+			END;
+			r.ranges[r.nranges].lo := lo; r.ranges[r.nranges].hi := hi;
+			INC(r.nranges); INC(r.classes[set].count)
+		END AddRange;
+
+		(*	The spans a shorthand stands for, collected first so that the upper-case form can
+			add their complement instead -- which is what lets [\D] and [\S] mean anything. *)
+		PROCEDURE Pour(set: SIGNED32; negate: BOOLEAN);
+		VAR i, next: SIGNED32;
+		BEGIN
+			IF ~negate THEN
+				FOR i := 0 TO tn - 1 DO AddRange(set, tlo[i], thi[i]) END
+			ELSE
+				next := 0;
+				FOR i := 0 TO tn - 1 DO
+					IF tlo[i] > next THEN AddRange(set, next, tlo[i] - 1) END;
+					next := thi[i] + 1
+				END;
+				IF next <= Unicode.MaxCode THEN AddRange(set, next, Unicode.MaxCode) END
+			END;
+			tn := 0
+		END Pour;
+
+		PROCEDURE Span(lo, hi: SIGNED32);
+		BEGIN
+			tlo[tn] := lo; thi[tn] := hi; INC(tn)
+		END Span;
+
+		(*	\d \w \s and their negations. ASCII on purpose, the way Go reads them: a person who
+			wants every letter Unicode knows writes \p{L}, and a person who writes \w means the
+			characters of an identifier. *)
+		PROCEDURE Shorthand(c: CHAR; set: SIGNED32): BOOLEAN;
+		BEGIN
+			tn := 0;
 			CASE c OF
-			  "d", "D": Put("0", "9")
-			| "w", "W": Put("0", "9"); Put("A", "Z"); Put("a", "z"); r.classes[set][ORD("_")] := want
-			| "s", "S":
-				r.classes[set][ORD(" ")] := want; r.classes[set][9] := want;
-				r.classes[set][10] := want; r.classes[set][11] := want;
-				r.classes[set][12] := want; r.classes[set][13] := want
+			  "d", "D": Span(30H, 39H)
+			| "w", "W": Span(30H, 39H); Span(41H, 5AH); Span(5FH, 5FH); Span(61H, 7AH)
+			| "s", "S": Span(9, 0DH); Span(20H, 20H)
 			ELSE RETURN FALSE
 			END;
+			Pour(set, c < "a");			(* upper case is the complement *)
 			RETURN TRUE
 		END Shorthand;
 
-		(* The character an escape stands for. \d and friends are not characters and are
-			handled by the caller; everything else is itself, which is what lets a pattern
-			write \. \* \( without a table of what is special where. *)
-		PROCEDURE Escaped(): CHAR;
+		(*	\p{Lu} is one general category, \p{L} every category starting with that letter. *)
+		PROCEDURE CategorySet(CONST name: ARRAY OF CHAR; VAR cats: SET): BOOLEAN;
+			PROCEDURE Named(CONST n: ARRAY OF CHAR; c: SIGNED32);
+			BEGIN
+				IF (name = n) OR ((name[1] = 0X) & (name[0] = n[0])) THEN cats := cats + {c} END
+			END Named;
+		BEGIN
+			cats := {};
+			IF (name[0] = 0X) OR (name[2] # 0X) THEN RETURN FALSE END;
+			Named("Lu", Unicode.Lu); Named("Ll", Unicode.Ll); Named("Lt", Unicode.Lt);
+			Named("Lm", Unicode.Lm); Named("Lo", Unicode.Lo);
+			Named("Mn", Unicode.Mn); Named("Mc", Unicode.Mc); Named("Me", Unicode.Me);
+			Named("Nd", Unicode.Nd); Named("Nl", Unicode.Nl); Named("No", Unicode.No);
+			Named("Pc", Unicode.Pc); Named("Pd", Unicode.Pd); Named("Ps", Unicode.Ps);
+			Named("Pe", Unicode.Pe); Named("Pi", Unicode.Pi); Named("Pf", Unicode.Pf);
+			Named("Po", Unicode.Po);
+			Named("Sm", Unicode.Sm); Named("Sc", Unicode.Sc); Named("Sk", Unicode.Sk);
+			Named("So", Unicode.So);
+			Named("Zs", Unicode.Zs); Named("Zl", Unicode.Zl); Named("Zp", Unicode.Zp);
+			Named("Cc", Unicode.Cc); Named("Cf", Unicode.Cf); Named("Cs", Unicode.Cs);
+			Named("Co", Unicode.Co); Named("Cn", Unicode.Cn);
+			RETURN cats # {}
+		END CategorySet;
+
+		(* Reads \p{X} or \P{X} after the p, and answers whether it was one. *)
+		PROCEDURE Property(c: CHAR; set: SIGNED32; inClass: BOOLEAN): BOOLEAN;
+		VAR name: ARRAY 4 OF CHAR; i: SIGNED32; cats: SET;
+		BEGIN
+			IF (c # "p") & (c # "P") THEN RETURN FALSE END;
+			INC(pos);
+			IF SELF.Ch() # "{" THEN Fail("expected { after \p"); RETURN TRUE END;
+			INC(pos);
+			i := 0;
+			WHILE (pos < len) & (SELF.Ch() # "}") & (i < 3) DO
+				name[i] := SELF.Ch(); INC(i); INC(pos)
+			END;
+			name[i] := 0X;
+			IF SELF.Ch() # "}" THEN Fail("unterminated \p{...}"); RETURN TRUE END;
+			INC(pos);
+			IF ~CategorySet(name, cats) THEN Fail("unknown general category"); RETURN TRUE END;
+			IF c = "P" THEN
+				IF inClass THEN Fail("\P is not allowed inside a class"); RETURN TRUE END;
+				r.classes[set].negated := TRUE
+			END;
+			r.classes[set].cats := r.classes[set].cats + cats;
+			RETURN TRUE
+		END Property;
+
+		(*	The character an escape stands for. \d and \p are not characters and are handled by
+			the caller; everything else is itself, which is what lets a pattern write \. \* \(
+			without a table of what is special where. *)
+		PROCEDURE Escaped(): SIGNED32;
 		VAR c: CHAR;
 		BEGIN
-			c := SELF.Ch(); INC(pos);
+			c := SELF.Ch();
 			CASE c OF
-			  "n": RETURN 0AX
-			| "r": RETURN 0DX
-			| "t": RETURN 9X
-			| "f": RETURN 0CX
-			| "v": RETURN 0BX
-			| 0X: Fail("pattern ends in a backslash"); RETURN 0X
-			ELSE RETURN c
+			  "n": INC(pos); RETURN 0AH
+			| "r": INC(pos); RETURN 0DH
+			| "t": INC(pos); RETURN 9
+			| "f": INC(pos); RETURN 0CH
+			| "v": INC(pos); RETURN 0BH
+			| 0X: Fail("pattern ends in a backslash"); RETURN 0
+			ELSE RETURN SELF.Rune()
 			END
 		END Escaped;
 
+		(*	One member of a class: a character or a span of them. Escapes that are whole sets
+			have been taken by the caller. *)
+		PROCEDURE ClassItem(set: SIGNED32);
+		VAR lo, hi: SIGNED32;
+		BEGIN
+			IF SELF.Ch() = "\" THEN INC(pos); lo := SELF.Escaped() ELSE lo := SELF.Rune() END;
+			IF failed THEN RETURN END;
+			IF (SELF.Ch() = "-") & (pos + 1 < len) & (pat[pos + 1] # "]") THEN
+				INC(pos);
+				IF SELF.Ch() = "\" THEN INC(pos); hi := SELF.Escaped() ELSE hi := SELF.Rune() END;
+				IF failed THEN RETURN END;
+				IF hi < lo THEN Fail("range runs backwards"); RETURN END;
+				AddRange(set, lo, hi)
+			ELSE
+				AddRange(set, lo, lo)
+			END
+		END ClassItem;
+
 		PROCEDURE ParseClass(): Node;
-		VAR n: Node; set: SIGNED32; negate, first: BOOLEAN; c, hi: CHAR; i: SIGNED32;
+		VAR n: Node; set: SIGNED32; negate, first: BOOLEAN; c: CHAR;
 		BEGIN
 			INC(pos);				(* [ *)
 			set := SELF.NewClass();
@@ -398,41 +552,27 @@ TYPE
 			first := TRUE;
 			WHILE (pos < len) & ((SELF.Ch() # "]") OR first) DO
 				first := FALSE;
-				c := SELF.Ch();
-				IF c = "\" THEN
+				IF SELF.Ch() = "\" THEN
 					INC(pos);
-					IF SELF.Shorthand(SELF.Ch(), set) THEN INC(pos); c := 0X
-					ELSE c := SELF.Escaped(); r.classes[set][ORD(c)] := TRUE;
-						IF (SELF.Ch() = "-") & (pos + 1 < len) & (pat[pos + 1] # "]") THEN
-							INC(pos); hi := SELF.Ch();
-							IF hi = "\" THEN INC(pos); hi := SELF.Escaped() ELSE INC(pos) END;
-							FOR i := ORD(c) TO ORD(hi) DO r.classes[set][i] := TRUE END
-						END
+					c := SELF.Ch();
+					IF SELF.Shorthand(c, set) THEN INC(pos)
+					ELSIF SELF.Property(c, set, TRUE) THEN (* taken *)
+					ELSE DEC(pos); SELF.ClassItem(set)
 					END
 				ELSE
-					INC(pos);
-					IF (SELF.Ch() = "-") & (pos + 1 < len) & (pat[pos + 1] # "]") THEN
-						INC(pos); hi := SELF.Ch();
-						IF hi = "\" THEN INC(pos); hi := SELF.Escaped() ELSE INC(pos) END;
-						IF ORD(hi) < ORD(c) THEN Fail("range runs backwards"); RETURN NIL END;
-						FOR i := ORD(c) TO ORD(hi) DO r.classes[set][i] := TRUE END
-					ELSE
-						r.classes[set][ORD(c)] := TRUE
-					END
+					SELF.ClassItem(set)
 				END;
 				IF failed THEN RETURN NIL END
 			END;
 			IF SELF.Ch() # "]" THEN Fail("unterminated character class"); RETURN NIL END;
 			INC(pos);
-			IF negate THEN
-				FOR i := 0 TO 255 DO r.classes[set][i] := ~r.classes[set][i] END
-			END;
+			r.classes[set].negated := negate;
 			n := SELF.NewNode(nClass); n.set := set;
 			RETURN n
 		END ParseClass;
 
 		PROCEDURE ParseAtom(): Node;
-		VAR n, inner: Node; c: CHAR; set: SIGNED32; capturing: BOOLEAN; g: SIGNED32;
+		VAR n, inner: Node; c: CHAR; set, cp: SIGNED32; capturing: BOOLEAN; g: SIGNED32;
 		BEGIN
 			c := SELF.Ch();
 			CASE c OF
@@ -467,16 +607,20 @@ TYPE
 					n := SELF.NewNode(nClass); n.set := set;
 					RETURN n
 				END;
+				IF SELF.Property(SELF.Ch(), set, FALSE) THEN
+					IF failed THEN RETURN NIL END;
+					n := SELF.NewNode(nClass); n.set := set;
+					RETURN n
+				END;
 				DEC(r.nclasses);		(* the class was not needed after all *)
-				c := SELF.Escaped();
+				cp := SELF.Escaped();
 				IF failed THEN RETURN NIL END;
-				n := SELF.NewNode(nChar); n.ch := c;
+				n := SELF.NewNode(nChar); n.ch := cp;
 				RETURN n
 			| ")": Fail("unbalanced )"); RETURN NIL
 			| "*", "+", "?": Fail("nothing to repeat"); RETURN NIL
 			ELSE
-				INC(pos);
-				n := SELF.NewNode(nChar); n.ch := c;
+				n := SELF.NewNode(nChar); n.ch := SELF.Rune();
 				RETURN n
 			END
 		END ParseAtom;
@@ -643,7 +787,7 @@ TYPE
 			r := re; NEW(r.prog, 32); r.nprog := 0
 		END InitEmitter;
 
-		PROCEDURE Put(op: SIGNED32; ch: CHAR; set, x, y: SIGNED32): SIGNED32;
+		PROCEDURE Put(op, ch, set, x, y: SIGNED32): SIGNED32;
 		VAR grown: Program; i: SIGNED32;
 		BEGIN
 			IF r.nprog = LEN(r.prog) THEN
@@ -663,42 +807,42 @@ TYPE
 			CASE n.kind OF
 			  nEmpty:
 			| nChar: i := SELF.Put(opChar, n.ch, -1, 0, 0)
-			| nAny: i := SELF.Put(opAny, 0X, -1, 0, 0)
-			| nClass: i := SELF.Put(opClass, 0X, n.set, 0, 0)
-			| nBol: i := SELF.Put(opBol, 0X, -1, 0, 0)
-			| nEol: i := SELF.Put(opEol, 0X, -1, 0, 0)
+			| nAny: i := SELF.Put(opAny, 0, -1, 0, 0)
+			| nClass: i := SELF.Put(opClass, 0, n.set, 0, 0)
+			| nBol: i := SELF.Put(opBol, 0, -1, 0, 0)
+			| nEol: i := SELF.Put(opEol, 0, -1, 0, 0)
 			| nCat: SELF.Emit(n.left); SELF.Emit(n.right)
 			| nGroup:
-				i := SELF.Put(opSave, 0X, -1, 2 * n.group, 0);
+				i := SELF.Put(opSave, 0, -1, 2 * n.group, 0);
 				SELF.Emit(n.left);
-				i := SELF.Put(opSave, 0X, -1, 2 * n.group + 1, 0)
+				i := SELF.Put(opSave, 0, -1, 2 * n.group + 1, 0)
 			| nAlt:
-				split := SELF.Put(opSplit, 0X, -1, 0, 0);
+				split := SELF.Put(opSplit, 0, -1, 0, 0);
 				r.prog[split].x := r.nprog;
 				SELF.Emit(n.left);
-				jmp := SELF.Put(opJmp, 0X, -1, 0, 0);
+				jmp := SELF.Put(opJmp, 0, -1, 0, 0);
 				r.prog[split].y := r.nprog;
 				SELF.Emit(n.right);
 				r.prog[jmp].x := r.nprog
 			| nQuest:
-				split := SELF.Put(opSplit, 0X, -1, 0, 0);
+				split := SELF.Put(opSplit, 0, -1, 0, 0);
 				body := r.nprog;
 				SELF.Emit(n.left);
 				IF n.greedy THEN r.prog[split].x := body; r.prog[split].y := r.nprog
 				ELSE r.prog[split].x := r.nprog; r.prog[split].y := body
 				END
 			| nStar:
-				top := SELF.Put(opSplit, 0X, -1, 0, 0);
+				top := SELF.Put(opSplit, 0, -1, 0, 0);
 				body := r.nprog;
 				SELF.Emit(n.left);
-				jmp := SELF.Put(opJmp, 0X, -1, top, 0);
+				jmp := SELF.Put(opJmp, 0, -1, top, 0);
 				IF n.greedy THEN r.prog[top].x := body; r.prog[top].y := r.nprog
 				ELSE r.prog[top].x := r.nprog; r.prog[top].y := body
 				END
 			| nPlus:
 				body := r.nprog;
 				SELF.Emit(n.left);
-				split := SELF.Put(opSplit, 0X, -1, 0, 0);
+				split := SELF.Put(opSplit, 0, -1, 0, 0);
 				IF n.greedy THEN r.prog[split].x := body; r.prog[split].y := r.nprog
 				ELSE r.prog[split].x := r.nprog; r.prog[split].y := body
 				END
@@ -717,10 +861,10 @@ BEGIN
 	IF p.failed THEN COPY(p.message, error); RETURN NIL END;
 	r.ngroups := p.groups;
 	NEW(e, r);
-	i := e.Put(opSave, 0X, -1, 0, 0);		(* group 0 opens *)
+	i := e.Put(opSave, 0, -1, 0, 0);		(* group 0 opens *)
 	e.Emit(tree);
-	i := e.Put(opSave, 0X, -1, 1, 0);		(* and closes *)
-	i := e.Put(opMatch, 0X, -1, 0, 0);
+	i := e.Put(opSave, 0, -1, 1, 0);		(* and closes *)
+	i := e.Put(opMatch, 0, -1, 0, 0);
 	r.Lists;
 	error := "";
 	RETURN r
