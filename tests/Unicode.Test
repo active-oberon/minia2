@@ -1,0 +1,143 @@
+# Tests for Unicode, the character database compiled into a table (2026-09-03).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The answers are read out of data/UnicodeData.txt, which is the file the table is generated from
+# and the file UnicodeProperties parses at run time -- so a case here that disagrees says the
+# generator lost something between the two, which is the only thing worth testing about a table.
+# The file in the tree is Unicode 5.0, and these code points have not changed meaning since.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the categories of code points the standard names
+
+	MODULE Test;
+	IMPORT U := Unicode;
+	BEGIN
+		ASSERT(U.Category(041H) = U.Lu);        (* A *)
+		ASSERT(U.Category(061H) = U.Ll);        (* a *)
+		ASSERT(U.Category(410H) = U.Lu);        (* CYRILLIC CAPITAL A *)
+		ASSERT(U.Category(430H) = U.Ll);
+		ASSERT(U.Category(4E00H) = U.Lo);       (* a Han character: a letter with no case *)
+		ASSERT(U.Category(660H) = U.Nd);        (* ARABIC-INDIC DIGIT ZERO *)
+		ASSERT(U.Category(2003H) = U.Zs);       (* EM SPACE *)
+		ASSERT(U.Category(2028H) = U.Zl);
+		ASSERT(U.Category(2029H) = U.Zp);
+		ASSERT(U.Category(9) = U.Cc);
+		ASSERT(U.Category(5FH) = U.Pc);
+		ASSERT(U.Category(2DH) = U.Pd);
+		ASSERT(U.Category(28H) = U.Ps);
+		ASSERT(U.Category(2BH) = U.Sm);
+		ASSERT(U.Category(24H) = U.Sc);
+		ASSERT(U.Category(5EH) = U.Sk);
+		ASSERT(U.Category(0D800H) = U.Cs);      (* a surrogate half is a category, not a hole *)
+		ASSERT(U.Category(378H) = U.Cn);        (* and an unassigned code point is Cn *)
+		ASSERT(U.Category(1F600H) = U.Cn)       (* emoji came in 6.0; this file is 5.0 *)
+	END Test.
+
+positive: simple case mapping, both ways and where there is none
+
+	MODULE Test;
+	IMPORT U := Unicode;
+	BEGIN
+		ASSERT(U.ToLower(041H) = 061H);
+		ASSERT(U.ToUpper(061H) = 041H);
+		ASSERT(U.ToLower(410H) = 430H);         (* Cyrillic *)
+		ASSERT(U.ToUpper(430H) = 410H);
+		ASSERT(U.ToLower(391H) = 3B1H);         (* Greek *)
+		ASSERT(U.ToUpper(3B1H) = 391H);
+		ASSERT(U.ToLower(10400H) = 10428H);     (* Deseret, past the basic plane *)
+		ASSERT(U.ToUpper(10428H) = 10400H);
+
+		(* a character maps to itself when it has no case, and that is not a failure *)
+		ASSERT(U.ToUpper(0DFH) = 0DFH);         (* sharp s: its upper case is SS, which is two *)
+		ASSERT(U.ToUpper(4E00H) = 4E00H);
+		ASSERT(U.ToLower(20H) = 20H);
+
+		(* the pairs that do not sit next to each other *)
+		ASSERT(U.ToUpper(131H) = 049H);         (* dotless i *)
+		ASSERT(U.ToLower(130H) = 069H);         (* I with dot *)
+		ASSERT(U.ToLower(23AH) = 2C65H);        (* two bytes of UTF-8 becoming three *)
+		ASSERT(U.ToUpper(2C65H) = 23AH);
+
+		(* out of range is not a trap and not a wrong answer *)
+		ASSERT(U.ToUpper(-1) = -1);
+		ASSERT(U.ToLower(110000H) = 110000H);
+		ASSERT(U.Category(-1) = U.Cn);
+		ASSERT(U.Category(110000H) = U.Cn)
+	END Test.
+
+positive: the predicates, on both sides of the ASCII line
+
+	MODULE Test;
+	IMPORT U := Unicode;
+	BEGIN
+		ASSERT(U.IsLetter(041H)); ASSERT(U.IsLetter(430H)); ASSERT(U.IsLetter(4E00H));
+		ASSERT(~U.IsLetter(030H)); ASSERT(~U.IsLetter(020H));
+
+		ASSERT(U.IsDigit(030H)); ASSERT(U.IsDigit(660H));
+		ASSERT(~U.IsDigit(2160H));              (* ROMAN NUMERAL ONE is a number, not a digit *)
+		ASSERT(U.IsNumber(2160H));
+
+		ASSERT(U.IsSpace(020H)); ASSERT(U.IsSpace(9)); ASSERT(U.IsSpace(0AH));
+		ASSERT(U.IsSpace(0A0H));                (* NO-BREAK SPACE is Zs *)
+		ASSERT(~U.IsSpace(041H));
+
+		ASSERT(U.IsUpper(041H)); ASSERT(~U.IsUpper(061H));
+		ASSERT(U.IsLower(061H)); ASSERT(~U.IsLower(041H));
+		ASSERT(U.IsControl(0)); ASSERT(U.IsControl(1BH)); ASSERT(~U.IsControl(041H));
+		ASSERT(U.IsPunctuation(02EH)); ASSERT(~U.IsPunctuation(02BH));   (* + is a symbol *)
+		ASSERT(U.IsLetterOrDigit(430H)); ASSERT(U.IsLetterOrDigit(039H)); ASSERT(~U.IsLetterOrDigit(020H))
+	END Test.
+
+positive: whole UTF-8 strings change case, and refuse to when they cannot
+
+	(*	No string literals here on purpose: the source file would have to carry the bytes, and
+		what is being tested is the mapping, not the encoding of this test. *)
+	MODULE Test;
+	IMPORT U := Unicode, UTF8Strings;
+	VAR src, dst, back: ARRAY 32 OF CHAR; small: ARRAY 4 OF CHAR;
+		i, o: SIZE; c: UTF8Strings.Char32;
+
+		PROCEDURE Put(VAR s: ARRAY OF CHAR; VAR at: SIZE; cp: SIGNED32);
+		BEGIN
+			ASSERT(UTF8Strings.EncodeChar(UTF8Strings.Char32(cp), s, at))
+		END Put;
+
+		PROCEDURE Next(CONST s: ARRAY OF CHAR; VAR at: SIZE): SIGNED32;
+		VAR ch: UTF8Strings.Char32;
+		BEGIN
+			ASSERT(UTF8Strings.DecodeChar(s, at, ch));
+			RETURN SIGNED32(ch)
+		END Next;
+
+	BEGIN
+		(* privet, in Cyrillic: two bytes a character, and every one of them has a case *)
+		o := 0;
+		Put(src, o, 43FH); Put(src, o, 440H); Put(src, o, 438H); Put(src, o, 432H);
+		ASSERT(UTF8Strings.ToUpper(src, dst));
+		i := 0;
+		ASSERT(Next(dst, i) = 41FH); ASSERT(Next(dst, i) = 420H);
+		ASSERT(Next(dst, i) = 418H); ASSERT(Next(dst, i) = 412H);
+		ASSERT(UTF8Strings.ToLower(dst, back));
+		ASSERT(back = src);
+
+		(*	U+023A lower cases to U+2C65, two bytes becoming three: the reason ToUpper and
+			ToLower refuse to work in place and the old UpperCase stayed ASCII *)
+		o := 0; Put(src, o, 23AH);
+		ASSERT(UTF8Strings.Size(src) = 2);
+		ASSERT(UTF8Strings.ToLower(src, dst));
+		ASSERT(UTF8Strings.Size(dst) = 3);
+		i := 0; ASSERT(Next(dst, i) = 2C65H);
+
+		(* a destination too small is refused, not written past *)
+		o := 0;
+		Put(src, o, 430H); Put(src, o, 431H); Put(src, o, 432H);
+		ASSERT(~UTF8Strings.ToUpper(src, small));
+
+		(* and the ASCII UpperCase still does what FATFiles calls it for, in place *)
+		src := "name.txt";
+		UTF8Strings.UpperCase(src, src);
+		ASSERT(src = "NAME.TXT");
+		c := 0; i := 0    (* so the compiler sees them used *)
+	END Test.

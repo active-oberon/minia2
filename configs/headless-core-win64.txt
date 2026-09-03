@@ -129,6 +129,7 @@ TrapWriters
 Traps
 UDP
 UTF8Strings
+Unicode
 UpTime
 User32
 Versioning

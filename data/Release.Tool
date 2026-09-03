@@ -361,7 +361,7 @@ END
 PACKAGE System ARCHIVE "System.zip" SOURCE "SystemSrc.zip" DESCRIPTION "System"
 # low-level utility modules
 	RealConversions.Mod
-	Strings.Mod UTF8Strings.Mod Regex.Mod
+	Strings.Mod Unicode.Mod UTF8Strings.Mod Regex.Mod
 
 # kernel extensions
 
