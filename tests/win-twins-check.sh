@@ -25,7 +25,7 @@ command -v script >/dev/null 2>&1 || { echo "no 'script' here, and nothing else 
 # relative path against its own working directory, and giving it a Windows path for a directory
 # somewhere else is a second thing to get right for no gain.
 work="$sdk"
-trap 'rm -f "$work"/WinTerm.Mod "$work"/WinTerm.GofWw "$work"/WinTerm.SymWw "$work"/WinProc.Mod "$work"/WinProc.GofWw "$work"/WinProc.SymWw "$work"/WinSock.Mod "$work"/WinSock.GofWw "$work"/WinSock.SymWw' EXIT
+trap 'rm -f "$work"/WinTerm.Mod "$work"/WinTerm.GofWw "$work"/WinTerm.SymWw "$work"/WinProc.Mod "$work"/WinProc.GofWw "$work"/WinProc.SymWw "$work"/WinSock.Mod "$work"/WinSock.GofWw "$work"/WinSock.SymWw "$work"/Panels.GofWw "$work"/Panels.SymWw' EXIT
 
 cat > "$work/WinTerm.Mod" <<'MOD'
 MODULE WinTerm;	(** what the check reads: one line per question *)
@@ -186,6 +186,36 @@ for want in "listening=yes" "connected=yes" "answer=pong" "heard=ping"; do
 		*) bad "$want -- got: $(printf '%s' "$sock" | tr '\n' ' ' | cut -c1-200)" ;;
 	esac
 done
+
+echo "=== and a full-screen program built for this host draws through them"
+# examples/Panels.Mod is the sixty-line Oberon-in-a-terminal demo, and it is what all three twins
+# are for. Ctrl-Q (021) is what it leaves on. What is asserted is that it drew a frame -- the box
+# drawing characters are UTF-8, E2 94 80 for a horizontal line -- and that it came back.
+# Two things had to be learned to read this transcript. wine puts a hide-and-show of the cursor
+# around every character it writes, so the three bytes of one box drawing character arrive with
+# escape sequences between them -- hence clean, before anything is looked for. And wine converts
+# what the console writes into the locale's character set, so under LC_ALL=C every box drawing
+# character becomes a question mark: the run below asks for a UTF-8 locale, and where the machine
+# has none it checks only that a full screen was drawn.
+utf8=""
+for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+	if locale -a 2>/dev/null | grep -qix "$candidate"; then utf8="$candidate"; break; fi
+done
+panels="$( cd "$work" && printf '\021' | WINEDEBUG=-all LC_ALL="${utf8:-C}" timeout 300 \
+	script -qec "wine '$sdk/ob.exe' run examples/Panels.Mod" /dev/null 2>&1 | clean || true )"
+if [ -n "$utf8" ]; then
+	if printf '%s' "$panels" | grep -q "$(printf '\342\224\200')"; then
+		ok "the frame was drawn, and its box characters arrived as the UTF-8 they were written in"
+	else
+		bad "no frame: $(printf '%s' "$panels" | tr '\n' ' ' | cut -c1-160)"
+	fi
+else
+	echo "skip  no UTF-8 locale here, so what the box characters became cannot be told"
+fi
+case "$panels" in
+	*"WinA2"*) ok "and it started and left on its own" ;;
+	*) bad "the demo did not run" ;;
+esac
 
 if [ "$fail" -eq 0 ]; then echo "win-twins-check: OK"; else echo "win-twins-check: FAILED"; fi
 exit "$fail"

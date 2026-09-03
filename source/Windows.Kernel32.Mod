@@ -614,6 +614,12 @@ VAR
 															   VAR lpNumberOfBytesWritten: SIGNED32;
 															   lpOverlapped: ANY ): BOOL;
 
+	(** The console's code pages: what a byte written to it, or read from it, is taken to mean. *)
+	GetConsoleCP-: PROCEDURE {WINAPI} ( ): SIGNED32;
+	GetConsoleOutputCP-: PROCEDURE {WINAPI} ( ): SIGNED32;
+	SetConsoleCP-: PROCEDURE {WINAPI} ( wCodePageID: SIGNED32 ): BOOL;
+	SetConsoleOutputCP-: PROCEDURE {WINAPI} ( wCodePageID: SIGNED32 ): BOOL;
+
 	(** The GetConsoleMode function retrieves the current input or output mode of a console. *)
 	GetConsoleMode-: PROCEDURE {WINAPI} ( hConsoleHandle: HANDLE; VAR lpMode: SIGNED32 ): BOOL;
 	(** The SetConsoleMode function sets the input or output mode of a console. *)
@@ -1051,6 +1057,10 @@ VAR
 		GetProcAddress(mod, "CreateProcessA",SYSTEM.VAL(ADDRESS,CreateProcessLine));
 		GetProcAddress(mod, "ReadFile",SYSTEM.VAL(ADDRESS,ReadFileBuffer));
 		GetProcAddress(mod, "WriteFile",SYSTEM.VAL(ADDRESS,WriteFileBuffer));
+		GetProcAddress(mod, "GetConsoleCP",SYSTEM.VAL(ADDRESS,GetConsoleCP));
+		GetProcAddress(mod, "GetConsoleOutputCP",SYSTEM.VAL(ADDRESS,GetConsoleOutputCP));
+		GetProcAddress(mod, "SetConsoleCP",SYSTEM.VAL(ADDRESS,SetConsoleCP));
+		GetProcAddress(mod, "SetConsoleOutputCP",SYSTEM.VAL(ADDRESS,SetConsoleOutputCP));
 		GetProcAddress(mod, "GetConsoleMode",SYSTEM.VAL(ADDRESS,GetConsoleMode));
 		GetProcAddress(mod, "SetConsoleMode",SYSTEM.VAL(ADDRESS,SetConsoleMode));
 		GetProcAddress(mod, "GetConsoleScreenBufferInfo",SYSTEM.VAL(ADDRESS,GetConsoleScreenBufferInfo));
