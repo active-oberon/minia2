@@ -1055,7 +1055,9 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	WIN { Windows.Terminal.Mod }
 	Frames.Mod # tiled frames of text with a caret, and any line runnable -- Oberon's model
 	UNIX { Unix.Processes.Mod } # start another program, and talk to it through pipes
+	WIN { Windows.Processes.Mod }
 	UNIX { Unix.LocalSockets.Mod } # sockets named by a path, for talking to a program on this machine
+	WIN { Windows.LocalSockets.Mod } # the same idea where it is a named pipe
 END
 
 PACKAGE GuiApplicationsMini ARCHIVE "GuiApplicationsMini.zip" SOURCE "GuiApplicationsMiniSrc.zip" DESCRIPTION "Minimal GUI applications set"

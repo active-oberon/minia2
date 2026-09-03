@@ -592,16 +592,16 @@ tasks:
           fi
         }
 
-  win-terminal:
-    desc: The Windows twin of the terminal, run under wine on a real pseudo-terminal
+  win-twins:
+    desc: The three Windows twins -- terminal, processes, local sockets -- run under wine
     cmds:
       - |
         set -eo pipefail
-        {{.CURRENT_DIR}}/tests/win-terminal-check.sh {{.BUILD_DIR}}/bundle-win64 || {
+        {{.CURRENT_DIR}}/tests/win-twins-check.sh {{.BUILD_DIR}}/bundle-win64 || {
           status=$?
           if [ "$status" -eq 2 ]; then
-            [ -z "$WIN_REQUIRE" ] || { echo "[FAIL] checking the Windows terminal needs the Windows SDK, wine and script(1), and WIN_REQUIRE is set"; exit 1; }
-            echo "[SKIP] checking the Windows terminal needs the Windows SDK (task win-bundle), wine and script(1)"
+            [ -z "$WIN_REQUIRE" ] || { echo "[FAIL] checking the Windows twins needs the Windows SDK, wine and script(1), and WIN_REQUIRE is set"; exit 1; }
+            echo "[SKIP] checking the Windows twins needs the Windows SDK (task win-bundle), wine and script(1)"
           else
             exit "$status"
           fi

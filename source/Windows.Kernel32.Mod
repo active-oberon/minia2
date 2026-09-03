@@ -198,6 +198,15 @@ TYPE
 	END;
 
 
+	(*	SECURITY_ATTRIBUTES, needed only for its third field: a pipe handle a child is to inherit
+		has to be made inheritable, and that is said here rather than afterwards. Added 2026-09-03
+		with the Windows twin of Processes. *)
+	SecurityAttributes* = RECORD
+		nLength*: SIGNED32;
+		lpSecurityDescriptor*: ADDRESS;
+		bInheritHandle*: BOOL
+	END;
+
 	(*	CONSOLE_SCREEN_BUFFER_INFO: two COORDs, a WORD, a SMALL_RECT and a COORD, all of them
 		sixteen bit, so the record needs no padding on either width. Added 2026-09-03 for the
 		Windows twin of Terminal, which asks the console how large its window is. *)
@@ -551,6 +560,60 @@ VAR
 	(** The GetCurrentDirectory function retrieves the current directory for the current process. *)
 	GetCurrentDirectory-: PROCEDURE {WINAPI} ( nBufferLength: SIGNED32;
 																				 VAR lpBuffer: ARRAY   OF CHAR ): SIGNED32;
+	(** The CreatePipe function creates an anonymous pipe, and returns handles to both of its ends. *)
+	CreatePipe-: PROCEDURE {WINAPI} ( VAR hReadPipe, hWritePipe: HANDLE;
+															  VAR lpPipeAttributes: SecurityAttributes;
+															  nSize: SIGNED32 ): BOOL;
+	(** The CreateNamedPipe function makes one instance of a named pipe, which others may open. *)
+	CreateNamedPipe-: PROCEDURE {WINAPI} ( CONST lpName: ARRAY OF CHAR;
+															   dwOpenMode, dwPipeMode, nMaxInstances: SIGNED32;
+															   nOutBufferSize, nInBufferSize: SIGNED32;
+															   nDefaultTimeOut: SIGNED32;
+															   lpSecurityAttributes: ANY ): HANDLE;
+	(** The ConnectNamedPipe function waits for a client to open the pipe. *)
+	ConnectNamedPipe-: PROCEDURE {WINAPI} ( hNamedPipe: HANDLE; lpOverlapped: ANY ): BOOL;
+	(** The DisconnectNamedPipe function lets go of the client at the other end of an instance. *)
+	DisconnectNamedPipe-: PROCEDURE {WINAPI} ( hNamedPipe: HANDLE ): BOOL;
+	(*	CreateFileA again with NULL where a pointer is wanted, for opening a named pipe. *)
+	CreateFileName-: PROCEDURE {WINAPI} ( CONST lpFileName: ARRAY OF CHAR;
+															  dwDesiredAccess, dwShareMode: SIGNED32;
+															  lpSecurityAttributes: ANY;
+															  dwCreationDisposition, dwFlagsAndAttributes: SIGNED32;
+															  hTemplateFile: ANY ): HANDLE;
+
+	(** The PeekNamedPipe function says how much a pipe has to give without taking any of it. *)
+	PeekNamedPipe-: PROCEDURE {WINAPI} ( hNamedPipe: HANDLE;
+															   lpBuffer: ANY; nBufferSize: SIGNED32;
+															   lpBytesRead: ANY;
+															   VAR lpTotalBytesAvail: SIGNED32;
+															   lpBytesLeftThisMessage: ANY ): BOOL;
+	(** The SetHandleInformation function sets whether a handle is inherited by a child process. *)
+	SetHandleInformation-: PROCEDURE {WINAPI} ( hObject: HANDLE; dwMask, dwFlags: SIGNED32 ): BOOL;
+
+	(*	The same CreateProcessA as above, declared the way it has to be called when the program is
+		named in the command line: lpApplicationName is then NULL, and a CONST ARRAY OF CHAR
+		cannot be. The current directory is NULL for the same reason -- inherit it. *)
+	CreateProcessLine-: PROCEDURE {WINAPI} ( lpApplicationName: ANY;
+																	   VAR lpCommandLine: ARRAY OF CHAR;
+																	   lpProcessAttributes, lpThreadAttributes: ANY;
+																	   bInheritHandles: BOOL;
+																	   dwCreationFlags: SIGNED32;
+																	   lpEnvironment: ANY;
+																	   lpCurrentDirectory: ANY;
+																	   VAR lpStartupInfo: StartupInfo;
+																	   VAR lpProcessInformation: ProcessInformation ): BOOL;
+
+	(*	ReadFile and WriteFile again, addressed rather than passed an array: a pipe is read into
+		the middle of a buffer, and an open array parameter cannot say "from here on". *)
+	ReadFileBuffer-: PROCEDURE {WINAPI} ( hFile: HANDLE; lpBuffer: ADDRESS;
+															  nNumberOfBytesToRead: SIGNED32;
+															  VAR lpNumberOfBytesRead: SIGNED32;
+															  lpOverlapped: ANY ): BOOL;
+	WriteFileBuffer-: PROCEDURE {WINAPI} ( hFile: HANDLE; lpBuffer: ADDRESS;
+															   nNumberOfBytesToWrite: SIGNED32;
+															   VAR lpNumberOfBytesWritten: SIGNED32;
+															   lpOverlapped: ANY ): BOOL;
+
 	(** The GetConsoleMode function retrieves the current input or output mode of a console. *)
 	GetConsoleMode-: PROCEDURE {WINAPI} ( hConsoleHandle: HANDLE; VAR lpMode: SIGNED32 ): BOOL;
 	(** The SetConsoleMode function sets the input or output mode of a console. *)
@@ -978,6 +1041,16 @@ VAR
 		GetProcAddress(mod, "ClearCommBreak",SYSTEM.VAL(ADDRESS,ClearCommBreak));
 		GetProcAddress(mod, "ClearCommError",SYSTEM.VAL(ADDRESS,ClearCommError));
 		GetProcAddress(mod, "CloseHandle",SYSTEM.VAL(ADDRESS,CloseHandle));
+		GetProcAddress(mod, "CreatePipe",SYSTEM.VAL(ADDRESS,CreatePipe));
+		GetProcAddress(mod, "PeekNamedPipe",SYSTEM.VAL(ADDRESS,PeekNamedPipe));
+		GetProcAddress(mod, "CreateNamedPipeA",SYSTEM.VAL(ADDRESS,CreateNamedPipe));
+		GetProcAddress(mod, "ConnectNamedPipe",SYSTEM.VAL(ADDRESS,ConnectNamedPipe));
+		GetProcAddress(mod, "DisconnectNamedPipe",SYSTEM.VAL(ADDRESS,DisconnectNamedPipe));
+		GetProcAddress(mod, "CreateFileA",SYSTEM.VAL(ADDRESS,CreateFileName));
+		GetProcAddress(mod, "SetHandleInformation",SYSTEM.VAL(ADDRESS,SetHandleInformation));
+		GetProcAddress(mod, "CreateProcessA",SYSTEM.VAL(ADDRESS,CreateProcessLine));
+		GetProcAddress(mod, "ReadFile",SYSTEM.VAL(ADDRESS,ReadFileBuffer));
+		GetProcAddress(mod, "WriteFile",SYSTEM.VAL(ADDRESS,WriteFileBuffer));
 		GetProcAddress(mod, "GetConsoleMode",SYSTEM.VAL(ADDRESS,GetConsoleMode));
 		GetProcAddress(mod, "SetConsoleMode",SYSTEM.VAL(ADDRESS,SetConsoleMode));
 		GetProcAddress(mod, "GetConsoleScreenBufferInfo",SYSTEM.VAL(ADDRESS,GetConsoleScreenBufferInfo));
