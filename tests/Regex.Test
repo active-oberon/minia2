@@ -211,6 +211,91 @@ positive: replacing and splitting, including the empty match that would hang a l
 		ASSERT(n = 1); ASSERT(parts[0]^ = "abc")
 	END Test.
 
+positive: characters, not bytes -- the pattern and the input are both UTF-8
+
+	(*	Byte offsets come out of Find, because that is what a caller indexes a string with, but
+		everything inside the engine is code points: a two-byte character is one character to
+		`.`, one endpoint of a range, and one step of the match. *)
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE;
+	BEGIN
+		r := Regex.Compile("^.$", e);
+		ASSERT(r # NIL);
+		ASSERT(r.Find("б", 0, pos, len));
+		ASSERT(len = 2);                        (* one character, two bytes *)
+		ASSERT(~r.Match("бв"));                 (* and two characters are two, not four *)
+
+		r := Regex.Compile("^..$", e);
+		ASSERT(r.Match("бв"));
+
+		(* a range whose ends are outside ASCII: the whole point of the change *)
+		r := Regex.Compile("[а-я]+", e);
+		ASSERT(r.Find("xxпривет!", 0, pos, len));
+		ASSERT(pos = 2); ASSERT(len = 12);      (* six characters of two bytes each *)
+		ASSERT(~Regex.Matches("^[а-я]+$", "Привет"));   (* capital П is not in a-я *)
+		ASSERT(Regex.Matches("^[А-Яа-я]+$", "Привет"));
+
+		(* the negated class knows what is not in it, all 1114112 of them *)
+		ASSERT(Regex.Matches("^[^а-я]+$", "abc"));
+		ASSERT(~Regex.Matches("^[^а-я]+$", "aбc"));
+
+		(*	\d \w \s stay ASCII, the way Go reads them -- but their negations are now the
+			complement over the whole code space, so a Cyrillic letter is not a digit *)
+		ASSERT(~Regex.Matches("^\d$", "б"));
+		ASSERT(Regex.Matches("^\D$", "б"));
+		ASSERT(Regex.Matches("^\S+$", "привет"));
+		ASSERT(~Regex.Matches("^\w+$", "привет"))
+	END Test.
+
+positive: general categories, which is what makes the character database visible
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE;
+	BEGIN
+		ASSERT(Regex.Matches("^\p{L}+$", "привет"));
+		ASSERT(Regex.Matches("^\p{L}+$", "abc"));
+		ASSERT(~Regex.Matches("^\p{L}+$", "ab1"));
+		ASSERT(Regex.Matches("^\p{Lu}$", "П"));
+		ASSERT(~Regex.Matches("^\p{Lu}$", "п"));
+		ASSERT(Regex.Matches("^\p{Ll}$", "п"));
+		ASSERT(Regex.Matches("^\p{Nd}+$", "123"));
+		ASSERT(Regex.Matches("^\P{L}+$", "123 "));
+		ASSERT(~Regex.Matches("^\P{L}+$", "12a"));
+
+		(* a category inside a class, next to ordinary members *)
+		r := Regex.Compile("[\p{Lu}_]+", e);
+		ASSERT(r # NIL);
+		ASSERT(r.Find("aП_Бb", 0, pos, len));
+		ASSERT(pos = 1); ASSERT(len = 5);       (* П _ Б : 2 + 1 + 2 bytes *)
+
+		r := Regex.Compile("\p{Zzz}", e);
+		ASSERT(r = NIL);                        (* an unknown category is refused *)
+		r := Regex.Compile("\p{L", e);
+		ASSERT(r = NIL);
+		r := Regex.Compile("[\P{L}]", e);
+		ASSERT(r = NIL)                         (* and \P inside a class says so instead of lying *)
+	END Test.
+
+positive: a byte that is not UTF-8 is a character too, and does not stall the search
+
+	(*	A pattern matcher is what a caller reaches for when the input is suspect, so a byte that
+		decodes to nothing is matched as the character of its own value. The property that
+		matters is that the search still advances: a decoder that returned zero bytes here would
+		be an engine that never returns. *)
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; s: ARRAY 8 OF CHAR; pos, len: SIZE;
+	BEGIN
+		s[0] := "a"; s[1] := 0FFX; s[2] := "b"; s[3] := 0X;
+		r := Regex.Compile("^...$", e);
+		ASSERT(r.Match(s));                     (* three characters, three bytes *)
+		r := Regex.Compile("b", e);
+		ASSERT(r.Find(s, 0, pos, len));
+		ASSERT(pos = 2); ASSERT(len = 1)
+	END Test.
+
 positive: the pattern that hangs a backtracking engine finishes here
 
 	(*	(a+)+$ over twenty-four a's and one b is the textbook exponential case: a backtracking

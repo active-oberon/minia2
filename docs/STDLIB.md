@@ -91,10 +91,16 @@ time — so the cost is O(pattern × input) and no pattern a caller writes can m
 That is the property a standard library needs and a backtracking matcher cannot promise; the
 price is no back references, which is the feature that makes backtracking exponential in the
 first place. The syntax is the common subset: `. * + ? {m,n} | ( ) (?: ) [ ] ^ $`, lazy variants,
-`\d \w \s` and their negations, nine capturing groups, plus `ReplaceAll` with `$0`–`$9`
-and `Split`. `{m,n}` is written out into the program rather than counted, so a count is
-capped at `MaxRepeat`. Not there: characters — a pattern matches UTF-8 literally but `.`
-counts one byte, which is the same UCD hole as above and closes with it.
+`\d \w \s` and their negations, `\p{L}` / `\p{Lu}` general categories, nine capturing
+groups, plus `ReplaceAll` with `$0`–`$9` and `Split`. `{m,n}` is written out into the
+program rather than counted, so a count is capped at `MaxRepeat`.
+
+It works in characters, not bytes: `Unicode` landed the same day, so the engine decodes
+UTF-8 on both sides — `.` is one character however many bytes it takes, `[а-я]` is a range,
+and `\p{L}` is a table lookup. Offsets out of `Find` and `Group` stay **bytes**, because
+that is what a caller indexes a string with. A byte that is not well-formed UTF-8 matches as
+the character of its own value: a matcher is what you reach for when the input is suspect,
+so it must not stall on it. Still missing: a case-insensitive flag.
 
 ---
 
