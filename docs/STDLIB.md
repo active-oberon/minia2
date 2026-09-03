@@ -62,6 +62,14 @@ Unicode database out of **`std/ime`**, `JSON` out of `std/web`, the clocks out o
 
 ### Still open
 
+**Step 4 started 2026-09-03 with the duplicates, and one of the three decisions was wrong.**
+`MD5` is gone: `HTTPSession` and `SVNUtil` were its only callers and they now use `CryptoMD5`
+with `CryptoUtils.Bin2Hex`, which does not terminate the string the way `MD5.ToString` did --
+there is a test case that says so. `Base64` and `CryptoBase64` are one module: the 27.08 note
+that nothing imported either was wrong, and the one with no callers at all was the one std had
+kept. `Base64` is now the implementation `WebSockets`, `CryptoRSA` and `CryptoDSA` were already
+using, under the name std filed it as. `DES` and `CryptoDES` both stay, as decided.
+
 `std/data` is two modules (`GenericCollections`, `GenericSort`) and has no `Map` or
 `Set`. `std/text` has no regex and no UCD tables — the Unicode database is in
 `lib/texts` because this implementation of it reads through the rich-text model. Those,
@@ -147,7 +155,7 @@ Missing, worth adding: **Ed25519, X25519, ChaCha20-Poly1305, HKDF**.
 - **base** (4) — `WMEvents`, `Inputs`, `FP1616`, `Plugins` — the window manager's tail inside the package named "needs no host"
 - **calc** (10) — quadrature and differentiation — a numerics package
 - **compress** (3) — BWH, MoveToFront, OZip3
-- **crypto** (9) — ARC4, Blowfish, CAST, IDEA, Twofish, DES, DES3 — kept for compatibility, not recommended in new code. `CryptoBase64` duplicates `Base64`, `DES` duplicates `CryptoDES`
+- **crypto** (8) — ARC4, Blowfish, CAST, IDEA, Twofish, DES, DES3 — kept for compatibility, not recommended in new code. `DES` duplicates `CryptoDES` and both stay: different APIs, each with its own callers. `CryptoBase64` left 2026-09-03 — it *was* `Base64`, see below
 - **data** (13) — the second generation of containers (`DataLists`, `DataQueues`, `DataStacks`, `DataTrees`) plus `SQL`, `ODBC`, `PrevalenceSystem` — databases in a package named for data structures
 - **disk** (28) — FAT, ISO, Oberon FS, partitions — one operating system, not a language
 - **drivers** (19) — hardware, and half of it is already marked graphical
@@ -155,7 +163,7 @@ Missing, worth adding: **Ed25519, X25519, ChaCha20-Poly1305, HKDF**.
 - **ime** (14) — input methods — but `UnicodeProperties` and `UnicodeBidirectionality` come out of here into std/text, which is where they should have been
 - **math** (11) — the `Nbr*` arbitrary-precision family — a numerics package, not the numeric core the compiler emits calls into
 - **media** (14) — codecs are leaves; nobody interoperates through an MP3 decoder
-- **net** (41) — FTP, SSH, Telnet, Samba, mail, chat, XModem — finished programs. `MD5` and `PKCS1` leave as duplicates of std/crypto
+- **net** (40) — FTP, SSH, Telnet, Samba, mail, chat, XModem — finished programs. `PKCS1` stays as a duplicate of std/crypto; `MD5` was deleted 2026-09-03, its two callers now use `CryptoMD5`
 - **numerics** (10) — special functions — same
 - **sound** (5) — a device and two players
 - **system** (22) — diagnostics: five `Events*`, two `ProcessInfo`, two `HierarchicalProfiler`, `DependencyWalker`, `WinTrace`

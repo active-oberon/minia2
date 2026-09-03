@@ -923,7 +923,7 @@ PACKAGE ApplicationsMini ARCHIVE "ApplicationsMini.zip" SOURCE "ApplicationsMini
 
 	Installer.Mod InstallerPackages.XML
 
-	CryptoBigNumbers.Mod CryptoBase64.Mod CryptoUtils.Mod CryptoCiphers.Mod CryptoARC4.Mod
+	CryptoBigNumbers.Mod Base64.Mod CryptoUtils.Mod CryptoCiphers.Mod CryptoARC4.Mod
 	CryptoDES.Mod CryptoDES3.Mod
 	CryptoHashes.Mod CryptoMD5.Mod CryptoSHA1.Mod CryptoSHA256.Mod
 	CryptoKeccakF1600.Mod CryptoKeccakSponge.Mod CryptoSHA3.Mod CryptoCSPRNG.Mod
@@ -969,8 +969,6 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	WIN, UNIX, BIOS & COOP, ZYNQ { Windows.Performance.Mod } # This is just a dummy
 
 	Bin2Hex.Mod BinToCode.Mod
-
-	Base64.Mod
 
 	DisplayGTF.Mod	# Create VESA 3.0 Init Strings
 
@@ -1029,7 +1027,6 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	# Image codecs
 	JPEG2000DecoderUtil.Mod JPEG2000DecoderCS.Mod JPEG2000Decoder.Mod
 
-	MD5.Mod	# Temporarily moved here from gadgets
 	HTTPSupport.Mod HTTPSession.Mod DynamicWebpage.Mod	# Dynamic Webpages support
 	DynamicWebpagePlugin.Mod PrevalenceSystem.Mod
 	WMDropTarget.Mod

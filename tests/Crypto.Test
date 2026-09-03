@@ -5,6 +5,8 @@
 # The package is thirty modules and the registry calls it stable. SHA-1 and SHA-256 were checked
 # against published values already; MD5, SHA-3, AES and Base64 were not checked against anything.
 #
+# 2026-09-03: Base64 is now one module, not two -- the stream half had never been run by anything.
+#
 # For cryptography a round trip is worth nothing: a cipher that decrypts what it encrypted, and a
 # digest that agrees with itself, can both be wrong in a way that makes them useless -- the whole
 # purpose is to agree with everybody else's. So every case here is a known answer, from the
@@ -74,19 +76,71 @@ positive: AES encrypts the block FIPS-197 encrypts, to the same bytes
 positive: Base64 of what RFC 4648 says, padding and all
 
 	MODULE Test;
-	IMPORT CryptoBase64;
+	IMPORT Base64;
 	VAR out: ARRAY 64 OF CHAR; back: ARRAY 64 OF CHAR; len: SIGNED32;
 	BEGIN
-		CryptoBase64.Encode("Oberon", 6, out);
+		Base64.Encode("Oberon", 6, out);
 		ASSERT(out = "T2Jlcm9u");
-		CryptoBase64.Encode("a", 1, out);
+		Base64.Encode("a", 1, out);
 		ASSERT(out = "YQ==");                       (* one byte, two pad characters *)
-		CryptoBase64.Encode("ab", 2, out);
+		Base64.Encode("ab", 2, out);
 		ASSERT(out = "YWI=");
-		len := CryptoBase64.Decode("T2Jlcm9u", back);
+		len := Base64.Decode("T2Jlcm9u", back);
 		back[len] := 0X;
 		ASSERT(back = "Oberon");
 		ASSERT(len = 6)
+	END Test.
+
+positive: Base64 through streams agrees with Base64 through arrays
+
+	(*	CryptoRSA and CryptoDSA read PEM with DecodeStream, and nothing ever checked it.
+		EncodeStream is not the same procedure as Encode: it wraps at 72 characters, RFC 1421
+		style, which is why the round trip below feeds it more than 54 bytes. *)
+	MODULE Test;
+	IMPORT Base64, Streams;
+	VAR w: Streams.StringWriter; r: Streams.StringReader;
+		out, back: ARRAY 256 OF CHAR; len: SIGNED32; i: SIGNED32; long: ARRAY 100 OF CHAR;
+	BEGIN
+		NEW(w, 256);
+		Base64.EncodeStream("Oberon", 6, w);
+		w.Get(out);
+		ASSERT(out = "T2Jlcm9u");
+
+		NEW(r, 256); r.Set("T2Jlcm9u");
+		len := Base64.DecodeStream(r, back);
+		back[len] := 0X;
+		ASSERT(len = 6);
+		ASSERT(back = "Oberon");
+
+		(*	past the wrap: 60 bytes encode to 80 characters, so a line break lands in the middle
+			and the decoder has to skip it *)
+		FOR i := 0 TO 59 DO long[i] := CHR(ORD("A") + i MOD 26) END;
+		long[60] := 0X;
+		NEW(w, 256); Base64.EncodeStream(long, 60, w); w.Get(out);
+		NEW(r, 256); r.Set(out);
+		len := Base64.DecodeStream(r, back);
+		back[len] := 0X;
+		ASSERT(len = 60);
+		ASSERT(back = long)
+	END Test.
+
+positive: MD5 the way the two callers of the deleted MD5.Mod now do it
+
+	(*	HTTPSession and SVNUtil printed a digest with MD5.ToString, which does not exist any
+		more: the module went 2026-09-03. CryptoUtils.Bin2Hex is the replacement and it does
+		NOT terminate the string -- that is the caller's job, and this case is what says so. *)
+	MODULE Test;
+	IMPORT CryptoMD5, CryptoUtils;
+	VAR h: CryptoMD5.Hash; digest: ARRAY 16 OF CHAR; hex: ARRAY 48 OF CHAR; data: ARRAY 16 OF CHAR;
+	BEGIN
+		hex := "----------------------------------------";
+		NEW(h); h.Initialize;
+		data := "message digest"; h.Update(data, 0, 14);
+		h.GetHash(digest, 0);
+		CryptoUtils.Bin2Hex(digest, 0, hex, 0, 16);
+		ASSERT(hex # "F96B697D7CB7938D525A2F31AAF161D0");     (* RFC 1321, but no terminator yet *)
+		hex[32] := 0X;
+		ASSERT(hex = "F96B697D7CB7938D525A2F31AAF161D0")
 	END Test.
 
 positive: HMAC-SHA256 of what RFC 4231 says

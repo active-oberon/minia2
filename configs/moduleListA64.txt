@@ -203,7 +203,7 @@ FTPClient.Mod
 XYModem.Mod
 ShellSerial.Mod
 CryptoBigNumbers.Mod
-CryptoBase64.Mod
+Base64.Mod
 CryptoUtils.Mod
 CryptoCiphers.Mod
 CryptoARC4.Mod
@@ -249,7 +249,6 @@ TCPTools.Mod
 IPBandwidth.Mod
 Bin2Hex.Mod
 BinToCode.Mod
-Base64.Mod
 DisplayGTF.Mod
 GZip.Mod
 ShellCommands.Mod
@@ -279,7 +278,6 @@ WebFTPServer.Mod
 XModem.Mod
 TaskScheduler.Mod
 DES.Mod
-MD5.Mod
 HTTPSupport.Mod
 HTTPSession.Mod
 DynamicWebpage.Mod

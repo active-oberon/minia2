@@ -2,7 +2,7 @@ MODULE CryptoDSA;	(** AUTHOR "G.F."; PURPOSE "Digital Signature Algorithm DSA"; 
 
 IMPORT
 	B := CryptoBigNumbers, SHA1 := CryptoSHA1, P := CryptoPrimes, U := CryptoUtils, Streams,
-	Base64 := CryptoBase64, BIT;
+	Base64, BIT;
 
 TYPE
 	Number = B.BigNumber;

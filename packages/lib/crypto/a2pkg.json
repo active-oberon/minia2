@@ -10,7 +10,6 @@
     "Checksum",
     "CryptoAES",
     "CryptoARC4",
-    "CryptoBase64",
     "CryptoBigNumbers",
     "CryptoBlowfish",
     "CryptoCAST",

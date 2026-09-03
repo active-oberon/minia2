@@ -5,7 +5,7 @@
 MODULE WebSockets;
 
 IMPORT
-	Rng := CryptoFortunaRng, Streams, CryptoSHA1, CryptoBase64, WebHTTP, WebHTTPServer,
+	Rng := CryptoFortunaRng, Streams, CryptoSHA1, Base64, WebHTTP, WebHTTPServer,
 	Objects, Locks, Strings, Commands, Modules
 	(*, TFLog*);
 
@@ -275,7 +275,7 @@ TYPE
 		BEGIN
 			(* 16 random bytes *)
 			Rng.Generate(buf, 0, 16);
-			CryptoBase64.Encode(buf, 16, result);
+			Base64.Encode(buf, 16, result);
 		END GenerateClientKey;
 
 		PROCEDURE GenerateServerAccept*(CONST clientKey: ARRAY OF CHAR);
@@ -285,7 +285,7 @@ TYPE
 			hash(clientKey, 0, Strings.Length(clientKey));
 			hash("258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 0, 36);
 			hash.GetHash(buf, 0);
-			CryptoBase64.Encode(buf, 20, result);
+			Base64.Encode(buf, 20, result);
 		END GenerateServerAccept;
 	END;
 

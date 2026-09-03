@@ -5,7 +5,7 @@ MODULE CryptoRSA;	(** AUTHOR "G.F."; PURPOSE "RSA"; *)
 IMPORT
 	B := CryptoBigNumbers, U := CryptoUtils, MD5 := CryptoMD5, 
 	Ciphers := CryptoCiphers,
-	Base64 := CryptoBase64, Streams, Clock;
+	Base64, Streams, Clock;
 
 CONST
 	chinese = TRUE;
