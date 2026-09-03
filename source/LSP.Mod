@@ -1,6 +1,6 @@
 MODULE LSP;
 (**
-	AUTHOR "minia2 SDK";
+	AUTHOR "Andrii Puhachenko";
 	PURPOSE "Minimal Language Server (LSP) for Active Oberon — diagnostics over JSON-RPC/stdio";
 	LIMITATIONS
 		"- Diagnostics on open/change/save, hover, and go-to-definition. No completion yet.

@@ -1,6 +1,6 @@
 MODULE JSON;
 (**
-	AUTHOR "minia2 SDK";
+	AUTHOR "Andrii Puhachenko";
 	PURPOSE "RFC 8259 JSON parser and serializer for Active Oberon";
 	LIMITATIONS
 		"- \uXXXX escapes are decoded to UTF-8 for the Basic Multilingual Plane only
