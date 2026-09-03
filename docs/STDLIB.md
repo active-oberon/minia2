@@ -80,10 +80,11 @@ construction — the pattern becomes a program and every thread advances one cha
 time — so the cost is O(pattern × input) and no pattern a caller writes can make it worse.
 That is the property a standard library needs and a backtracking matcher cannot promise; the
 price is no back references, which is the feature that makes backtracking exponential in the
-first place. The syntax is the common subset: `. * + ? | ( ) (?: ) [ ] ^ $`, lazy variants,
-`\d \w \s` and their negations, nine capturing groups. Not there: counted repetition
-`{m,n}`, and characters — a pattern matches UTF-8 literally but `.` counts one byte, which is
-the same UCD hole as above and closes with it.
+first place. The syntax is the common subset: `. * + ? {m,n} | ( ) (?: ) [ ] ^ $`, lazy variants,
+`\d \w \s` and their negations, nine capturing groups, plus `ReplaceAll` with `$0`–`$9`
+and `Split`. `{m,n}` is written out into the program rather than counted, so a count is
+capped at `MaxRepeat`. Not there: characters — a pattern matches UTF-8 literally but `.`
+counts one byte, which is the same UCD hole as above and closes with it.
 
 ---
 

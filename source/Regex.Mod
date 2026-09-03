@@ -5,12 +5,15 @@ MODULE Regex;
 	LIMITATIONS
 		"- bytes, not characters: a pattern matches UTF-8 literally, but `.` counts one byte
 		   and a range like [a-z] cannot span a multi-byte character;
-		 - no counted repetition {m,n}, no back references (a back reference is what makes
-		   matching exponential, and this engine trades it away on purpose);
+		 - no back references (a back reference is what makes matching exponential, and this
+		   engine trades it away on purpose);
+		 - {m,n} is written out into the program, so a count is capped at MaxRepeat;
 		 - ^ and $ anchor the whole text, not a line;
 		 - at most MaxGroups capturing groups;
 		 - a compiled Regexp carries the result of its last search, so it is a searcher and not
-		   a shared constant: give each activity its own."
+		   a shared constant: give each activity its own;
+		 - Split ignores an empty match, because splitting on one produces one piece per
+		   character and nobody means that."
 *)
 (*	The engine is Thompson's: the pattern becomes a program, and the program is run over the
 	input with every thread advancing one character at a time. Cost is O(pattern * input) and
@@ -22,6 +25,7 @@ IMPORT Strings;
 
 CONST
 	MaxGroups* = 9;		(** capturing groups, not counting group 0 -- the whole match *)
+	MaxRepeat* = 1000;	(** the largest count {m,n} may name: the program is written out, not counted *)
 
 	(* instructions *)
 	opChar = 0; opAny = 1; opClass = 2; opSplit = 3; opJmp = 4; opSave = 5;
@@ -206,6 +210,84 @@ TYPE
 			value[len] := 0X;
 			RETURN TRUE
 		END GroupString;
+
+		(*	Replace every match, expanding $0..$9 in the replacement to the groups of that
+			match ($$ is a dollar). An empty match still advances by one character, which is
+			the difference between replacing and hanging. *)
+		PROCEDURE ReplaceAll*(CONST s, repl: ARRAY OF CHAR; VAR out: ARRAY OF CHAR): BOOLEAN;
+		VAR at, from, pos, len, gp, gl, i, n, o: SIZE; g: SIGNED32;
+
+			PROCEDURE Emit(c: CHAR): BOOLEAN;
+			BEGIN
+				IF o + 1 >= LEN(out) THEN RETURN FALSE END;
+				out[o] := c; INC(o);
+				RETURN TRUE
+			END Emit;
+
+		BEGIN
+			n := Strings.Length(s); from := 0; o := 0;
+			WHILE (from <= n) & SELF.Find(s, from, pos, len) DO
+				FOR at := from TO pos - 1 DO IF ~Emit(s[at]) THEN RETURN FALSE END END;
+				i := 0;
+				WHILE repl[i] # 0X DO
+					IF (repl[i] = "$") & (repl[i + 1] = "$") THEN
+						IF ~Emit("$") THEN RETURN FALSE END; INC(i, 2)
+					ELSIF (repl[i] = "$") & (repl[i + 1] >= "0") & (repl[i + 1] <= "9") THEN
+						g := ORD(repl[i + 1]) - ORD("0"); INC(i, 2);
+						IF SELF.Group(g, gp, gl) THEN
+							FOR at := gp TO gp + gl - 1 DO IF ~Emit(s[at]) THEN RETURN FALSE END END
+						END
+					ELSE
+						IF ~Emit(repl[i]) THEN RETURN FALSE END; INC(i)
+					END
+				END;
+				IF len = 0 THEN
+					IF pos < n THEN IF ~Emit(s[pos]) THEN RETURN FALSE END END;
+					from := pos + 1
+				ELSE
+					from := pos + len
+				END
+			END;
+			FOR at := from TO n - 1 DO IF ~Emit(s[at]) THEN RETURN FALSE END END;
+			out[o] := 0X;
+			RETURN TRUE
+		END ReplaceAll;
+
+		(*	The pieces between the matches. "a1b22c" split on [0-9]+ is a, b, c -- and a match
+			at either end leaves the empty piece there, the way Go and Python both do it. *)
+		PROCEDURE Split*(CONST s: ARRAY OF CHAR; VAR parts: Strings.StringArray): SIZE;
+		VAR from, pos, len, n, count, k, at: SIZE; piece: Strings.String;
+
+			PROCEDURE Grow;
+			VAR bigger: Strings.StringArray; i: SIZE;
+			BEGIN
+				IF parts = NIL THEN NEW(parts, 8)
+				ELSIF count = LEN(parts) THEN
+					NEW(bigger, 2 * count);
+					FOR i := 0 TO count - 1 DO bigger[i] := parts[i] END;
+					parts := bigger
+				END
+			END Grow;
+
+		BEGIN
+			n := Strings.Length(s); from := 0; count := 0;
+			WHILE (from <= n) & SELF.Find(s, from, pos, len) & (len > 0) DO
+				Grow;
+				NEW(piece, pos - from + 1);
+				k := 0;
+				FOR at := from TO pos - 1 DO piece[k] := s[at]; INC(k) END;
+				piece[k] := 0X;
+				parts[count] := piece; INC(count);
+				from := pos + len
+			END;
+			Grow;
+			NEW(piece, n - from + 1);
+			k := 0;
+			FOR at := from TO n - 1 DO piece[k] := s[at]; INC(k) END;
+			piece[k] := 0X;
+			parts[count] := piece; INC(count);
+			RETURN count
+		END Split;
 
 	END Regexp;
 
@@ -399,23 +481,112 @@ TYPE
 			END
 		END ParseAtom;
 
+		PROCEDURE Clone(n: Node): Node;
+		VAR c: Node;
+		BEGIN
+			IF n = NIL THEN RETURN NIL END;
+			c := SELF.NewNode(n.kind);
+			c.ch := n.ch; c.set := n.set; c.group := n.group; c.greedy := n.greedy;
+			c.left := SELF.Clone(n.left); c.right := SELF.Clone(n.right);
+			RETURN c
+		END Clone;
+
+		PROCEDURE Cat(left, right: Node): Node;
+		VAR n: Node;
+		BEGIN
+			IF left = NIL THEN RETURN right END;
+			IF right = NIL THEN RETURN left END;
+			n := SELF.NewNode(nCat); n.left := left; n.right := right;
+			RETURN n
+		END Cat;
+
+		(*	x{m,n} is written out rather than counted: m copies, then n-m optional ones nested
+			so that a copy cannot be skipped and a later one taken. That is what makes the
+			program grow with the count, and why MaxRepeat exists. *)
+		PROCEDURE Repeated(x: Node; min, max: SIGNED32; greedy: BOOLEAN): Node;
+		VAR head, tail, q, star: Node; i: SIGNED32;
+		BEGIN
+			head := NIL;
+			FOR i := 1 TO min DO head := SELF.Cat(head, SELF.Clone(x)) END;
+			IF max < 0 THEN
+				star := SELF.NewNode(nStar); star.greedy := greedy; star.left := SELF.Clone(x);
+				RETURN SELF.Cat(head, star)
+			END;
+			tail := NIL;
+			FOR i := min + 1 TO max DO
+				q := SELF.NewNode(nQuest); q.greedy := greedy;
+				q.left := SELF.Cat(SELF.Clone(x), tail);
+				tail := q
+			END;
+			IF (head = NIL) & (tail = NIL) THEN RETURN SELF.NewNode(nEmpty) END;
+			RETURN SELF.Cat(head, tail)
+		END Repeated;
+
+		PROCEDURE Number(VAR value: SIGNED32): BOOLEAN;
+		VAR digits: SIGNED32;
+		BEGIN
+			value := 0; digits := 0;
+			WHILE (SELF.Ch() >= "0") & (SELF.Ch() <= "9") DO
+				value := value * 10 + (ORD(SELF.Ch()) - ORD("0"));
+				INC(pos); INC(digits);
+				IF value > MaxRepeat THEN Fail("repetition count is larger than MaxRepeat"); RETURN FALSE END
+			END;
+			RETURN digits > 0
+		END Number;
+
+		(*	{m}, {m,} or {m,n}. Anything else that starts with a brace is a brace: Perl reads
+			it that way and so does every pattern a person pastes in, so a failed parse rewinds
+			instead of failing the compile. *)
+		PROCEDURE ParseCount(x: Node; VAR done: BOOLEAN): Node;
+		VAR mark: SIZE; min, max: SIGNED32; greedy: BOOLEAN;
+		BEGIN
+			mark := pos; done := FALSE;
+			INC(pos);
+			IF ~SELF.Number(min) THEN
+				IF failed THEN RETURN NIL END;
+				pos := mark; RETURN x
+			END;
+			max := min;
+			IF SELF.Ch() = "," THEN
+				INC(pos);
+				IF SELF.Ch() = "}" THEN max := -1
+				ELSIF ~SELF.Number(max) THEN
+					IF failed THEN RETURN NIL END;
+					pos := mark; RETURN x
+				END
+			END;
+			IF SELF.Ch() # "}" THEN pos := mark; RETURN x END;
+			INC(pos);
+			IF (max >= 0) & (max < min) THEN Fail("repetition counts run backwards"); RETURN NIL END;
+			greedy := TRUE;
+			IF SELF.Ch() = "?" THEN INC(pos); greedy := FALSE END;
+			done := TRUE;
+			RETURN SELF.Repeated(x, min, max, greedy)
+		END ParseCount;
+
 		PROCEDURE ParseRepeat(): Node;
-		VAR n, rep: Node; c: CHAR;
+		VAR n, rep: Node; c: CHAR; counted: BOOLEAN;
 		BEGIN
 			n := SELF.ParseAtom();
 			IF failed THEN RETURN NIL END;
 			LOOP
 				c := SELF.Ch();
-				IF (c # "*") & (c # "+") & (c # "?") THEN EXIT END;
-				INC(pos);
-				CASE c OF
-				  "*": rep := SELF.NewNode(nStar)
-				| "+": rep := SELF.NewNode(nPlus)
-				ELSE rep := SELF.NewNode(nQuest)
-				END;
-				rep.left := n;
-				IF SELF.Ch() = "?" THEN INC(pos); rep.greedy := FALSE END;
-				n := rep
+				IF c = "{" THEN
+					n := SELF.ParseCount(n, counted);
+					IF failed THEN RETURN NIL END;
+					IF counted THEN (* another quantifier may follow *) ELSE EXIT END
+				ELSIF (c = "*") OR (c = "+") OR (c = "?") THEN
+					INC(pos);
+					CASE c OF
+					  "*": rep := SELF.NewNode(nStar)
+					| "+": rep := SELF.NewNode(nPlus)
+					ELSE rep := SELF.NewNode(nQuest)
+					END;
+					rep.left := n;
+					IF SELF.Ch() = "?" THEN INC(pos); rep.greedy := FALSE END;
+					n := rep
+				ELSE EXIT
+				END
 			END;
 			RETURN n
 		END ParseRepeat;
