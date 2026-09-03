@@ -4,7 +4,7 @@ MODULE UTF8Strings;	(** pjm *)
 
 (* Based on UTFStrings.Mod of TF and ISOStrings.Mod of jaco *)
 
-IMPORT Strings;
+IMPORT Strings, Unicode;
 
 CONST
 	CmpLess* = -1; CmpEqual* = 0; CmpGreater* = 1;	 CmpError* = 2; (** results for Compare. *)
@@ -355,6 +355,38 @@ BEGIN
 		INC(i)
 	END
 END UnicodetoUTF8;
+
+(*	ToUpper and ToLower map every character, not only the twenty-six. Both refuse to work in
+	place: a simple case mapping can need one byte more than the character it replaces -- four
+	of them do, U+023A and U+023E upward among them -- so writing over the source would eat the
+	character after it. UpperCase below stays ASCII for exactly that reason: FATFiles calls it
+	with one array as both arguments. *)
+
+(** Upper case a well-formed UTF-8 string. FALSE if src is malformed or dst too small; src and dst must not be the same array. *)
+PROCEDURE ToUpper*(CONST src: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	RETURN MapCase(src, dst, TRUE)
+END ToUpper;
+
+(** Lower case a well-formed UTF-8 string. FALSE if src is malformed or dst too small; src and dst must not be the same array. *)
+PROCEDURE ToLower*(CONST src: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	RETURN MapCase(src, dst, FALSE)
+END ToLower;
+
+PROCEDURE MapCase(CONST src: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR; up: BOOLEAN): BOOLEAN;
+VAR i, o: SIZE; ucs: Char32; mapped: SIGNED32;
+BEGIN
+	i := 0; o := 0;
+	IF LEN(dst) = 0 THEN RETURN FALSE END;
+	WHILE src[i] # 0X DO
+		IF ~DecodeChar(src, i, ucs) THEN RETURN FALSE END;
+		IF up THEN mapped := Unicode.ToUpper(SIGNED32(ucs)) ELSE mapped := Unicode.ToLower(SIGNED32(ucs)) END;
+		IF ~EncodeChar(Char32(mapped), dst, o) THEN RETURN FALSE END
+	END;
+	dst[o] := 0X;
+	RETURN TRUE
+END MapCase;
 
 (** Convert all simple lower-case letters in a well-formed UTF-8 string to upper case. The resulting string is still in UTF-8 form *)
 

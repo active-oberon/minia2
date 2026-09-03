@@ -11,6 +11,7 @@
     "StringPool",
     "Strings",
     "TFStringPool",
+    "Unicode",
     "UTF8Strings"
   ],
   "requires": {
@@ -18,6 +19,7 @@
     "std/runtime": "*"
   },
   "residual": [
+    "Unicode arrived 2026-09-03 and is generated, not written: tests/gen-unicode.py turns data/UnicodeData.txt into a run table -- 2642 runs over the whole code space, 151 distinct (category, case) values -- so the character database finally travels in a headless SDK. UnicodeProperties parses that same file at run time through Texts and Codecs, which is why it is in lib/texts and this is not. Simple case mapping only, and the file in the tree is Unicode 5.0: a newer table is a newer file plus one script run.",
     "Regex arrived 2026-09-03: the library had no regular expressions at all, and it is here rather than in the registry because a pattern is a shared type -- two packages that each ship their own matcher cannot hand one to the other. It is Thompson's construction, so the cost is O(pattern * input) with no pattern able to make it worse; the price of that is no back references. Bytes, not characters: the UCD tables are still missing (see below), so a range cannot span a multi-byte character.",
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
     "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. In: Strings, UTF8Strings, DynamicStrings, StringPool, TFStringPool from std/base; UnicodeProperties and UnicodeBidirectionality from std/ime. RealConversions did NOT come: Streams imports it, so it stays in std/base and the dependency runs text -> base only.",

@@ -132,6 +132,7 @@ TrapWriters
 Traps
 UDP
 UTF8Strings
+Unicode
 Unix
 UnixBinary
 UnixFiles
