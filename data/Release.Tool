@@ -930,6 +930,7 @@ PACKAGE ApplicationsMini ARCHIVE "ApplicationsMini.zip" SOURCE "ApplicationsMini
 	CryptoPrimes.Mod CryptoDSA.Mod CryptoDiffieHellman.Mod
 	CryptoAES.Mod
 	CryptoPoly1305.Mod CryptoChaCha20.Mod
+	CryptoCurve25519.Mod CryptoEd25519.Mod
 	CryptoBlowfish.Mod
 	CryptoTwofish.Mod
 	CryptoCAST.Mod

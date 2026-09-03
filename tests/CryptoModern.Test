@@ -172,3 +172,173 @@ positive: the AEAD seals and opens, and refuses everything that was touched
 		aad[3] := CHR(ORD(aad[3]) - 1);
 		ASSERT(CC.Open(key, nonce, aad, 12, cipher, back, 114, tag))
 	END Test.
+
+positive: X25519 computes what RFC 7748 computes
+
+	(*	The iterated vector is the one that matters: a carry that is wrong once in a while
+		survives a single multiplication and does not survive a thousand chained ones. Only the
+		first iteration is here -- the thousandth was run by hand on 2026-09-03 and gave
+		684CF59BA83309552800EF566F2F4D3C1C3887C49360E3875F2EB94D99532C51, as the RFC says, in
+		2.7 seconds; a thousand of them under the AArch64 emulator would be two minutes of every
+		suite run for one case. *)
+	MODULE Test;
+	IMPORT C := CryptoCurve25519, U := CryptoUtils;
+	VAR k, u, r, t: ARRAY 32 OF CHAR; hex: ARRAY 80 OF CHAR; i, j: SIGNED32;
+
+		PROCEDURE Mult(CONST scalar, point: ARRAY OF CHAR): BOOLEAN;
+		BEGIN
+			IF ~C.ScalarMult(scalar, point, r) THEN RETURN FALSE END;
+			U.Bin2Hex(r, 0, hex, 0, 32); hex[64] := 0X;
+			RETURN TRUE
+		END Mult;
+
+	BEGIN
+		(* 5.2, both vectors *)
+		U.Hex2Bin("A546E36BF0527C9D3B16154B82465EDD62144C0AC1FC5A18506A2244BA449AC4", 0, k, 0, 32);
+		U.Hex2Bin("E6DB6867583030DB3594C1A424B15F7C726624EC26B3353B10A903A6D0AB1C4C", 0, u, 0, 32);
+		ASSERT(Mult(k, u));
+		ASSERT(hex = "C3DA55379DE9C6908E94EA4DF28D084F32ECCF03491C71F754B4075577A28552");
+
+		U.Hex2Bin("4B66E9D4D1B4673C5AD22691957D6AF5C11B6421E0EA01D42CA4169E7918BA0D", 0, k, 0, 32);
+		U.Hex2Bin("E5210F12786811D3F4B7959D0538AE2C31DBE7106FC03C3EFC4CD549C715A493", 0, u, 0, 32);
+		ASSERT(Mult(k, u));
+		ASSERT(hex = "95CBDE9476E8907D7AADE45CB4B873F88B595A68799FA152E6F8F7647AAC7957");
+
+		(* the iteration, once *)
+		FOR i := 0 TO 31 DO k[i] := 0X; u[i] := 0X END;
+		k[0] := 09X; u[0] := 09X;
+		ASSERT(Mult(k, u));
+		ASSERT(hex = "422C8E7A6227D7BCA1350B3E2BB7279F7897B87BB6854B783C60E80311AE3079");
+		j := 0
+	END Test.
+
+positive: two sides of X25519 agree, which is the whole point of it
+
+	MODULE Test;
+	IMPORT C := CryptoCurve25519, U := CryptoUtils;
+	VAR ask, apk, bsk, bpk, s1, s2, zero: ARRAY 32 OF CHAR; hex: ARRAY 80 OF CHAR; i: SIGNED32;
+	BEGIN
+		(* RFC 7748 6.1 *)
+		U.Hex2Bin("77076D0A7318A57D3C16C17251B26645DF4C2F87EBC0992AB177FBA51DB92C2A", 0, ask, 0, 32);
+		U.Hex2Bin("5DAB087E624A8A4B79E17F8B83800EE66F3BB1292618B6FD1C2F8B27FF88E0EB", 0, bsk, 0, 32);
+
+		ASSERT(C.Public(ask, apk));
+		U.Bin2Hex(apk, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "8520F0098930A754748B7DDCB43EF75A0DBF3A0D26381AF4EBA4A98EAA9B4E6A");
+		ASSERT(C.Public(bsk, bpk));
+		U.Bin2Hex(bpk, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "DE9EDB7D7B7DC1B4D35B61C2ECE435373F8343C85B78674DADFC7E146F882B4F");
+
+		ASSERT(C.ScalarMult(ask, bpk, s1));
+		ASSERT(C.ScalarMult(bsk, apk, s2));
+		U.Bin2Hex(s1, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "4A5D9D5BA4CE2DE1728E3BF480350F25E07E21C947D19E3376F09B3C1E161742");
+		FOR i := 0 TO 31 DO ASSERT(s1[i] = s2[i]) END;
+
+		(*	A point of small order makes a shared secret of nothing, and the answer is FALSE so
+			that a protocol can refuse it rather than encrypt to a key everybody knows *)
+		FOR i := 0 TO 31 DO zero[i] := 0X END;
+		ASSERT(~C.ScalarMult(ask, zero, s1))
+	END Test.
+
+positive: Ed25519 signs what RFC 8032 signs
+
+	MODULE Test;
+	IMPORT Ed := CryptoEd25519, U := CryptoUtils;
+	VAR sk, pk: ARRAY 32 OF CHAR; sig: ARRAY 64 OF CHAR; msg: ARRAY 8 OF CHAR;
+		hex: ARRAY 160 OF CHAR;
+
+		PROCEDURE KeyAndSign(CONST secret: ARRAY OF CHAR; CONST m: ARRAY OF CHAR; len: SIZE);
+		BEGIN
+			U.Hex2Bin(secret, 0, sk, 0, 32);
+			Ed.Public(sk, pk);
+			Ed.Sign(sk, m, len, sig)
+		END KeyAndSign;
+
+		PROCEDURE PubHex(): BOOLEAN;
+		BEGIN
+			U.Bin2Hex(pk, 0, hex, 0, 32); hex[64] := 0X;
+			RETURN TRUE
+		END PubHex;
+
+		PROCEDURE SigHex(): BOOLEAN;
+		BEGIN
+			U.Bin2Hex(sig, 0, hex, 0, 64); hex[128] := 0X;
+			RETURN TRUE
+		END SigHex;
+
+	BEGIN
+		(* TEST 1: the empty message *)
+		KeyAndSign("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60", msg, 0);
+		ASSERT(PubHex());
+		ASSERT(hex = "D75A980182B10AB7D54BFED3C964073A0EE172F3DAA62325AF021A68F707511A");
+		ASSERT(SigHex());
+		ASSERT(hex = "E5564300C360AC729086E2CC806E828A84877F1EB8E5D974D873E065224901555FB8821590A33BACC61E39701CF9B46BD25BF5F0595BBE24655141438E7A100B");
+		ASSERT(Ed.Verify(pk, msg, 0, sig));
+
+		(* TEST 2: one byte *)
+		msg[0] := 72X;
+		KeyAndSign("4CCD089B28FF96DA9DB6C346EC114E0F5B8A319F35ABA624DA8CF6ED4FB8A6FB", msg, 1);
+		ASSERT(PubHex());
+		ASSERT(hex = "3D4017C3E843895A92B70AA74D1B7EBC9C982CCF2EC4968CC0CD55F12AF4660C");
+		ASSERT(SigHex());
+		ASSERT(hex = "92A009A9F0D4CAB8720E820B5F642540A2B27B5416503F8FB3762223EBDB69DA085AC1E43E15996E458F3613D0F11D8C387B2EAEB4302AEEB00D291612BB0C00");
+		ASSERT(Ed.Verify(pk, msg, 1, sig));
+
+		(* TEST 3: two bytes *)
+		msg[0] := 0AFX; msg[1] := 82X;
+		KeyAndSign("C5AA8DF43F9F837BEDB7442F31DCB7B166D38535076F094B85CE3A2E0B4458F7", msg, 2);
+		ASSERT(PubHex());
+		ASSERT(hex = "FC51CD8E6218A1A38DA47ED00230F0580816ED13BA3303AC5DEB911548908025");
+		ASSERT(SigHex());
+		ASSERT(hex = "6291D657DEEC24024827E69C3ABE01A30CE548A284743A445E3680D7DB5AC3AC18FF9B538D16F290AE67F760984DC6594A7C15E9716ED28DC027BECEEA1EC40A");
+		ASSERT(Ed.Verify(pk, msg, 2, sig))
+	END Test.
+
+positive: Ed25519 refuses everything that was changed
+
+	(*	A signature scheme that only ever says yes is a signature scheme that says nothing. Each
+		of these is a byte moved somewhere the verification has to notice: the message, the
+		signature's two halves, and the key it is checked against. *)
+	MODULE Test;
+	IMPORT Ed := CryptoEd25519, U := CryptoUtils;
+	VAR sk, pk, other: ARRAY 32 OF CHAR; sig: ARRAY 64 OF CHAR; msg: ARRAY 16 OF CHAR;
+		i: SIGNED32;
+	BEGIN
+		U.Hex2Bin("C5AA8DF43F9F837BEDB7442F31DCB7B166D38535076F094B85CE3A2E0B4458F7", 0, sk, 0, 32);
+		Ed.Public(sk, pk);
+		msg := "a release";
+		Ed.Sign(sk, msg, 9, sig);
+		ASSERT(Ed.Verify(pk, msg, 9, sig));
+
+		msg[3] := CHR(ORD(msg[3]) + 1);
+		ASSERT(~Ed.Verify(pk, msg, 9, sig));
+		msg[3] := CHR(ORD(msg[3]) - 1);
+		ASSERT(Ed.Verify(pk, msg, 9, sig));
+
+		ASSERT(~Ed.Verify(pk, msg, 8, sig));             (* the same bytes, one shorter *)
+
+		sig[0] := CHR(ORD(sig[0]) + 1);                  (* R *)
+		ASSERT(~Ed.Verify(pk, msg, 9, sig));
+		sig[0] := CHR(ORD(sig[0]) - 1);
+		sig[32] := CHR(ORD(sig[32]) + 1);                (* S *)
+		ASSERT(~Ed.Verify(pk, msg, 9, sig));
+		sig[32] := CHR(ORD(sig[32]) - 1);
+
+		(*	S must be less than the group order. Without that check, adding the order to S gives
+			a second signature of the same message under the same key -- the malleability RFC
+			8032 section 8.4 warns about. The order's top byte is 10H, so a top byte of FFH is
+			certainly not reduced, and the answer must be no before any curve arithmetic. *)
+		sig[63] := 0FFX;
+		ASSERT(~Ed.Verify(pk, msg, 9, sig));
+		sig[63] := 0X;
+
+		Ed.Sign(sk, msg, 9, sig);
+		FOR i := 0 TO 31 DO other[i] := pk[i] END;
+		other[0] := CHR(ORD(other[0]) + 1);
+		ASSERT(~Ed.Verify(other, msg, 9, sig));          (* someone else's key *)
+
+		U.Hex2Bin("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60", 0, sk, 0, 32);
+		Ed.Public(sk, other);
+		ASSERT(~Ed.Verify(other, msg, 9, sig))           (* a real key, the wrong one *)
+	END Test.

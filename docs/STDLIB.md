@@ -70,7 +70,7 @@ that nothing imported either was wrong, and the one with no callers at all was t
 kept. `Base64` is now the implementation `WebSockets`, `CryptoRSA` and `CryptoDSA` were already
 using, under the name std filed it as. `DES` and `CryptoDES` both stay, as decided.
 
-Step 4 is done but for the two elliptic curves. Everything on this list went in on 2026-09-03:
+Step 4 is done. Everything on this list went in on 2026-09-03:
 
 **Crypto of this decade** (`CryptoSHA512`, `CryptoHKDF`, `CryptoChaCha20`, `CryptoPoly1305`,
 `tests/CryptoModern.Test`). What `lib/crypto` had was the nineties: MD5, DES, RSA. Now it also
@@ -79,9 +79,14 @@ RFC 5869, RFC 8439 — and checked against that standard's own vectors, because 
 with itself proves nothing. Two things fell out of writing them: `CryptoHMAC` padded every key to
 64 bytes, which is right through SHA-256 and wrong for SHA-512, so `CryptoHashes.Hash` now carries
 its compression block size; and `100H * ORD(c)` multiplies in sixteen bits and wraps, which put
-two wrong bytes in a Poly1305 key (a case in `tests/Numbers.Test` now pins it). **Still missing:
-X25519 and Ed25519** — the pair `ob get` would verify a signature with, and the largest single
-piece of arithmetic in the list.
+two wrong bytes in a Poly1305 key (a case in `tests/Numbers.Test` now pins it). **X25519 and Ed25519** followed the same afternoon (`CryptoCurve25519`, `CryptoEd25519`), from
+RFC 7748 and RFC 8032 and against their vectors — including the thousand-iteration one, which is
+the case that catches a carry that is wrong once in a while. The field is ten limbs of alternating
+26 and 25 bits, which is what a machine with no 128-bit product needs, and its hundred product
+terms are generated rather than typed. Both are constant time **by construction and not by
+measurement**: the ladder swaps with a mask, the field never branches on a limb, nothing is
+indexed by a secret — and nobody outside this tree has looked at either with a timer. That is the
+honest state to put a signature check for `ob get` on.
 
 **Monotonic time and UTC** (`source/Time.Mod`, `tests/Time.Test`). Both clocks were reachable
 and neither was usable: `PrecisionTimer.GetCounter` is monotonic on both hosts but counts
@@ -194,11 +199,11 @@ is, with `Hashing` for the hash and equality a map has to be handed.
 
 `DNS`, `IP`, `Network`, `Sockets`, `TCP`, `TLS`, `UDP`, `WebHTTP`, `WebHTTPClient`, `WebHTTPServer`
 
-## std/crypto — 26
+## std/crypto — 28
 
-`ASN1`, `CryptoAES`, `CryptoBigNumbers`, `CryptoCSPRNG`, `CryptoChaCha20`, `CryptoCiphers`, `CryptoDSA`, `CryptoDiffieHellman`, `CryptoFortuna`, `CryptoFortunaRng`, `CryptoHKDF`, `CryptoHMAC`, `CryptoHashes`, `CryptoKeccakF1600`, `CryptoKeccakSponge`, `CryptoMD5`, `CryptoPoly1305`, `CryptoPrimes`, `CryptoRSA`, `CryptoSHA1`, `CryptoSHA256`, `CryptoSHA3`, `CryptoSHA512`, `CryptoStreams`, `CryptoUtils`, `X509`
+`ASN1`, `CryptoAES`, `CryptoBigNumbers`, `CryptoCSPRNG`, `CryptoChaCha20`, `CryptoCurve25519`, `CryptoEd25519`, `CryptoCiphers`, `CryptoDSA`, `CryptoDiffieHellman`, `CryptoFortuna`, `CryptoFortunaRng`, `CryptoHKDF`, `CryptoHMAC`, `CryptoHashes`, `CryptoKeccakF1600`, `CryptoKeccakSponge`, `CryptoMD5`, `CryptoPoly1305`, `CryptoPrimes`, `CryptoRSA`, `CryptoSHA1`, `CryptoSHA256`, `CryptoSHA3`, `CryptoSHA512`, `CryptoStreams`, `CryptoUtils`, `X509`
 
-Missing, worth adding: **Ed25519, X25519**. ChaCha20-Poly1305 and HKDF arrived 2026-09-03.
+Nothing missing from this list any more: Ed25519, X25519, ChaCha20-Poly1305 and HKDF all arrived 2026-09-03.
 
 ## std/archive — 13
 
