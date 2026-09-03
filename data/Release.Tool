@@ -369,7 +369,7 @@ PACKAGE System ARCHIVE "System.zip" SOURCE "SystemSrc.zip" DESCRIPTION "System"
 	KernelLog.Mod
 
 	# Services and device drivers
-	Plugins.Mod Streams.Mod Pipes.Mod Commands.Mod
+	Plugins.Mod Streams.Mod Format.Mod Pipes.Mod Commands.Mod
 	In.Mod Out.Mod
 
 	I386 { I386.Reals.Mod }
@@ -503,7 +503,7 @@ PACKAGE System ARCHIVE "System.zip" SOURCE "SystemSrc.zip" DESCRIPTION "System"
 	TVDriver.Mod
 
 	# Generics
-	GenericCollections.Mod
+	GenericCollections.Mod GenericMaps.Mod Hashing.Mod
 
 	WIN { Windows.HostLibs.Mod }
 	UNIX { Unix.HostLibs.Mod }
@@ -786,7 +786,7 @@ PACKAGE ApplicationsMini ARCHIVE "ApplicationsMini.zip" SOURCE "ApplicationsMini
 
 	WIN { Windows.PrecisionTimer.Mod Windows.WinApplications.Mod }
 	UNIX { Unix.PrecisionTimer.Mod }
-	UNIX, WIN { Stopwatch.Mod }
+	UNIX, WIN { Stopwatch.Mod Time.Mod }
 
 	NATIVE {
 		DriverDatabase.Mod DriverDatabase.XML

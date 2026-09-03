@@ -28,6 +28,7 @@ Regex.Mod
 KernelLog.Mod
 Plugins.Mod
 Streams.Mod
+Format.Mod
 Pipes.Mod
 Commands.Mod
 In.Mod
@@ -95,6 +96,8 @@ SoundDevices.Mod
 Joysticks.Mod
 TVDriver.Mod
 GenericCollections.Mod
+GenericMaps.Mod
+Hashing.Mod
 Unix.HostLibs.Mod
 VirtualDisks.Mod
 Unix.V24.Mod
@@ -160,6 +163,7 @@ System.Mod
 Reboot.Mod
 Unix.PrecisionTimer.Mod
 Stopwatch.Mod
+Time.Mod
 Random.Mod
 Drand48.Mod
 SerialsVirtual.Mod

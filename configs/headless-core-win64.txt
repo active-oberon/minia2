@@ -24,6 +24,7 @@ Errors
 Events
 FP1616
 Files
+Format
 FoxA64Assembler
 FoxA64Backend
 FoxA64InstructionSet
@@ -71,7 +72,9 @@ FoxTranspilerBackend
 Frames
 GenericCollections
 GenericLinker
+GenericMaps
 GenericSort
+Hashing
 Heaps
 HostLibs
 IP
@@ -124,6 +127,7 @@ TFStringPool
 TaskScheduler
 TerminalCodes
 Texts
+Time
 Trace
 TrapWriters
 Traps

@@ -1,0 +1,203 @@
+# Tests for GenericMaps and Hashing: the lookup std/data did not have (2026-09-03).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test MapsTestShared;System.Load Test"
+#
+# A hash map is easy to write and easy to write wrongly, and the wrong versions pass the obvious
+# tests: they fail on removal from the middle of a chain, on growth while chains are long, and on
+# two keys that hash the same. Every case here is one of those.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE MapsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A hash that collides on purpose" *)
+
+	(*	Every key in one bucket. A map is only a hash table on the days the hash works; the day
+		it does not, it is a linked list, and these are the procedures that make it one. *)
+	PROCEDURE OneBucket*(CONST k: SIGNED64): SIZE;
+	BEGIN
+		RETURN 0
+	END OneBucket;
+
+	PROCEDURE Same*(CONST a, b: SIGNED64): BOOLEAN;
+	BEGIN
+		RETURN a = b
+	END Same;
+
+	END MapsTestShared.
+
+positive: a map of names, which is what a map is usually for
+
+	MODULE Test;
+	IMPORT Strings, Hashing,
+		M := GenericMaps(Strings.String, SIGNED32, Hashing.StringPtr, Hashing.StringPtrEqual);
+	VAR m: M.Map; v: SIGNED32;
+
+		PROCEDURE S(CONST s: ARRAY OF CHAR): Strings.String;
+		VAR p: Strings.String;
+		BEGIN
+			NEW(p, LEN(s)); COPY(s, p^);
+			RETURN p
+		END S;
+
+	BEGIN
+		NEW(m);
+		ASSERT(m.Empty());
+		ASSERT(~m.Get(S("nothing"), v));
+
+		m.Put(S("one"), 1); m.Put(S("two"), 2); m.Put(S("three"), 3);
+		ASSERT(m.Count() = 3);
+		ASSERT(m.Get(S("two"), v)); ASSERT(v = 2);
+
+		(* a key is what it says, not where it is: a fresh string with the same text is the same key *)
+		ASSERT(m.Contains(S("one")));
+		ASSERT(~m.Contains(S("One")));
+
+		m.Put(S("two"), 22);                    (* replaces, does not add *)
+		ASSERT(m.Count() = 3);
+		ASSERT(m.Get(S("two"), v)); ASSERT(v = 22);
+
+		ASSERT(m.Remove(S("two")));
+		ASSERT(~m.Remove(S("two")));            (* and says so the second time *)
+		ASSERT(m.Count() = 2);
+		ASSERT(~m.Get(S("two"), v));
+		ASSERT(m.Get(S("three"), v)); ASSERT(v = 3);
+
+		m.Reset;
+		ASSERT(m.Empty()); ASSERT(m.Count() = 0)
+	END Test.
+
+positive: it grows, and everything that was in it is still findable afterwards
+
+	MODULE Test;
+	IMPORT Hashing, M := GenericMaps(SIGNED64, SIGNED64, Hashing.Int, Hashing.IntEqual);
+	VAR m: M.Map; i, v: SIGNED64; seen: SIGNED64; it: M.Iterator; k: SIGNED64;
+	BEGIN
+		NEW(m);
+		(* a thousand keys through a table that starts at sixteen: six doublings *)
+		FOR i := 0 TO 999 DO m.Put(i, i * i) END;
+		ASSERT(m.Count() = 1000);
+		FOR i := 0 TO 999 DO
+			ASSERT(m.Get(i, v));
+			ASSERT(v = i * i)
+		END;
+		ASSERT(~m.Get(1000, v));
+
+		(* the walk sees every pair exactly once *)
+		seen := 0; it := m.All();
+		WHILE it.Next(k, v) DO
+			ASSERT(v = k * k);
+			INC(seen)
+		END;
+		ASSERT(seen = 1000);
+
+		(* remove every other one, from chains that are certainly not of length one *)
+		FOR i := 0 TO 999 BY 2 DO ASSERT(m.Remove(i)) END;
+		ASSERT(m.Count() = 500);
+		FOR i := 0 TO 999 DO
+			IF i MOD 2 = 0 THEN ASSERT(~m.Contains(i)) ELSE ASSERT(m.Contains(i)) END
+		END
+	END Test.
+
+positive: keys that collide are still told apart
+
+	(*	Every key hashes to the same bucket here, so the map degenerates into one chain -- which
+		is the only place where the chain walking, the replacement and the removal from the
+		middle are actually exercised. *)
+	MODULE Test;
+	IMPORT MapsTestShared, M := GenericMaps(SIGNED64, SIGNED64, MapsTestShared.OneBucket, MapsTestShared.Same);
+	VAR m: M.Map; i, v: SIGNED64;
+	BEGIN
+		NEW(m);
+		FOR i := 1 TO 50 DO m.Put(i, 100 + i) END;
+		ASSERT(m.Count() = 50);
+		FOR i := 1 TO 50 DO
+			ASSERT(m.Get(i, v));
+			ASSERT(v = 100 + i)
+		END;
+		ASSERT(m.Remove(25));                   (* the middle of the chain *)
+		ASSERT(m.Remove(1));
+		ASSERT(m.Count() = 48);
+		ASSERT(~m.Contains(25)); ASSERT(~m.Contains(1));
+		ASSERT(m.Contains(24)); ASSERT(m.Contains(26)); ASSERT(m.Contains(50))
+	END Test.
+
+positive: a set, and a negative hash does not pick a bucket that is not there
+
+	MODULE Test;
+	IMPORT Hashing, S := GenericMaps(SIGNED64, BOOLEAN, Hashing.Int, Hashing.IntEqual);
+	VAR s: S.Set; i: SIGNED64;
+	BEGIN
+		NEW(s);
+		ASSERT(s.Empty());
+		ASSERT(s.Add(7));
+		ASSERT(~s.Add(7));                      (* it was there already *)
+		ASSERT(s.Count() = 1);
+		ASSERT(s.Contains(7)); ASSERT(~s.Contains(8));
+		ASSERT(s.Remove(7)); ASSERT(~s.Remove(7));
+		ASSERT(s.Empty());
+
+		(*	Hashing.Int returns a negative number for plenty of keys, and a bucket index that
+			came out negative is a trap, not a wrong answer -- so this is the case that would
+			have caught it *)
+		FOR i := -500 TO 500 DO ASSERT(s.Add(i)) END;
+		ASSERT(s.Count() = 1001);
+		FOR i := -500 TO 500 DO ASSERT(s.Contains(i)) END;
+		ASSERT(~s.Contains(501))
+	END Test.
+
+positive: the hashes spread, which is the only thing a hash owes anybody
+
+	MODULE Test;
+	IMPORT Hashing;
+	VAR i, h: SIGNED64; buckets: ARRAY 64 OF SIGNED32; s: ARRAY 16 OF CHAR;
+		empty, worst: SIGNED32; n: SIZE;
+	BEGIN
+		ASSERT(Hashing.String("") = Hashing.Bytes("", 0));
+		ASSERT(Hashing.String("") >= 0);        (* never negative: a bucket index is not *)
+		ASSERT(Hashing.String("a") # Hashing.String("b"));
+		ASSERT(Hashing.String("ab") # Hashing.String("ba"));      (* order matters *)
+		ASSERT(Hashing.String("abc") = Hashing.Bytes("abc", 3));
+		ASSERT(Hashing.Int(1) # Hashing.Int(2));
+
+		(* a thousand consecutive numbers must not pile into a few buckets *)
+		FOR i := 0 TO 63 DO buckets[i] := 0 END;
+		FOR i := 0 TO 999 DO
+			n := Hashing.Int(i) MOD 64;
+			IF n < 0 THEN INC(n, 64) END;
+			INC(buckets[n])
+		END;
+		empty := 0; worst := 0;
+		FOR i := 0 TO 63 DO
+			IF buckets[i] = 0 THEN INC(empty) END;
+			IF buckets[i] > worst THEN worst := buckets[i] END
+		END;
+		(*	Sixteen per bucket is even. The first version of this module left the low five bits
+			of an integer hash always zero and put all thousand keys into two buckets, so these
+			two numbers are what that failure looked like from here. *)
+		ASSERT(empty = 0);
+		ASSERT(worst < 40);
+
+		(* the same for strings that differ in the last character only *)
+		FOR i := 0 TO 63 DO buckets[i] := 0 END;
+		s := "key0000";
+		FOR i := 0 TO 999 DO
+			s[4] := CHR(ORD("0") + i DIV 100 MOD 10);
+			s[5] := CHR(ORD("0") + i DIV 10 MOD 10);
+			s[6] := CHR(ORD("0") + i MOD 10);
+			h := Hashing.String(s);
+			n := h MOD 64;
+			IF n < 0 THEN INC(n, 64) END;
+			INC(buckets[n])
+		END;
+		empty := 0; worst := 0;
+		FOR i := 0 TO 63 DO
+			IF buckets[i] = 0 THEN INC(empty) END;
+			IF buckets[i] > worst THEN worst := buckets[i] END
+		END;
+		(*	Keys that differ in three characters are the case rotate-and-xor could not spread:
+			exclusive-or and rotation are linear, so a structured set of keys stays structured.
+			With the multiplication, none of the sixty-four buckets is empty. *)
+		ASSERT(empty = 0);
+		ASSERT(worst < 60)
+	END Test.
