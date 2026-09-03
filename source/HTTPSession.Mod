@@ -1,7 +1,7 @@
 MODULE HTTPSession; (** AUTHOR "Luc Blaeser/cs"; PURPOSE "HTTP Session Management";
 	code parts from CSHTTPSupport of "cs" *)
 
-IMPORT HTTPSupport, WebHTTP, MD5, IP, Random, Dates, Strings, TFClasses, Kernel, Modules, KernelLog;
+IMPORT HTTPSupport, WebHTTP, MD5 := CryptoMD5, CryptoUtils, IP, Random, Dates, Strings, TFClasses, Kernel, Modules, KernelLog;
 
 CONST
 	(** variable name for the sesiion id in the HTTP request *)
@@ -237,8 +237,8 @@ VAR
 	VAR
 		i: SIZE;
 		buffer1,buffer2: POINTER TO ARRAY OF CHAR;
-		context: MD5.Context;
-		digest: MD5.Digest;
+		context: MD5.Hash;
+		digest: ARRAY 16 OF CHAR;
 		date,time: SIGNED32;
 	BEGIN
 		NEW(buffer1,16384);
@@ -252,10 +252,10 @@ VAR
 		Strings.Append(buffer1^,buffer2^);
 		Strings.IntToStr(randomSequence.Integer(),buffer2^); (* some random number *)
 		Strings.Append(buffer1^,buffer2^);
-		context := MD5.New();
-		MD5.WriteBytes(context,buffer1^,Strings.Length(buffer1^));
-		MD5.Close(context,digest);
-		MD5.ToString(digest,sessionId)
+		NEW(context); context.Initialize;
+		context.Update(buffer1^,0,Strings.Length(buffer1^));
+		context.GetHash(digest,0);
+		CryptoUtils.Bin2Hex(digest,0,sessionId,0,16); sessionId[32] := 0X
 	END NewSessionId;
 
 	PROCEDURE AddExpirationHandler*(handler: SessionExpirationHandler);

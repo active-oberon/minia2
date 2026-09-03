@@ -1,137 +1,198 @@
-MODULE Base64; (** AUTHOR "P.Hunziker - Ported from Oberon.Base64.Mod (JG 23.8.94) "; PURPOSE "Base64 encoding and decoding"; *)
 
-IMPORT Streams, KernelLog;
+MODULE Base64;	 (** AUTHOR "g.f."; PURPOSE  "Base 64 encoding according to RFC1421"; *)
+
+IMPORT Streams;
 
 VAR
-		encTable: ARRAY 64 OF CHAR;
-		decTable: ARRAY 128 OF SIGNED16;
+	etab: ARRAY 64 OF CHAR;
+	dtab: ARRAY 128 OF SIGNED16;
 
-PROCEDURE Decode*(R: Streams.Reader; W:Streams.Writer);
-		VAR
-			codes: ARRAY 4 OF SIGNED16;
-			i: SIGNED16;
-			ch: CHAR;
-			ok, end: BOOLEAN;
+
+	PROCEDURE Encode*( CONST image: ARRAY OF CHAR; len: SIZE;
+						  		VAR b64: ARRAY OF CHAR );
+	VAR
+		group, i, ix, ox: SIGNED32;
 	BEGIN
-		ok := TRUE; end := FALSE;
-		ch:=R.Get();
-		REPEAT
-			i := 0;
-			WHILE ok & (i < 4) DO
-				WHILE ch<=" " DO ch:=R.Get(); END;
-				codes[i] := decTable[ORD(ch)];
-				ok := codes[i] >= 0; INC(i);
-				IF ok THEN ch:=R.Get() END;
+		group := 0;  i := 0;  ix := 0;  ox := 0;
+		WHILE ix < len DO
+			group := group*100H + ORD( image[ix] );  INC( ix );  INC( i );
+			IF i = 3 THEN
+				b64[ox] := etab[group DIV 40000H MOD 64];
+				b64[ox+1] := etab[group DIV 1000H MOD 64];
+				b64[ox+2] := etab[group DIV 40H MOD 64];
+				b64[ox+3] := etab[group MOD 64];
+				INC( ox, 4 );
+				group := 0;
+				i := 0
 			END;
-			IF i > 0 THEN
-				IF ok THEN
-					W.Char(CHR(ASH(codes[0], 2)+ASH(codes[1], -4)));
-					W.Char(CHR(ASH(codes[1], 4)+ASH(codes[2], -2)));
-					W.Char(CHR(ASH(codes[2], 6)+codes[3]))
-				ELSIF ch = "=" THEN
-					ok := TRUE; end := TRUE; DEC(i);
-					IF i = 2 THEN W.Char( CHR(ASH(codes[0], 2)+ASH(codes[1], -4)))
-					ELSIF i = 3 THEN
-						W.Char( CHR(ASH(codes[0], 2)+ASH(codes[1], -4)));
-						W.Char( CHR(ASH(codes[1], 4)+ASH(codes[2], -2)))
-					ELSIF i # 0 THEN ok := FALSE
-					END
-				ELSIF i = 4 THEN
-					ok := TRUE; end := TRUE;
-					W.Char( CHR(ASH(codes[0], 2)+ASH(codes[1], -4)));
-					W.Char( CHR(ASH(codes[1], 4)+ASH(codes[2], -2)));
-					W.Char( CHR(ASH(codes[2], 6)+codes[3]))
-				ELSIF i = 1 THEN ok := TRUE; end := TRUE
-				END
-			ELSE
-				end := TRUE
-			END;
-		UNTIL end;
-		W.Update;
-	END Decode;
-
-	PROCEDURE Encode*(R:Streams.Reader; W:Streams.Writer);
-		VAR
-			i, j, c, c0, c1, c2, l: SIGNED32;
-			chars: ARRAY 3 OF CHAR;
-
-		PROCEDURE OutCode(k:SIGNED32);
-		BEGIN
-			IF l > 80 THEN	W.Ln; l := 0	END;
-
-			c0 :=ORD(chars[0]);
-			c := ASH(c0, -2);
-			W.Char( encTable[c]);
-
-			c0 := c0-ASH(c, 2);
-			c1 := ORD(chars[1]);
-			c := ASH(c0, 4)+ASH(c1, -4);
-			IF k>=1 THEN W.Char(encTable[c]); END;
-
-			c1 := c1 MOD ASH(1, 4);
-			c2 := ORD(chars[2]);
-			c := ASH(c1, 2)+ASH(c2, -6);
-			IF k>=2 THEN W.Char(encTable[c]); END;
-
-			c2 := c2 MOD ASH(1, 6);
-			IF k>=3 THEN W.Char(encTable[c2]); END;
-			INC(l, 4)
-		END OutCode;
-	BEGIN
-		l := 0;
-		R.Char(chars[0]); i := 1;
-		WHILE R.res=Streams.Ok DO
-			IF i >= 3 THEN OutCode(i); i := 0 END;
-			R.Char(chars[i]); INC(i)
 		END;
-		DEC(i);
-		IF i > 0 THEN
-			j := i;
-			WHILE i < 3 DO chars[i] := 0X; INC(i) END;
-			OutCode(j);
-			WHILE j<3 DO W.Char("="); INC(j) END;
+
+		IF i > 0 THEN	(*encode rest *)
+			IF i = 1 THEN  group := group*256  END;
+			b64[ox] := etab[group DIV 400H MOD 64];
+			b64[ox+1] := etab[group DIV 10H MOD 64];
+			IF i = 1 THEN  b64[ox+2] := '='  ELSE  b64[ox+2] := etab[group*4 MOD 64]  END;
+			b64[ox+3] := '=';
+			INC( ox, 4 );
 		END;
-		W.Update;
+		b64[ox] := 0X;
 	END Encode;
 
-	PROCEDURE InitTables;
-		VAR i, max: SIGNED16;
+
+	(* returns image length, negative value = error! *)
+	PROCEDURE Decode*( CONST b64: ARRAY OF CHAR;
+								VAR image: ARRAY OF CHAR ): SIGNED32;
+	VAR
+		i, d, code, group, ix, len: SIGNED32;
+		c: CHAR;
 	BEGIN
-		max := ORD("Z")-ORD("A");
-		FOR i := 0 TO max DO encTable[i] := CHR(i+ORD("A")) END;
-		INC(max);
-		FOR i := max TO max+ORD("z")-ORD("a") DO encTable[i] := CHR(i-max+ORD("a")) END;
-		max := max+ORD("z")-ORD("a")+1;
-		FOR i := max TO max+ORD("9")-ORD("0") DO encTable[i] := CHR(i-max+ORD("0")) END;
-		encTable[62] := "+";
-		encTable[63] := "/";
-		FOR i := 0 TO 127 DO decTable[i] := -1 END;
-		FOR i := 0 TO 63 DO decTable[ORD(encTable[i])] := i END
+		len := 0;  ix := 0;  group := 0;  i := 0;
+
+		REPEAT  c := b64[ix];  INC( ix )  UNTIL (c > ' ') OR (c = 0X);
+		code := dtab[ORD( c )];
+		WHILE code >= 0 DO
+			group := group*64 + code;  INC( i );
+			IF i = 4 THEN
+				image[len] := CHR( group DIV 10000H MOD 100H );  INC( len );
+				image[len] := CHR( group DIV 100H MOD 100H );  INC( len );
+				image[len] := CHR( group MOD 100H );  INC( len );
+				group := 0;  i := 0
+			END;
+			REPEAT  c := b64[ix];  INC( ix )  UNTIL (c > ' ') OR (c = 0X);
+			code := dtab[ORD( c )];
+		END;
+
+		IF c = '=' THEN  (* decode rest *)
+			IF i < 2 THEN  (* error *)  RETURN -1  END;
+			group := group*64;  d := 1;  c := b64[ix];
+			IF c = '=' THEN  group := group*64;  d := 2  END;
+			image[len] := CHR( group DIV 10000H );  INC( len );
+			IF d = 1 THEN  image[len] := CHR( group DIV 100H MOD 100H );  INC( len )  END
+		ELSIF i > 0 THEN  (* error *)  RETURN -1
+		END;
+
+		RETURN len
+	END Decode;
+
+
+
+
+	PROCEDURE EncodeStream*( CONST image: ARRAY OF CHAR; len: SIGNED32;
+						   		  		w: Streams.Writer );
+	VAR
+		group, i, ix, ll: SIGNED32;
+	BEGIN
+		group := 0;  i := 0; ix := 0;  ll := 0;
+		WHILE ix < len DO
+			group := group*100H + ORD( image[ix] );  INC( ix );  INC( i );
+			IF i = 3 THEN
+				w.Char( etab[group DIV 40000H MOD 64] );
+				w.Char( etab[group DIV 1000H MOD 64] );
+				w.Char( etab[group DIV 40H MOD 64] );
+				w.Char( etab[group MOD 64] );
+				INC( ll, 4 );
+				IF ll >= 72 THEN  w.Ln;  ll := 0  END;
+				group := 0;
+				i := 0
+			END;
+		END;
+
+		IF i > 0 THEN   (* encode rest *)
+			IF i = 1 THEN  group := group*100H  END;
+			w.Char( etab[group DIV 400H MOD 64] );
+			w.Char( etab[group DIV 10H MOD 64] );
+			IF i = 1 THEN  w.Char( '=' )  ELSE  w.Char( etab[group*4 MOD 64] )  END;
+			w.Char( '=' );
+		END;
+		w.Update
+	END EncodeStream;
+
+
+	(* returns image length, negative value = error! *)
+	PROCEDURE DecodeStream*( r: Streams.Reader;
+										VAR image: ARRAY OF CHAR ): SIGNED32;
+	VAR
+		i, rest, code, group, len: SIGNED32;
+		c: CHAR;
+	BEGIN
+		len := 0; group := 0;  i := 0;
+
+		REPEAT  r.Char( c )  UNTIL (c > ' ') OR (c = 0X);
+		code := dtab[ORD( c )];
+		WHILE code >= 0 DO
+			group := group*64 + code;  INC( i );
+			IF i = 4 THEN
+				image[len] := CHR( group DIV 10000H MOD 100H );  INC( len );
+				image[len] := CHR( group DIV 100H MOD 100H );  INC( len );
+				image[len] := CHR( group MOD 100H );  INC( len );
+				group := 0;  i := 0
+			END;
+			REPEAT  r.Char( c )  UNTIL (c > ' ') OR (c = 0X);
+			code := dtab[ORD( c )];
+		END;
+
+		IF c = '=' THEN   (* decode rest *)
+			IF i < 2 THEN  (* error *)  RETURN -1  END;
+			group := group*64;  rest := 2;  r.Char( c );
+			IF c = '=' THEN  group := group*64;  rest := 1  END;
+			image[len] := CHR( group DIV 10000H );  INC( len );
+			IF rest = 2 THEN  image[len] := CHR( group DIV 100H MOD 100H );  INC( len )  END
+		ELSIF i > 0 THEN  (* error *)  RETURN -1
+		END;
+
+		RETURN len
+	END DecodeStream;
+
+
+	PROCEDURE InitTables;
+	CONST
+		letters = 26;  digits = 10;
+	VAR
+		i, j: SIGNED16;
+	BEGIN
+		j := 0;
+		FOR i := 0 TO letters - 1 DO  etab[j] := CHR( i + ORD("A") );  INC( j )  END;
+		FOR i := 0 TO letters - 1 DO  etab[j] := CHR( i + ORD("a") );  INC( j )  END;
+		FOR i := 0 TO digits - 1 DO  etab[j] := CHR( i + ORD("0") );  INC( j )  END;
+		etab[62] := "+";
+		etab[63] := "/";
+		FOR i := 0 TO 127 DO  dtab[i] := -1  END;
+		FOR i := 0 TO 63 DO  dtab[ORD( etab[i] )] := i  END
 	END InitTables;
 
 	(*
-	(* testing: expected behaviour:  "admin:1234" encode => "YWRtaW46MTIzNA==" decode => "admin:1234"*)
-	PROCEDURE Test*;
-	VAR W:Streams.StringWriter; R: Streams.StringReader; plain, base64: ARRAY 80 OF CHAR;
+	(* testing: expected behaviour:  "admin:1234"  =>  "YWRtaW46MTIzNA=="  =>  "admin:1234"*)
+	PROCEDURE Test*( c: Commands.Context );
+	VAR image, base64: ARRAY 80 OF CHAR;  len: SIGNED32; r: Streams.StringReader;
 	BEGIN
-		NEW(W,80); NEW(R,80);
-		KernelLog.String('admin:1234 => '); KernelLog.Ln;
-		R.Set('admin:1234');
-		Encode(R,W);
-		W.Get(base64);
-		KernelLog.String(base64); KernelLog.String(" => ");
+		c.out.String( 'admin:1234  =>  ' );
+		image := 'admin:123456789';
+		Encode( image, 10, base64 );
+		c.out.String( base64 ); c.out.String( "  =>  " );
+		len := Decode( base64, image );
+		IF len > 0 THEN
+			image[len] := 0X;
+			c.out.String(image); c.out.Ln;
+		END;
 
-		NEW(W,80); NEW(R,80);
-		R.Set(base64);
-		Decode(R,W);
-		W.Get(plain);
-		KernelLog.String(plain); KernelLog.Ln;
+		c.out.String( 'admin:1234  =>  ' );
+		EncodeStream( 'admin:123456789', 10, c.out );  c.out.String( "  =>  " );
+		NEW( r, 80 );  r.Set( base64 );
+		len := DecodeStream( r, image );
+		IF len > 0 THEN
+			image[len] := 0X;
+			c.out.String( image ); c.out.Ln
+		END
 	END Test;
 	*)
 
+
 BEGIN
-	InitTables;
+	InitTables();
 END Base64.
 
-Base64.Test
-System.Free Base64 ~
+
+
+	Base64.Test ~
+
+	System.Free Base64 ~

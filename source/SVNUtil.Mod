@@ -1,7 +1,7 @@
 MODULE SVNUtil; (** AUTHOR "rstoll"; *)
 
 IMPORT
-	Files, Strings, MD5,
+	Files, Strings, MD5 := CryptoMD5, CryptoUtils,
 	SVNOutput,
 	Dates;
 
@@ -90,8 +90,8 @@ CONST
 VAR
 	len: SIZE;
 	tmp, res : Strings.String;
-	md5context : MD5.Context;
-	md5digest : MD5.Digest;
+	md5context : MD5.Hash;
+	md5digest : ARRAY 16 OF CHAR;
 
 	r : Files.Reader;
 	f : Files.File;
@@ -104,15 +104,15 @@ BEGIN
 
 	Files.OpenReader ( r, f, 0 );
 
-	md5context := MD5.New();
+	NEW ( md5context ); md5context.Initialize;
 	LOOP
 		r.Bytes ( tmp^, 0, bufSize, len );
-		MD5.WriteBytes ( md5context, tmp^, len );
+		md5context.Update ( tmp^, 0, len );
 		IF len < bufSize THEN EXIT END;
 	END;
 
-	MD5.Close ( md5context, md5digest );
-	MD5.ToString ( md5digest, res^ );
+	md5context.GetHash ( md5digest, 0 );
+	CryptoUtils.Bin2Hex ( md5digest, 0, res^, 0, 16 );  res^[32] := 0X;
 
 	RETURN res;
 END GetChecksum;
@@ -131,17 +131,17 @@ END CheckChecksum;
 
 PROCEDURE GetUUID* () : Strings.String;
 VAR
-	md5context : MD5.Context;
-	md5digest : MD5.Digest;
+	md5context : MD5.Hash;
+	md5digest : ARRAY 16 OF CHAR;
 	tmp : Strings.String;
 BEGIN
 	NEW ( tmp, 40 );
-	md5context := MD5.New();
+	NEW ( md5context ); md5context.Initialize;
 	Dates.FormatDateTime ( SVNOutput.DateFormat, Dates.Now(), tmp^ );
 
-	MD5.WriteBytes ( md5context, tmp^, Strings.Length ( tmp^ ) );
-	MD5.Close ( md5context, md5digest );
-	MD5.ToString ( md5digest, tmp^ );
+	md5context.Update ( tmp^, 0, Strings.Length ( tmp^ ) );
+	md5context.GetHash ( md5digest, 0 );
+	CryptoUtils.Bin2Hex ( md5digest, 0, tmp^, 0, 16 );  tmp^[32] := 0X;
 
 	RETURN tmp;
 END GetUUID;
