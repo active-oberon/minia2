@@ -87,6 +87,7 @@ KernelLog
 LSP
 Linker
 Loader
+LocalSockets
 Locks
 Machine
 Math
@@ -104,6 +105,7 @@ Plugins
 PrecisionTimer
 ProcessInfo
 ProcessInfo0
+Processes
 Random
 RealConversions
 Reals
