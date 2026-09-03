@@ -113,6 +113,43 @@ positive: character classes, their ranges, their negation and their shorthands
 		ASSERT(~Regex.Matches("^a\.c$", "abc"))
 	END Test.
 
+positive: counted repetition, and a brace that is not a count is a brace
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE; s: ARRAY 32 OF CHAR;
+	BEGIN
+		r := Regex.Compile("^a{3}$", e);
+		ASSERT(r # NIL);
+		ASSERT(r.Match("aaa")); ASSERT(~r.Match("aa")); ASSERT(~r.Match("aaaa"));
+
+		r := Regex.Compile("a{2,4}", e);
+		ASSERT(r.Find("baaaaaa", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 4);   (* greedy *)
+		r := Regex.Compile("a{2,4}?", e);
+		ASSERT(r.Find("baaaaaa", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 2);   (* lazy *)
+
+		r := Regex.Compile("^a{2,}$", e);
+		ASSERT(~r.Match("a")); ASSERT(r.Match("aa")); ASSERT(r.Match("aaaaaaaa"));
+
+		r := Regex.Compile("^(ab){2}$", e);
+		ASSERT(r.Match("abab"));
+		ASSERT(r.GroupString(1, "abab", s)); ASSERT(s = "ab");   (* the last copy wins *)
+
+		ASSERT(Regex.Matches("^x{0}y$", "y"));                   (* nothing, spelled out *)
+		ASSERT(Regex.Matches("^a\d{2,3}b$", "a123b"));
+
+		(*	Perl reads a brace that does not open a count as a brace, and so does anyone who
+			pastes a pattern in; failing the compile there would be the surprising answer *)
+		ASSERT(Regex.Matches("^a{x}$", "a{x}"));
+		ASSERT(Regex.Matches("^a{2$", "a{2"));
+		ASSERT(Regex.Matches("^a{}$", "a{}"));
+
+		r := Regex.Compile("a{3,2}", e);
+		ASSERT(r = NIL);                                         (* counts run backwards *)
+		r := Regex.Compile("a{1001}", e);
+		ASSERT(r = NIL)                                          (* past MaxRepeat, and it says so *)
+	END Test.
+
 positive: leftmost-first, which is what the engine promises and not merely some match
 
 	MODULE Test;
@@ -134,6 +171,44 @@ positive: leftmost-first, which is what the engine promises and not merely some 
 		ASSERT(r.Find("a12b345", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 2);
 		ASSERT(r.Find("a12b345", pos + len, pos, len)); ASSERT(pos = 4); ASSERT(len = 3);
 		ASSERT(~r.Find("a12b345", pos + len, pos, len))
+	END Test.
+
+positive: replacing and splitting, including the empty match that would hang a loop
+
+	MODULE Test;
+	IMPORT Regex, Strings;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; out: ARRAY 64 OF CHAR;
+		parts: Strings.StringArray; n: SIZE;
+	BEGIN
+		r := Regex.Compile("[0-9]+", e);
+		ASSERT(r.ReplaceAll("a12b345c", "#", out)); ASSERT(out = "a#b#c");
+		ASSERT(r.ReplaceAll("abc", "#", out)); ASSERT(out = "abc");
+
+		(* $0 is the whole match and $$ is a dollar *)
+		r := Regex.Compile("(a+)(b+)", e);
+		ASSERT(r.ReplaceAll("xaabbz", "[$2$1]", out)); ASSERT(out = "x[bbaa]z");
+		ASSERT(r.ReplaceAll("xaabbz", "<$0>", out)); ASSERT(out = "x<aabb>z");
+		ASSERT(r.ReplaceAll("xaabbz", "$$", out)); ASSERT(out = "x$z");
+
+		(*	an empty match must still move: x* matches nothing everywhere, and a loop that
+			does not advance over it never returns *)
+		r := Regex.Compile("x*", e);
+		ASSERT(r.ReplaceAll("ab", "-", out)); ASSERT(out = "-a-b-");
+
+		(* a replacement that does not fit is refused, not truncated into a wrong answer *)
+		r := Regex.Compile("a", e);
+		ASSERT(~r.ReplaceAll("aaaa", "0123456789012345678901234567890123456789", out));
+
+		r := Regex.Compile("[0-9]+", e);
+		n := r.Split("a1b22c", parts);
+		ASSERT(n = 3);
+		ASSERT(parts[0]^ = "a"); ASSERT(parts[1]^ = "b"); ASSERT(parts[2]^ = "c");
+		n := r.Split("1a2", parts);
+		ASSERT(n = 3);
+		ASSERT(parts[0]^ = "");                 (* a match at the edge leaves the empty piece *)
+		ASSERT(parts[1]^ = "a"); ASSERT(parts[2]^ = "");
+		n := r.Split("abc", parts);
+		ASSERT(n = 1); ASSERT(parts[0]^ = "abc")
 	END Test.
 
 positive: the pattern that hangs a backtracking engine finishes here
