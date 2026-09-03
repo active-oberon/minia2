@@ -1,0 +1,109 @@
+# Tests for Format: the template with holes that stands in for printf (2026-09-03).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The cases that matter are the ones about a message going wrong: a hole nobody filled, an
+# argument with no hole, and a message too long for its buffer. A formatter that hides any of
+# those produces a message the reader cannot tell from a correct one.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the holes are filled in order, and braces can be written literally
+
+	MODULE Test;
+	IMPORT Format;
+	VAR f: Format.StringFormatter; s: ARRAY 64 OF CHAR;
+	BEGIN
+		f := Format.Into(64, "{} of {} tests failed");
+		f.Int(3, 0); f.Int(7228, 0);
+		f.Get(s);
+		ASSERT(s = "3 of 7228 tests failed");
+		ASSERT(f.Complete());
+		ASSERT(f.holes = 2);
+
+		f := Format.Into(64, "{}={}, {}");
+		f.Str("name"); f.Char("x"); f.Bool(TRUE);
+		f.Get(s);
+		ASSERT(s = "name=x, true");
+
+		f := Format.Into(64, "{{{}}}");
+		f.Str("brace");
+		f.Get(s);
+		ASSERT(s = "{brace}");
+
+		f := Format.Into(64, "no holes here");
+		f.Get(s);
+		ASSERT(s = "no holes here");
+		ASSERT(f.Complete())
+	END Test.
+
+positive: the numbers come out the way the call asked, not the template
+
+	MODULE Test;
+	IMPORT Format;
+	VAR f: Format.StringFormatter; s: ARRAY 64 OF CHAR;
+	BEGIN
+		f := Format.Into(64, "[{}]");
+		f.Int(42, 6);
+		f.Get(s);
+		ASSERT(s = "[    42]");            (* width is the argument of the call *)
+
+		f := Format.Into(64, "{}");
+		f.Hex(255, 4);
+		f.Get(s);
+		ASSERT(s = "  FF");                (* Streams.Writer.Hex pads with spaces, not zeros *)
+
+		f := Format.Into(64, "{}");
+		f.Int(-7, 0);
+		f.Get(s);
+		ASSERT(s = "-7");
+
+		f := Format.Into(64, "{} {}");
+		f.Bool(FALSE); f.Bool(TRUE);
+		f.Get(s);
+		ASSERT(s = "false true")
+	END Test.
+
+positive: a message that went wrong says so instead of reading like a correct one
+
+	MODULE Test;
+	IMPORT Format;
+	VAR f: Format.StringFormatter; s: ARRAY 64 OF CHAR;
+	BEGIN
+		(* a hole nobody filled stays visible *)
+		f := Format.Into(64, "{} of {} failed");
+		f.Int(3, 0);
+		f.Get(s);
+		ASSERT(s = "3 of {} failed");
+		ASSERT(~f.Complete());
+
+		(* an argument with no hole left is dropped, and that is not silent either *)
+		f := Format.Into(64, "just {}");
+		f.Int(1, 0); f.Int(2, 0);
+		f.Get(s);
+		ASSERT(s = "just 1");
+		ASSERT(f.extra);
+		ASSERT(~f.Complete());
+
+		(* Done twice is not the message twice *)
+		f := Format.Into(64, "a{}c");
+		f.Str("b");
+		f.Done; f.Done;
+		f.Get(s);
+		ASSERT(s = "abc")
+	END Test.
+
+positive: the same template into a stream, which is where a message usually goes
+
+	MODULE Test;
+	IMPORT Format, Streams;
+	VAR w: Streams.StringWriter; f: Format.Formatter; s: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(w, 64);
+		f := Format.To(w, "{}:{} -- {}");
+		f.Str("Regex.Mod"); f.Int(128, 0); f.Str("ok");
+		f.Done;
+		w.Get(s);
+		ASSERT(s = "Regex.Mod:128 -- ok");
+		ASSERT(f.Complete())
+	END Test.

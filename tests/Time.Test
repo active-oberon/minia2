@@ -1,0 +1,117 @@
+# Tests for Time: the monotonic clock and the UTC one (2026-09-03).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The Unix times are the ones every other system prints for those dates, and the awkward ones are
+# on purpose: before 1970, the leap day of a century year that is a leap year, and the second the
+# 32-bit world ends on. A calendar that agrees with itself proves nothing.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the calendar agrees with what Unix time means
+
+	MODULE Test;
+	IMPORT Time, Dates;
+	VAR dt: Dates.DateTime;
+
+		PROCEDURE At(y, m, d, h, min, s: SIGNED32): Dates.DateTime;
+		VAR t: Dates.DateTime;
+		BEGIN
+			t.year := y; t.month := m; t.day := d;
+			t.hour := h; t.minute := min; t.second := s;
+			RETURN t
+		END At;
+
+	BEGIN
+		ASSERT(Time.ToUnix(At(1970, 1, 1, 0, 0, 0)) = 0);
+		ASSERT(Time.ToUnix(At(2000, 1, 1, 0, 0, 0)) = 946684800);
+		ASSERT(Time.ToUnix(At(2026, 9, 3, 12, 0, 0)) = 1788436800);
+		ASSERT(Time.ToUnix(At(2038, 1, 19, 3, 14, 7)) = 2147483647);
+
+		(* before the epoch, where a truncating division would give the wrong day *)
+		ASSERT(Time.ToUnix(At(1969, 12, 31, 23, 59, 59)) = -1);
+		ASSERT(Time.ToUnix(At(1900, 1, 1, 0, 0, 0)) = -2208988800);
+
+		(* 2000 is a leap year and 1900 is not, which is the whole point of the 400 rule *)
+		ASSERT(Time.ToUnix(At(2000, 2, 29, 12, 0, 0)) = 951825600);
+		ASSERT(Time.ToUnix(At(2000, 3, 1, 0, 0, 0)) - Time.ToUnix(At(2000, 2, 28, 0, 0, 0)) = 2 * 86400);
+		ASSERT(Time.ToUnix(At(1900, 3, 1, 0, 0, 0)) - Time.ToUnix(At(1900, 2, 28, 0, 0, 0)) = 86400);
+
+		(* and back *)
+		dt := Time.FromUnix(0);
+		ASSERT(dt.year = 1970); ASSERT(dt.month = 1); ASSERT(dt.day = 1);
+		ASSERT(dt.hour = 0); ASSERT(dt.minute = 0); ASSERT(dt.second = 0);
+		dt := Time.FromUnix(1788436800);
+		ASSERT(dt.year = 2026); ASSERT(dt.month = 9); ASSERT(dt.day = 3); ASSERT(dt.hour = 12);
+		dt := Time.FromUnix(-1);
+		ASSERT(dt.year = 1969); ASSERT(dt.month = 12); ASSERT(dt.day = 31);
+		ASSERT(dt.hour = 23); ASSERT(dt.minute = 59); ASSERT(dt.second = 59);
+		dt := Time.FromUnix(951825600);
+		ASSERT(dt.month = 2); ASSERT(dt.day = 29)
+	END Test.
+
+positive: every day of a century round trips, both ways
+
+	(*	Forty thousand days across 1900 to 2010 -- the century leap year, every ordinary one, and
+		the epoch itself -- because an off-by-one in a calendar hides on all but a few dates. *)
+	MODULE Test;
+	IMPORT Time, Dates;
+	VAR i: SIGNED64; dt: Dates.DateTime; t: SIGNED64;
+	BEGIN
+		FOR i := -2208988800 TO 1288000000 BY 86400 DO
+			dt := Time.FromUnix(i);
+			t := Time.ToUnix(dt);
+			ASSERT(t = i);
+			ASSERT(dt.month >= 1); ASSERT(dt.month <= 12);
+			ASSERT(dt.day >= 1); ASSERT(dt.day <= 31)
+		END
+	END Test.
+
+positive: the monotonic clock moves, forward, in nanoseconds
+
+	MODULE Test;
+	IMPORT Time;
+	VAR a, b: Time.Instant; i, sum: SIGNED64; d: Time.Duration;
+	BEGIN
+		a := Time.Monotonic();
+		sum := 0;
+		(*	Twenty thousand, not three million: the first version of this case took 124 seconds
+			of the AArch64 suite under qemu, which is forty microseconds an iteration, and then
+			failed its own upper bound. An emulator is the reason a timing test may not assume
+			how fast anything is -- the bound below is an hour, and it is there to catch a clock
+			counting in the wrong unit, not a slow machine. *)
+		FOR i := 1 TO 20000 DO sum := sum + i END;
+		b := Time.Monotonic();
+		ASSERT(sum > 0);                        (* so the loop is not optimised away *)
+		ASSERT(b > a);                          (* it moved *)
+		d := Time.Since(a);
+		ASSERT(d >= b - a);                     (* and it did not go back *)
+		ASSERT(d < 3600 * Time.Second);         (* a clock counting microseconds would fail here *)
+		ASSERT(Time.Milliseconds(1500 * Time.Millisecond) = 1500);
+		(*	Not = 0.001: the quotient and the literal are the same number on x86-64 and one
+			unit in the last place apart on AArch64, which is what floating point is for. *)
+		ASSERT(ABS(Time.Seconds(Time.Second) - 1.0) < 1.0E-12);
+		ASSERT(ABS(Time.Seconds(Time.Millisecond) - 0.001) < 1.0E-12)
+	END Test.
+
+positive: UTC and local differ by the offset the host is running in
+
+	MODULE Test;
+	IMPORT Time, Dates;
+	VAR utc, local, back: Dates.DateTime; z: SIGNED32; a, b: SIGNED64;
+	BEGIN
+		z := Time.Zone();
+		ASSERT(z >= -720); ASSERT(z <= 840);    (* the widest offsets in use *)
+
+		utc := Time.UTC();
+		local := Dates.Now();
+		a := Time.ToUnix(utc); b := Time.ToUnix(local);
+		(*	the two readings are a moment apart, so allow a second of slack and check the
+			offset, not the instant *)
+		ASSERT(b - a >= SIGNED64(z) * 60 - 1);
+		ASSERT(b - a <= SIGNED64(z) * 60 + 1);
+
+		back := Time.FromLocal(Time.ToLocal(utc));
+		ASSERT(Time.ToUnix(back) = Time.ToUnix(utc));
+		ASSERT(ABS(Time.Unix() - Time.ToUnix(Time.UTC())) <= 1)
+	END Test.

@@ -7,7 +7,9 @@
   "description": "Data structures and persistence: generic collections/sort, lists/queues/stacks/trees, the Models/Repositories/Types object framework, CSV, persistent objects, versioning.",
   "provides": [
     "GenericCollections",
-    "GenericSort"
+    "GenericMaps",
+    "GenericSort",
+    "Hashing"
   ],
   "requires": {
     "lib/numerics": "*",
@@ -19,6 +21,7 @@
     "std/system": "*"
   },
   "residual": [
+    "GenericMaps and Hashing arrived 2026-09-03: the package had every container that is a line of elements and none that is a lookup, so anything needing one grew its own -- TFClasses has a string dictionary, FoxBasic a symbol table, and neither can hand its map to the other. Same parametric form as GenericCollections, so it compiles to a symbol file and produces an object only when instantiated. Hashing is the pair of procedures a map has to be given; its first version used the rotate-and-xor of FoxBasic and TFClasses and did not spread, which the suite measures rather than assumes.",
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
     "Hosts the high-fan-in HUBS pulled out of the misc pile (Repositories fan-in 15, Models 8, Types 6) — they fan out to XML (std/web) and text, so they are correctly mid-tier, not std/base.",
     "OPEN: a data member reaches std/compiler (likely PersistentObjects via reflection/fingerprints). Confirm and either accept the edge or isolate it before stable.",

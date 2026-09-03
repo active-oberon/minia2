@@ -7,6 +7,7 @@
   "description": "Text: the string family and its pool, UTF-8, regular expressions, and number conversion into and out of strings.",
   "provides": [
     "DynamicStrings",
+    "Format",
     "Regex",
     "StringPool",
     "Strings",
@@ -19,6 +20,7 @@
     "std/runtime": "*"
   },
   "residual": [
+    "Format arrived 2026-09-03. Every other language spells this printf and printf needs varargs, which Active Oberon does not have and should not grow for this; what it has is objects, so the template is an object and the arguments arrive as calls on it. The shape of a message stays in one string -- greppable, translatable -- and each argument keeps the type the compiler checked. A hole nobody filled is written out as {} rather than swallowed, and Complete says so.",
     "Unicode arrived 2026-09-03 and is generated, not written: tests/gen-unicode.py turns data/UnicodeData.txt into a run table -- 2642 runs over the whole code space, 151 distinct (category, case) values -- so the character database finally travels in a headless SDK. UnicodeProperties parses that same file at run time through Texts and Codecs, which is why it is in lib/texts and this is not. Simple case mapping only, and the file in the tree is Unicode 5.0: a newer table is a newer file plus one script run.",
     "Regex arrived 2026-09-03: the library had no regular expressions at all, and it is here rather than in the registry because a pattern is a shared type -- two packages that each ship their own matcher cannot hand one to the other. It is Thompson's construction, so the cost is O(pattern * input) with no pattern able to make it worse; the price of that is no back references. Bytes, not characters: the UCD tables are still missing (see below), so a range cannot span a multi-byte character.",
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
