@@ -53,6 +53,12 @@ CONST
 		NewlineAutoReturn is disabled so that a line drawn to the last column does not scroll. *)
 	ProcessedOutput = 1; VirtualTerminalProcessing = 4; DisableNewlineAutoReturn = 8;
 
+	(*	The console reads and writes bytes through a code page, and the default one is not UTF-8:
+		the box drawing a full-screen program is made of arrives as whatever those bytes mean in
+		CP437, which is how the demo looked when it was first run here. TerminalCodes writes
+		UTF-8, so the console is told to expect it, and told back afterwards. *)
+	UTF8Page = 65001;
+
 	Settle = 2;                        (* milliseconds to let the rest of a sequence arrive *)
 
 TYPE
@@ -65,6 +71,7 @@ VAR
 	in: Streams.Reader;
 	input, output: Kernel32.HANDLE;
 	savedIn, savedOut: SIGNED32;        (* the modes as they were, to put back *)
+	savedInPage, savedOutPage: SIGNED32;
 	raw: BOOLEAN;
 	rows, columns: SIGNED32;            (* the size as it was last asked for *)
 	(*	Objects.Sleep is the Unix twin's, and this host has no such procedure -- the timer object
@@ -82,7 +89,7 @@ VAR
 		console, or if the console cannot do virtual terminal sequences -- which is the honest
 		answer for a program whose drawing would arrive as gibberish. *)
 	PROCEDURE Open* (): BOOLEAN;
-	VAR mode: SIGNED32;
+	VAR mode: SIGNED32; ignore: Kernel32.BOOL;
 	BEGIN
 		IF raw THEN RETURN TRUE END;
 		IF Kernel32.GetConsoleMode(input, savedIn) = 0 THEN RETURN FALSE END;
@@ -99,6 +106,10 @@ VAR
 			mode := Kernel32.SetConsoleMode(input, savedIn);
 			RETURN FALSE
 		END;
+		savedInPage := Kernel32.GetConsoleCP();
+		savedOutPage := Kernel32.GetConsoleOutputCP();
+		ignore := Kernel32.SetConsoleOutputCP(UTF8Page);
+		ignore := Kernel32.SetConsoleCP(UTF8Page);
 		raw := TRUE;
 		RETURN TRUE
 	END Open;
@@ -111,6 +122,8 @@ VAR
 		out.Update;
 		ignore := Kernel32.SetConsoleMode(input, savedIn);
 		ignore := Kernel32.SetConsoleMode(output, savedOut);
+		IF savedOutPage # 0 THEN ignore := Kernel32.SetConsoleOutputCP(savedOutPage) END;
+		IF savedInPage # 0 THEN ignore := Kernel32.SetConsoleCP(savedInPage) END;
 		raw := FALSE
 	END Close;
 
@@ -228,7 +241,7 @@ VAR
 
 BEGIN
 	in := StdIO.env.in; out := StdIO.env.out;
-	raw := FALSE; rows := 0; columns := 0;
+	raw := FALSE; rows := 0; columns := 0; savedInPage := 0; savedOutPage := 0;
 	NEW(settle);
 	input := Kernel32.GetStdHandle(Kernel32.STDInput);
 	output := Kernel32.GetStdHandle(Kernel32.STDOutput);
