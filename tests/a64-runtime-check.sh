@@ -48,7 +48,7 @@ fi
 modules=(
 	AMD64.Builtins.Mod Trace.Mod Linux.Glue.Mod Linux.Unix.Mod Unix.Machine.Mod
 	Heaps.Mod Modules.Mod Unix.Objects.Mod Unix.Kernel.Mod RealConversions.Mod
-	Strings.Mod UTF8Strings.Mod KernelLog.Mod Plugins.Mod Streams.Mod Pipes.Mod
+	Strings.Mod Unicode.Mod UTF8Strings.Mod KernelLog.Mod Plugins.Mod Streams.Mod Pipes.Mod
 	Commands.Mod In.Mod Out.Mod AMD64.Reals.Mod Reflection.Mod TrapWriters.Mod
 	CRC.Mod SystemVersion.Mod Unix.StdIO.Mod Unix.Traps.Mod Locks.Mod Unix.Clock.Mod
 	Disks.Mod DiskCaches.Mod Files.Mod Dates.Mod Options.Mod FileTrapWriter.Mod
