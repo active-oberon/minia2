@@ -23,6 +23,7 @@ Unix.Kernel.Mod
 RealConversions.Mod
 Strings.Mod
 UTF8Strings.Mod
+Regex.Mod
 KernelLog.Mod
 Plugins.Mod
 Streams.Mod

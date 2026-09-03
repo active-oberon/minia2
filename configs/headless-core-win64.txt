@@ -105,6 +105,7 @@ Random
 RealConversions
 Reals
 Reflection
+Regex
 ReleaseThreadPool
 Shell
 ShellCommands
