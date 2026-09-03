@@ -1,0 +1,182 @@
+# Tests for Regex, the regular expressions std/text did not have until 2026-09-03.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The answers are not this implementation's: they are what Perl, Go and every other leftmost-first
+# engine prints for the same pattern, which is the only thing a newcomer will check them against.
+# Three of the cases are here for the property this engine was chosen for rather than for a feature:
+# a pattern nobody can make explode, a match that must be leftmost-first rather than merely some
+# match, and a pattern that is not a pattern being refused instead of trapping.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the plain pattern, matched where it is and nowhere it is not
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE; nl: ARRAY 4 OF CHAR;
+	BEGIN
+		r := Regex.Compile("bc", e);
+		ASSERT(r # NIL);
+		ASSERT(r.Find("abcd", 0, pos, len));
+		ASSERT(pos = 1); ASSERT(len = 2);
+		ASSERT(~r.Match("abd"));
+
+		r := Regex.Compile("a.c", e);
+		ASSERT(r.Match("abc"));
+		ASSERT(r.Match("a c"));
+		ASSERT(~r.Match("ac"));
+		nl[0] := "a"; nl[1] := 0AX; nl[2] := "c"; nl[3] := 0X;
+		ASSERT(~r.Match(nl));                   (* . is every character but the line break *)
+
+		ASSERT(Regex.Matches("^abc$", "abc"));
+		ASSERT(~Regex.Matches("^abc$", "xabc"));
+		ASSERT(~Regex.Matches("^abc$", "abcx"));
+		ASSERT(Regex.Matches("^$", ""))
+	END Test.
+
+positive: the quantifiers, greedy and not
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE;
+	BEGIN
+		r := Regex.Compile("a*", e);
+		ASSERT(r.Find("aaab", 0, pos, len)); ASSERT(pos = 0); ASSERT(len = 3);
+		ASSERT(r.Find("b", 0, pos, len)); ASSERT(len = 0);   (* a* matches nothing, at 0 *)
+
+		r := Regex.Compile("a+", e);
+		ASSERT(~r.Match("b"));
+		ASSERT(r.Find("baaa", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 3);
+
+		r := Regex.Compile("ab?c", e);
+		ASSERT(r.Match("abc")); ASSERT(r.Match("ac")); ASSERT(~r.Match("abbc"));
+
+		(*	greedy takes everything it can, lazy takes the least -- the difference the two
+			write out in full, and the reason <.+> is the classic mistake *)
+		r := Regex.Compile("<.+>", e);
+		ASSERT(r.Find("<a><b>", 0, pos, len)); ASSERT(pos = 0); ASSERT(len = 6);
+		r := Regex.Compile("<.+?>", e);
+		ASSERT(r.Find("<a><b>", 0, pos, len)); ASSERT(pos = 0); ASSERT(len = 3)
+	END Test.
+
+positive: groups say where each part landed
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE; s: ARRAY 32 OF CHAR;
+	BEGIN
+		r := Regex.Compile("(a+)(b+)", e);
+		ASSERT(r # NIL); ASSERT(r.ngroups = 2);
+		ASSERT(r.Match("xxaaabbc"));
+		ASSERT(r.Group(0, pos, len)); ASSERT(pos = 2); ASSERT(len = 5);
+		ASSERT(r.GroupString(1, "xxaaabbc", s)); ASSERT(s = "aaa");
+		ASSERT(r.GroupString(2, "xxaaabbc", s)); ASSERT(s = "bb");
+		ASSERT(~r.Group(3, pos, len));
+
+		(* a group that did not take part is not an empty group *)
+		r := Regex.Compile("(a)|(b)", e);
+		ASSERT(r.Match("b"));
+		ASSERT(~r.Group(1, pos, len));
+		ASSERT(r.Group(2, pos, len));
+
+		(* (?: ...) groups without capturing *)
+		r := Regex.Compile("(?:ab)+(c)", e);
+		ASSERT(r.ngroups = 1);
+		ASSERT(r.Match("ababc"));
+		ASSERT(r.GroupString(1, "ababc", s)); ASSERT(s = "c")
+	END Test.
+
+positive: character classes, their ranges, their negation and their shorthands
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE;
+	BEGIN
+		r := Regex.Compile("[a-cx]+", e);
+		ASSERT(r.Find("zzabcxz", 0, pos, len)); ASSERT(pos = 2); ASSERT(len = 4);
+
+		r := Regex.Compile("[^0-9]+", e);
+		ASSERT(r.Find("12ab34", 0, pos, len)); ASSERT(pos = 2); ASSERT(len = 2);
+
+		r := Regex.Compile("]", e);                 (* a lone ] is a character, not an error *)
+		ASSERT(r.Match("]"));
+		r := Regex.Compile("[]]", e);               (* and first inside a class it still is *)
+		ASSERT(r # NIL); ASSERT(r.Match("]"));
+
+		ASSERT(Regex.Matches("^\d+$", "1234"));
+		ASSERT(~Regex.Matches("^\d+$", "12a4"));
+		ASSERT(Regex.Matches("^\w+$", "a_9"));
+		ASSERT(~Regex.Matches("^\S+$", "a b"));
+		ASSERT(Regex.Matches("^[\d-]+$", "1-2"));   (* a - that cannot start a range is one *)
+		ASSERT(Regex.Matches("^a\.c$", "a.c"));
+		ASSERT(~Regex.Matches("^a\.c$", "abc"))
+	END Test.
+
+positive: leftmost-first, which is what the engine promises and not merely some match
+
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; pos, len: SIZE;
+	BEGIN
+		(*	alternation takes the branch written first, even when a later one would match more:
+			Perl and Go both print "ab" here, and an engine that prints "abc" is a different
+			language wearing the same syntax *)
+		r := Regex.Compile("ab|abc", e);
+		ASSERT(r.Find("xabc", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 2);
+
+		(* leftmost first, then longest by preference: the match starts as early as it can *)
+		r := Regex.Compile("a+", e);
+		ASSERT(r.Find("baab", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 2);
+
+		(* Find from an offset walks a string, which is how a caller writes a loop *)
+		r := Regex.Compile("[0-9]+", e);
+		ASSERT(r.Find("a12b345", 0, pos, len)); ASSERT(pos = 1); ASSERT(len = 2);
+		ASSERT(r.Find("a12b345", pos + len, pos, len)); ASSERT(pos = 4); ASSERT(len = 3);
+		ASSERT(~r.Find("a12b345", pos + len, pos, len))
+	END Test.
+
+positive: the pattern that hangs a backtracking engine finishes here
+
+	(*	(a+)+$ over twenty-four a's and one b is the textbook exponential case: a backtracking
+		matcher tries every way of splitting the a's before it admits there is no b, which is
+		2^24 attempts. This engine walks the input once per character and answers immediately.
+		If this case ever takes measurable time, the engine was replaced by a backtracker. *)
+	MODULE Test;
+	IMPORT Regex;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR; s: ARRAY 64 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 23 DO s[i] := "a" END;
+		s[24] := 0X;
+		r := Regex.Compile("(a+)+$", e);
+		ASSERT(r # NIL);
+		ASSERT(r.Match(s));                         (* it does end in a's *)
+		s[24] := "b"; s[25] := 0X;
+		ASSERT(~r.Match(s))                         (* and this is the answer that costs *)
+	END Test.
+
+positive: what is not a pattern is refused, with a reason and without a trap
+
+	MODULE Test;
+	IMPORT Regex, Strings;
+	VAR r: Regex.Regexp; e: ARRAY 128 OF CHAR;
+	BEGIN
+		r := Regex.Compile("(ab", e);
+		ASSERT(r = NIL); ASSERT(Strings.Length(e) > 0);
+		r := Regex.Compile("ab)", e);
+		ASSERT(r = NIL);
+		r := Regex.Compile("*ab", e);
+		ASSERT(r = NIL);
+		r := Regex.Compile("[a-", e);
+		ASSERT(r = NIL);
+		r := Regex.Compile("[z-a]", e);
+		ASSERT(r = NIL);
+		r := Regex.Compile("ab\", e);
+		ASSERT(r = NIL);
+		ASSERT(~Regex.Matches("(", "("));           (* a pattern that is not one matches nothing *)
+
+		r := Regex.Compile("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)", e);
+		ASSERT(r = NIL);                            (* MaxGroups is 9, and it says so *)
+		r := Regex.Compile("(a)(b)(c)(d)(e)(f)(g)(h)(i)", e);
+		ASSERT(r # NIL)
+	END Test.

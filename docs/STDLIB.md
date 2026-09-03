@@ -25,7 +25,7 @@ and `packages/apps/`. Sources have not moved: only the classification did.
 |---|---|---|
 | `std/runtime` | 0 | 15 |
 | `std/base` | 1 | 13 |
-| `std/text` | 1 | 5 |
+| `std/text` | 1 | 6 |
 | `std/system` | 2 | 25 |
 | `std/process` | 2 | 2 |
 | `std/encoding` | 3 | 3 |
@@ -71,9 +71,19 @@ kept. `Base64` is now the implementation `WebSockets`, `CryptoRSA` and `CryptoDS
 using, under the name std filed it as. `DES` and `CryptoDES` both stay, as decided.
 
 `std/data` is two modules (`GenericCollections`, `GenericSort`) and has no `Map` or
-`Set`. `std/text` has no regex and no UCD tables — the Unicode database is in
-`lib/texts` because this implementation of it reads through the rich-text model. Those,
-plus monotonic time and modern crypto, are step 4.
+`Set`. `std/text` has no UCD tables — the Unicode database is in
+`lib/texts` because this implementation of it reads through the rich-text model. That,
+plus monotonic time and modern crypto, is what is left of step 4.
+
+**Regex landed 2026-09-03** (`source/Regex.Mod`, `tests/Regex.Test`). It is Thompson's
+construction — the pattern becomes a program and every thread advances one character at a
+time — so the cost is O(pattern × input) and no pattern a caller writes can make it worse.
+That is the property a standard library needs and a backtracking matcher cannot promise; the
+price is no back references, which is the feature that makes backtracking exponential in the
+first place. The syntax is the common subset: `. * + ? | ( ) (?: ) [ ] ^ $`, lazy variants,
+`\d \w \s` and their negations, nine capturing groups. Not there: counted repetition
+`{m,n}`, and characters — a pattern matches UTF-8 literally but `.` counts one byte, which is
+the same UCD hole as above and closes with it.
 
 ---
 
@@ -99,11 +109,11 @@ proper is 138 modules.**
 
 `LocalSockets`, `Processes`
 
-## std/text — 10
+## std/text — 11
 
-`DynamicStrings`, `NbrStrings`, `RealConversions`, `StringPool`, `Strings`, `TFStringPool`, `Texts`, `UTF8Strings`, `UnicodeBidirectionality`, `UnicodeProperties`
+`DynamicStrings`, `NbrStrings`, `RealConversions`, `Regex`, `StringPool`, `Strings`, `TFStringPool`, `Texts`, `UTF8Strings`, `UnicodeBidirectionality`, `UnicodeProperties`
 
-Missing, worth adding: **regex, UCD tables**.
+Missing, worth adding: **UCD tables**. `Regex` arrived 2026-09-03.
 
 ## std/time — 5
 

@@ -4,9 +4,10 @@
   "context": "A2",
   "headless": true,
   "status": "draft",
-  "description": "Text: the string family and its pool, UTF-8, and number conversion into and out of strings.",
+  "description": "Text: the string family and its pool, UTF-8, regular expressions, and number conversion into and out of strings.",
   "provides": [
     "DynamicStrings",
+    "Regex",
     "StringPool",
     "Strings",
     "TFStringPool",
@@ -17,6 +18,7 @@
     "std/runtime": "*"
   },
   "residual": [
+    "Regex arrived 2026-09-03: the library had no regular expressions at all, and it is here rather than in the registry because a pattern is a shared type -- two packages that each ship their own matcher cannot hand one to the other. It is Thompson's construction, so the cost is O(pattern * input) with no pattern able to make it worse; the price of that is no back references. Bytes, not characters: the UCD tables are still missing (see below), so a range cannot span a multi-byte character.",
     "The modules under `graphical` belong to this package but cannot travel in the headless SDK: their own import closure reaches the window system. The list is checked against the import graph by docker/gen-headless-core.sh, so it cannot go quietly out of date.",
     "Re-homed 2026-08-27 by the shared-type rule (docs/STDLIB.md): a package holds what other packages talk to each other through. See that file for what moved where and why. In: Strings, UTF8Strings, DynamicStrings, StringPool, TFStringPool from std/base; UnicodeProperties and UnicodeBidirectionality from std/ime. RealConversions did NOT come: Streams imports it, so it stays in std/base and the dependency runs text -> base only.",
     "UnicodeProperties and UnicodeBidirectionality are graphical; Texts is not, which the gate had to tell me. They read their tables through Texts AND Codecs, and it is Codecs that reaches the window system. Making them headless means giving them a reader that is not the rich-text model -- the same work as regenerating the tables from the UCD.",
