@@ -198,6 +198,17 @@ TYPE
 	END;
 
 
+	(*	CONSOLE_SCREEN_BUFFER_INFO: two COORDs, a WORD, a SMALL_RECT and a COORD, all of them
+		sixteen bit, so the record needs no padding on either width. Added 2026-09-03 for the
+		Windows twin of Terminal, which asks the console how large its window is. *)
+	ConsoleScreenBufferInfo* = RECORD
+		sizeX*, sizeY*: SIGNED16;
+		cursorX*, cursorY*: SIGNED16;
+		attributes*: SIGNED16;
+		window*: SmallRect;
+		maxX*, maxY*: SIGNED16
+	END;
+
 	(** Critical-section object. *)
 	CriticalSection* = RECORD
 		a, b, c, d, e, f: SIZE;
@@ -540,6 +551,14 @@ VAR
 	(** The GetCurrentDirectory function retrieves the current directory for the current process. *)
 	GetCurrentDirectory-: PROCEDURE {WINAPI} ( nBufferLength: SIGNED32;
 																				 VAR lpBuffer: ARRAY   OF CHAR ): SIGNED32;
+	(** The GetConsoleMode function retrieves the current input or output mode of a console. *)
+	GetConsoleMode-: PROCEDURE {WINAPI} ( hConsoleHandle: HANDLE; VAR lpMode: SIGNED32 ): BOOL;
+	(** The SetConsoleMode function sets the input or output mode of a console. *)
+	SetConsoleMode-: PROCEDURE {WINAPI} ( hConsoleHandle: HANDLE; dwMode: SIGNED32 ): BOOL;
+	(** The GetConsoleScreenBufferInfo function retrieves information about the console screen buffer. *)
+	GetConsoleScreenBufferInfo-: PROCEDURE {WINAPI} ( hConsoleOutput: HANDLE;
+															  VAR lpInfo: ConsoleScreenBufferInfo ): BOOL;
+
 	(** The GetConsoleWindow function retrieves the window handle used by the console associated with the calling process. *)
 	(*
 	GetConsoleWindow-: PROCEDURE{WINAPI} (): SIGNED32 ;
@@ -959,6 +978,9 @@ VAR
 		GetProcAddress(mod, "ClearCommBreak",SYSTEM.VAL(ADDRESS,ClearCommBreak));
 		GetProcAddress(mod, "ClearCommError",SYSTEM.VAL(ADDRESS,ClearCommError));
 		GetProcAddress(mod, "CloseHandle",SYSTEM.VAL(ADDRESS,CloseHandle));
+		GetProcAddress(mod, "GetConsoleMode",SYSTEM.VAL(ADDRESS,GetConsoleMode));
+		GetProcAddress(mod, "SetConsoleMode",SYSTEM.VAL(ADDRESS,SetConsoleMode));
+		GetProcAddress(mod, "GetConsoleScreenBufferInfo",SYSTEM.VAL(ADDRESS,GetConsoleScreenBufferInfo));
 		GetProcAddress(mod, "CopyFileA",SYSTEM.VAL(ADDRESS,CopyFile));
 		GetProcAddress(mod, "CreateDirectoryA",SYSTEM.VAL(ADDRESS,CreateDirectory));
 		GetProcAddress(mod, "CreateEventA",SYSTEM.VAL(ADDRESS,CreateEvent));
