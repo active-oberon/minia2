@@ -108,3 +108,39 @@ positive: two pieces of a buffer are equal, or are not
 		ASSERT(~Network.Equal(a, b, 0, 0, 5));
 		ASSERT(Network.Equal(a, b, 0, 0, 3))     (* up to where they differ *)
 	END Test.
+
+positive: an IPv6 address whose bytes have the high bit prints as an address
+
+	(*	AdrToStr built each sixteen-bit group with ORD(byte) * 256, and that product is computed
+		in sixteen bits: a group whose first byte is 80H or more came out negative, and
+		IntToHexStr printed it as such. Every address in fe80::/10 -- which is every link-local
+		address a machine has -- printed wrongly until 2026-09-03. *)
+	MODULE Test;
+	IMPORT IP, Strings;
+	VAR adr: IP.Adr; s: ARRAY 128 OF CHAR; bytes: ARRAY 16 OF CHAR; i: SIGNED32;
+
+		PROCEDURE Print(CONST bytes: ARRAY OF CHAR);
+		VAR k: SIGNED32;
+		BEGIN
+			FOR k := 0 TO 15 DO adr.ipv6Adr[k] := bytes[k] END;
+			adr.usedProtocol := IP.IPv6;
+			s := "";
+			IP.AdrToStr(adr, s)
+		END Print;
+
+	BEGIN
+		(*	fe80::1, the shape of every link-local address. Two things were wrong with it:
+			the group was built in sixteen bits, and it was then printed to a width of three
+			hex digits when a group is four -- so the fourth digit was cut off every address
+			this procedure ever printed, overflow or not. *)
+		FOR i := 0 TO 15 DO bytes[i] := 0X END;
+		bytes[0] := 0FEX; bytes[1] := 80X; bytes[15] := 01X;
+		Print(bytes);
+		ASSERT(Strings.Pos("-", s) < 0);        (* nothing negative anywhere in it *)
+		ASSERT(s = "FE80::1");
+
+		(* and one where every group has its high bit set *)
+		FOR i := 0 TO 15 DO bytes[i] := 0FFX END;
+		Print(bytes);
+		ASSERT(s = "FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF")
+	END Test.

@@ -89,15 +89,15 @@ http://www.fourcc.org/yuv.php
 	PROCEDURE BGRtoYUVInt*(blue,green,red: CHAR; VAR y,u,v: CHAR);
 	BEGIN
 		(*"studio swing BT.601"*)	
-		y:=CHR((66*ORD(red)+129*ORD(green)+25*ORD(blue)+128) DIV 256 +16);
-		u:=CHR((-38*ORD(red)-74*ORD(green)+112*ORD(blue)+128) DIV 256 +128);
-		v:=CHR((112*ORD(red)-94*ORD(green)-18*ORD(blue)+128) DIV 256 +128);
+		y:=CHR((66*SIGNED32(ORD(red))+129*SIGNED32(ORD(green))+25*SIGNED32(ORD(blue))+128) DIV 256 +16);
+		u:=CHR((-38*SIGNED32(ORD(red))-74*SIGNED32(ORD(green))+112*SIGNED32(ORD(blue))+128) DIV 256 +128);
+		v:=CHR((112*SIGNED32(ORD(red))-94*SIGNED32(ORD(green))-18*SIGNED32(ORD(blue))+128) DIV 256 +128);
 		
 		(*"full swing BT.601"*)
 		(*
-		y:=CHR((77*ORD(red)+150*ORD(green)+29*ORD(blue)+128) DIV 256);
-		u:=CHR((-43*ORD(red)-84*ORD(green)+127*ORD(blue)+128) DIV 256 +128);
-		v:=CHR((127*ORD(red)-106*ORD(green)-21*ORD(blue)+128) DIV 256 +128);
+		y:=CHR((77*SIGNED32(ORD(red))+150*SIGNED32(ORD(green))+29*SIGNED32(ORD(blue))+128) DIV 256);
+		u:=CHR((-43*SIGNED32(ORD(red))-84*SIGNED32(ORD(green))+127*SIGNED32(ORD(blue))+128) DIV 256 +128);
+		v:=CHR((127*SIGNED32(ORD(red))-106*SIGNED32(ORD(green))-21*SIGNED32(ORD(blue))+128) DIV 256 +128);
 		*)
 	END BGRtoYUVInt;
 	

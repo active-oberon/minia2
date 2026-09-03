@@ -501,7 +501,7 @@ TYPE
 			ASSERT( idLen = SessionIdLength );
 			ASSERT( idLen < 33 );	ASSERT( idLen >= 2  );	ASSERT( ofs > -1 );	ASSERT( LEN( data )  >= ofs + idLen );
 			IF ~policy.sessionResumptionEnabled THEN RETURN NIL END;
-			i := ( ORD( data[ ofs ] ) + 256 * ORD( data[ ofs + 1 ] ) ) MOD SessionHashtableSize;
+			i := ( SIGNED32(ORD( data[ ofs ] )) + 256 * SIGNED32(ORD( data[ ofs + 1 ] )) ) MOD SessionHashtableSize;
 			current := sessionCache[ i ];
 			previous := sessionCache[ i ];
 			WHILE current # NIL DO
@@ -529,7 +529,7 @@ TYPE
 			VAR i: SIGNED32;
 		BEGIN
 			ASSERT( s.resumable );
-			i := ORD( s.id[ 0 ] ) + 256 * ORD( s.id[ 1 ] );
+			i := SIGNED32(ORD( s.id[ 0 ] )) + 256 * SIGNED32(ORD( s.id[ 1 ] ));
 			i := i MOD SessionHashtableSize;
 			s.next := sessionCache[ i ];
 			sessionCache[ i ] := s
@@ -1028,7 +1028,7 @@ TYPE
 				SendError( ProtocolVersion );
 				RETURN
 			END;
-			len := 256 * ORD( in.Get() ) + ORD( in.Get() );	(* length of payload *)
+			len := 256 * SIGNED32(ORD( in.Get() )) + SIGNED32(ORD( in.Get() ));	(* length of payload *)
 			IF len > MaxCiphertextLength THEN
 				SendError( RecordOverflow );
 				RETURN
@@ -1183,7 +1183,7 @@ TYPE
 			ptr := ofs;
 			WHILE ptr < ofs + len DO	(* for each handshake message *)
 				hsType := ORD( data[ ptr ] );	(* handshake type *)
-				msgLen := 256 * 256 * ORD( data[ ptr + 1 ] ) + 256 * ORD( data[ ptr + 2 ] ) + ORD( data[ ptr + 3 ] );
+				msgLen := 256 * 256 * SIGNED32(ORD( data[ ptr + 1 ] )) + 256 * SIGNED32(ORD( data[ ptr + 2 ] )) + SIGNED32(ORD( data[ ptr + 3 ] ));
 				(* update the digests used in the finished-messages *)
 				IF version[1] < 3X THEN (* TLS ver <= 1.1 *)
 					hsMD5send.Update( data, ptr, msgLen + 4 );
@@ -1249,7 +1249,7 @@ TYPE
 			idPos := pos + 1;
 			INC( pos, idLen + 1 );
 			(* cipher-suites *)
-			nofSuites := (256 * ORD( data[ pos ] ) + ORD( data[ pos + 1 ] )) DIV 2; (* number of cipher-suites supported by the client *)
+			nofSuites := (256 * SIGNED32(ORD( data[ pos ] )) + SIGNED32(ORD( data[ pos + 1 ] ))) DIV 2; (* number of cipher-suites supported by the client *)
 			INC( pos, 2 );
 
 			IF idLen = SessionIdLength THEN	(* client attempted session resumption *)
@@ -1257,7 +1257,7 @@ TYPE
 				IF session # NIL THEN
 					(* check: is the resumed session's cipher-suite contained by the client-hello ? *)
 					FOR i := 0 TO nofSuites - 1 DO
-						cipherSuite := 256 * ORD( data[ pos + 2 * i ] ) + ORD( data[ pos + 2 * i + 1 ] );
+						cipherSuite := 256 * SIGNED32(ORD( data[ pos + 2 * i ] )) + SIGNED32(ORD( data[ pos + 2 * i + 1 ] ));
 						IF cipherSuite = session.cipherSuite THEN	(* session resumption *)
 							pendingSecurityParameters.cipherSuite := session.cipherSuite;
 							IF Trace THEN KernelLog.String("ciphersuite: ");KernelLog.Int(pendingSecurityParameters.cipherSuite, 8 );KernelLog.Ln END;
@@ -1271,7 +1271,7 @@ TYPE
 			(* choose cipher-suite *)
 			i := 0;
 			LOOP
-				cipherSuite := 256 * ORD( data[ pos + 2 * i ] ) + ORD( data[ pos + 2 * i + 1 ] );
+				cipherSuite := 256 * SIGNED32(ORD( data[ pos + 2 * i ] )) + SIGNED32(ORD( data[ pos + 2 * i + 1 ] ));
 				IF Trace THEN KernelLog.String("Server: client accepts cipher suite: "); KernelLog.Int(cipherSuite, 0); KernelLog.Ln END;
 				IF context.policy.IsSupported( cipherSuite ) THEN
 					EXIT
@@ -1403,16 +1403,16 @@ TYPE
 			VAR nofSuites, idLen, challengeLen, i, cipherSuite: SIGNED32; res: INTEGER;
 		BEGIN
 			IF Trace THEN PrintDirection(FALSE); KernelLog.String("SSLv2.0 ClientHello");KernelLog.Ln END;
-			nofSuites := ( 256 * ORD(data[ofs+3]) + ORD(data[ofs+4]) ) DIV 3;
-			idLen := 256 * ORD(data[ofs+5]) + ORD(data[ofs+6]);
-			challengeLen := 256 * ORD(data[ofs+7]) + ORD(data[ofs+8]);
+			nofSuites := ( 256 * SIGNED32(ORD(data[ofs+3])) + SIGNED32(ORD(data[ofs+4])) ) DIV 3;
+			idLen := 256 * SIGNED32(ORD(data[ofs+5])) + SIGNED32(ORD(data[ofs+6]));
+			challengeLen := 256 * SIGNED32(ORD(data[ofs+7])) + SIGNED32(ORD(data[ofs+8]));
 			(* if an SSLv2.0-ClientHello is received, a new session has to be established, because a client sends an TLSv1.0-ClientHello when resuming a session *)
 			session := context.GetNewServerSession( );
 			(* choose cipher-suite *)
 			INC( ofs, 9);
 			i := 0;
 			LOOP
-				cipherSuite := 256*256*ORD( data[ ofs + 3 * i ] ) + 256 * ORD( data[ ofs + 3 * i + 1 ] ) + ORD( data[ ofs + 3 * i + 2 ] );
+				cipherSuite := 256*256*SIGNED32(ORD( data[ ofs + 3 * i ] )) + 256 * SIGNED32(ORD( data[ ofs + 3 * i + 1 ] )) + SIGNED32(ORD( data[ ofs + 3 * i + 2 ] ));
 				IF context.policy.IsSupported( cipherSuite ) THEN
 					EXIT
 				END;
@@ -1488,7 +1488,9 @@ TYPE
 			END;
 
 			(* cipher-suite selected by the server*)
-			cipherSuite := 250 * ORD( data[ pos] ) + ORD( data[ pos + 1 ] );
+			(*	256, not 250: a two-byte big-endian number. The typo predates this file's arrival
+				in the tree and made the server's chosen cipher suite a number nobody uses. *)
+			cipherSuite := 256 * SIGNED32(ORD( data[ pos] )) + SIGNED32(ORD( data[ pos + 1 ] ));
 			SELF.session.cipherSuite := cipherSuite;
 			PrepareSecurityParameters( pendingSecurityParameters, cipherSuite, res );
 			IF res < 0 THEN
@@ -1620,8 +1622,8 @@ TYPE
 			END;
 
 			(* Get Certificate Length. First 3 bytes: length + 3, next 3 bytes: length *)
-			lengthP3 := ORD(data[ofs]) * 256 * 256 + ORD(data[ofs + 1]) * 256 + ORD(data[ofs + 2]);
-			length := ORD(data[ofs + 3]) * 256 * 256 + ORD(data[ofs + 4]) * 256 + ORD(data[ofs + 5]);
+			lengthP3 := SIGNED32(ORD(data[ofs])) * 256 * 256 + SIGNED32(ORD(data[ofs + 1])) * 256 + SIGNED32(ORD(data[ofs + 2]));
+			length := SIGNED32(ORD(data[ofs + 3])) * 256 * 256 + SIGNED32(ORD(data[ofs + 4])) * 256 + SIGNED32(ORD(data[ofs + 5]));
 			(*ASSERT(lengthP3 = length + 3);*)
 			context.lengthOfRsaCertificate := length;
 

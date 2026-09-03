@@ -2715,19 +2715,19 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 			ELSIF src[a] # 0X THEN
 				SYSTEM.MOVE(dadr, ADDRESSOF(dst), 4);
 				fd := 256-ORD(src[a]);
-				dst[0] := CHR(MIN( (256 * ORD(src[0]) + fd * ORD(dst[0])) DIV 256, 255));
+				dst[0] := CHR(MIN( (256 * SIGNED32(ORD(src[0])) + fd * SIGNED32(ORD(dst[0]))) DIV 256, 255));
 				(*
 				IF t < 255 THEN dst[0] := CHR(t) ELSE dst[0] := CHR(255) END;
 				*)
-				dst[1] := CHR(MIN((256 * ORD(src[1]) + fd * ORD(dst[1])) DIV 256, 255));
+				dst[1] := CHR(MIN((256 * SIGNED32(ORD(src[1])) + fd * SIGNED32(ORD(dst[1]))) DIV 256, 255));
 				(*
 				IF t < 255 THEN dst[1] := CHR(t) ELSE dst[1] := CHR(255) END;
 				*)
-				dst[2] := CHR(MIN( (256 * ORD(src[2]) + fd * ORD(dst[2])) DIV 256, 255));
+				dst[2] := CHR(MIN( (256 * SIGNED32(ORD(src[2])) + fd * SIGNED32(ORD(dst[2]))) DIV 256, 255));
 				(*
 				IF t < 255 THEN dst[2] := CHR(t) ELSE dst[2] := CHR(255) END;
 				*)
-				dst[3] := CHR(MIN( (256 * ORD(src[3]) + fd * ORD(dst[3])) DIV 256, 255));
+				dst[3] := CHR(MIN( (256 * SIGNED32(ORD(src[3])) + fd * SIGNED32(ORD(dst[3]))) DIV 256, 255));
 				(*
 				IF t < 255 THEN dst[3] := CHR(t) ELSE dst[3] := CHR(255) END;
 				*)
@@ -2787,14 +2787,14 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 			ELSIF src[a] # 0X THEN
 				mode.dst.unpack(mode.dst, dadr, 0, dst);
 				fd := 255-ORD(src[a]);
-				t := (256 * ORD(src[0]) + fd * ORD(dst[0])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[0])) + fd * SIGNED32(ORD(dst[0]))) DIV 256;
 				IF t < 255 THEN dst[0] := CHR(t) ELSE dst[0] := CHR(255) END;
 
-				t := (256 * ORD(src[1]) + fd * ORD(dst[1])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[1])) + fd * SIGNED32(ORD(dst[1]))) DIV 256;
 				IF t < 255 THEN dst[1] := CHR(t) ELSE dst[1] := CHR(255) END;
-				t := (256 * ORD(src[2]) + fd * ORD(dst[2])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[2])) + fd * SIGNED32(ORD(dst[2]))) DIV 256;
 				IF t < 255 THEN dst[2] := CHR(t) ELSE dst[2] := CHR(255) END;
-				t := (256 * ORD(src[3]) + fd * ORD(dst[3])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[3])) + fd * SIGNED32(ORD(dst[3]))) DIV 256;
 				IF t < 255 THEN dst[3] := CHR(t) ELSE dst[3] := CHR(255) END;
 				mode.dst.pack(mode.dst, dadr, 0, dst);
 			END;
@@ -2817,14 +2817,14 @@ MODULE Raster; (** non-portable *)	(* eos, TF  **)
 				dst[b] := CHR((t MOD 32) * 8); dst[g] := CHR((t DIV 32 MOD 64) * 4); dst[r] := CHR((t DIV 2048 MOD 32) * 8);
 
 				fd := 256-ORD(src[a]);
-				t := (256 * ORD(src[0]) + fd * ORD(dst[0])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[0])) + fd * SIGNED32(ORD(dst[0]))) DIV 256;
 				IF t < 255 THEN dst[0] := CHR(t) ELSE dst[0] := CHR(255) END;
 
-				t := (256 * ORD(src[1]) + fd * ORD(dst[1])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[1])) + fd * SIGNED32(ORD(dst[1]))) DIV 256;
 				IF t < 255 THEN dst[1] := CHR(t) ELSE dst[1] := CHR(255) END;
-				t := (256 * ORD(src[2]) + fd * ORD(dst[2])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[2])) + fd * SIGNED32(ORD(dst[2]))) DIV 256;
 				IF t < 255 THEN dst[2] := CHR(t) ELSE dst[2] := CHR(255) END;
-				t := (256 * ORD(src[3]) + fd * ORD(dst[3])) DIV 256;
+				t := (256 * SIGNED32(ORD(src[3])) + fd * SIGNED32(ORD(dst[3]))) DIV 256;
 				IF t < 255 THEN dst[3] := CHR(t) ELSE dst[3] := CHR(255) END;
 				SYSTEM.PUT16(dadr, ASH(ORD(dst[b]), -3) + ASH(ASH(ORD(dst[g]), -2), 5) + ASH(ASH(ORD(dst[r]), -3), 11));
 			END;

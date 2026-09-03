@@ -2054,7 +2054,7 @@ TYPE
 			input.Bytes(buffer, 0, 8, bytesRead);
 			IF (input.res # Streams.Ok) OR (bytesRead < 8) THEN RETURN FALSE END;
 
-			headerLength := ORD(buffer[0]) * 256 + ORD(buffer[1]) - 6;
+			headerLength := SIGNED32(ORD(buffer[0])) * 256 + SIGNED32(ORD(buffer[1])) - 6;
 
 			(* we don't care about rateBound, audioBound, CSPS-, AudioLock- and VideoLock-Flags and videoBound *)
 

@@ -207,7 +207,9 @@ TYPE
 		CONST
 			headCRC = 2; extraField = 4; origName = 8; comment = 10H; reserved = 20H;
 		VAR
-			ch, method, flags: CHAR; len: SIGNED16;
+			(*	len was SIGNED16 and the extra field's length is an unsigned sixteen bit number:
+				one of 8000H or more read as negative and the skip loop below never ran. *)
+			ch, method, flags: CHAR; len: SIGNED32;
 		BEGIN
 			ch := reader.Get();
 			IF reader.res = Streams.EOF THEN
@@ -226,7 +228,7 @@ TYPE
 						FOR len := 1 TO 6 DO ch := reader.Get(); END;	(* skip time, xflags and OS code *)
 						IF ODD(ORD(flags) DIV extraField) THEN	(* skip extra field *)
 							ch := reader.Get(); len := ORD(ch);
-							ch := reader.Get(); len := len + 100H*ORD(ch);
+							ch := reader.Get(); len := len + 100H*SIGNED32(ORD(ch));
 							WHILE (reader.res = Streams.EOF) & (len # 0) DO
 								ch := reader.Get(); DEC(len)
 							END
