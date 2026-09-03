@@ -1,0 +1,174 @@
+# Tests for the crypto of this decade: SHA-512, HKDF, ChaCha20 and Poly1305 (2026-09-03).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Every answer here is from the document that defines it -- FIPS 180-4 for SHA-512, RFC 4231 for
+# HMAC, RFC 5869 for HKDF, RFC 8439 for ChaCha20 and Poly1305 -- and not from this implementation.
+# A cipher that agrees with itself is worth nothing; the whole point is to agree with everybody
+# else's, and these modules were written from the standards rather than ported from anyone.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: SHA-512 of what FIPS 180-4 says
+
+	MODULE Test;
+	IMPORT CryptoSHA512, U := CryptoUtils;
+	VAR h: CryptoSHA512.Hash; digest: ARRAY 64 OF CHAR; hex: ARRAY 160 OF CHAR;
+		data: ARRAY 64 OF CHAR;
+
+		PROCEDURE Of(CONST s: ARRAY OF CHAR; len: SIZE): BOOLEAN;
+		BEGIN
+			NEW(h); h.Initialize; h.Update(s, 0, len); h.GetHash(digest, 0);
+			U.Bin2Hex(digest, 0, hex, 0, 64); hex[128] := 0X;
+			RETURN TRUE
+		END Of;
+
+	BEGIN
+		ASSERT(Of("", 0));
+		ASSERT(hex = "CF83E1357EEFB8BDF1542850D66D8007D620E4050B5715DC83F4A921D36CE9CE47D0D13C5D85F2B0FF8318D2877EEC2F63B931BD47417A81A538327AF927DA3E");
+		ASSERT(Of("abc", 3));
+		ASSERT(hex = "DDAF35A193617ABACC417349AE20413112E6FA4E89A97EA20A9EEEE64B55D39A2192992A274FC1A836BA3C23A3FEEBBD454D4423643CE80E2A9AC94FA54CA49F");
+
+		(* fifty-six bytes: one byte past what fits beside the length field, so it pads twice *)
+		data := "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+		ASSERT(Of(data, 56));
+		ASSERT(hex = "204A8FC6DDA82F0A0CED7BEB8E08A41657C16EF468B228A8279BE331A703C33596FD15C13B1B07F9AA1D3BEA57789CA031AD85C7A71DD70354EC631238CA3445")
+	END Test.
+
+positive: HMAC over a hash whose block is not 64 bytes
+
+	(*	CryptoHMAC padded every key to 64 bytes until 2026-09-03, which is right for SHA-1 and
+		SHA-256 and wrong for SHA-512, whose compression block is 128. It would have produced a
+		number that was not an HMAC and said nothing. Both hashes are here: the second is the
+		regression, because the fix changed the code every existing caller runs. *)
+	MODULE Test;
+	IMPORT CryptoHMAC, U := CryptoUtils;
+	VAR m: CryptoHMAC.HMac; key, data, mac: ARRAY 64 OF CHAR; hex: ARRAY 160 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 19 DO key[i] := 0BX END;
+		data := "Hi There";
+
+		NEW(m, "CryptoSHA512"); m.Initialize(key, 20); m.Update(data, 0, 8); m.GetMac(mac, 0);
+		U.Bin2Hex(mac, 0, hex, 0, 64); hex[128] := 0X;
+		ASSERT(hex = "87AA7CDEA5EF619D4FF0B4241A1D6CB02379F4E2CE4EC2787AD0B30545E17CDEDAA833B7D6B8A702038B274EAEA3F4E4BE9D914EEB61F1702E696C203A126854");
+
+		NEW(m, "CryptoSHA256"); m.Initialize(key, 20); m.Update(data, 0, 8); m.GetMac(mac, 0);
+		U.Bin2Hex(mac, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "B0344C61D8DB38535CA8AFCEAF0BF12B881DC200C9833DA726E9376C2E32CFF7");
+
+		(* a key longer than the block is hashed first, which is the branch the block size also governs *)
+		FOR i := 0 TO 63 DO key[i] := 0AAX END;
+		NEW(m, "CryptoSHA256"); m.Initialize(key, 64); m.Update(data, 0, 8); m.GetMac(mac, 0);
+		U.Bin2Hex(mac, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex # "")
+	END Test.
+
+positive: HKDF derives what RFC 5869 derives
+
+	MODULE Test;
+	IMPORT HKDF := CryptoHKDF, U := CryptoUtils;
+	VAR ikm, salt, info, prk, okm: ARRAY 64 OF CHAR; hex: ARRAY 200 OF CHAR;
+		i: SIGNED32; n: SIZE;
+	BEGIN
+		FOR i := 0 TO 21 DO ikm[i] := 0BX END;
+		FOR i := 0 TO 12 DO salt[i] := CHR(i) END;
+		FOR i := 0 TO 9 DO info[i] := CHR(0F0H + i) END;
+
+		(* A.1: with salt and info *)
+		n := HKDF.Extract("CryptoSHA256", salt, 13, ikm, 22, prk);
+		ASSERT(n = 32);
+		U.Bin2Hex(prk, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "077709362C2E32DF0DDC3F0DC47BBA6390B6C73BB50F9C3122EC844AD7C2B3E5");
+		ASSERT(HKDF.Expand("CryptoSHA256", prk, n, info, 10, okm, 42));
+		U.Bin2Hex(okm, 0, hex, 0, 42); hex[84] := 0X;
+		ASSERT(hex = "3CB25F25FAACD57A90434F64D0362F2A2D2D0A90CF1A5A4C5DB02D56ECC4C5BF34007208D5B887185865");
+
+		(*	A.3: no salt and no info, which is NOT the same as a key of nothing -- the standard
+			says an absent salt is a string of zeros as long as the hash *)
+		ASSERT(HKDF.Derive("CryptoSHA256", salt, 0, ikm, 22, info, 0, okm, 42));
+		U.Bin2Hex(okm, 0, hex, 0, 42); hex[84] := 0X;
+		ASSERT(hex = "8DA4E775A563C18F715F802A063C5A31B8A11F5C5EE1879EC3454E5F3C738D2D9D201395FAA4B61A96C8");
+
+		ASSERT(~HKDF.Expand("CryptoSHA256", prk, 32, info, 10, okm, 100000))   (* past the limit *)
+	END Test.
+
+positive: ChaCha20 makes the keystream RFC 8439 prints
+
+	MODULE Test;
+	IMPORT CC := CryptoChaCha20, U := CryptoUtils;
+	VAR key, nonce, stream: ARRAY 64 OF CHAR; hex: ARRAY 160 OF CHAR; i: SIGNED32;
+	BEGIN
+		(* 2.3.2: key 00..1F, nonce 00 00 00 09 00 00 00 4A 00 00 00 00, counter 1 *)
+		FOR i := 0 TO 31 DO key[i] := CHR(i) END;
+		FOR i := 0 TO 11 DO nonce[i] := 0X END;
+		nonce[3] := 09X; nonce[7] := 4AX;
+		CC.Block(key, nonce, 1, stream, 0);
+		U.Bin2Hex(stream, 0, hex, 0, 64); hex[128] := 0X;
+		ASSERT(hex = "10F1E7E4D13B5915500FDD1FA32071C4C7D1F4C733C068030422AA9AC3D46C4ED2826446079FAA0914C2D705D98B02A2B5129CD1DE164EB9CBD083E8A2503C4E");
+
+		(*	A key with a high bit set in every word, which is the case that caught a word
+			assembled by arithmetic instead of shifts *)
+		U.Hex2Bin("808182838485868788898A8B8C8D8E8F909192939495969798999A9B9C9D9E9F", 0, key, 0, 32);
+		U.Hex2Bin("070000004041424344454647", 0, nonce, 0, 12);
+		CC.Block(key, nonce, 0, stream, 0);
+		U.Bin2Hex(stream, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "7BAC2B252DB447AF09B67A55A4E955840AE1D6731075D9EB2A9375783ED553FF")
+	END Test.
+
+positive: Poly1305 tags what RFC 8439 tags
+
+	MODULE Test;
+	IMPORT Poly := CryptoPoly1305, U := CryptoUtils;
+	VAR key, msg, tag: ARRAY 64 OF CHAR; hex: ARRAY 80 OF CHAR; i: SIGNED32;
+	BEGIN
+		U.Hex2Bin("85D6BE7857556D337F4452FE42D506A80103808AFB0DB2FD4ABFF6AF4149F51B", 0, key, 0, 32);
+		msg := "Cryptographic Forum Research Group";
+		Poly.Mac(key, msg, 34, tag);
+		U.Bin2Hex(tag, 0, hex, 0, 16); hex[32] := 0X;
+		ASSERT(hex = "A8061DC1305136C6C22B8BAF0C0127A9");
+
+		(* a message of nothing still has a tag, and it is s *)
+		FOR i := 0 TO 31 DO key[i] := 0X END;
+		Poly.Mac(key, msg, 0, tag);
+		U.Bin2Hex(tag, 0, hex, 0, 16); hex[32] := 0X;
+		ASSERT(hex = "00000000000000000000000000000000")
+	END Test.
+
+positive: the AEAD seals and opens, and refuses everything that was touched
+
+	MODULE Test;
+	IMPORT CC := CryptoChaCha20, U := CryptoUtils;
+	VAR key, nonce, aad, tag: ARRAY 64 OF CHAR;
+		plain, cipher, back: ARRAY 128 OF CHAR; hex: ARRAY 300 OF CHAR;
+	BEGIN
+		U.Hex2Bin("808182838485868788898A8B8C8D8E8F909192939495969798999A9B9C9D9E9F", 0, key, 0, 32);
+		U.Hex2Bin("070000004041424344454647", 0, nonce, 0, 12);
+		U.Hex2Bin("50515253C0C1C2C3C4C5C6C7", 0, aad, 0, 12);
+		plain := "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+
+		CC.Seal(key, nonce, aad, 12, plain, cipher, 114, tag);
+		U.Bin2Hex(cipher, 0, hex, 0, 32); hex[64] := 0X;
+		ASSERT(hex = "D31A8D34648E60DB7B86AFBC53EF7EC2A4ADED51296E08FEA9E2B5A736EE62D6");
+		U.Bin2Hex(tag, 0, hex, 0, 16); hex[32] := 0X;
+		ASSERT(hex = "1AE10B594F09E26A7E902ECBD0600691");
+
+		ASSERT(CC.Open(key, nonce, aad, 12, cipher, back, 114, tag));
+		back[114] := 0X;
+		ASSERT(back = plain);
+
+		(* a tag off by one bit is a refusal, not a plaintext *)
+		tag[0] := CHR(ORD(tag[0]) + 1);
+		ASSERT(~CC.Open(key, nonce, aad, 12, cipher, back, 114, tag));
+		tag[0] := CHR(ORD(tag[0]) - 1);
+
+		(* so is a ciphertext off by one bit *)
+		cipher[7] := CHR(ORD(cipher[7]) + 1);
+		ASSERT(~CC.Open(key, nonce, aad, 12, cipher, back, 114, tag));
+		cipher[7] := CHR(ORD(cipher[7]) - 1);
+
+		(* and so is a header nobody encrypted but everybody authenticated *)
+		aad[3] := CHR(ORD(aad[3]) + 1);
+		ASSERT(~CC.Open(key, nonce, aad, 12, cipher, back, 114, tag));
+		aad[3] := CHR(ORD(aad[3]) - 1);
+		ASSERT(CC.Open(key, nonce, aad, 12, cipher, back, 114, tag))
+	END Test.

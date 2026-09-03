@@ -4,7 +4,7 @@
   "context": "A2",
   "headless": false,
   "status": "stable",
-  "description": "Ciphers (AES/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA3/Keccak), public-key (RSA/DSA/DH), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
+  "description": "Ciphers (AES/ChaCha20/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA512/SHA3/Keccak), authenticators (HMAC, Poly1305), key derivation (HKDF), public-key (RSA/DSA/DH), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
   "provides": [
     "ASN1",
     "Checksum",
@@ -14,6 +14,7 @@
     "CryptoBlowfish",
     "CryptoCAST",
     "CryptoCSPRNG",
+    "CryptoChaCha20",
     "CryptoCiphers",
     "CryptoDES",
     "CryptoDES3",
@@ -21,17 +22,20 @@
     "CryptoDiffieHellman",
     "CryptoFortuna",
     "CryptoFortunaRng",
+    "CryptoHKDF",
     "CryptoHMAC",
     "CryptoHashes",
     "CryptoIDEA",
     "CryptoKeccakF1600",
     "CryptoKeccakSponge",
     "CryptoMD5",
+    "CryptoPoly1305",
     "CryptoPrimes",
     "CryptoRSA",
     "CryptoSHA1",
     "CryptoSHA256",
     "CryptoSHA3",
+    "CryptoSHA512",
     "CryptoStreams",
     "CryptoTwofish",
     "CryptoUtils",
@@ -45,6 +49,7 @@
     "std/system": "*"
   },
   "residual": [
+    "2026-09-03: SHA-512, HKDF, ChaCha20 and Poly1305 arrived, written from FIPS 180-4, RFC 5869 and RFC 8439 and checked against those documents' own vectors. The gap they close is that everything here older than them is nineties cryptography. Still missing and named in docs/STDLIB.md: X25519 and Ed25519, which is what ob get would verify a signature with.",
     "DES and Checksum entered 2026-08-24, unclaimed until then: DES belongs beside the other ciphers, and Checksum (GF) is the md5/sha1/sha3 command over the hashes already here.",
     "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
   ]

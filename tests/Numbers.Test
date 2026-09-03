@@ -332,3 +332,34 @@ positive: the generator, which has to repeat itself and stay in its range
 			u := s.Uniform(); ASSERT(u >= 0.0); ASSERT(u <= 1.0)
 		END
 	END Test.
+
+positive: the width an expression is multiplied in, which is not the width it is assigned to
+
+	(*	Not a defect and worth a case anyway: the type of a * b is the wider of a and b, not a
+		type wide enough to hold the answer. ORD of a CHAR is a small type, so 100H * ORD(c) is
+		multiplied in sixteen bits and wraps, even on the way into a SIGNED64. It cost two wrong
+		bytes in a Poly1305 key on 2026-09-03 -- the assembled word was one bit short in the
+		third byte and every tag after it was wrong -- and the same shape is written all over
+		the older library. Assembling bytes into a word wants shifts on a SET, not multipliers. *)
+	MODULE Test;
+	VAR c: CHAR; t: SIGNED64; n: SIGNED32; v: SET64; i: SIGNED32; b: ARRAY 4 OF CHAR;
+	BEGIN
+		c := 0BEX;                                  (* 190 *)
+		t := 10000H * ORD(c);
+		ASSERT(t = 12451840);                       (* 10000H needs 32 bits, so this one is fine *)
+		n := 190;
+		t := 100H * n + 10000H * n;
+		ASSERT(t = 12500480);                       (* and so is this: n is SIGNED32 *)
+
+		t := 100H * ORD(c);
+		ASSERT(t # 48640);                          (* but this wraps in sixteen bits *)
+		ASSERT(t = -16896);
+		t := 100H * ORD(c) + 10000H * ORD(c);
+		ASSERT(t = 12434944);                       (* which is 65536 short of the arithmetic answer *)
+
+		(* the way to assemble a word out of bytes, and the reason the crypto modules do it *)
+		b[0] := 85X; b[1] := 0D6X; b[2] := 0BEX; b[3] := 78X;
+		v := {};
+		FOR i := 3 TO 0 BY -1 DO v := LSH(v, 8) + SET64(ORD(b[i])) END;
+		ASSERT(SIGNED64(v) = 2025772677)            (* 78BED685H, all four bytes intact *)
+	END Test.

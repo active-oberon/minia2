@@ -925,14 +925,15 @@ PACKAGE ApplicationsMini ARCHIVE "ApplicationsMini.zip" SOURCE "ApplicationsMini
 
 	CryptoBigNumbers.Mod Base64.Mod CryptoUtils.Mod CryptoCiphers.Mod CryptoARC4.Mod
 	CryptoDES.Mod CryptoDES3.Mod
-	CryptoHashes.Mod CryptoMD5.Mod CryptoSHA1.Mod CryptoSHA256.Mod
+	CryptoHashes.Mod CryptoMD5.Mod CryptoSHA1.Mod CryptoSHA256.Mod CryptoSHA512.Mod
 	CryptoKeccakF1600.Mod CryptoKeccakSponge.Mod CryptoSHA3.Mod CryptoCSPRNG.Mod
 	CryptoPrimes.Mod CryptoDSA.Mod CryptoDiffieHellman.Mod
 	CryptoAES.Mod
+	CryptoPoly1305.Mod CryptoChaCha20.Mod
 	CryptoBlowfish.Mod
 	CryptoTwofish.Mod
 	CryptoCAST.Mod
-	CryptoHMAC.Mod CryptoIDEA.Mod
+	CryptoHMAC.Mod CryptoHKDF.Mod CryptoIDEA.Mod
 	CryptoRSA.Mod
 	CryptoStreams.Mod
 
