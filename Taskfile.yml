@@ -592,6 +592,21 @@ tasks:
           fi
         }
 
+  win-terminal:
+    desc: The Windows twin of the terminal, run under wine on a real pseudo-terminal
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/win-terminal-check.sh {{.BUILD_DIR}}/bundle-win64 || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$WIN_REQUIRE" ] || { echo "[FAIL] checking the Windows terminal needs the Windows SDK, wine and script(1), and WIN_REQUIRE is set"; exit 1; }
+            echo "[SKIP] checking the Windows terminal needs the Windows SDK (task win-bundle), wine and script(1)"
+          else
+            exit "$status"
+          fi
+        }
+
   win-bundle:
     desc: The Windows SDK -- ob.exe and the library it compiles against, needing no bash on the target
     cmds:

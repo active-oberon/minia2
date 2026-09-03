@@ -1046,11 +1046,13 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	DAP.Mod # debug adapter: a trapped program, read where it stopped (DAP over stdio)
 
 	# full-screen terminal programs: what a terminal sends and understands, and, one module
-	# up, the terminal as a device. Only the second is platform work, and only Unix has it
-	# so far -- a Windows console twin is what a TUI there waits for.
+	# up, the terminal as a device. Only the second is platform work, and both hosts have it
+	# since 2026-09-03: the Windows twin sets console modes where the Unix one clears termios
+	# bits, and draws with the same sequences, which that console has understood since 10.
 	Channels.Mod # a queue that waits: what one activity hands to another
 	TerminalCodes.Mod
 	UNIX { Unix.Terminal.Mod }
+	WIN { Windows.Terminal.Mod }
 	Frames.Mod # tiled frames of text with a caret, and any line runnable -- Oberon's model
 	UNIX { Unix.Processes.Mod } # start another program, and talk to it through pipes
 	UNIX { Unix.LocalSockets.Mod } # sockets named by a path, for talking to a program on this machine
