@@ -70,8 +70,18 @@ that nothing imported either was wrong, and the one with no callers at all was t
 kept. `Base64` is now the implementation `WebSockets`, `CryptoRSA` and `CryptoDSA` were already
 using, under the name std filed it as. `DES` and `CryptoDES` both stay, as decided.
 
-Modern crypto is what is left of step 4. Everything else on this list is done, and the last
-three went in on 2026-09-03:
+Step 4 is done but for the two elliptic curves. Everything on this list went in on 2026-09-03:
+
+**Crypto of this decade** (`CryptoSHA512`, `CryptoHKDF`, `CryptoChaCha20`, `CryptoPoly1305`,
+`tests/CryptoModern.Test`). What `lib/crypto` had was the nineties: MD5, DES, RSA. Now it also
+has SHA-512, HKDF, and the ChaCha20-Poly1305 AEAD, each written from its standard — FIPS 180-4,
+RFC 5869, RFC 8439 — and checked against that standard's own vectors, because a cipher agreeing
+with itself proves nothing. Two things fell out of writing them: `CryptoHMAC` padded every key to
+64 bytes, which is right through SHA-256 and wrong for SHA-512, so `CryptoHashes.Hash` now carries
+its compression block size; and `100H * ORD(c)` multiplies in sixteen bits and wraps, which put
+two wrong bytes in a Poly1305 key (a case in `tests/Numbers.Test` now pins it). **Still missing:
+X25519 and Ed25519** — the pair `ob get` would verify a signature with, and the largest single
+piece of arithmetic in the list.
 
 **Monotonic time and UTC** (`source/Time.Mod`, `tests/Time.Test`). Both clocks were reachable
 and neither was usable: `PrecisionTimer.GetCounter` is monotonic on both hosts but counts
@@ -184,11 +194,11 @@ is, with `Hashing` for the hash and equality a map has to be handed.
 
 `DNS`, `IP`, `Network`, `Sockets`, `TCP`, `TLS`, `UDP`, `WebHTTP`, `WebHTTPClient`, `WebHTTPServer`
 
-## std/crypto — 22
+## std/crypto — 26
 
-`ASN1`, `CryptoAES`, `CryptoBigNumbers`, `CryptoCSPRNG`, `CryptoCiphers`, `CryptoDSA`, `CryptoDiffieHellman`, `CryptoFortuna`, `CryptoFortunaRng`, `CryptoHMAC`, `CryptoHashes`, `CryptoKeccakF1600`, `CryptoKeccakSponge`, `CryptoMD5`, `CryptoPrimes`, `CryptoRSA`, `CryptoSHA1`, `CryptoSHA256`, `CryptoSHA3`, `CryptoStreams`, `CryptoUtils`, `X509`
+`ASN1`, `CryptoAES`, `CryptoBigNumbers`, `CryptoCSPRNG`, `CryptoChaCha20`, `CryptoCiphers`, `CryptoDSA`, `CryptoDiffieHellman`, `CryptoFortuna`, `CryptoFortunaRng`, `CryptoHKDF`, `CryptoHMAC`, `CryptoHashes`, `CryptoKeccakF1600`, `CryptoKeccakSponge`, `CryptoMD5`, `CryptoPoly1305`, `CryptoPrimes`, `CryptoRSA`, `CryptoSHA1`, `CryptoSHA256`, `CryptoSHA3`, `CryptoSHA512`, `CryptoStreams`, `CryptoUtils`, `X509`
 
-Missing, worth adding: **Ed25519, X25519, ChaCha20-Poly1305, HKDF**.
+Missing, worth adding: **Ed25519, X25519**. ChaCha20-Poly1305 and HKDF arrived 2026-09-03.
 
 ## std/archive — 13
 
