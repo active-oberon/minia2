@@ -786,3 +786,39 @@ positive: an indexed image written to a file brings its palette back with it
 			ASSERT(out[Raster.b] = pal.col[x, Raster.b])
 		END
 	END Test.
+
+positive: the colour conversion no longer multiplies in sixteen bits
+
+	(*	BGRtoYUVInt weights green by 129, and 129 * 255 is 32895 -- past the sixteen bits the
+		product was computed in until 2026-09-03, so every colour with a bright green component
+		came out with the wrong luminance and the wrong chrominance. The numbers below are what
+		the BT.601 studio-swing formulas say; the same formula written in any other language
+		prints them, and this one did not. *)
+	MODULE Test;
+	IMPORT RasterPixelFormats;
+	VAR y, u, v: CHAR;
+
+		PROCEDURE Convert(red, green, blue: SIGNED32);
+		BEGIN
+			RasterPixelFormats.BGRtoYUVInt(CHR(blue), CHR(green), CHR(red), y, u, v)
+		END Convert;
+
+	BEGIN
+		Convert(255, 255, 255);                 (* white: the case that overflowed hardest *)
+		ASSERT(ORD(y) = 235); ASSERT(ORD(u) = 128); ASSERT(ORD(v) = 128);
+
+		Convert(0, 255, 0);                     (* green alone, and 129 * 255 is the product *)
+		ASSERT(ORD(y) = 144); ASSERT(ORD(u) = 54); ASSERT(ORD(v) = 34);
+
+		Convert(255, 0, 0);
+		ASSERT(ORD(y) = 82); ASSERT(ORD(u) = 90); ASSERT(ORD(v) = 240);
+
+		Convert(0, 0, 255);
+		ASSERT(ORD(y) = 41); ASSERT(ORD(u) = 240); ASSERT(ORD(v) = 110);
+
+		Convert(128, 200, 64);
+		ASSERT(ORD(y) = 156); ASSERT(ORD(u) = 79); ASSERT(ORD(v) = 106);
+
+		Convert(0, 0, 0);                       (* and black, which never overflowed *)
+		ASSERT(ORD(y) = 16); ASSERT(ORD(u) = 128); ASSERT(ORD(v) = 128)
+	END Test.

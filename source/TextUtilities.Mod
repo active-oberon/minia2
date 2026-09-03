@@ -2085,7 +2085,7 @@ BEGIN
 		Files.OpenReader(r, f, 0);
 		i := 0;
 		REPEAT
-			r.Char(tc1); r.Char(tc2); ch := ORD(tc1) * 256 + ORD(tc2);
+			r.Char(tc1); r.Char(tc2); ch := SIGNED32(ORD(tc1)) * 256 + SIGNED32(ORD(tc2));
 			IF i = m  THEN tempUCS32[i] := 0; text.InsertUCS32(text.GetLength(), tempUCS32); i := 0 END;
 			IF (last # ORD(CR)) OR (ch # ORD(LF)) THEN
 				IF ch = ORD(CR) THEN tempUCS32[i] := ORD(LF)

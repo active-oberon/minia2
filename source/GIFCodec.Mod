@@ -626,7 +626,7 @@ END LoadData;
 
 PROCEDURE GetColor(CONST pixel : Raster.Pixel) : SIGNED32;
 BEGIN
-	RETURN ORD(pixel[Raster.a]) + 100H * ORD(pixel[Raster.b]) + 10000H * ORD(pixel[Raster.g]) + 1000000H * ORD(pixel[Raster.r]);
+	RETURN SIGNED32(ORD(pixel[Raster.a])) + 100H * SIGNED32(ORD(pixel[Raster.b])) + 10000H * SIGNED32(ORD(pixel[Raster.g])) + 1000000H * SIGNED32(ORD(pixel[Raster.r]));
 END GetColor;
 
 PROCEDURE InitDefaultPalette;

@@ -49,7 +49,7 @@ TYPE
 		PROCEDURE GetPacket32(pos : SIGNED32) : SIGNED32;
 		VAR int32 : SIGNED32;
 		BEGIN
-			int32 := ORD(packet[pos]) * 1000000H + ORD(packet[pos + 1]) * 10000H + ORD(packet[pos + 2]) * 100H + ORD(packet[pos + 3]);
+			int32 := SIGNED32(ORD(packet[pos])) * 1000000H + SIGNED32(ORD(packet[pos + 1])) * 10000H + SIGNED32(ORD(packet[pos + 2])) * 100H + SIGNED32(ORD(packet[pos + 3]));
 			RETURN int32
 		END GetPacket32;
 

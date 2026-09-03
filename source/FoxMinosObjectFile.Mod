@@ -329,7 +329,7 @@ TYPE
 
 		PROCEDURE Get32(offset: SIZE): SIGNED32;
 		BEGIN
-			RETURN ORD(code[offset]) + 100H*ORD(code[offset+1]) + 10000H * ORD(code[offset+2]) + 1000000H*ORD(code[offset+3]);
+			RETURN SIGNED32(ORD(code[offset])) + 100H*SIGNED32(ORD(code[offset+1])) + 10000H * SIGNED32(ORD(code[offset+2])) + 1000000H*SIGNED32(ORD(code[offset+3]));
 		END Get32;
 
 		(* ObjectFile = name:String key:Int fixSelf:Int Imports Commands Entries Data Code *)

@@ -56,7 +56,7 @@ TYPE
 
 		(* Get2 - reads a (big endian) 16bit value from 'buf' at position 'ofs'..'ofs'+1 *)
 		PROCEDURE Get2(CONST buf: ARRAY OF CHAR; ofs: SIZE): SIGNED32;
-		BEGIN RETURN ORD(buf[ofs])*100H + ORD(buf[ofs+1])
+		BEGIN RETURN SIGNED32(ORD(buf[ofs]))*100H + SIGNED32(ORD(buf[ofs+1]))
 		END Get2;
 
 		(* Put2 - writes a (big endian) 16bit value to 'buf' at position 'ofs'..'ofs'+1 *)

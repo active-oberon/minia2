@@ -18,7 +18,7 @@ BEGIN
 	w := buf.GetWriter();
 	i := 0;
 	WHILE i < LEN(from) - 1 DO
-		code := ORD(from[i]) * 256 + ORD(from[i + 1]);
+		code := SIGNED32(ORD(from[i])) * 256 + SIGNED32(ORD(from[i + 1]));
 		INC(i, 2);
 		IF UTF8Strings.EncodeChar(gb2312Table[code MOD 10000H], temp, len) THEN
 			w.String(temp)

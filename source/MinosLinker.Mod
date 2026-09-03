@@ -166,7 +166,7 @@ TYPE
 		BEGIN
 			len := 0; WHILE str[len] # 0X DO INC (len) END; i := 0;
 			WHILE i <= len DO
-				code[index] := ORD (str[i]) + ORD (str[i+1]) * 100H + ORD (str[i+2]) * 10000H + ORD (str[i+3]) * 1000000H;
+				code[index] := SIGNED32(ORD (str[i])) + SIGNED32(ORD (str[i+1])) * 100H + SIGNED32(ORD (str[i+2])) * 10000H + SIGNED32(ORD (str[i+3])) * 1000000H;
 				INC (index); INC (i, 4)
 			END;
 		END String;

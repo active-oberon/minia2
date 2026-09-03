@@ -172,6 +172,7 @@ FSTools.Mod
 UpTime.Mod
 CLUTs.Mod
 Raster.Mod
+RasterPixelFormats.Mod
 Localization.Mod
 Archives.Mod
 WMRectangles.Mod
