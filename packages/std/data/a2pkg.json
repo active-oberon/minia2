@@ -2,7 +2,7 @@
   "name": "std/data",
   "tier": 8,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Data structures and persistence: generic collections/sort, lists/queues/stacks/trees, the Models/Repositories/Types object framework, CSV, persistent objects, versioning.",
   "provides": [

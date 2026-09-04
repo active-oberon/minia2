@@ -2,7 +2,7 @@
   "name": "lib/calc",
   "tier": 9,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "draft",
   "description": "Numerical calculus: Gauss/Grünwald/Diethelm quadrature and differentiation kernels over std/math + std/numerics.",
   "provides": [

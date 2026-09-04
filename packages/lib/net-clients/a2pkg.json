@@ -2,7 +2,18 @@
   "name": "lib/net-clients",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
+  "graphical": [
+    "FTP",
+    "SSH",
+    "SSHAuthorize",
+    "SSHChannels",
+    "SSHGlobals",
+    "SSHKeys",
+    "SSHTerminal",
+    "SSHTransport",
+    "UDPChatClient"
+  ],
   "status": "draft",
   "description": "Network clients and servers that are programs, not protocol: FTP, SSH, Telnet, Samba, mail, TFTP, the chat demos, and the X/YMODEM transfers -- plus TLS and the three HTTP stacks.",
   "provides": [

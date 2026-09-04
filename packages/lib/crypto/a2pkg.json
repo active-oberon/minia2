@@ -2,7 +2,7 @@
   "name": "lib/crypto",
   "tier": 4,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "stable",
   "description": "Ciphers (AES/ChaCha20/DES/Blowfish/CAST/IDEA/Twofish/ARC4), hashes (MD5/SHA1/SHA256/SHA512/SHA3/Keccak), authenticators (HMAC, Poly1305), key derivation (HKDF), public-key (RSA/DSA/DH, X25519, Ed25519), big numbers, CSPRNG (Fortuna), ASN.1 / X.509.",
   "provides": [

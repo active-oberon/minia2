@@ -2,7 +2,7 @@
   "name": "apps/perfmon",
   "tier": 9,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "The performance monitor: the application, its tabs and components, the alert machinery, and a plugin per thing worth watching -- CPU, memory, heap, disks, network, processes, messages, module variables, the servers.",
   "provides": [

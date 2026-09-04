@@ -2,7 +2,7 @@
   "name": "apps/system-tools",
   "tier": 9,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "Commands for looking after the machine: the file tools, the file-handler registry, and the localization commands.",
   "provides": [

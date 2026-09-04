@@ -2,7 +2,7 @@
   "name": "lib/diagnostics",
   "tier": 3,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Looking at a running system: the event logs, the profilers, process info, the dependency walker, and the small dump tools.",
   "provides": [

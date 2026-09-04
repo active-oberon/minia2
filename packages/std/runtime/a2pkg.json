@@ -2,7 +2,7 @@
   "name": "std/runtime",
   "tier": 0,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "stable",
   "description": "The closed kernel: what the compiler emits calls into without the programmer naming it, and what must exist before any module can load. Allocation and the collector, module loading and type descriptors, activities and AWAIT, the platform binding, the clock.",
   "provides": [

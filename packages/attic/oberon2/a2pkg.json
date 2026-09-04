@@ -2,7 +2,7 @@
   "name": "attic/oberon2",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "unsupported",
   "description": "The Oberon-2 compiler of the old system, and the Minos object format and linker beside it.",
   "provides": [

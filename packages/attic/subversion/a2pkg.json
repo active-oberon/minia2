@@ -2,7 +2,7 @@
   "name": "attic/subversion",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "A Subversion client over WebDAV/DeltaV: the HTTP authentication, the XML of the DeltaV methods, the working-copy bookkeeping and the command line above them.",
   "provides": [

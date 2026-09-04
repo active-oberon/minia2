@@ -2,7 +2,11 @@
   "name": "lib/texts",
   "tier": 4,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
+  "graphical": [
+    "UnicodeBidirectionality",
+    "UnicodeProperties"
+  ],
   "status": "draft",
   "description": "The rich-text piece-list model and the Unicode character database that reads its tables through it.",
   "provides": [

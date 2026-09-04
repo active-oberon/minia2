@@ -2,7 +2,7 @@
   "name": "attic/activecells-hardware",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "unsupported",
   "description": "The hardware synthesis back end for ActiveCells: cells and ports turned into an FPGA design rather than into code.",
   "provides": [

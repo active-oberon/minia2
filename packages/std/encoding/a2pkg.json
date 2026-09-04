@@ -2,7 +2,7 @@
   "name": "std/encoding",
   "tier": 3,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Turning values into bytes and back: JSON, CSV, Base64, CRC.",
   "provides": [

@@ -15,6 +15,24 @@ The border is Rust's, because Rust is the one modern standard library designed
 per-package API to copy is Go's — those are the best available specifications.
 The size to aim for is Oberon's own.
 
+## The payload, 2026-09-04: `headless` became `shipped`, and it grew
+
+The manifest field that decides what the SDK carries was called `headless`, which was the
+question a Docker image asks. The payload decides something else — what `ob build` can link
+against without compiling the tree — and the old name hid a triage nobody had done: of 757
+modules in the tree, **336 reach the window system and 421 do not**, yet the payload was 149.
+Almost everything outside it was outside for want of an answer, not because it draws.
+
+So the field says `shipped` now, and every library package was asked the question. The gate
+did the second half: it named the fifty modules that do draw, and they are in `graphical`
+where they can no longer rot quietly — the IME windows, the video decoders, the SSH family,
+`UnicodeProperties` and `UnicodeBidirectionality`, one CSS module. `lib/gui` stays home and is
+the one package where that is not a decision to revisit: all 115 of it draws.
+
+Payload **149 → 352** modules (356 on Win64), `lib/` in the tarball **8.3 → 14 MB**, the
+tarball itself **16 → 20 MB**. `apps/*` and `attic/*` stay out: finished programs and other
+people's languages are what `ob get` is for.
+
 ## Status — steps 1a and 1b are done, `task registry` is green (2026-08-27)
 
 `std` is now **12 packages, 144 modules**, and the SDK payload went from **340 to 140**.

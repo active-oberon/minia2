@@ -2,7 +2,7 @@
   "name": "std/text",
   "tier": 1,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Text: the string family and its pool, UTF-8, regular expressions, and number conversion into and out of strings.",
   "provides": [

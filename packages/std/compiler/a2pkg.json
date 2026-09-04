@@ -2,7 +2,7 @@
   "name": "std/compiler",
   "tier": 7,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "The Active Oberon compiler: the Oberon front end, the semantic checker and syntax tree, the intermediate code and its textual form, the AMD64 and AArch64 back ends and assemblers, the linker, the disassembler, the documentation back end, and the language server.",
   "provides": [

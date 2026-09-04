@@ -2,7 +2,7 @@
   "name": "std/system",
   "tier": 2,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "The host a program runs on: files, the trap handler and its stack traces, the dynamic loader and the object file it reads, the command interpreter and the standard streams, and what a process can say about itself.",
   "provides": [

@@ -2,7 +2,7 @@
   "name": "attic/tf-tools",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "Thomas Frey's own semantic tooling for Active Oberon: a type system and scope tools independent of the Fox front end, and the checker over them.",
   "provides": [

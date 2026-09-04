@@ -2,7 +2,7 @@
   "name": "apps/desktop",
   "tier": 9,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "The desktop's own programs and tools: viewers and players, the editors and converters, the inspectors and monitors, the installers, and what draws the desktop itself.",
   "provides": [

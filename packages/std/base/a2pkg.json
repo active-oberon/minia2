@@ -2,7 +2,7 @@
   "name": "std/base",
   "tier": 1,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "The library that needs no host: streams and number conversion, bit sets and bit streams, events and channels, locks and pipes, the plugin registry.",
   "provides": [

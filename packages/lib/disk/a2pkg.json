@@ -2,7 +2,14 @@
   "name": "lib/disk",
   "tier": 3,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
+  "graphical": [
+    "DiskBenchmark",
+    "DiskTests",
+    "FATScavenger",
+    "Partitions",
+    "PartitionsLib"
+  ],
   "status": "draft",
   "description": "Block devices and the file systems on them: the disk and volume abstractions and their cache, FAT, ISO 9660, the old Oberon file system, partitions, a RAM volume, and file systems reached over a network.",
   "provides": [

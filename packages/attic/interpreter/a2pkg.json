@@ -2,7 +2,7 @@
   "name": "attic/interpreter",
   "tier": 9,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "unsupported",
   "description": "An interpreting back end: runs the intermediate code instead of generating machine code.",
   "provides": [
