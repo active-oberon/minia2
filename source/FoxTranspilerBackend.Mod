@@ -1243,7 +1243,9 @@ TYPE
 			| Global.Cap: writer.String ("Capitalize ("); PrintExpression (argument[0]); writer.Char (')');
 			| Global.Odd: writer.Char ('('); PrintExpression (argument[0]); writer.String (" & 1)");
 			| Global.Ash: writer.Char ('('); PrintExpression (argument[0]); IF IsNegative (argument[1]) THEN writer.String (" >> - ") ELSE writer.String (" << ") END; PrintExpression (argument[1]); writer.Char (')');
-			| Global.Abs: IF (expression.type.resolvedType IS SyntaxTree.FloatType) THEN writer.Char ('f') END;
+			| Global.Abs:
+				IF expression.type.resolvedType IS SyntaxTree.FloatType THEN writer.Char ('f')
+				ELSIF expression.type.resolvedType.sizeInBits > 32 THEN writer.String ("ll") END;
 				writer.String ("abs ("); PrintExpression (argument[0]); writer.Char (')');
 			(* MIN/MAX of two: the C ternary, and it does evaluate the winner twice -- no side effects survive that *)
 			| Global.Min, Global.Max:
@@ -1266,7 +1268,7 @@ TYPE
 				writer.String ("*(("); PrintType (TRUE, expression.type, ""); writer.String (") "); PrintExpression (argument[0]); writer.Char (')');
 			| Global.systemPut, Global.systemPut8, Global.systemPut16, Global.systemPut32, Global.systemPut64:
 				writer.String ("*(("); PrintType (TRUE, argument[1].type, ""); writer.String (") "); PrintExpression (argument[0]); writer.String (") = "); PrintExpression (argument[1]);
-			| Global.systemMove: writer.String ("memcpy ("); PrintExpression (argument[1]); writer.String (", "); PrintExpression (argument[0]); writer.String (", "); PrintExpression (argument[2]); writer.Char (')');
+			| Global.systemMove: writer.String ("memcpy ((void*) "); PrintExpression (argument[1]); writer.String (", (void*) "); PrintExpression (argument[0]); writer.String (", "); PrintExpression (argument[2]); writer.Char (')');
 			| Global.systemVal:
 				IF (argument[1] IS SyntaxTree.SymbolDesignator) & (argument[1].resolved = NIL) THEN
 					writer.String ("*(("); PrintType (TRUE, GetDeclaredType (argument[0]), ""); writer.String (") &"); PrintExpression (argument[1]); writer.Char (')');
@@ -1468,7 +1470,7 @@ TYPE
 
 		PROCEDURE VisitDereferenceDesignator* (expression: SyntaxTree.DereferenceDesignator);
 		BEGIN
-			IF expression.type IS SyntaxTree.ArrayType THEN
+			IF expression.type.resolvedType IS SyntaxTree.ArrayType THEN (* a named one is one too *)
 				writer.String ("(*("); PrintType (TRUE, expression.type, ""); writer.String (") &");
 				PrintExpression (expression.left); writer.String ("->array)");
 			ELSE
@@ -1739,15 +1741,17 @@ TYPE
 		END;
 	END FixStailaIdentifier;
 
+	(* An Active Oberon name that happens to be a C keyword gets an underscore. The list used to be
+		six long, and a field called `static` is what a compiled ZlibDeflate.c stops on. *)
 	PROCEDURE FixIdentifier (VAR identifier: ARRAY OF CHAR; style: Style);
 	CONST Tag = '_';
+		Keywords = "|alignas|alignof|auto|bool|break|case|char|complex|const|continue|default|do|double|else|enum|extern|false|float|for|goto|if|imaginary|inline|int|long|noreturn|register|restrict|return|short|signed|sizeof|static|struct|switch|thread_local|true|typedef|union|unsigned|void|volatile|while|";
+	VAR delimited: ARRAY 160 OF CHAR;
 	BEGIN
 		Replace (identifier, '$', Tag); Replace (identifier, '@', Tag);
 		(* IF style = StailaStyle THEN FixStailaIdentifier (identifier) END; *)
-		IF (identifier = "int") OR (identifier = "return") OR (identifier = "enum") OR
-			(identifier = "char") OR (identifier = "register") OR (identifier = "continue") THEN
-				Strings.Append (identifier, Tag);
-		END;
+		COPY ("|", delimited); Strings.Append (delimited, identifier); Strings.Append (delimited, "|");
+		IF Strings.Pos (delimited, Keywords) >= 0 THEN Strings.Append (identifier, Tag) END;
 	END FixIdentifier;
 
 	PROCEDURE Get* (): Backend.Backend;

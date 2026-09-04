@@ -48,9 +48,10 @@ jobs:
           AMD64_REQUIRE: "1"
         run: task amd64-codegen
       - name: C transpiler backend
-        # The transpiler has no runtime yet, so nothing here compiles the C it writes -- what is
-        # checkable is the text, and it silently regressed for years because nobody read it. This
-        # transpiles a module of the constructs the backend used to refuse and greps the output.
+        # The C the backend writes silently regressed for years because nobody read it, and until
+        # 04.09 nobody could compile it either -- there was no oberon.h. This transpiles a module of
+        # the constructs the backend used to refuse, greps the output, and then gives it to clang
+        # and runs it against transpiler/oberon.c.
         env:
           TRANSPILER_REQUIRE: "1"
         run: task transpiler

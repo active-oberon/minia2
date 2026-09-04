@@ -2,11 +2,13 @@
 #
 # Transpile tests/TranspilerCases.Mod to C and read the C back.
 #
-# The C backend (source/FoxTranspilerBackend.Mod, -b=Transpiler) has no runtime yet -- there is no
-# oberon.h in the tree -- so nothing here compiles the C or runs it. What is checkable today is the
-# text it writes, and that is what this does: one grep per construct the backend used to refuse or
-# to write wrongly. A regression shows up as a missing shape here rather than as a trap somewhere in
-# the middle of the standard library.
+# Two halves. First one grep per construct the backend used to refuse or to write wrongly, so a
+# regression shows up as a missing shape here rather than as a trap somewhere in the middle of the
+# standard library. Then the C is handed to clang, linked against transpiler/oberon.c and run, with
+# tests/transpiler-driver.c calling what the module exports and checking the answers.
+#
+# That second half needs no garbage collector because the fixture allocates a handful of objects and
+# exits. A program that stays up does, and that is the rest of the work.
 #
 # It also transpiles three real modules -- Streams, Strings, JSON -- because a fixture only proves
 # the shapes somebody thought of, and those three were the ones that fell over first.
@@ -76,9 +78,36 @@ if [ -f "$c" ]; then
 	check "$c" "((LongInt) x)"                    "x(SIGNED32) is not a cast"
 fi
 
+# And then the part that a grep cannot do: give the generated C to a C compiler, link it against
+# transpiler/oberon.h + oberon.c, run it, and see the answers come back. Without this the check
+# proves the backend wrote something, not that what it wrote means anything.
+if [ -f "$c" ] && command -v clang >/dev/null; then
+	if clang -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Werror \
+		-I "$root/transpiler" -I "$work" \
+		-o "$work/cases" "$root/tests/transpiler-driver.c" "$c" "$root/transpiler/oberon.c" \
+		-pthread -lm 2> "$work/cc.log"; then
+		if output="$("$work/cases" 2>&1)"; then
+			# what TRACE printed: the module name, the source position, the expression and its value
+			case "$output" in
+				*"TranspilerCases@"*"answer = 42"*) ;;
+				*) fail "the running binary printed '$output', not the traced answer" ;;
+			esac
+		else
+			fail "the transpiled C compiled but did not run"
+			printf '%s\n' "$output" >&2
+		fi
+	else
+		fail "the transpiled C does not compile against transpiler/oberon.h"
+		head -20 "$work/cc.log" >&2
+	fi
+	ran="compiled, linked and ran"
+else
+	ran="not compiled -- no clang here"
+fi
+
 if [ "$failed" -ne 0 ]; then
 	echo "the C transpiler backend lost ground -- see source/FoxTranspilerBackend.Mod" >&2
 	exit 1
 fi
 
-echo "the C backend wrote all fourteen shapes, and Streams, Strings and JSON went through it"
+echo "the C backend wrote all fourteen shapes; Streams, Strings and JSON went through it; the C $ran"

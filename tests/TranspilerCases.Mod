@@ -60,4 +60,11 @@ PROCEDURE Narrow* (x: SIZE): SIGNED32;
 BEGIN RETURN x(SIGNED32);
 END Narrow;
 
+(* TRACE goes through the module named by --traceModule, and transpiler-check.sh reads what it
+	printed off the running binary's stdout *)
+PROCEDURE Say*;
+VAR answer: SIGNED32;
+BEGIN answer := 6 * 7; TRACE (answer);
+END Say;
+
 END TranspilerCases.
