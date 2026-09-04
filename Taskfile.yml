@@ -923,8 +923,8 @@ tasks:
           fi
         }
 
-  sdk:
-    desc: Rebuild the SDK image that `ob` runs (IMAGE=… TAG=…)
+  docker:
+    desc: Rebuild the Docker image that serves the SDK (IMAGE=… TAG=…)
     vars:
       IMAGE: '{{.IMAGE | default "minia2-sdk"}}'
       TAG: '{{.TAG | default "latest"}}'
@@ -950,13 +950,13 @@ tasks:
       - |
         docker build -f docker/Dockerfile -t {{.IMAGE}}:{{.TAG}} \
           --build-arg "SDK_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" .
-      - task: sdk-check
+      - task: docker-check
         vars:
           IMAGE: "{{.IMAGE}}"
           TAG: "{{.TAG}}"
 
-  sdk-check:
-    desc: Smoke-test the compiler inside an SDK image (IMAGE=… TAG=…)
+  docker-check:
+    desc: Smoke-test the compiler inside a Docker SDK image (IMAGE=… TAG=…)
     vars:
       IMAGE: '{{.IMAGE | default "minia2-sdk"}}'
       TAG: '{{.TAG | default "latest"}}'
@@ -964,7 +964,7 @@ tasks:
       - sh: "command -v docker >/dev/null"
         msg: "docker not found"
       - sh: "docker image inspect {{.IMAGE}}:{{.TAG}} >/dev/null 2>&1"
-        msg: "no such image: {{.IMAGE}}:{{.TAG}} — build it with `task sdk`"
+        msg: "no such image: {{.IMAGE}}:{{.TAG}} — build it with `task docker`"
     cmds:
       # Compiles and runs one module through `ob` inside the image, so the check covers
       # the code generator the image actually serves rather than the one in target/.
@@ -1101,8 +1101,9 @@ tasks:
       - echo "task test                  — run compiler tests"
       - 'echo "task bundle                — the SDK as a tarball, no Docker needed to use it"'
       - 'echo "task bundle-check          — unpack that tarball elsewhere and use it with an empty environment"'
-      - 'echo "task sdk [IMAGE=… TAG=…]    — rebuild the SDK image that ob runs (default minia2-sdk:latest)"'
-      - 'echo "task sdk-check [IMAGE=… TAG=…] — check the compiler inside an existing SDK image"'
+      - 'echo "task update                — bring the SDK on this machine up to the tree: build, bundle, install"'
+      - 'echo "task docker [IMAGE=… TAG=…] — rebuild the Docker image (default minia2-sdk:latest)"'
+      - 'echo "task docker-check [IMAGE=… TAG=…] — check the compiler inside an existing Docker image"'
       - 'echo "task clean [PLATFORM=…]     — remove build artifacts for one platform (host by default)"'
       - echo "task clean-all             — remove build artifacts for every platform"
       - echo "task help                  — display this help message"

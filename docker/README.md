@@ -8,7 +8,7 @@ hosts, the language server and the limitations — the image is one of four ways
 payload, so its documentation lives with the SDK rather than here.
 
 ```sh
-task sdk                      # build the image (IMAGE=… TAG=… to name it)
+task docker                   # build the image (IMAGE=… TAG=… to name it)
 docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod
 bash docker/hub-description.sh   # push the Hub description, made out of docs/SDK.md
 ```
