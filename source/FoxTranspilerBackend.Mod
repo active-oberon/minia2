@@ -20,6 +20,7 @@ CONST
 	DelegateTag = "_delegate";
 	BaseObjectName = "BaseObject";
 	TypeDescriptorTag = "_descriptor";
+	ResultVariable = "_result";
 
 	DefaultStyle = 0;
 	StailaStyle = 1;
@@ -670,6 +671,17 @@ TYPE
 			END;
 		END PrintDelegate;
 
+		(* only a pointer result can be reached through RESULT -- the checker refuses the rest *)
+		PROCEDURE DeclareResult (procedure: SyntaxTree.Procedure);
+		VAR returnType: SyntaxTree.Type;
+		BEGIN
+			IF (procedure = NIL) OR ~(procedure.type.resolvedType IS SyntaxTree.ProcedureType) THEN RETURN END;
+			returnType := procedure.type.resolvedType(SyntaxTree.ProcedureType).returnType;
+			IF (returnType # NIL) & (returnType.resolvedType IS SyntaxTree.PointerType) THEN
+				PrintIndent; PrintVariable (FALSE, ResultVariable, returnType); writer.String (" = 0"); writer.Char (Semicolon); writer.Ln;
+			END;
+		END DeclareResult;
+
 		PROCEDURE PrintBody (procedure: SyntaxTree.Procedure; body: SyntaxTree.Body; variable: SyntaxTree.Variable);
 		VAR name: Identifier;
 		BEGIN
@@ -695,6 +707,7 @@ TYPE
 				END;
 				variable := variable.nextVariable;
 			END;
+			DeclareResult (procedure);
 			IF body # NIL THEN
 				IF body.code # NIL THEN
 					PrintCode (body.code);
@@ -777,13 +790,30 @@ TYPE
 			ELSIF type IS SyntaxTree.CharacterType THEN
 				IF type.sizeInBits = 8 THEN
 					IF backend.style = StailaStyle THEN writer.String ("char") ELSE writer.String ("Char") END;
+				ELSIF type.sizeInBits = 16 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint16_t") ELSE writer.String ("Char16") END;
+				ELSIF type.sizeInBits = 32 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint32_t") ELSE writer.String ("Char32") END;
 				ELSE
 					HALT (1234);
 				END;
 			ELSIF type IS SyntaxTree.BooleanType THEN
 					IF backend.style = StailaStyle THEN writer.String ("bool") ELSE writer.String ("Boolean") END;
 			ELSIF type IS SyntaxTree.IntegerType THEN
-				IF type.sizeInBits = 8 THEN
+				(* UNSIGNED32 is not SIGNED32: C decides division, shifts and comparisons by the type *)
+				IF ~type(SyntaxTree.IntegerType).signed THEN
+					IF type.sizeInBits = 8 THEN
+						IF backend.style = StailaStyle THEN writer.String ("uint8_t") ELSE writer.String ("Unsigned8") END;
+					ELSIF type.sizeInBits = 16 THEN
+						IF backend.style = StailaStyle THEN writer.String ("uint16_t") ELSE writer.String ("Unsigned16") END;
+					ELSIF type.sizeInBits = 32 THEN
+						IF backend.style = StailaStyle THEN writer.String ("uint32_t") ELSE writer.String ("Unsigned32") END;
+					ELSIF type.sizeInBits = 64 THEN
+						IF backend.style = StailaStyle THEN writer.String ("uint64_t") ELSE writer.String ("Unsigned64") END;
+					ELSE
+						HALT (1234);
+					END;
+				ELSIF type.sizeInBits = 8 THEN
 					IF backend.style = StailaStyle THEN writer.String ("int8_t") ELSE writer.String ("ShortInt") END;
 				ELSIF type.sizeInBits = 16 THEN
 					IF backend.style = StailaStyle THEN writer.String ("int16_t") ELSE writer.String ("Integer") END;
@@ -805,6 +835,14 @@ TYPE
 			ELSIF type IS SyntaxTree.SetType THEN
 				IF type.sizeInBits = backend.addressSize THEN
 					IF backend.style = StailaStyle THEN writer.String ("size_t") ELSE writer.String ("Set") END;
+				ELSIF type.sizeInBits = 8 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint8_t") ELSE writer.String ("Set8") END;
+				ELSIF type.sizeInBits = 16 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint16_t") ELSE writer.String ("Set16") END;
+				ELSIF type.sizeInBits = 32 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint32_t") ELSE writer.String ("Set32") END;
+				ELSIF type.sizeInBits = 64 THEN
+					IF backend.style = StailaStyle THEN writer.String ("uint64_t") ELSE writer.String ("Set64") END;
 				ELSE
 					HALT (1234);
 				END;
@@ -821,17 +859,23 @@ TYPE
 		BEGIN PrintType (variable, type, name);
 		END PrintVariable;
 
-		PROCEDURE PrintCharacter (value: CHAR);
+		(* one character between C quotes: the backslash is a quote too, and \x eats every hex digit behind it *)
+		PROCEDURE PrintEscaped (value: CHAR);
 		BEGIN
-			writer.Char ("'");
-			IF value = "'" THEN
-				writer.String ("\'");
+			IF (value = "'") OR (value = '"') OR (value = '\') THEN
+				writer.Char ('\'); writer.Char (value);
 			ELSIF (ORD (value) >= 32) & (ORD (value) < 127) THEN
 				writer.Char (value);
 			ELSE
-				writer.String ("\x"); writer.Hex (ORD (value), 0);
+				writer.Char ('\');
+				writer.Char (CHR (ORD ('0') + ORD (value) DIV 64 MOD 8));
+				writer.Char (CHR (ORD ('0') + ORD (value) DIV 8 MOD 8));
+				writer.Char (CHR (ORD ('0') + ORD (value) MOD 8));
 			END;
-			writer.Char ("'");
+		END PrintEscaped;
+
+		PROCEDURE PrintCharacter (value: CHAR);
+		BEGIN writer.Char ("'"); PrintEscaped (value); writer.Char ("'");
 		END PrintCharacter;
 
 		PROCEDURE PrintNew (arguments: SyntaxTree.ExpressionList);
@@ -937,27 +981,52 @@ TYPE
 			END;
 		END PrintNegatedExpression;
 
-		PROCEDURE VisitAssignment* (statement: SyntaxTree.Assignment);
+		PROCEDURE PrintTarget (left: SyntaxTree.Expression; CONST name: ARRAY OF CHAR);
+		BEGIN IF left # NIL THEN PrintExpression (left) ELSE writer.String (name) END;
+		END PrintTarget;
+
+		(* one assignment; the target is an expression, or a plain name when it has no designator yet *)
+		PROCEDURE PrintAssign (left: SyntaxTree.Expression; CONST name: ARRAY OF CHAR; leftType: SyntaxTree.Type; right: SyntaxTree.Expression);
 		BEGIN
 			PrintIndent;
-			IF IsEmptyString (statement.right.type) THEN
-				PrintExpression (statement.left); writer.String ("[0] = 0");
-			ELSIF IsStructuredType (statement.left.type) THEN
-				ASSERT (~IsOpenArray (statement.left.type.resolvedType));
+			IF IsEmptyString (right.type) THEN
+				PrintTarget (left, name); writer.String ("[0] = 0");
+			ELSIF IsStructuredType (leftType) THEN
+				ASSERT (~IsOpenArray (leftType.resolvedType));
 				writer.String ("memcpy (");
-				IF ~(statement.left.type.resolvedType IS SyntaxTree.ArrayType) THEN writer.Char ('&'); END;
-				PrintExpression (statement.left); writer.String (", ");
-				IF ~(statement.right.type.resolvedType IS SyntaxTree.StringType) & ~(statement.right.type.resolvedType IS SyntaxTree.ArrayType) THEN writer.Char ('&'); END;
-				PrintExpression (statement.right); writer.String (", sizeof ("); PrintType (FALSE, statement.left.type, ""); writer.String ("))");
+				IF ~(leftType.resolvedType IS SyntaxTree.ArrayType) THEN writer.Char ('&'); END;
+				PrintTarget (left, name); writer.String (", ");
+				IF ~(right.type.resolvedType IS SyntaxTree.StringType) & ~(right.type.resolvedType IS SyntaxTree.ArrayType) THEN writer.Char ('&'); END;
+				PrintExpression (right); writer.String (", sizeof ("); PrintType (FALSE, leftType, ""); writer.String ("))");
 			ELSE
-				PrintExpression (statement.left); writer.Char (Space); writer.Char ('='); writer.Char (Space); Convert (statement.right, statement.left.type);
+				PrintTarget (left, name); writer.Char (Space); writer.Char ('='); writer.Char (Space); Convert (right, leftType);
 			END;
 			writer.Char (Semicolon); writer.Ln;
-			IF IsDelegate (statement.left.type.resolvedType) THEN
-				PrintIndent; PrintExpression (statement.left); writer.String (DelegateTag);
-				writer.String (" = "); PrintDelegate (statement.right); writer.Char (Semicolon); writer.Ln;
+			IF IsDelegate (leftType.resolvedType) THEN
+				PrintIndent; PrintTarget (left, name); writer.String (DelegateTag);
+				writer.String (" = "); PrintDelegate (right); writer.Char (Semicolon); writer.Ln;
 			END;
+		END PrintAssign;
+
+		PROCEDURE VisitAssignment* (statement: SyntaxTree.Assignment);
+		BEGIN PrintAssign (statement.left, "", statement.left.type, statement.right);
 		END VisitAssignment;
+
+		(* VAR x := e among the statements: the variable is declared by PrintBody -- the checker
+			puts it into the procedure scope -- so only its initializer is left to write here *)
+		PROCEDURE VisitDeclarationStatement* (statement: SyntaxTree.DeclarationStatement);
+		VAR variable: SyntaxTree.Variable; initializer: SyntaxTree.Expression; name: Identifier; i: SIZE;
+		BEGIN
+			FOR i := 0 TO statement.variables.Length () - 1 DO
+				variable := statement.variables.Get (i);
+				initializer := statement.initializers.GetExpression (i);
+				IF initializer = NIL THEN initializer := variable.initializer END;
+				IF initializer # NIL THEN
+					GetSymbolName (variable, name, backend.style);
+					PrintAssign (NIL, name, variable.type, initializer);
+				END;
+			END;
+		END VisitDeclarationStatement;
 
 		PROCEDURE VisitIfStatement* (statement: SyntaxTree.IfStatement);
 		VAR i: SIZE;
@@ -1014,17 +1083,17 @@ TYPE
 		END VisitExitStatement;
 
 		PROCEDURE VisitReturnStatement* (statement: SyntaxTree.ReturnStatement);
-		CONST ResultVariable = "_result";
+		CONST Returned = "_returned";
 		VAR scope: SyntaxTree.ProcedureScope; locked: BOOLEAN;
 		BEGIN
 			scope := GetStatementProcedure (statement);
 			locked := IsInExclusiveBlock (statement);
 			IF statement.returnValue # NIL THEN
 				IF locked THEN
-					BeginBlock; PrintIndent; PrintVariable (FALSE, ResultVariable, statement.returnValue.type.resolvedType); writer.Char (Semicolon); writer.Ln;
-					PrintIndent; writer.String (ResultVariable); writer.String (" = "); PrintExpression (statement.returnValue);
+					BeginBlock; PrintIndent; PrintVariable (FALSE, Returned, statement.returnValue.type.resolvedType); writer.Char (Semicolon); writer.Ln;
+					PrintIndent; writer.String (Returned); writer.String (" = "); PrintExpression (statement.returnValue);
 					writer.Char (Semicolon); writer.Ln; UnlockScope (scope.outerScope);
-					PrintIndent; writer.String ("return "); writer.String (ResultVariable); writer.Char (Semicolon); writer.Ln; EndBlock;
+					PrintIndent; writer.String ("return "); writer.String (Returned); writer.Char (Semicolon); writer.Ln; EndBlock;
 				ELSE
 					PrintIndent; writer.String ("return "); PrintExpression (statement.returnValue); writer.Char (Semicolon); writer.Ln;
 				END
@@ -1136,6 +1205,22 @@ TYPE
 			END;
 		END VisitSymbolDesignator;
 
+		(* ROL/ROR/ROT: C has no rotate, and a shift by the full width is undefined -- hence the masks *)
+		PROCEDURE PrintRotate (value, count: SyntaxTree.Expression; type: SyntaxTree.Type; right: BOOLEAN);
+
+			PROCEDURE Width;
+			BEGIN writer.String ("sizeof ("); PrintType (FALSE, type, ""); writer.String (") * 8");
+			END Width;
+
+		BEGIN
+			writer.String ("(("); PrintExpression (value);
+			IF right THEN writer.String (" >> ((") ELSE writer.String (" << ((") END;
+			PrintExpression (count); writer.String (") & ("); Width; writer.String (" - 1))) | (");
+			PrintExpression (value);
+			IF right THEN writer.String (" << ((") ELSE writer.String (" >> ((") END;
+			Width; writer.String (" - ("); PrintExpression (count); writer.String (")) & ("); Width; writer.String (" - 1))))");
+		END PrintRotate;
+
 		PROCEDURE VisitBuiltinCallDesignator* (expression: SyntaxTree.BuiltinCallDesignator);
 		VAR argument: ARRAY 3 OF SyntaxTree.Expression; i: SIZE; name: Identifier;
 			position: Streams.Position; typeDeclaration: SyntaxTree.TypeDeclaration;
@@ -1153,14 +1238,22 @@ TYPE
 			| Global.Halt, Global.systemHalt: writer.String ("ASSERT (false)");
 			| Global.Ord: PrintExpression (argument[0]);
 			| Global.Chr: PrintExpression (argument[0]);
-			| Global.Short, Global.Long: writer.Char ('('); PrintType (FALSE, expression.type, ""); writer.Char (')'); writer.Char (Space); PrintExpression (argument[0]);
+			| Global.Short, Global.Long, Global.Ord32: writer.Char ('('); PrintType (FALSE, expression.type, ""); writer.Char (')'); writer.Char (Space); PrintExpression (argument[0]);
 			| Global.Entier, Global.EntierH: writer.String ("floor ("); PrintExpression (argument[0]); writer.Char (')');
 			| Global.Cap: writer.String ("Capitalize ("); PrintExpression (argument[0]); writer.Char (')');
 			| Global.Odd: writer.Char ('('); PrintExpression (argument[0]); writer.String (" & 1)");
 			| Global.Ash: writer.Char ('('); PrintExpression (argument[0]); IF IsNegative (argument[1]) THEN writer.String (" >> - ") ELSE writer.String (" << ") END; PrintExpression (argument[1]); writer.Char (')');
 			| Global.Abs: IF (expression.type.resolvedType IS SyntaxTree.FloatType) THEN writer.Char ('f') END;
 				writer.String ("abs ("); PrintExpression (argument[0]); writer.Char (')');
-			| Global.Min, Global.Max: PrintExpression (expression.resolved);
+			(* MIN/MAX of two: the C ternary, and it does evaluate the winner twice -- no side effects survive that *)
+			| Global.Min, Global.Max:
+				IF expression.resolved # NIL THEN PrintExpression (expression.resolved);
+				ELSE
+					writer.Char ('('); PrintExpression (argument[0]);
+					IF expression.id = Global.Min THEN writer.String (" < ") ELSE writer.String (" > ") END;
+					PrintExpression (argument[1]); writer.String (" ? "); PrintExpression (argument[0]);
+					writer.String (" : "); PrintExpression (argument[1]); writer.Char (')');
+				END;
 			| Global.New: PrintNew (expression.parameters);
 			| Global.Dispose: writer.String ("Dispose (&"); PrintExpression (argument[0]); writer.Char (')');
 			| Global.Len:
@@ -1181,8 +1274,10 @@ TYPE
 					writer.String ("("); PrintType (FALSE, GetDeclaredType (argument[0]), ""); writer.String (") "); PrintExpression (argument[1]);
 				END;
 			| Global.Lsh: writer.Char ('('); PrintExpression (argument[0]); IF IsNegative (argument[1]) THEN writer.String (" >> - ") ELSE writer.String (" << ") END; PrintExpression (argument[1]); writer.Char (')');
-			| Global.Rot: writer.String ("(("); PrintExpression (argument[0]); writer.String (" << "); PrintExpression (argument[1]); writer.String (") | (");
-				PrintExpression (argument[0]); writer.String (" >> (sizeof ("); PrintType (FALSE, expression.type, ""); writer.String (") * 8 - "); PrintExpression (argument[1]); writer.String (")))");
+			| Global.Rot, Global.Rol: PrintRotate (argument[0], argument[1], expression.type, FALSE);
+			| Global.Ror: PrintRotate (argument[0], argument[1], expression.type, TRUE);
+			| Global.Shl: writer.Char ('('); PrintExpression (argument[0]); writer.String (" << "); PrintExpression (argument[1]); writer.Char (')');
+			| Global.Shr: writer.Char ('('); PrintExpression (argument[0]); writer.String (" >> "); PrintExpression (argument[1]); writer.Char (')');
 			| Global.systemSize: writer.String ("sizeof ("); PrintType (FALSE, GetDeclaredType (argument[0]), ""); writer.Char (')');
 			| Global.systemTypeCode: typeDeclaration := argument[0](SyntaxTree.SymbolDesignator).symbol(SyntaxTree.TypeDeclaration);
 				IF typeDeclaration.declaredType.resolvedType IS SyntaxTree.PointerType THEN
@@ -1256,8 +1351,7 @@ TYPE
 			LOOP
 				char := expression.value[i];
 				IF char = 0X THEN EXIT END;
-				IF char = '"' THEN writer.Char ('\') END;
-				writer.Char (char); INC (i);
+				PrintEscaped (char); INC (i);
 			END;
 			writer.Char ('"');
 		END VisitStringValue;
@@ -1272,6 +1366,9 @@ TYPE
 
 		PROCEDURE VisitUnaryExpression* (expression: SyntaxTree.UnaryExpression);
 		BEGIN
+			IF expression.operator = Scanner.Size THEN (* SIZE OF T: the operand is a type, not a value *)
+				writer.String ("sizeof ("); PrintType (FALSE, GetDeclaredType (expression.left), ""); writer.Char (')'); RETURN;
+			END;
 			CASE expression.operator OF
 			| Scanner.Plus:
 			| Scanner.Minus: IF expression.type.resolvedType IS SyntaxTree.SetType THEN writer.Char ('~') ELSE writer.Char ('-') END;
@@ -1283,6 +1380,11 @@ TYPE
 		PROCEDURE VisitTypeGuardDesignator* (expression: SyntaxTree.TypeGuardDesignator);
 		VAR isRecord: BOOLEAN;
 		BEGIN
+			(* x(SIGNED32) is written like a guard but means a conversion: a basic type has no descriptor to test *)
+			IF expression.type.resolvedType IS SyntaxTree.BasicType THEN
+				writer.String ("(("); PrintType (FALSE, expression.type, ""); writer.String (") ");
+				PrintExpression (expression.left); writer.Char (')'); RETURN;
+			END;
 			isRecord := expression.type.resolvedType IS SyntaxTree.RecordType;
 			IF isRecord THEN writer.String ("(*") END;
 			writer.String ("(ASSERT ("); CompareTypeDescriptor (expression.left, expression.type); writer.String ("), (");
@@ -1333,6 +1435,11 @@ TYPE
 			writer.Char (Space);
 			IF IsString (expression.left.type) THEN writer.Char ('0'); ELSE PrintExpression (expression.right); END; writer.Char (')');
 		END VisitBinaryExpression;
+
+		(* RESULT is a designator, not a variable: PrintBody declares the C one it stands for *)
+		PROCEDURE VisitResultDesignator* (expression: SyntaxTree.ResultDesignator);
+		BEGIN writer.String (ResultVariable);
+		END VisitResultDesignator;
 
 		PROCEDURE VisitSelfDesignator* (expression: SyntaxTree.SelfDesignator);
 		BEGIN PrintSelf;
