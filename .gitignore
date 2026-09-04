@@ -9,3 +9,11 @@ target
 __pycache__/
 *.pyc
 .claude
+
+# The C backend writes X.c and X.h beside the module it was given, so a transpiler run
+# aimed at the tree litters source/ -- which holds nothing but .Mod files.
+source/*.c
+source/*.h
+
+# what `oberon do` leaves in the working directory
+LogFile.csv

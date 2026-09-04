@@ -618,7 +618,12 @@ TYPE
 				parameterType := parameterType(SyntaxTree.ArrayType).arrayBase; INC (index);
 			END;
 			IF IsDelegate (parameterType.resolvedType) THEN
-				writer.Char (Comma); writer.Char (Space); PrintDelegate (argument);
+				writer.Char (Comma); writer.Char (Space);
+				(* no argument means the parameter is handed on as it stands, delegate and all *)
+				IF argument = NIL THEN
+					GetSymbolName (parameter, name, backend.style); writer.String (name); writer.String (DelegateTag);
+				ELSE PrintDelegate (argument);
+				END;
 			END;
 		END PrintArgument;
 
@@ -1439,6 +1444,28 @@ TYPE
 		END VisitBinaryExpression;
 
 		(* RESULT is a designator, not a variable: PrintBody declares the C one it stands for *)
+		(* An inlined call is a block plus the expression it leaves behind, and C has exactly that as a
+			statement expression -- the clang and gcc extension. The backend already writes __asm, so
+			this is not the first one. *)
+		PROCEDURE VisitInlineCallDesignator* (expression: SyntaxTree.InlineCallDesignator);
+		VAR variable: SyntaxTree.Variable; name: Identifier;
+		BEGIN
+			writer.String ("({"); writer.Ln; INC (indent);
+			IF expression.block.scope # NIL THEN
+				variable := expression.block.scope.firstVariable;
+				WHILE variable # NIL DO
+					GetSymbolName (variable, name, backend.style);
+					PrintIndent; PrintVariable (FALSE, name, variable.type); writer.Char (Semicolon); writer.Ln;
+					variable := variable.nextVariable;
+				END;
+			END;
+			PrintStatements (expression.block.statements);
+			IF expression.result # NIL THEN
+				PrintIndent; PrintExpression (expression.result); writer.Char (Semicolon); writer.Ln;
+			END;
+			DEC (indent); PrintIndent; writer.String ("})");
+		END VisitInlineCallDesignator;
+
 		PROCEDURE VisitResultDesignator* (expression: SyntaxTree.ResultDesignator);
 		BEGIN writer.String (ResultVariable);
 		END VisitResultDesignator;
@@ -1461,7 +1488,10 @@ TYPE
 		PROCEDURE VisitConversion* (expression: SyntaxTree.Conversion);
 		VAR e: SyntaxTree.Expression;
 		BEGIN
-			IF (expression.type IS SyntaxTree.CharacterType) & (expression.expression.type IS SyntaxTree.StringType) THEN
+			(* a one-character string turned into a CHAR -- but only when it really is a constant:
+				the same conversion appears with nothing folded behind it *)
+			IF (expression.type.resolvedType IS SyntaxTree.CharacterType) & (expression.expression.type.resolvedType IS SyntaxTree.StringType)
+				& (expression.expression.resolved # NIL) & (expression.expression.resolved IS SyntaxTree.StringValue) THEN
 				PrintCharacter (expression.expression.resolved(SyntaxTree.StringValue).value[0]);
 			ELSE
 				PrintExpression (expression.expression);
