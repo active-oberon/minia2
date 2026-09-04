@@ -673,6 +673,23 @@ tasks:
           fi
         }
 
+  transpiler:
+    desc: Transpile tests/TranspilerCases.Mod to C and read the C back
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/transpiler-check.sh {{.BUILD_DIR}}/{{.HOST}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # Same rule as the other checks: where a build is meant to exist -- CI -- a silent skip
+            # is the check not running at all, which reads the same as it passing.
+            [ -z "$TRANSPILER_REQUIRE" ] || { echo "[FAIL] the transpiler check needs a built host compiler, and TRANSPILER_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the transpiler check needs a built host compiler (task {{.HOST}})"
+          else
+            exit "$status"
+          fi
+        }
+
   amd64-codegen:
     desc: Compile tests/AMD64Codegen.Mod for Unix64 and decode what came out (VERBOSE=1 to list it)
     cmds:

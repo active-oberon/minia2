@@ -47,6 +47,13 @@ jobs:
         env:
           AMD64_REQUIRE: "1"
         run: task amd64-codegen
+      - name: C transpiler backend
+        # The transpiler has no runtime yet, so nothing here compiles the C it writes -- what is
+        # checkable is the text, and it silently regressed for years because nobody read it. This
+        # transpiles a module of the constructs the backend used to refuse and greps the output.
+        env:
+          TRANSPILER_REQUIRE: "1"
+        run: task transpiler
       - name: A64 standard library and self hosting
         # `task test` covers the A64 backend, the runtime, module loading and the collector; it
         # stops short of the standard library, which is minutes of compiling, and therefore of the
