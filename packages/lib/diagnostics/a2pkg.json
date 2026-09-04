@@ -2,7 +2,7 @@
   "name": "lib/diagnostics",
   "tier": 3,
   "context": "A2",
-  "headless": false,
+  "headless": true,
   "status": "draft",
   "description": "Looking at a running system: the event logs, the profilers, process info, the dependency walker, and the small dump tools.",
   "provides": [
@@ -32,7 +32,13 @@
     "std/runtime": "*"
   },
   "residual": [
+    "headless true since 2026-09-04, with three exceptions the gate found: KernelLogger, MultiLogger and PositionDebugging draw into a window and are named in `graphical`. Nothing else here does -- these are the event logs, the profilers and the small dump tools, and TFLog is what every HTTP module in the tree writes to. The flag was false because nobody had asked the question.",
     "Split out of std/system on 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload.",
     "Out on 2026-08-27: ProcessInfo and ProcessInfo0 to std/system -- System imports them."
+  ],
+  "graphical": [
+    "KernelLogger",
+    "MultiLogger",
+    "PositionDebugging"
   ]
 }

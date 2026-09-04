@@ -1,0 +1,26 @@
+{
+  "name": "lib/http",
+  "version": "0.0.0",
+  "tier": 3,
+  "context": "A2",
+  "headless": true,
+  "status": "draft",
+  "description": "HTTP as a headless program speaks it: the request and response headers, and a client that fetches or streams.",
+  "provides": [
+    "NewHTTPClient",
+    "WebHTTP"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/net": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*",
+    "std/time": "*",
+    "lib/diagnostics": "*"
+  },
+  "residual": [
+    "Split out of lib/net-clients 2026-09-04, when the sound package went into the payload and dragged these two in behind it: a payload that carries a module whose own package says it does not belong there is a payload that has stopped agreeing with the manifests. The rest of net-clients is finished programs and stays where it is.",
+    "TFLog comes with them and stays in lib/diagnostics, which went headless the same day: it is a log file, not an HTTP anything, and putting it here to shorten a dependency would be filing by accident rather than by subject."
+  ]
+}

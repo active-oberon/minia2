@@ -1,9 +1,14 @@
 ActiveTimers
+Autostart
 BIT
 Base64
+Bin2Hex
+BinToCode
 BitSets
 BitStreams
+BootConsole
 Builtins
+CPUID
 CRC
 CSV
 Channels
@@ -22,7 +27,12 @@ Drand48
 DynamicStrings
 Errors
 Events
+EventsFileLog
+EventsKernelLog
+EventsMemoryLog
+EventsUtils
 FP1616
+FileTrapWriter
 Files
 Format
 FoxA64Assembler
@@ -77,6 +87,8 @@ GenericSort
 Glue
 Hashing
 Heaps
+HierarchicalProfiler
+HierarchicalProfiler0
 HostLibs
 IP
 In
@@ -93,10 +105,16 @@ Math
 Math32
 Math64
 MathL
+MemoryReader
 Modules
 Network
+NewHTTPClient
+OGGUtilities
+OGGVorbisPlayer
 ObjectFile
 Objects
+OpenAL
+OpenALSound
 Options
 Out
 Pipes
@@ -108,6 +126,7 @@ Processes
 Random
 RealConversions
 Reals
+Reboot
 Reflection
 Regex
 ReleaseThreadPool
@@ -115,6 +134,7 @@ Shell
 ShellCommands
 Shortreal
 Sockets
+SoundDevices
 StdIO
 StdIOShell
 Stopwatch
@@ -125,6 +145,7 @@ Strings
 System
 SystemVersion
 TCP
+TFLog
 TFStringPool
 TaskScheduler
 Terminal
@@ -143,6 +164,7 @@ UnixFiles
 UpTime
 Versioning
 WMEvents
+WebHTTP
 XML
 XMLObjects
 XMLParser
