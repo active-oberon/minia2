@@ -41,7 +41,7 @@ expected="$root/tests/wm-expected.txt"
 # first answer. bin holds an object file for every module of the system, WindowManager among them. So
 # a check that compiles a module out of source/ into the working directory and then runs it does not
 # run what it compiled: it compiles, throws the result somewhere further down the path, and loads the
-# object that was built the last time somebody ran `task sdk`. This check did exactly that, and it is
+# object that was built the last time somebody ran `task update`. This check did exactly that, and it is
 # why the zoom below came up as 1 with the source in front of it saying 4.
 #
 # AOSPATH is what settles it: UnixFiles seeds the search path from that variable before oberon.cfg

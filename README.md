@@ -69,7 +69,7 @@ task bundle-check    # unpack the tarball elsewhere and use it with an empty env
 task win-bundle      # the Windows SDK: ob.exe and the library it compiles against
 task a64-bundle      # the AArch64 SDK, native on the device (glibc)
 task a64-bundle-android  # the same against Bionic: Termux without proot
-task sdk             # the Docker image (same payload at /opt/a2sdk)
+task docker          # the Docker image (same payload at /opt/a2sdk)
 ```
 
 To put the latest release on a machine — download, unpack into `~/.local/share/a2sdk`,

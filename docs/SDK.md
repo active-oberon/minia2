@@ -33,7 +33,7 @@ tarball is `ob.exe` and wants no bash, Cygwin or WSL.
 From the repository root (both compile the runtime + stdlib from source):
 
 ```sh
-task sdk                    # the image (docker build, and then a smoke test of it)
+task docker                 # the image (docker build, and then a smoke test of it)
 task bundle                 # the tarball: target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz
 task bundle-check           # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle             # the Windows SDK: ob.exe and the library it compiles against
