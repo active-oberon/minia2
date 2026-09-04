@@ -2,7 +2,7 @@
   "name": "lib/sound",
   "tier": 4,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Sound out of this machine: the device abstraction, the cross-platform OpenAL driver behind it, and the Ogg/Vorbis decoder and stream player that reach a speaker without touching the codec registry.",
   "provides": [

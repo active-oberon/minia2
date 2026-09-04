@@ -16,7 +16,7 @@ files are not (yet) physically moved. A manifest is a plain `a2pkg.json`.
 - **`lib/`** — library that is not standard: crypto, compression, archives, the web
   framework, graphics and the window manager, drivers, disks, media, sound, the numeric
   extras, the network clients. Every one of them is a leaf `ob get` can deliver, so none
-  of them is in the SDK payload (`headless` false). Sources still live in `source/`; when
+  of them is in the SDK payload (`shipped` false). Sources still live in `source/`; when
   a package's sources move to a2-registry it becomes `community/<name>` there and leaves
   here.
 - **`apps/`** — programs, not library: fan-in zero and/or a `Commands.Context` command.
@@ -192,14 +192,21 @@ and **`a2pkg.lock`** (`{ "<repo>": {"version","commit"} }`).
 
 Three fields were added, and two of them are checked rather than trusted.
 
-- **`headless`** — does the SDK carry this package. It is what decides the contents of
+- **`shipped`** — does the SDK carry this package. It is what decides the contents of
   `configs/headless-core*.txt`: the payload is the union of the `provides` of the packages
   where this is true, closed under imports. `bash tests/gen-headless-core.sh` writes the
   lists, `task registry` verifies them without writing, and CI runs the check.
+
+  It was called `headless` until 2026-09-04, and the name was the question the SDK asked when
+  the SDK was a Docker image: does this need a screen. That is not the question any more —
+  what the payload decides is what `ob build` can link against without compiling the tree —
+  and one flag was answering two: *do we carry this* (a decision: library yes, finished
+  programs and other people's languages no) and *does it draw* (a fact, measured below). The
+  triage that followed the rename took the payload from 171 modules to 352.
 - **`graphical`** — the members of a *shipped* package that cannot travel, because their own
   import closure reaches the window system: `Texts`, the SSH family, the decoders. Checked
   against the import graph in both directions, so it cannot go quietly out of date. On a
-  package where `headless` is false the field says nothing and is refused.
+  package where `shipped` is false the field says nothing and is refused.
 - **`requires`** — now derived from the import graph rather than written by hand.
 
 **`packages/attic/`** is a third area beside `std` and `apps`: what lives in `source/` and is

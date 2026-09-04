@@ -2,7 +2,7 @@
   "name": "attic/trm",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "unsupported",
   "description": "Back end for the Tiny Register Machine.",
   "provides": [

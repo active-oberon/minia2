@@ -2,7 +2,7 @@
   "name": "attic/legacy-services",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "Network services of another era, kept because they are in the tree and they work: a Fidonet client and a stock-quote server.",
   "provides": [

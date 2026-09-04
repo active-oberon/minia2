@@ -2,7 +2,7 @@
   "name": "lib/archive",
   "tier": 5,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "draft",
   "description": "ZIP container formats: archive reader/writer, zip-backed file system, zip CLI tool, standalone unzip.",
   "provides": [

@@ -2,7 +2,7 @@
   "name": "std/process",
   "tier": 2,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Other programs on this machine: starting one with its input and output on pipes or with the terminal, waiting for it or killing it, reading the environment, and sockets named by a path -- the way a program is driven when a port would be the wrong thing.",
   "provides": [

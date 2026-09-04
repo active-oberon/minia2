@@ -2,7 +2,10 @@
   "name": "lib/web",
   "tier": 3,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
+  "graphical": [
+    "CSS2Properties"
+  ],
   "status": "draft",
   "description": "XML stack (parser/scanner/DOM objects) and the Configuration settings module built on it.",
   "provides": [

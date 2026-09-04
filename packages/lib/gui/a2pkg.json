@@ -2,7 +2,7 @@
   "name": "lib/gui",
   "tier": 6,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "draft",
   "description": "The A2 graphics + window-manager framework as one irreducible unit: Raster/Gfx rendering, image codecs (PNG/JPEG/SVG/BMP), OpenType fonts, and the WM* component/desktop toolkit. Merged because graphics and the window manager are mutually dependent (see cycle note).",
   "provides": [
@@ -135,6 +135,7 @@
     "std/text": "*"
   },
   "residual": [
+    "`shipped` stays false after the triage of 2026-09-04, and it is the one library package where that is not a decision to revisit: every module here reaches the window system, so shipping the package would mean naming all 115 in `graphical` and shipping none of them. A window system is what this is.",
     "Not in the headless SDK at all: this package IS the window system. This package IS the window system, so every member of it stays home and a `graphical` list would be the whole list.",
     "CYCLE FINDING: std/gfx and std/wm cannot be separate tiered packages — even their library cores are mutually dependent (gfx -> wm AND wm -> gfx), an irreducible SCC. Unlike the lower tiers (which form a clean DAG), the A2 graphics + window-manager layer is co-designed. It is therefore modeled as ONE package: cycles WITHIN a package are allowed, cross-package cycles are not.",
     "provides here is the FRAMEWORK library core (~40 of the 137 WM* + 39 gfx modules). The remaining ~90 are GUI applications/tools with zero fan-in (WMBuilder, WMFileManager, WMCharMap, PET, SkinEditor, …) -> packages/apps.",

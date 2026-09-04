@@ -2,7 +2,7 @@
   "name": "lib/compress",
   "tier": 4,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "stable",
   "description": "DEFLATE/zlib primitives (inflate + deflate, buffers, stream readers/writers) and gzip. Container formats (ZIP) live in std/archive.",
   "provides": [

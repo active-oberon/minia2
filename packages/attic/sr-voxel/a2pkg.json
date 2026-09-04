@@ -2,7 +2,7 @@
   "name": "attic/sr-voxel",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "in-tree",
   "description": "The sr voxel and ray engine: volume textures, ray casting, the voxel spaces and the demos over them.",
   "provides": [

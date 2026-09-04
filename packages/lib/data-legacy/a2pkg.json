@@ -2,7 +2,7 @@
   "name": "lib/data-legacy",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "draft",
   "description": "The older answer to data: the pre-generic collections (DataLists/Queues/Stacks/Trees, TFClasses), persistence (PersistentObjects, PrevalenceSystem, DataIO), and the SQL/ODBC bindings.",
   "provides": [

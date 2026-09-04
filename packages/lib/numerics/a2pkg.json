@@ -2,7 +2,7 @@
   "name": "lib/numerics",
   "tier": 4,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "stable",
   "description": "Advanced / special functions over the std/math number types: cube root, error/gamma functions, real & complex series, rational/real/integer numeric routines.",
   "provides": [

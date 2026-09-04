@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "tier": 3,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "HTTP as a headless program speaks it: the request and response headers, and a client that fetches or streams.",
   "provides": [

@@ -2,7 +2,7 @@
   "name": "std/time",
   "tier": 3,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Time: the calendar and its formatting, the high-resolution counter, the stopwatch, and timers.",
   "provides": [

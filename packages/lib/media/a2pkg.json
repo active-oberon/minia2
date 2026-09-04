@@ -2,7 +2,20 @@
   "name": "lib/media",
   "tier": 6,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
+  "graphical": [
+    "AVI",
+    "AnimationCodec",
+    "DivXDecoder",
+    "DivXHelper",
+    "GIFCodec",
+    "MP3Decoder",
+    "MPEGUtilities",
+    "MPEGVideoDecoder",
+    "PictCodec",
+    "PictImages",
+    "WAVCodec"
+  ],
   "status": "draft",
   "description": "Audio/video/image codecs: MP3, DivX/MPEG video (+ IDCT, tables), WAV, GIF, AVI container, a codec registry and sound-device abstraction.",
   "provides": [

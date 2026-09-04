@@ -2,7 +2,7 @@
   "name": "lib/numbers",
   "tier": 4,
   "context": "A2",
-  "headless": false,
+  "shipped": true,
   "status": "draft",
   "description": "Arbitrary-precision and rational numbers: the Nbr* family, complex numbers, and the primes beside them.",
   "provides": [

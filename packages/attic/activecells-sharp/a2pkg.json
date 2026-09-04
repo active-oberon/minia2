@@ -2,7 +2,7 @@
   "name": "attic/activecells-sharp",
   "tier": 8,
   "context": "A2",
-  "headless": false,
+  "shipped": false,
   "status": "unsupported",
   "description": "ActiveCells# -- a C#-flavoured syntax over the ActiveCells model, from Alexey Gokhberg's parser.",
   "provides": [

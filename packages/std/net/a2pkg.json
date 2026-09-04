@@ -2,7 +2,7 @@
   "name": "std/net",
   "tier": 7,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "draft",
   "description": "Networking: TCP/UDP/IP/DNS/sockets, TLS, an HTTP client/server stack, and protocol clients (FTP, SMTP, POP3, SSH, TFTP, LPR, XModem).",
   "provides": [

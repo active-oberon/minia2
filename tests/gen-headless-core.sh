@@ -9,9 +9,27 @@
 # WHAT DECIDES MEMBERSHIP
 #
 # The registry does: packages/*/*/a2pkg.json. A module is shipped iff some package whose
-# `headless` is true names it in `provides` and does not name it in `graphical`, or iff the
-# import closure of such a module needs it. packages/attic/* is where the tree's other languages
-# and other machines are declared -- `headless` false, `status` unsupported, in source/ but not
+# `shipped` is true names it in `provides` and does not name it in `graphical`, or iff the
+# import closure of such a module needs it.
+#
+# The field was called `headless` until 2026-09-04, and the name was the question the SDK asked
+# in the days when the SDK was a Docker image: does this need a screen. It is not the question any
+# more. What the list decides today is what `ob build` can link against without compiling the
+# tree, and there are two separate questions behind that, which one flag was answering as though
+# they were one:
+#
+#   -  does the SDK carry this package at all? That is a decision -- library yes, finished
+#      programs and other people's languages no -- and it is what `shipped` says.
+#   -  does this module reach the window system? That is a fact, it is not anybody's decision,
+#      and it is what `graphical` records and this script CHECKS. A shipped package whose module
+#      draws must name it, and naming one that does not is equally an error.
+#
+# So the list is still the headless core and the files still say so: nothing that draws is in it.
+# What changed is that a package now declares whether it ships rather than whether it is headless,
+# and the second half is measured rather than declared.
+#
+# packages/attic/* is where the tree's other languages
+# and other machines are declared -- `shipped` false, `status` unsupported, in source/ but not
 # ours: the Oberon-2 compiler, the ActiveCells# front end, the TRM and interpreter back ends,
 # the 32-bit ARM back end. Nothing else. The list is therefore a decision
 # that somebody wrote down, package by package, and this script only works it out.
@@ -142,23 +160,23 @@ for m in sorted(NOTGUI):
 for f in sorted(glob.glob("packages/*/*/a2pkg.json")):
     d = json.load(open(f))
     name = d["name"]
-    if "headless" not in d:
-        problems.append(f"{name}: no `headless` field -- say whether the SDK carries this package")
+    if "shipped" not in d:
+        problems.append(f"{name}: no `shipped` field -- say whether the SDK carries this package")
         continue
     packages[name] = d
     graphical = set(d.get("graphical", []))
     # `graphical` only says something about a package that ships: it is the reason a member of it
     # does NOT. On a package that stays home the whole list would be noise, so it is not allowed
     # there and not checked.
-    if not d["headless"] and graphical:
-        problems.append(f"{name}: `headless` is false, so `graphical` says nothing -- drop it")
+    if not d["shipped"] and graphical:
+        problems.append(f"{name}: `shipped` is false, so `graphical` says nothing -- drop it")
     for m in d.get("provides", []):
         if m in owner:
             problems.append(f"{m}: provided by both {owner[m]} and {name}")
         owner[m] = name
         if m not in deps:
             continue                        # no source on this target: Shortreal on AArch64, and so on
-        if not d["headless"]:
+        if not d["shipped"]:
             continue
         reaches = any(gui(x) for x in closure({m}))
         if reaches and m not in graphical:

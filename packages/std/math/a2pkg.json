@@ -2,7 +2,7 @@
   "name": "std/math",
   "tier": 3,
   "context": "A2",
-  "headless": true,
+  "shipped": true,
   "status": "stable",
   "description": "Numeric core: fixed/arbitrary number types (Nbr*), base real/complex math (Math, Math32/64/L), RNG. Advanced/special functions live in std/numerics.",
   "provides": [
