@@ -16,7 +16,6 @@
     "LPR",
     "Mail",
     "MailStorage",
-    "NewHTTPClient",
     "PKCS1",
     "POP3Client",
     "RFC865Client",
@@ -41,7 +40,6 @@
     "UDPChatBase",
     "UDPChatClient",
     "UDPChatServer",
-    "WebHTTP",
     "WebHTTPClient",
     "WebHTTPServer",
     "WebHTTPServerStatistics",
@@ -62,6 +60,7 @@
     "std/text": "*"
   },
   "residual": [
+    "WebHTTP and NewHTTPClient left for lib/http on 2026-09-04: they are the HTTP a headless program speaks, the rest of this package is finished programs (FTP, SSH, Telnet, Samba, mail), and the payload needed the two without the forty-two.",
     "Split out of std/net on 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."
   ]
 }

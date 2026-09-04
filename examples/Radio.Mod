@@ -37,7 +37,7 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 *)
 
 IMPORT Files, Streams, Strings, UTF8Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
-	Random, Kernel,
+	Random, Kernel, Vorbis := OGGVorbisPlayer,
 	(*	One parametric module, instantiated for the kind of thing this program hands about: the
 		waiting is written once, in the library, and named here. *)
 	Arrivals := Channels(Arrival);
@@ -105,6 +105,29 @@ TYPE
 		END
 	END Player;
 
+	(**	A station played here rather than by anybody else. OGGVorbisPlayer decodes Vorbis and
+		reads the stream itself; PlayURL does not return until the stream ends or StopURL is
+		called, so it belongs in an object of its own like everything else that waits.
+
+		Only Ogg. The player is a Vorbis decoder and nothing else, and more than half the
+		stations in a catalogue are AAC or MP3 -- those still go to mpv, which is the honest
+		division and not a stage of one. *)
+	Native = OBJECT
+	VAR arriving: Arrivals.Channel; address: Strings.String; what: Arrival; played: BOOLEAN;
+
+		PROCEDURE &InitNative* (where: Arrivals.Channel; url: Strings.String);
+		BEGIN arriving := where; address := url
+		END InitNative;
+
+	BEGIN {ACTIVE}
+		played := Vorbis.PlayURL(address);
+		what.kind := ALine;
+		IF played THEN what.said := Strings.NewString("the stream ended")
+		ELSE what.said := Strings.NewString("that stream is not Vorbis, or did not answer")
+		END;
+		IF ~arriving.Put(what) THEN END      (* the program may have left before the stream did *)
+	END Native;
+
 	(**	The window's size, looked at now and then. It is the third source, and the only one that
 		must be asked rather than waited for: a size does not announce itself, and the signal that
 		would is worth less than what a handler in the wrong place costs. *)
@@ -140,6 +163,7 @@ VAR
 	genreText, catalogue, output: Frames.Text;
 
 	player: Processes.Process;         (* mpv, while something is playing *)
+	inhouse: Native;                   (* or the Vorbis decoder, when the station is Ogg *)
 	control: LocalSockets.Connection;  (* and the socket it listens on *)
 	socketPath: ARRAY 128 OF CHAR;
 	playing: SIGNED32;                 (* which station, or -1 *)
@@ -264,8 +288,24 @@ VAR
 			IF ~player.Finished(code) THEN player.Kill END;
 			player.Close; player := NIL
 		END;
+		IF inhouse # NIL THEN
+			(*	The object ends when PlayURL returns, and PlayURL returns when this flag is
+				seen -- so nothing is cancelled and nothing is waited for here. *)
+			Vorbis.StopURL; inhouse := NIL
+		END;
 		playing := -1; paused := FALSE; status := ""
 	END Stop;
+
+	(*	Ogg is played here, everything else by mpv. The URL is what says which, because that is
+		all a catalogue line has: a station whose address ends in .ogg is Vorbis often enough to
+		try, and the object above says so in the log when it is not. *)
+	PROCEDURE Ogg (CONST url: ARRAY OF CHAR): BOOLEAN;
+	VAR n: SIZE;
+	BEGIN
+		n := Strings.Length(url);
+		RETURN (n > 4) & (url[n-4] = ".") & (CAP(url[n-3]) = "O") & (CAP(url[n-2]) = "G")
+			& (CAP(url[n-1]) = "G")
+	END Ogg;
 
 	(* The station on that line of the list, or -1 where the list is empty. *)
 	PROCEDURE Chosen (line: SIGNED32): SIGNED32;
@@ -280,6 +320,15 @@ VAR
 	BEGIN
 		IF (which < 0) OR (which >= stations) THEN RETURN END;
 		Stop;
+
+		IF Ogg(station[which].url^) THEN
+			playing := which; status := "";
+			NEW(inhouse, arriving, station[which].url);
+			said := "playing here, without mpv: "; Strings.Append(said, station[which].name^);
+			Say(said);
+			RETURN
+		END;
+
 		IF ~Home(directory) THEN RETURN END;
 
 		include := "--include="; Strings.Append(include, directory); Strings.Append(include, "mpv.conf");
@@ -307,6 +356,13 @@ VAR
 		IF level < 0 THEN level := 0 END;
 		IF level > 130 THEN level := 130 END;
 		volume := level;
+		IF inhouse # NIL THEN
+			(*	The volume of what is played here is the one OGGVorbisPlayer opens its channel
+				with, and it exports no way to change it. Saying so is better than moving a
+				number on the screen that nothing follows. *)
+			Say("the volume of a station played here is fixed; mpv's is not");
+			RETURN
+		END;
 		json := '{"command": ["set_property", "volume", '; Strings.AppendInt(json, volume);
 		Strings.Append(json, "]}");
 		Command(json)
@@ -314,6 +370,10 @@ VAR
 
 	PROCEDURE Pause;
 	BEGIN
+		IF inhouse # NIL THEN
+			Say("a station played here cannot be paused, only stopped");
+			RETURN
+		END;
 		paused := ~paused;
 		IF paused THEN Command('{"command": ["set_property", "pause", true]}'); Say("paused")
 		ELSE Command('{"command": ["set_property", "pause", false]}'); Say("playing again")
@@ -407,8 +467,12 @@ VAR
 		IF playing >= 0 THEN
 			Strings.Append(t, "-- "); Strings.Append(t, station[playing].name^);
 			IF paused THEN Strings.Append(t, " (paused)") END;
-			Strings.Append(t, ", volume "); Strings.AppendInt(t, volume);
-			Strings.Append(t, " ")
+			IF inhouse # NIL THEN
+				Strings.Append(t, ", here ")           (* and not through mpv *)
+			ELSE
+				Strings.Append(t, ", volume "); Strings.AppendInt(t, volume);
+				Strings.Append(t, " ")
+			END
 		END;
 		COPY(t, list.title)
 	END Title;
@@ -442,7 +506,7 @@ VAR
 		screen.NewTrack(1); screen.Add(genreFrame);
 		screen.NewTrack(3); screen.Add(list); screen.Add(log);
 		Fill(-1);
-		output.Add("mpv does the playing; everything else here is Active Oberon");
+		output.Add("Ogg is played here; mpv plays the rest. Everything else is Active Oberon");
 		RETURN TRUE
 	END Compose;
 
