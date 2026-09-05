@@ -1,6 +1,6 @@
 MODULE Linker;	(* AUTHOR "negelef"; PURPOSE "Object File Linker"; *)
 
-IMPORT Commands, Options, Diagnostics, Files, GenericLinker, ObjectFile, BitSets, Strings, Streams;
+IMPORT Commands, Options, Diagnostics, Files, GenericLinker, ObjectFile, BitSets, Strings, Streams, Dates;
 
 TYPE
 	ExportName = ARRAY 128 OF CHAR;
@@ -108,6 +108,11 @@ TYPE
 		displacement: GenericLinker.Address;
 		bits: BitSets.BitSet;
 		maxUnitSize: ObjectFile.Bits;
+		(*	Where the data begins, in bits, or -1 while nothing but code has been placed. Set when
+			the first section that is not code arrives -- which is the first one at all, now that
+			GenericLinker gives data and constants their own priorities -- and rounded up to a
+			section boundary so that a writer can end the executable section there. *)
+		dataStart-: ObjectFile.Bits;
 
 		exportInfo: ExportInfo;
 		relocInfo: RelocationInfo;
@@ -115,10 +120,11 @@ TYPE
 	PROCEDURE & InitArrangement* (displacement: GenericLinker.Address);
 	BEGIN
 		SELF.displacement := displacement; maxUnitSize := 1; NEW (bits, 0); exportInfo := NIL; NEW(relocInfo);
+		dataStart := -1;
 	END InitArrangement;
 
 	PROCEDURE Allocate* (CONST section: ObjectFile.Section): GenericLinker.Address;
-	VAR address, alignment: ObjectFile.Bits; i, j: SIZE; name: ObjectFile.SegmentedName;
+	VAR address, alignment, boundary: ObjectFile.Bits; i, j: SIZE; name: ObjectFile.SegmentedName;
 	BEGIN
 		IF section.unit > maxUnitSize THEN maxUnitSize := section.unit END;
 		IF section.fixed THEN
@@ -127,6 +133,15 @@ TYPE
 			address := bits.GetSize (); alignment := section.alignment * section.unit;
 			IF alignment = 0 THEN alignment := section.unit; END;
 			INC (address, (alignment - address MOD alignment) MOD alignment);
+			(*	The first byte of data starts a section of its own. A block placed at a fixed
+				address is left out of this: it is put where it was told, and the only targets that
+				ask for one are the bare metal ones, whose images are copied whole and have no
+				section protection to speak of. *)
+			IF (dataStart < 0) & ~ObjectFile.IsCode (section.type) THEN
+				boundary := ImageSectionAlignment * 8;
+				INC (address, (boundary - address MOD boundary) MOD boundary);
+				dataStart := address
+			END;
 		END;
 		IF bits.GetSize () < section.bits.GetSize () + address THEN
 			bits.Resize (address + section.bits.GetSize ());
@@ -173,6 +188,11 @@ TYPE FileFormat = PROCEDURE {DELEGATE} (linker: GenericLinker.Linker; arrangemen
 
 VAR defaults: Options.Defaults;
 	processing, finished: GenericLinker.Block;
+
+(*	What a PE section's address is a multiple of. The arrangement needs it as well as the writer:
+	code and data can only be told apart by the loader if the boundary between them falls on one
+	of these. *)
+CONST ImageSectionAlignment* = 1000H;
 
 PROCEDURE Align(this, to: SIZE): SIZE;
 BEGIN
@@ -257,13 +277,59 @@ BEGIN
 	w.RawInt32( relocations(SIGNED32) );
 END WriteRelocations;
 
+(*
+	Where the checksum of the PE being written sits, or 0 when the format is not PE. It is the one
+	header field that cannot be written while writing: it is a sum over the finished file, the
+	bytes after it included. WritePEFile leaves the field zero and says here where it is;
+	WriteOutputFile fills it in once the file is on disk.
+*)
+VAR peChecksumAt, peChecksum: SIZE;
+
+(*	Seconds since 1970, which is what a PE timestamp is. Local time rather than UTC: nothing
+	validates this field, and what it is for here is not being zero -- a zero stamp is on every
+	heuristic list of things packers leave behind. *)
+PROCEDURE EpochSeconds(): SIGNED32;
+CONST SecondsPerDay = 86400; SecondsPerHour = 3600; SecondsPerMinute = 60;
+VAR epoch: Dates.DateTime; days, hours, minutes, seconds: SIGNED32;
+BEGIN
+	epoch.year := 1970; epoch.month := 1; epoch.day := 1;
+	epoch.hour := 0; epoch.minute := 0; epoch.second := 0;
+	Dates.TimeDifference(epoch, Dates.Now(), days, hours, minutes, seconds);
+	RETURN days * SecondsPerDay + hours * SecondsPerHour + minutes * SecondsPerMinute + seconds
+END EpochSeconds;
+
+(*
+	The PE checksum: a 16 bit one's complement sum over the whole file plus its length, with the
+	checksum field itself counted as the zero it was written as. Real linkers compute it and a
+	zero there is one more thing that says "this file was assembled by hand".
+*)
+(*
+	The checksum is the one header field that cannot be written in place: it is a sum over the
+	whole file, the bytes after it included. It is therefore summed as the file is written -- and
+	NOT by reading the file back, which was tried first and does not work: a file A2 has just
+	written and registered reads back 561 to 806 bytes short in the same process, so both the sum
+	and the length came out wrong, and on files whose tail was not zeros the sum came out wrong
+	invisibly. Only these four bytes go back into the finished file.
+*)
+PROCEDURE PatchChecksum(CONST fileName: Files.FileName; at, checksum: SIZE);
+VAR file: Files.File; writer: Files.Writer;
+BEGIN
+	file := Files.Old(fileName);
+	IF file = NIL THEN RETURN END;
+	Files.OpenWriter(writer, file, at);
+	writer.RawInt32(SIGNED32(checksum MOD 100000000H));
+	writer.Update
+END PatchChecksum;
+
 PROCEDURE WriteOutputFile* (arrangement: Arrangement; CONST fileName: Files.FileName; linker: GenericLinker.Linker; fileFormat: FileFormat);
 VAR file: Files.File; writer: Files.Writer; msg: ARRAY 64 OF CHAR; number: ARRAY 32 OF CHAR;
 BEGIN
 	file := Files.New (fileName);
 	Files.OpenWriter (writer, file, 0);
+	peChecksumAt := 0;
 	fileFormat (linker, arrangement, writer);
 	writer.Update; Files.Register (file);
+	IF peChecksumAt # 0 THEN PatchChecksum(fileName, peChecksumAt, peChecksum) END;
 	msg := "written ";
 	Strings.IntToStr(arrangement.SizeInBits(), number);
 	Strings.Append(msg, number);
@@ -357,15 +423,60 @@ PROCEDURE WritePEFile (linker: GenericLinker.Linker; arrangement: Arrangement; w
 CONST DOSText = "This program cannot be run in DOS mode.$";
 CONST DOSHeaderSize = 64; DOSCodeSize = 14; DOSTextSize = 40; DOSStubSize = ((DOSHeaderSize + DOSCodeSize + DOSTextSize + 15) DIV 16) * 16;
 CONST FileAlignment = 200H; SectionAlignment = 1000H; HeaderSize = 24; SectionHeaderSize = 40; DirectoryEntries = 16;
+CONST EFISubsystem = 10;			(* the one subsystem here that is not Windows and keeps firmware's expectations *)
+CONST WindowsVersion = 6;			(* the OS and subsystem version a Windows binary declares: Vista and up *)
+CONST DynamicBase = 40H;			(* IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE -- the image may be relocated: ASLR *)
+CONST NXCompatible = 100H;			(* IMAGE_DLLCHARACTERISTICS_NX_COMPAT -- data pages are not executable: DEP *)
+CONST TerminalServerAware = 8000H;	(* IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE *)
+(*
+	What the two sections of an image are allowed to do. Until 04.09.2026 there was one section,
+	`.text`, and it was CODE + EXECUTE + READ + WRITE over code, data and the import table alike --
+	a section that can be written and executed at once, which is the single loudest thing a file
+	can say about itself to a reputation engine, and the shape a packer has by necessity.
+
+	The import address table stays inside `.text` and the section is nevertheless read-only: that
+	is where a Microsoft-linked binary keeps it too (in `.rdata`), and the loader unprotects the
+	page it writes. Should a loader somewhere refuse, TextCharacteristics + Writable is the whole
+	of the way back.
+*)
+CONST Writable = SIGNED32(80000000H);
+CONST TextCharacteristics = 60000020H;	(* CODE | MEM_EXECUTE | MEM_READ *)
+CONST DataCharacteristics = SIGNED32(0C0000040H);	(* INITIALIZED_DATA | MEM_READ | MEM_WRITE *)
 VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress: SIZE; BaseAddress: SIGNED32; exportInfo: ExportInfo; relocInfo: RelocationInfo;
+	TextSize, AlignedTextSize, DataSize, AlignedDataSize: SIZE;
 	pos: SIZE;
+	sum, carry: SIZE; pending: BOOLEAN;	(* the file's checksum, accumulated as it is written *)
+
+	(*	One byte into the 16 bit one's complement sum the checksum field wants. Every byte written
+		below goes through here, which is why the sum cannot disagree with the file. *)
+	PROCEDURE Take (byte: SIZE);
+	BEGIN
+		IF pending THEN
+			INC(sum, carry + 100H * byte);
+			sum := (sum MOD 10000H) + (sum DIV 10000H);
+			pending := FALSE
+		ELSE
+			carry := byte; pending := TRUE
+		END
+	END Take;
+
+	PROCEDURE Checksum (): SIZE;
+	VAR total: SIZE;
+	BEGIN
+		total := sum;
+		IF pending THEN
+			INC(total, carry); total := (total MOD 10000H) + (total DIV 10000H)
+		END;
+		total := (total DIV 10000H) + (total MOD 10000H);
+		RETURN (total MOD 10000H) + pos
+	END Checksum;
 
 	PROCEDURE Reserve (size: SIZE);
-	BEGIN INC(pos, size); WHILE size # 0 DO writer.Char (0X); DEC (size); END;
+	BEGIN INC(pos, size); WHILE size # 0 DO writer.Char (0X); Take (0); DEC (size); END;
 	END Reserve;
 
 	PROCEDURE WriteBYTE (value: SIZE);
-	BEGIN writer.Char (CHR (value)); INC(pos);
+	BEGIN writer.Char (CHR (value)); INC(pos); Take (value MOD 100H);
 	END WriteBYTE;
 
 	PROCEDURE WriteWORD (value: SIZE);
@@ -381,8 +492,9 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	END WritePTR;
 
 	PROCEDURE WriteString(s: ARRAY OF CHAR);
+	VAR i: SIZE;
 	BEGIN
-		writer.String(s); INC(pos, Strings.Length(s));
+		i := 0; WHILE s[i] # 0X DO WriteBYTE(ORD(s[i])); INC(i) END
 	END WriteString;
 
 	PROCEDURE WriteString0(s: ARRAY OF CHAR);
@@ -402,6 +514,24 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	BEGIN
 		RETURN (exportInfo # NIL) & (exportInfo.exports # 0)
 	END HasExports;
+
+	(*	How many section headers this file has. Counted in one place because two things need the
+		same number: the header field, and the room the headers take -- which used to be computed
+		as one section header whatever the count, and fitted only because the alignment left
+		slack. *)
+	PROCEDURE HasData(): BOOLEAN;
+	BEGIN RETURN DataSize > 0
+	END HasData;
+
+	PROCEDURE Sections(): SIZE;
+	VAR count: SIZE;
+	BEGIN
+		count := 1;
+		IF HasData() THEN INC(count) END;
+		IF HasRelocs() THEN INC(count) END;
+		IF HasExports() THEN INC(count) END;
+		RETURN count
+	END Sections;
 
 	PROCEDURE ExportTableSize(): SIZE;
 	VAR i,offset: SIZE;
@@ -475,7 +605,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	END WriteDOSStub;
 
 	PROCEDURE WriteHeader;
-	VAR characteristics, sections: SIGNED32;
+	VAR characteristics: SIGNED32;
 	BEGIN
 		WriteDWORD (000004550H);	(* Signature *)
 		IF bitmode = 64 THEN
@@ -483,11 +613,8 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		ELSE
 			WriteWORD (0014CH);	(* Machine *)
 		END;
-		sections := 1;
-		IF HasRelocs() THEN INC(sections) END;
-		IF HasExports()THEN INC(sections) END;
-		WriteWORD (sections);	(* NumberOfSections *)
-		WriteDWORD (0);	(* TimeDateStamp *)
+		WriteWORD (Sections());	(* NumberOfSections *)
+		WriteDWORD (EpochSeconds());	(* TimeDateStamp *)
 		WriteDWORD (0);	(* PointerToSymbolTable *)
 		WriteDWORD (0);	(* NumberOfSymbols *)
 		WriteWORD (OptionalHeaderSize);	(* SizeOfOptionalHeader *)
@@ -510,10 +637,11 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		ELSE
 			WriteWORD (0010BH);	(* Magic *)
 		END;
-		(* 2 *) WriteBYTE (0);	(* MajorLinkerVersion *)
+		(*	Ours, and not zero: a linker version of 0.0 says "no linker wrote this". *)
+		(* 2 *) WriteBYTE (1);	(* MajorLinkerVersion *)
 		(* 3 *) WriteBYTE (0);	(* MinorLinkerVersion *)
-		(* 4 *) WriteDWORD (CodeSize);	(* SizeOfCode *)
-		(* 8 *) WriteDWORD (0);	(* SizeOfInitializedData *)
+		(* 4 *) WriteDWORD (TextSize);	(* SizeOfCode *)
+		(* 8 *) WriteDWORD (DataSize);	(* SizeOfInitializedData *)
 		(* 12 *) WriteDWORD (0);	(* SizeOfUninitializedData *)
 		(* 16 *) WriteDWORD (BaseCodeAddress);	(* AddressOfEntryPoint *)
 		(* 20 *) WriteDWORD (BaseCodeAddress);	(* BaseOfCode *)
@@ -523,19 +651,38 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		(* 28 / 24 *) WritePTR (arrangement.displacement - BaseCodeAddress);	(* ImageBase *)
 		(* 32 *) WriteDWORD (SectionAlignment);	(* SectionAlignment *)
 		(* 36 *)WriteDWORD (FileAlignment);	(* FileAlignment *)
-		(* 40 *)WriteWORD (4);	(* MajorOperatingSystemVersion *)
+		(*	Windows NT 4.0 was what this said until 04.09.2026, and a subsystem version that old is
+			on the same heuristic lists as a zero timestamp. 6.0 is Vista, which is older than any
+			Windows this runs on. EFI images (subsystem 10) keep what firmware expects. *)
+		(* 40 *)WriteWORD (WindowsVersion);	(* MajorOperatingSystemVersion *)
 		(* 42 *)WriteWORD (0);	(* MinorOperatingSystemVersion *)
 		(* 44 *)WriteWORD (0);	(* MajorImageVersion *)
 		(* 46 *)WriteWORD (0);	(* MinorImageVersion *)
-		(* 48 *)WriteWORD (4);	(* MajorSubsystemVersion *)
+		(* 48 *)WriteWORD (WindowsVersion);	(* MajorSubsystemVersion *)
 		(* 50 *)WriteWORD (0);	(* MinorSubsystemVersion *)
 		(* 52 *)WriteDWORD (0);	(* Win32VersionValue *)
 		(* 56 *)WriteDWORD (ImageSize);	(* SizeOfImage *)
 		(* 60 *)WriteDWORD (HeadersSize);	(* SizeOfHeaders *)
-		(* 64 *)WriteDWORD (0);	(* CheckSum *)
+		(* 64 *)peChecksumAt := pos; WriteDWORD (0);	(* CheckSum, filled in once the file is written *)
 		(* 68 *)WriteWORD (subSystem);	(* Subsystem *)
-		(* 70 *)IF isDLL THEN WriteWORD (40H);	(* DllCharacteristics *)
-				ELSE WriteWORD(0)
+		(*
+			DEP, which this said nothing about until 04.09.2026 -- a PE that does not ask for it is
+			both a hole of its own and, to a reputation engine, a binary from before it existed.
+
+			ASLR (DYNAMIC_BASE, 40H) is NOT here, and that is measured rather than assumed: with it
+			the image is relocated at every start, and a binary built with it set crashes on
+			startup with an access violation -- 05.09.2026, `ob.exe version`, the same binary
+			running the moment the flag is patched out of the header. So the relocations this
+			linker writes do not survive the image being moved. They are HIGHLOW (type 3, see
+			WriteSections), which cannot express a delta outside the low 4 GB, and evidently that
+			is not their only trouble. ASLR -- and HIGH_ENTROPY_VA after it -- waits for a
+			relocation table that is complete and DIR64 wide. Until then this asks for what it can
+			honour.
+		*)
+		(* 70 *)IF subSystem = EFISubsystem THEN
+					IF isDLL THEN WriteWORD (DynamicBase) ELSE WriteWORD (0) END
+				ELSE
+					WriteWORD (NXCompatible + TerminalServerAware)
 				END;
 		(* 72 *)WritePTR (0100000H);	(* SizeOfStackReserve *)
 		(* 76 / 80 *)WritePTR (01000H);	(* SizeOfStackCommit *)
@@ -563,15 +710,29 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 
 		(* code section header *)
 		(* 0 *) WriteString (".text"); Reserve (3);	(* Name *)
-		(* 8 *) WriteDWORD (CodeSize);	(* VirtualSize *)
+		(* 8 *) WriteDWORD (TextSize);	(* VirtualSize *)
 		(* 12 *) WriteDWORD (BaseCodeAddress);	(* VirtualAddress *)
-		(* 16 *) WriteDWORD (AlignedCodeSize);	(* SizeOfRawData *)
+		(* 16 *) WriteDWORD (AlignedTextSize);	(* SizeOfRawData *)
 		(* 20 *) WriteDWORD (BaseCodeAddress);	(* PointerToRawData *)
 		(* 24 *) WriteDWORD (0);	(* PointerToRelocations *)
 		(* 28 *) WriteDWORD (0);	(* PointerToLinenumbers *)
 		(* 32 *) WriteWORD (0);	(* NumberOfRelocations *)
 		(* 34 *) WriteWORD (0);	(* NumberOfLinenumbers *)
-		(* 36 *) WriteDWORD (SIGNED32 (0E0000020H));	(* Characteristics *)
+		(* 36 *) WriteDWORD (TextCharacteristics);	(* Characteristics *)
+
+		IF HasData() THEN
+			(* data section header -- the same bytes, the other half, and not executable *)
+			(* 0 *) WriteString (".data"); Reserve (3);	(* Name *)
+			(* 8 *) WriteDWORD (DataSize);	(* VirtualSize *)
+			(* 12 *) WriteDWORD (BaseCodeAddress + AlignedTextSize);	(* VirtualAddress *)
+			(* 16 *) WriteDWORD (AlignedDataSize);	(* SizeOfRawData *)
+			(* 20 *) WriteDWORD (BaseCodeAddress + AlignedTextSize);	(* PointerToRawData *)
+			(* 24 *) WriteDWORD (0);	(* PointerToRelocations *)
+			(* 28 *) WriteDWORD (0);	(* PointerToLinenumbers *)
+			(* 32 *) WriteWORD (0);	(* NumberOfRelocations *)
+			(* 34 *) WriteWORD (0);	(* NumberOfLinenumbers *)
+			(* 36 *) WriteDWORD (DataCharacteristics);	(* Characteristics *)
+		END;
 
 		IF HasExports() THEN
 			(* export table header *)
@@ -604,8 +765,13 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		(* 40 / 80 / 120 *) ReserveTo(BaseCodeAddress);
 
 		(**** code section *****)
+		(*	Written here rather than by WriteBinaryFile so that every byte passes the checksum and
+			is counted: the old line counted GetBits DIV 8 while the loop writes one byte per
+			started group of eight, which for a size not a multiple of eight is one byte more. *)
 		(* BaseCodeAddress *)
-		WriteBinaryFile (linker, arrangement, writer); INC(pos, arrangement.bits.GetSize () DIV 8);
+		FOR i := 0 TO arrangement.bits.GetSize () - 1 BY 8 DO
+			WriteBYTE (arrangement.bits.GetBits (i, 8))
+		END;
 		(* BaseCodeAddress +CodeSize *)
 		Reserve (AlignedCodeSize-CodeSize);
 		(* BaseCodeAddress + AlignedCodeSize *)
@@ -680,11 +846,24 @@ BEGIN
 	OptionalHeaderSize := 96 + DirectoryEntries * 8;
 	IF bitmode = 64 THEN INC (OptionalHeaderSize, 16); END;
 	CodeSize := arrangement.bits.GetSize () DIV 8;
-	AlignedCodeSize := Align(CodeSize, SectionAlignment);
-	HeadersSize :=  Align(DOSStubSize + HeaderSize + OptionalHeaderSize + SectionHeaderSize, FileAlignment);
+	(*	The blob is one piece of bytes and stays one piece in the file; what the two section
+		headers do is say which half of it may be executed and which may be written. The
+		arrangement put the boundary on a section boundary, so both halves are already aligned. *)
+	IF (arrangement.dataStart >= 0) & (arrangement.dataStart DIV 8 < CodeSize) THEN
+		TextSize := arrangement.dataStart DIV 8
+	ELSE
+		TextSize := CodeSize
+	END;
+	DataSize := CodeSize - TextSize;
+	AlignedTextSize := Align(TextSize, SectionAlignment);
+	AlignedDataSize := Align(DataSize, SectionAlignment);
+	AlignedCodeSize := AlignedTextSize + AlignedDataSize;
+	HeadersSize :=  Align(DOSStubSize + HeaderSize + OptionalHeaderSize + Sections() * SectionHeaderSize, FileAlignment);
 	BaseCodeAddress := Align(HeadersSize, SectionAlignment);
 
+	sum := 0; carry := 0; pending := FALSE;
 	WriteDOSStub; WriteHeader; WriteOptionalHeader; WriteSections;
+	peChecksum := Checksum()
 END WritePEFile;
 
 PROCEDURE WriteDLL32File (linker: GenericLinker.Linker; arrangement: Arrangement; writer: Files.Writer);
