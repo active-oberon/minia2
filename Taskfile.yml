@@ -391,11 +391,33 @@ tasks:
         msg: "Host compiler not found: {{.TOOL}}"
     cmds:
       - |
+        set -eo pipefail
+        # The compiler runs inside A2, and the shell cannot ask the process how it went: on
+        # Windows, Machine.Shutdown takes the parameter that says restart-or-stop and hands
+        # ExitProcess a hard 0, where the Unix twin hands it 0 or 1. Measured 05.09.2026 on three
+        # runs that differed only in whether they worked -- a command that does not exist, a
+        # command that does, and a compilation that fails -- and all three left 0 behind. So the
+        # build believed itself finished over a Windows.Kernel32.Mod that had not compiled, and
+        # said "Building platform Win64 have finished" while doing it.
+        #
+        # Until that is fixed where it lives -- it is not a one-liner: a second exit path in
+        # Windows.Objects races this one -- the marker the compiler prints is the only signal
+        # there is, and the build reads it. Glue on purpose: the judgement stays the compiler's,
+        # this only refuses to ignore it.
+        log={{.BUILD_DIR}}/{{.PLATFORM}}/compile.log
         cd {{.BUILD_DIR}}/{{.PLATFORM}} && {{.TOOL}} do "
           System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg ~
           Files.SetWorkPath {{.BUILD_DIR}}/{{.PLATFORM}} ~
           System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt ~
-        "
+        " 2>&1 | tee "$log"
+        if grep -qE '^Error\(s\) in file|^System\.DoCommands: Command: .* failed:' "$log"; then
+          echo "[ERROR] the compiler reported errors building {{.PLATFORM}}; the log is $log" >&2
+          exit 1
+        fi
+        # Not decoration: the shell go-task runs gives a script that ENDS in an `if` the status of
+        # the condition, so ending here would fail every build in which the test found nothing --
+        # which is every build that worked. Saying the check ran is worth a line anyway.
+        echo "[OK] the compiler reported no errors building {{.PLATFORM}}"
       - |
         case "{{.PLATFORM}}" in
           Linux*|LinuxARM)
@@ -520,6 +542,9 @@ tasks:
     cmds:
       - |
         rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/oberon.log
+        # Only a build that got this far had no errors; a failing one stops before this task and
+        # its log stays where the message says it is.
+        rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/compile.log
         rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg
         rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt
         rm -f {{.PLATFORM_ENV}}
