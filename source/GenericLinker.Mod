@@ -523,8 +523,13 @@ BEGIN
 	IF (block.bits = NIL) OR (block.bits.GetSize () = 0) THEN RETURN Empty END;
 	IF block.type = ObjectFile.BodyCode THEN RETURN Code END;
 	IF block.type = ObjectFile.Code THEN RETURN Code END;
-	IF block.type = ObjectFile.Data THEN RETURN Code END;
-	IF block.type = ObjectFile.Const THEN RETURN Code END;
+	(*	Data and constants used to be given the priority of code, which put them among it: one
+		address range holding both, and therefore one image section that has to be writable AND
+		executable -- the first thing any reputation engine says about a file. They have had
+		priorities of their own in this module since it was written; using them is what lets a
+		writer put code in one section and data in another. *)
+	IF block.type = ObjectFile.Data THEN RETURN Data END;
+	IF block.type = ObjectFile.Const THEN RETURN Const END;
 	HALT(100); (* undefined type *)
 END GetPriority;
 
