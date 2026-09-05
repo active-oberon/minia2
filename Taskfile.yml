@@ -226,6 +226,17 @@ tasks:
           PLATFORM: "{{.HOST}}"
       - echo "[SUCCESS] Compiler rebuilt and replaced for {{.PLATFORM}}"
 
+  oberon-win64:
+    # The Win64 bootstrap, cross-linked from a Linux host -- `task oberon` can only build the
+    # bootstrap of the machine it runs on, and this tree is developed on Linux. Needs `task Linux64`
+    # (for the runtime whose linker is this tree's) and `task Win64` (for the objects) first.
+    # The recipe and the reason it is a script are in tests/win-bootstrap.sh.
+    desc: Cross-link compilers/Win64/oberon.exe with the freshly built runtime
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/win-bootstrap.sh {{.BUILD_DIR}}/{{.HOST}}
+
   platforms:
     desc: Build all supported platforms
     cmds:
