@@ -1,6 +1,6 @@
 MODULE Linker;	(* AUTHOR "negelef"; PURPOSE "Object File Linker"; *)
 
-IMPORT Commands, Options, Diagnostics, Files, GenericLinker, ObjectFile, BitSets, Strings, Streams, Dates;
+IMPORT Commands, Options, Diagnostics, Files, GenericLinker, ObjectFile, BitSets, Strings, Streams;
 
 TYPE
 	ExportName = ARRAY 128 OF CHAR;
@@ -285,19 +285,6 @@ END WriteRelocations;
 *)
 VAR peChecksumAt, peChecksum: SIZE;
 
-(*	Seconds since 1970, which is what a PE timestamp is. Local time rather than UTC: nothing
-	validates this field, and what it is for here is not being zero -- a zero stamp is on every
-	heuristic list of things packers leave behind. *)
-PROCEDURE EpochSeconds(): SIGNED32;
-CONST SecondsPerDay = 86400; SecondsPerHour = 3600; SecondsPerMinute = 60;
-VAR epoch: Dates.DateTime; days, hours, minutes, seconds: SIGNED32;
-BEGIN
-	epoch.year := 1970; epoch.month := 1; epoch.day := 1;
-	epoch.hour := 0; epoch.minute := 0; epoch.second := 0;
-	Dates.TimeDifference(epoch, Dates.Now(), days, hours, minutes, seconds);
-	RETURN days * SecondsPerDay + hours * SecondsPerHour + minutes * SecondsPerMinute + seconds
-END EpochSeconds;
-
 (*
 	The PE checksum: a 16 bit one's complement sum over the whole file plus its length, with the
 	checksum field itself counted as the zero it was written as. Real linkers compute it and a
@@ -444,6 +431,7 @@ CONST TextCharacteristics = 60000020H;	(* CODE | MEM_EXECUTE | MEM_READ *)
 CONST DataCharacteristics = SIGNED32(0C0000040H);	(* INITIALIZED_DATA | MEM_READ | MEM_WRITE *)
 VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress: SIZE; BaseAddress: SIGNED32; exportInfo: ExportInfo; relocInfo: RelocationInfo;
 	TextSize, AlignedTextSize, DataSize, AlignedDataSize: SIZE;
+	stamp, stampIndex: SIZE;
 	pos: SIZE;
 	sum, carry: SIZE; pending: BOOLEAN;	(* the file's checksum, accumulated as it is written *)
 
@@ -614,7 +602,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			WriteWORD (0014CH);	(* Machine *)
 		END;
 		WriteWORD (Sections());	(* NumberOfSections *)
-		WriteDWORD (EpochSeconds());	(* TimeDateStamp *)
+		WriteDWORD (stamp);	(* TimeDateStamp -- of the image, not of the clock; see below *)
 		WriteDWORD (0);	(* PointerToSymbolTable *)
 		WriteDWORD (0);	(* NumberOfSymbols *)
 		WriteWORD (OptionalHeaderSize);	(* SizeOfOptionalHeader *)
@@ -860,6 +848,23 @@ BEGIN
 	AlignedCodeSize := AlignedTextSize + AlignedDataSize;
 	HeadersSize :=  Align(DOSStubSize + HeaderSize + OptionalHeaderSize + Sections() * SectionHeaderSize, FileAlignment);
 	BaseCodeAddress := Align(HeadersSize, SectionAlignment);
+
+	(*
+		The timestamp is taken from the image and not from the clock, and that is not a nicety:
+		this tree checks that the binary `ob build` writes is byte for byte the one the shell
+		version writes, and a stamp read off the clock differs between two links of the same input.
+		ELF has no such field, so only the PE targets ever noticed -- CI did, on the first push.
+
+		Zero is what it was before 04.09.2026, and zero is on every heuristic list of things a
+		packer leaves behind. A value folded out of the image is neither: it is not zero, it does
+		not move unless the image does, and a reproducible stamp is what /Brepro writes for the
+		same reason.
+	*)
+	stamp := 0;
+	FOR stampIndex := 0 TO arrangement.bits.GetSize () - 1 BY 8 DO
+		stamp := (stamp * 33 + arrangement.bits.GetBits (stampIndex, 8)) MOD 100000000H
+	END;
+	IF stamp = 0 THEN stamp := 1 END;
 
 	sum := 0; carry := 0; pending := FALSE;
 	WriteDOSStub; WriteHeader; WriteOptionalHeader; WriteSections;
