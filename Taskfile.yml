@@ -49,25 +49,55 @@ tasks:
       PLATFORM: "{{.PLATFORM}}"
       PLATFORM_ENV: "{{.BUILD_DIR}}/{{.PLATFORM | default .HOST}}/.env"
     preconditions:
-      - sh: "command -v yq >/dev/null 2>&1"
-        msg: "yq is required to parse {{.ENV_FILE}} but was not found in PATH"
       - sh: "test -f {{.ENV_FILE}}"
         msg: "Environment file not found: {{.ENV_FILE}}"
     cmds:
+      # Read without yq, and not out of thrift: yq was the only tool this file needed that a
+      # Windows machine does not have, and the point of `ob` being a binary rather than a shell
+      # script is that a Windows machine needs nothing but the tree. env.yml is a flat map of
+      # platform to key and value, two levels and no more, so the shell reads it directly.
       - |
         set -eo pipefail
 
         echo "[INFO] Setting env for platform: {{.PLATFORM}}"
 
-        if ! yq -e ".{{.PLATFORM}}" {{.ENV_FILE}} >/dev/null; then
-          echo "[ERROR] Unknown platform {{.PLATFORM}} in {{.ENV_FILE}}"
-          exit 1
-        fi
-
         mkdir -p $(dirname {{.PLATFORM_ENV}})
 
-        yq -r ".{{.PLATFORM}} | to_entries | .[] | \"export \(.key)=\\\"\(.value)\\\"\"" \
-          {{.ENV_FILE}} > {{.PLATFORM_ENV}}
+        platform="{{.PLATFORM}}"
+        inside=0
+        found=0
+        cr=$(printf '\r')
+        : > "{{.PLATFORM_ENV}}"
+
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in *"$cr") line=${line%"$cr"} ;; esac
+          case "$line" in ''|'#'*) continue ;; esac
+          case "$line" in
+            ' '*|'	'*)
+              ;;
+            *)
+              # a name in column one begins a platform and ends the one before it
+              case "$line" in
+                "$platform:"*) inside=1; found=1 ;;
+                *) inside=0 ;;
+              esac
+              continue
+              ;;
+          esac
+          [ "$inside" = 1 ] || continue
+          case "$line" in *:*) ;; *) continue ;; esac
+          key=${line%%:*}
+          value=${line#*:}
+          while :; do case "$key" in ' '*|'	'*) key=${key#?} ;; *) break ;; esac; done
+          while :; do case "$value" in ' '*|'	'*) value=${value#?} ;; *) break ;; esac; done
+          case "$value" in '"'*'"') value=${value#\"}; value=${value%\"} ;; esac
+          printf 'export %s="%s"\n' "$key" "$value" >> "{{.PLATFORM_ENV}}"
+        done < "{{.ENV_FILE}}"
+
+        if [ "$found" = 0 ]; then
+          echo "[ERROR] Unknown platform {{.PLATFORM}} in {{.ENV_FILE}}" >&2
+          exit 1
+        fi
 
         echo "[SUCCESS] Environment written to {{.PLATFORM_ENV}}"
 
@@ -105,8 +135,10 @@ tasks:
   generate-module-list:
     desc: Generate raw module list (used internally)
     preconditions:
-      - sh: "test -x {{.TOOL}}"
-        msg: "Host compiler not found or not executable: {{.TOOL}}"
+      # -f rather than -x: Windows has no execute bit and go-task's shell answers "no" to -x
+      # for every file on it, so the precondition could never pass there.
+      - sh: "test -f {{.TOOL}}"
+        msg: "Host compiler not found: {{.TOOL}}"
     cmds:
       - mkdir -p {{.BUILD_DIR}}/{{.HOST}}
       - |
@@ -337,11 +369,14 @@ tasks:
       PLATFORM: "{{.PLATFORM}}"
     cmds:
       - |
+        # Absolute, all three. On Windows WinFS.Init ends by changing the process into the
+        # directory of the image, so a relative search path is resolved against the compiler's own
+        # directory rather than against the build. On Linux these resolve to the same places.
         cat > {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg << EOF
         Heaps.SetMetaData~
         Files.AddSearchPath {{.BUILD_DIR}}/{{.PLATFORM}}/bin~
-        Files.AddSearchPath data~
-        Files.AddSearchPath source~
+        Files.AddSearchPath {{.BUILD_DIR}}/{{.PLATFORM}}/data~
+        Files.AddSearchPath {{.BUILD_DIR}}/{{.PLATFORM}}/source~
         Configuration.Init~
         EOF
 
@@ -350,12 +385,14 @@ tasks:
     vars:
       PLATFORM: "{{.PLATFORM}}"
     preconditions:
-      - sh: "test -x {{.TOOL}}"
-        msg: "Host compiler not found or not executable: {{.TOOL}}"
+      # -f rather than -x: Windows has no execute bit and go-task's shell answers "no" to -x
+      # for every file on it, so the precondition could never pass there.
+      - sh: "test -f {{.TOOL}}"
+        msg: "Host compiler not found: {{.TOOL}}"
     cmds:
       - |
         cd {{.BUILD_DIR}}/{{.PLATFORM}} && {{.TOOL}} do "
-          System.DoFile oberonCompile.cfg ~
+          System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/oberonCompile.cfg ~
           Files.SetWorkPath {{.BUILD_DIR}}/{{.PLATFORM}} ~
           System.DoFile {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt ~
         "
@@ -505,7 +542,7 @@ tasks:
   test:
     desc: Run compiler tests for host platform
     preconditions:
-      - sh: "test -x {{.BUILD_DIR}}/{{.HOST}}/oberon || test -x {{.BUILD_DIR}}/{{.HOST}}/oberon.exe"
+      - sh: "test -f {{.BUILD_DIR}}/{{.HOST}}/oberon || test -f {{.BUILD_DIR}}/{{.HOST}}/oberon.exe"
         msg: "No built compiler in {{.BUILD_DIR}}/{{.HOST}}. Build it first (e.g. `task {{.HOST}}` or `task oberon`)."
     cmds:
       - echo "Running tests for host {{.HOST}}"
@@ -524,7 +561,7 @@ tasks:
         cd {{.BUILD_DIR}}/{{.HOST}}
         export PWD="$(pwd)"
         rm -rf work && mkdir -p work
-        OBERON=./oberon; [ -x "$OBERON" ] || OBERON=./oberon.exe
+        OBERON=./oberon; [ -f "$OBERON" ] || OBERON=./oberon.exe
         "$OBERON" do "
           System.DoFile oberon.cfg ~
           Files.AddSearchPath {{.CURRENT_DIR}}/tests ~
