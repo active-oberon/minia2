@@ -5,10 +5,10 @@ MODULE LocalSockets;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Sockets named by a
 	Listen by a path, a connection that is two streams, Accept that waits -- so that a program
 	written against one compiles against the other; what changes is where the name lives.
 
-	A path is turned into a pipe name: `/tmp/mpv.sock` becomes `\\.\pipe\tmp_mpv.sock`. Pipe names
-	are flat, so the separators become underscores, and a name that is already a pipe name is left
-	alone -- a program talking to something Windows-native passes `\\.\pipe\whatever` and gets it
-	through untouched.
+	A path is turned into a pipe name: `/tmp/mpv.sock` becomes `\\.\pipe\tmp\mpv.sock`, which
+	is the same translation the programs on this host make -- mpv among them, and mpv is what this was
+	written for. A name that is already a pipe name is left alone: a program talking to something
+	Windows-native passes `\\.\pipe\whatever` and gets it through untouched.
 
 	AF_UNIX exists on Windows 10 since 1803 and would have kept the two implementations closer,
 	but a named pipe is what programs on this host actually listen on, it needs no Winsock, and it
@@ -166,8 +166,21 @@ TYPE
 
 	END Listener;
 
-(*	`/tmp/mpv.sock` becomes `\\.\pipe\tmp_mpv.sock`; a name that already begins with the pipe
-	prefix is passed through, so that a program talking to something Windows-native can name it. *)
+(*
+	`/tmp/mpv.sock` becomes `\\.\pipe\tmp\mpv.sock`; a name that already begins with the
+	pipe prefix is passed through, so that a program talking to something Windows-native can name it.
+
+	The separators are kept as separators, and that is the whole of this procedure: a pipe name may
+	contain backslashes after the prefix, and the programs this talks to translate a Unix path exactly
+	this way. mpv, given `--input-ipc-server=/tmp/a2-radio-1.sock`, makes
+	`\\.\pipe\tmp\a2-radio-1.sock` -- checked on this host 05.09.2026 by listing the pipes it made.
+	Until then this turned them into underscores, on the belief that pipe names are flat; they are
+	not, and so the two ends named two different pipes: mpv played, and the program that had started
+	it could not say one word to it.
+
+	A leading separator is dropped rather than kept: an empty first component is a different name
+	from the one everybody else writes.
+*)
 PROCEDURE PipeName (CONST path: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
 VAR i, j: SIZE; ch: CHAR;
 BEGIN
@@ -177,8 +190,8 @@ BEGIN
 	i := 0;
 	WHILE (path[i] # 0X) & (j < LEN(name)-1) DO
 		ch := path[i];
-		IF (ch = "/") OR (ch = "\") OR (ch = ":") THEN ch := "_" END;
-		IF ~((j = Strings.Length(Prefix)) & (ch = "_")) THEN name[j] := ch; INC(j) END;
+		IF (ch = "/") OR (ch = "\") THEN ch := "\" ELSIF ch = ":" THEN ch := "_" END;
+		IF ~((j = Strings.Length(Prefix)) & (ch = "\")) THEN name[j] := ch; INC(j) END;
 		INC(i)
 	END;
 	name[j] := 0X
