@@ -31,6 +31,11 @@ TYPE
 VAR
 	searchPath: ARRAY 4 * Kernel32.MaxPath OF CHAR;
 	workPath, tempPath: FileName;  notifications: Notification;
+	(*	The directory the process was started in, kept because this file is what overwrites it:
+		the work path becomes the process's current directory on Windows, so by the time anything
+		asks Windows, the directory the user stood in is gone. A command-line tool needs it to
+		resolve what the user typed, and on Unix it is simply never lost. *)
+	startPath: FileName;
 TYPE
 
 	SearchByName = OBJECT
@@ -1226,6 +1231,7 @@ VAR
 		AutoMountWindowsLogicalDrives( drives );
 
 		IGNORE Kernel32.GetCurrentDirectory( LEN( workPath ), workPath );  i := 0; IGNORE Kernel32.GetModuleFileName( Kernel32.hInstance, sysPath, LEN( sysPath ) );  j := -1;
+		COPY( workPath, startPath );   (* the last moment it is still the caller's directory: this procedure ends by moving to the image's own *)
 		FixDriveLetter (workPath); FixDriveLetter (sysPath);
 		WHILE sysPath[i] # 0X DO
 			IF sysPath[i] = PathDelimiter THEN j := i END;
@@ -1287,6 +1293,14 @@ VAR
 		context.arg.String(diskname);
 		UnmountDrive(diskname, context);
 	END Unmount;
+
+(**	The directory this process was started in, as Windows reported it before the work path was
+	made the current directory. Empty when the file system was never initialised. What a
+	command-line tool resolves a relative name the user typed against. *)
+PROCEDURE StartPath*(VAR path: ARRAY OF CHAR);
+BEGIN
+	COPY( startPath, path )
+END StartPath;
 
 BEGIN
 	Init();  Modules.InstallTermHandler( Finalization ); SetPaths;

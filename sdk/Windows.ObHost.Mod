@@ -11,7 +11,7 @@ MODULE ObHost;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Host services Ob needs a
 	Windows accepts a forward slash everywhere, and ob builds its paths with one.
 *)
 
-IMPORT SYSTEM, Kernel32, Strings;
+IMPORT SYSTEM, Kernel32, Strings, WinFS;
 
 CONST
 	MaxPath* = 1024;
@@ -135,10 +135,53 @@ END Env;
 	`GetFullPathName` hands it back untouched -- so the name resolved fine, existed fine, and then
 	could not be opened, which read as "no MODULE header in examples/Hello.Mod" about a file whose
 	first word is MODULE. *)
+(*
+	Is the name anchored -- a drive, a UNC share, or a root -- or is it relative to wherever the
+	process happens to be standing?
+*)
+PROCEDURE Absolute(CONST path: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF (path[0] = 0X) THEN RETURN FALSE END;
+	IF (path[0] = Separator) OR (path[0] = '/') THEN RETURN TRUE END;
+	RETURN (path[1] = ':') & (path[2] # 0X)
+END Absolute;
+
+(*
+	What the user typed, resolved against the directory they typed it in.
+
+	Windows resolves a relative name against the process's current directory, and A2 moves that:
+	the work path IS the current directory there (Windows.WinFS.SetPaths), and ob sets the work
+	path to its own scratch directory before it compiles. So by the time a verb looks at its
+	argument, `Foo.Mod` no longer means the Foo.Mod the user was looking at. WinFS keeps the
+	directory the process started in for exactly this, and on Unix the question never arises
+	because nothing there ever calls chdir.
+*)
+PROCEDURE Anchor(CONST path: ARRAY OF CHAR; VAR anchored: ARRAY OF CHAR);
+VAR start: Path; length: SIZE;
+BEGIN
+	COPY(path, anchored);
+	IF Absolute(path) THEN RETURN END;
+	(*	$A2_PROJECT first, by the same rule Ob.FindProject follows, and for the same reason it is
+		needed at all: a shell can hand a program a working directory that is not the one it is
+		showing the user -- Windows PowerShell changes its own location without changing the
+		process's -- and then the only truth about where the user stands is what the shell says
+		out loud. *)
+	IF Env("A2_PROJECT", start) & (start # "") THEN
+	ELSE WinFS.StartPath(start)
+	END;
+	IF start = "" THEN RETURN END;
+	length := 0; WHILE start[length] # 0X DO INC(length) END;
+	IF (length > 0) & (start[length-1] # Separator) & (start[length-1] # '/') THEN
+		Strings.Append(start, Separator)
+	END;
+	Strings.Append(start, path);
+	COPY(start, anchored)
+END Anchor;
+
 PROCEDURE RealPath*(CONST path: ARRAY OF CHAR; VAR resolved: ARRAY OF CHAR): BOOLEAN;
 VAR buffer, native: Path; index: SIZE;
 BEGIN
-	COPY(path, native); index := 0;
+	Anchor(path, native); index := 0;
 	WHILE native[index] # 0X DO
 		IF native[index] = '/' THEN native[index] := Separator END;
 		INC(index)
@@ -156,10 +199,17 @@ BEGIN
 	COPY(buffer, path); RETURN TRUE
 END ExecutablePath;
 
-(** The current working directory. *)
+(**
+	The directory the user is in -- which is the one this process was started in, not the one it
+	has walked to since. Ob asks this to decide where the project is, and a process whose current
+	directory is its own scratch directory has no project. Falls back to Windows' answer when the
+	file system never recorded a start (nothing ran SetPaths).
+*)
 PROCEDURE CurrentDirectory*(VAR path: ARRAY OF CHAR): BOOLEAN;
 VAR buffer: Path;
 BEGIN
+	WinFS.StartPath(buffer);
+	IF buffer # "" THEN COPY(buffer, path); RETURN TRUE END;
 	IF Kernel32.GetCurrentDirectory(LEN(buffer), buffer) = 0 THEN path := ""; RETURN FALSE END;
 	COPY(buffer, path); RETURN TRUE
 END CurrentDirectory;
