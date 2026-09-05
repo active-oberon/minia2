@@ -1,0 +1,287 @@
+# Tests for source/Linker.Mod -- the part of it that writes what a Windows image says about
+# itself: the `.rsrc` section with its version block, its manifest and its icon.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Everything else in Linker.Mod ends in a file, and a file is what the shell checks: tests/ob-check.sh
+# links the same input twice and compares the two binaries byte for byte, and `objdump -p` reads the
+# header back. What no shell check can reach is the shape of the resource directory, because a
+# directory that is subtly wrong still links, still runs, and simply has no icon -- Windows finds
+# nothing where it looked and says nothing about it.
+#
+# So the cases ask the builder directly. They walk the three levels the way the loader walks them:
+# by type, then by id, then by language, following the top bit that says "another directory" down
+# to the descriptor that says "these bytes, at this address". Anything that does not point inside
+# the section it belongs to is caught here rather than by a missing icon on somebody's desktop.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a version string becomes the two words VS_FIXEDFILEINFO keeps
+
+	MODULE Test;
+	IMPORT Linker;
+
+	PROCEDURE Numbers(CONST version: ARRAY OF CHAR; expectedHigh, expectedLow: SIZE);
+	VAR high, low: SIZE;
+	BEGIN
+		Linker.VersionNumbers(version, high, low);
+		ASSERT(high = expectedHigh); ASSERT(low = expectedLow)
+	END Numbers;
+
+	BEGIN
+		Numbers("1.2.3.4", 10002H, 30004H);
+		Numbers("2026.9.5.0", 07EA0009H, 50000H);
+
+		(* fewer than four parts: what was not said stays zero *)
+		Numbers("1.0", 10000H, 0);
+		Numbers("7", 70000H, 0);
+		Numbers("", 0, 0);
+
+		(*	Each part is a word, and a number too big for one is held at the top rather than
+			wrapping around into the part beside it. *)
+		Numbers("99999.1.0.0", 0FFFFH * 10000H + 1, 0);
+
+		(* the fourth dot belongs to no part, so what follows it joins the fourth: 4 then 45 *)
+		Numbers("1.2.3.4.5", 10002H, 30000H + 45)
+	END Test.
+
+positive: the strings of a version block are UTF-16, whatever came in
+
+	MODULE Test;
+	IMPORT Linker;
+
+	VAR builder: Linker.Builder;
+
+	PROCEDURE Length(): SIZE;
+	BEGIN RETURN builder.length
+	END Length;
+
+	(*	The high byte through a SIZE of its own: ORD of a CHAR is a small type, and 100H times one
+		is multiplied in sixteen bits, so 8000H and up would come back negative. *)
+	PROCEDURE Unit(at: SIZE): SIZE;
+	VAR high: SIZE;
+	BEGIN high := ORD(builder.bytes[at + 1]); RETURN ORD(builder.bytes[at]) + 100H * high
+	END Unit;
+
+	BEGIN
+		NEW(builder);
+		builder.Utf16("ob");
+		ASSERT(Length() = 6);	(* two characters and the NUL, two bytes apiece *)
+		ASSERT(Unit(0) = ORD("o")); ASSERT(Unit(2) = ORD("b")); ASSERT(Unit(4) = 0);
+
+		(*	A company name is exactly the place a letter outside ASCII turns up, and the option it
+			arrives in is UTF-8. Two bytes in, one unit out. *)
+		NEW(builder);
+		builder.Utf16("Ä");	(* C3 84 *)
+		ASSERT(Length() = 4);
+		ASSERT(Unit(0) = 0C4H); ASSERT(Unit(2) = 0);
+
+		(* three bytes in, still one unit out *)
+		NEW(builder);
+		builder.Utf16("€");	(* E2 82 AC *)
+		ASSERT(Length() = 4);
+		ASSERT(Unit(0) = 20ACH);
+
+		(*	Above the basic plane UTF-16 has no single unit and must use a surrogate pair, which is
+			the one place widening bytes into words would quietly write the wrong string. *)
+		NEW(builder);
+		builder.Utf16("😀");	(* F0 9F 98 80, U+1F600 *)
+		ASSERT(Length() = 6);
+		ASSERT(Unit(0) = 0D83DH); ASSERT(Unit(2) = 0DE00H); ASSERT(Unit(4) = 0)
+	END Test.
+
+positive: the resource directory of an image with no icon
+
+	MODULE Test;
+	IMPORT Linker;
+
+	CONST Address = 100000H;	(* where the section will sit in the image *)
+
+	VAR
+		resources: Linker.Resources; content: Linker.Builder;
+		types, leaves, i: SIZE;
+		leafType, leafId, leafAt, leafSize: ARRAY 16 OF SIZE;
+
+	(*	Each half through a SIZE of its own: ORD of a CHAR is a small type, and a product of two
+		small ones is computed in sixteen bits, so the top bit -- which is the bit that says
+		"another directory" -- would come back as a sign. *)
+	PROCEDURE Word(at: SIZE): SIZE;
+	VAR high: SIZE;
+	BEGIN high := ORD(content.bytes[at + 1]); RETURN ORD(content.bytes[at]) + 100H * high
+	END Word;
+
+	PROCEDURE DWord(at: SIZE): SIZE;
+	VAR high: SIZE;
+	BEGIN high := Word(at + 2); RETURN Word(at) + 10000H * high
+	END DWord;
+
+	(*	The walk the loader does: by type, by id, by language, and then a descriptor. Every step
+		checks the bit that says which of the two a pointer is, because that bit is the difference
+		between a directory and an address. *)
+	PROCEDURE Walk;
+	VAR t, i, id, name, pointer, typeDirectory, nameDirectory, names: SIZE;
+	BEGIN
+		ASSERT(Word(12) = 0);	(* nothing here is named; everything has an id *)
+		types := Word(14);
+		leaves := 0;
+		FOR t := 0 TO types - 1 DO
+			id := DWord(16 + 8 * t);
+			pointer := DWord(16 + 8 * t + 4);
+			ASSERT(pointer DIV 80000000H = 1);
+			typeDirectory := pointer MOD 80000000H;
+			names := Word(typeDirectory + 14);
+			ASSERT(Word(typeDirectory + 12) = 0);
+			FOR i := 0 TO names - 1 DO
+				name := DWord(typeDirectory + 16 + 8 * i);
+				pointer := DWord(typeDirectory + 16 + 8 * i + 4);
+				ASSERT(pointer DIV 80000000H = 1);
+				nameDirectory := pointer MOD 80000000H;
+				ASSERT(Word(nameDirectory + 14) = 1);	(* one language, and it is en-US *)
+				ASSERT(DWord(nameDirectory + 16) = 409H);
+				pointer := DWord(nameDirectory + 16 + 4);
+				ASSERT(pointer DIV 80000000H = 0);	(* a leaf: the top bit is clear *)
+				leafType[leaves] := id; leafId[leaves] := name;
+				leafAt[leaves] := DWord(pointer) - Address;
+				leafSize[leaves] := DWord(pointer + 4);
+				INC(leaves)
+			END
+		END
+	END Walk;
+
+	BEGIN
+		NEW(resources);
+		resources.description := "Hello"; resources.originalName := "Hello.exe";
+		resources.internalName := "Hello"; resources.product := "Active Oberon";
+		resources.version := "1.0.0.0";
+
+		content := Linker.BuildResources(resources, Address, FALSE, TRUE);
+		Walk;
+
+		(*	Two types and no more: a version block and a manifest. Both are written whether or not
+			anyone asked for them, which is the whole point -- an image with nothing to say about
+			itself is what this section exists to stop. *)
+		ASSERT(types = 2);
+		ASSERT(leaves = 2);
+		ASSERT(leafType[0] = 16); ASSERT(leafId[0] = 1);	(* RT_VERSION *)
+		ASSERT(leafType[1] = 24); ASSERT(leafId[1] = 1);	(* RT_MANIFEST *)
+
+		(*	Every descriptor points at bytes that are inside the section it belongs to. This is the
+			one mistake that costs nothing at link time and everything at load time. *)
+		FOR i := 0 TO leaves - 1 DO
+			ASSERT(leafSize[i] > 0);
+			ASSERT(leafAt[i] >= 0);
+			ASSERT(leafAt[i] + leafSize[i] <= content.length)
+		END;
+
+		(* the version block declares its own length, and it is the length of the resource *)
+		ASSERT(Word(leafAt[0]) = leafSize[0]);
+
+		(* and the manifest is the XML the loader will parse *)
+		ASSERT(content.bytes[leafAt[1]] = "<");
+		ASSERT(content.bytes[leafAt[1] + 1] = "?")
+	END Test.
+
+positive: an icon becomes one resource per image and a group that names them
+
+	MODULE Test;
+	IMPORT Linker;
+
+	CONST Address = 200000H; Images = 2;
+
+	VAR
+		resources: Linker.Resources; content: Linker.Builder;
+		types, groupAt, groupSize, icons, i: SIZE;
+
+	(*	Each half through a SIZE of its own: ORD of a CHAR is a small type, and a product of two
+		small ones is computed in sixteen bits, so the top bit -- which is the bit that says
+		"another directory" -- would come back as a sign. *)
+	PROCEDURE Word(at: SIZE): SIZE;
+	VAR high: SIZE;
+	BEGIN high := ORD(content.bytes[at + 1]); RETURN ORD(content.bytes[at]) + 100H * high
+	END Word;
+
+	PROCEDURE DWord(at: SIZE): SIZE;
+	VAR high: SIZE;
+	BEGIN high := Word(at + 2); RETURN Word(at) + 10000H * high
+	END DWord;
+
+	PROCEDURE PutWord(VAR bytes: ARRAY OF CHAR; at, value: SIZE);
+	BEGIN bytes[at] := CHR(value MOD 100H); bytes[at + 1] := CHR(value DIV 100H MOD 100H)
+	END PutWord;
+
+	PROCEDURE PutDWord(VAR bytes: ARRAY OF CHAR; at, value: SIZE);
+	BEGIN PutWord(bytes, at, value MOD 10000H); PutWord(bytes, at + 2, value DIV 10000H)
+	END PutDWord;
+
+	(*	An .ico as the file format has it: a directory of entries, each of which says how big its
+		image is and where in the file it starts. What goes into the image is the same directory
+		with those offsets replaced by resource ids. *)
+	PROCEDURE MakeIcon(damaged: BOOLEAN);
+	CONST Header = 6 + 16 * Images; Image = 40;
+	VAR i: SIZE;
+	BEGIN
+		NEW(resources.icon, Header + Images * Image);
+		resources.iconLength := Header + Images * Image;
+		PutWord(resources.icon^, 0, 0); PutWord(resources.icon^, 2, 1); PutWord(resources.icon^, 4, Images);
+		FOR i := 0 TO Images - 1 DO
+			resources.icon[6 + 16 * i] := CHR(16 * (i + 2));	(* width *)
+			resources.icon[6 + 16 * i + 1] := CHR(16 * (i + 2));	(* height *)
+			PutWord(resources.icon^, 6 + 16 * i + 4, 1);	(* planes *)
+			PutWord(resources.icon^, 6 + 16 * i + 6, 32);	(* bits per pixel *)
+			PutDWord(resources.icon^, 6 + 16 * i + 8, Image);
+			IF damaged THEN
+				PutDWord(resources.icon^, 6 + 16 * i + 12, Header + Images * Image)	(* one image past the end *)
+			ELSE
+				PutDWord(resources.icon^, 6 + 16 * i + 12, Header + i * Image)
+			END
+		END
+	END MakeIcon;
+
+	PROCEDURE Types(): SIZE;
+	BEGIN
+		content := Linker.BuildResources(resources, Address, FALSE, TRUE);
+		RETURN Word(14)
+	END Types;
+
+	BEGIN
+		NEW(resources);
+		resources.internalName := "Hello"; resources.version := "1.0.0.0";
+
+		MakeIcon(FALSE);
+		types := Types();
+
+		(* icon, group icon, version, manifest -- 3, 14, 16, 24, and in that order *)
+		ASSERT(types = 4);
+		ASSERT(DWord(16) = 3); ASSERT(DWord(16 + 8) = 14);
+		ASSERT(DWord(16 + 16) = 16); ASSERT(DWord(16 + 24) = 24);
+
+		(* one RT_ICON apiece, numbered from one *)
+		icons := Word(DWord(16 + 4) MOD 80000000H + 14);
+		ASSERT(icons = Images);
+		FOR i := 0 TO icons - 1 DO
+			ASSERT(DWord(DWord(16 + 4) MOD 80000000H + 16 + 8 * i) = i + 1)
+		END;
+
+		(*	The group is what the shell reads to choose a size, so it has to name the ids that were
+			actually written -- the one number in it that the .ico file cannot supply. *)
+		groupAt := DWord(DWord(DWord(16 + 8 + 4) MOD 80000000H + 16 + 4) MOD 80000000H + 16 + 4);
+		groupSize := DWord(groupAt + 4);
+		groupAt := DWord(groupAt) - Address;
+		ASSERT(groupSize = 6 + 14 * Images);
+		ASSERT(Word(groupAt + 2) = 1);	(* a group of icons, not of cursors *)
+		ASSERT(Word(groupAt + 4) = Images);
+		FOR i := 0 TO Images - 1 DO
+			ASSERT(ORD(content.bytes[groupAt + 6 + 14 * i]) = 16 * (i + 2));	(* the width, carried over *)
+			ASSERT(DWord(groupAt + 6 + 14 * i + 8) = 40);	(* the size of the image *)
+			ASSERT(Word(groupAt + 6 + 14 * i + 12) = i + 1)	(* and the id it was given here *)
+		END;
+
+		(*	An icon file comes from wherever the user says, so an offset in it that leaves the file
+			has to end as no icon rather than as bytes copied out of whatever followed. *)
+		MakeIcon(TRUE);
+		ASSERT(Types() = 2);
+
+		(* and the same for a file that is not an icon at all *)
+		resources.iconLength := 3;
+		ASSERT(Types() = 2)
+	END Test.
