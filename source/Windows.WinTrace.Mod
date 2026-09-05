@@ -116,11 +116,22 @@ BEGIN
 	Close;
 END Terminate;
 
+(*
+	The trace goes to stderr, and that is not a preference. It is diagnostics -- the startup banner,
+	KernelLog, a trap report -- and until 05.09.2026 it went to `hout`, which is **stdout**. For
+	`ob lsp` and `ob dap` stdout is the protocol channel, so the client got `WinA2 (64bit) ...` in
+	front of the first `Content-Length` frame and gave up; in nvim, whose `vim.lsp.start` attaches
+	synchronously, that looked like an editor that had stopped answering.
+
+	`herr` is the right handle for it even when nothing is listening: a program's ordinary output is
+	its result, and this is not part of any result. `OpenFile` points both handles at the trace file,
+	so tracing to a file is unaffected.
+*)
 PROCEDURE Char(c: CHAR);
 VAR len: SIGNED32; b: Kernel32.BOOL;
 BEGIN
 	len := 1;
-	b := Kernel32.WriteFile(hout,c,len,len,NIL);
+	b := Kernel32.WriteFile(herr,c,len,len,NIL);
 END Char;
 
 BEGIN

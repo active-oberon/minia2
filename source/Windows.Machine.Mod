@@ -593,7 +593,9 @@ BEGIN
 	Trace.String("trace -> console"); Trace.Ln;
 	res := Kernel32.AllocConsole ();
 	hin := Kernel32.GetStdHandle (Kernel32.STDInput);
-	hout := Kernel32.GetStdHandle (Kernel32.STDOutput);
+	(*	stderr, for the reason spelled out in Kernel32.SetTraceConsole: this is the second of the
+		three places that install a Trace.Char, and all three now agree. *)
+	hout := Kernel32.GetStdHandle (Kernel32.STDError);
 	Trace.Char := TraceChar;
 	Trace.String(version); Trace.Ln;
 END SetTraceConsole;

@@ -1228,10 +1228,16 @@ VAR
 VAR hout: HANDLE;
 
 
+	(*	The trace goes to stderr. This is the first of the three places on Windows that install a
+		`Trace.Char`, and it is the one the startup banner goes through, so until 05.09.2026 every
+		Windows program of this system opened by writing `WinA2 (64bit) ...` to **stdout**. For
+		`ob lsp` and `ob dap` stdout is the protocol channel, and a client that reads a banner
+		before the first `Content-Length` frame gives up. Diagnostics are not a program's result
+		and do not belong in the stream that carries one. *)
 	PROCEDURE SetTraceConsole;
 	VAR res: INTEGER;
 	BEGIN
-		hout := GetStdHandle (STDOutput);
+		hout := GetStdHandle (STDError);
 		Trace.Char := TraceChar;
 	END SetTraceConsole;
 
