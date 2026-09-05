@@ -58,7 +58,7 @@ VAR
 		#END;
 		DW elfheadersize
 		DW 20H
-		DW 4 ; #program header table entries
+		DW 5 ; #program header table entries
 		DW 0 ; section header table entry size
 		DW 0 ; section header number of entries
 		DW 0 ; section header names offset
@@ -79,6 +79,22 @@ VAR
 		#END
 		DD 07
 		DD 1000H; alignment
+
+		; The second PT_LOAD, left empty here and filled in by the linker. Where the code ends
+		; and the data begins is the linker's knowledge and cannot be this file's: it is decided
+		; while blocks are placed, and Arrangement rounds it up to a section boundary so that the
+		; two can be mapped with different permissions. Until something fills it the type is
+		; PT_NULL, which every loader passes over, so an image written by a linker that does not
+		; fill it is still exactly the image it was before.
+		DD 0 ; PT_NULL until the linker makes it PT_LOAD
+		DD 0 ; offset
+		DD 0 ; vadr
+		DD 0 ; padr
+		DD 0 ; segment size (file)
+		DD 0 ; segment size (memory)
+		DD 0 ; flags
+		DD 1000H; alignment
+
 		
 		; interpreter header
 		DD 3
@@ -197,7 +213,7 @@ VAR
 		DD 0
 		DW elfheadersize
 		DW 38H
-		DW 4 ; #program header table entries
+		DW 5 ; #program header table entries
 		DW 0
 		DW 0
 		DW 0
@@ -213,6 +229,22 @@ VAR
 		DQ @last - base; segment size (file)
 		DQ @last - base; segment size (memory)
 		DQ 1000H; alignment
+
+		; The second PT_LOAD, left empty here and filled in by the linker. Where the code ends
+		; and the data begins is the linker's knowledge and cannot be this file's: it is decided
+		; while blocks are placed, and Arrangement rounds it up to a section boundary so that the
+		; two can be mapped with different permissions. Until something fills it the type is
+		; PT_NULL, which every loader passes over, so an image written by a linker that does not
+		; fill it is still exactly the image it was before.
+		DD 0 ; PT_NULL until the linker makes it PT_LOAD
+		DD 0 ; flags
+		DQ 0 ; offset
+		DQ 0 ; vadr
+		DQ 0 ; padr
+		DQ 0 ; segment size (file)
+		DQ 0 ; segment size (memory)
+		DQ 1000H; alignment
+
 
 		; interpreter header
 		DD 3
@@ -319,7 +351,7 @@ VAR
 		DD 0
 		DW elfheadersize
 		DW 38H
-		DW 5 ; #program header table entries
+		DW 6 ; #program header table entries
 		DW 0
 		DW 0
 		DW 0
@@ -337,8 +369,8 @@ VAR
 		DQ elfheadersize
 		DQ base + elfheadersize
 		DQ base + elfheadersize
-		DQ 5 * 38H; segment size (file)
-		DQ 5 * 38H; segment size (memory)
+		DQ 6 * 38H; segment size (file)
+		DQ 6 * 38H; segment size (memory)
 		DQ 8H; alignment
 
 		; program header
@@ -354,6 +386,22 @@ VAR
 		DQ last - base; segment size (file)
 		DQ last - base; segment size (memory)
 		DQ 1000H; alignment
+
+		; The second PT_LOAD, left empty here and filled in by the linker. Where the code ends
+		; and the data begins is the linker's knowledge and cannot be this file's: it is decided
+		; while blocks are placed, and Arrangement rounds it up to a section boundary so that the
+		; two can be mapped with different permissions. Until something fills it the type is
+		; PT_NULL, which every loader passes over, so an image written by a linker that does not
+		; fill it is still exactly the image it was before.
+		DD 0 ; PT_NULL until the linker makes it PT_LOAD
+		DD 0 ; flags
+		DQ 0 ; offset
+		DQ 0 ; vadr
+		DQ 0 ; padr
+		DQ 0 ; segment size (file)
+		DQ 0 ; segment size (memory)
+		DQ 1000H; alignment
+
 
 		; interpreter header
 		DD 3
