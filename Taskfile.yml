@@ -6,7 +6,11 @@ vars:
   # Kept: Kernel System Drivers Compiler Build ApplicationsMini GuiApplicationsMini
   #       Applications GuiApplications Contributions + fonts.
   MINI_EXCLUDE: "Oberon OberonGadgets OberonApplications OberonVoyager OberonAnts OberonDocumentation Fun Education Testing EFI CjkFonts Pr3Fonts Pr6Fonts"
-  CURRENT_DIR: "{{.ROOT_DIR}}"
+  # Forward slashes, and that is not cosmetic. On Windows ROOT_DIR arrives as I:\Projects\... and
+  # every command below runs in go-task's own shell (mvdan/sh), which reads \P and \O as escape
+  # sequences -- the path collapses to I:ProjectsOSA2minia2 and every mkdir and cp is handed a
+  # relative name. Windows takes forward slashes everywhere this uses them.
+  CURRENT_DIR: '{{ .ROOT_DIR | replace "\\" "/" }}'
   CONFIGS: "{{.CURRENT_DIR}}/configs"
   SRC: "{{.CURRENT_DIR}}/source"
   DATA: "{{.CURRENT_DIR}}/data"
@@ -72,6 +76,26 @@ tasks:
     vars:
       PLATFORM: "{{.PLATFORM}}"
     cmds:
+      # A build whose output sits on a Windows mount dies on the third module, and the error names
+      # the wrong culprit: "could not import Trace", whose symbol file this same process wrote a
+      # moment earlier and which is right there on disk. drvfs does not show a process the file it
+      # just created, so every in-process import of a just-compiled module fails. Nothing in the
+      # compiler can be fixed to make it work; the output has to be on a native filesystem. Sources
+      # may stay on /mnt.
+      - |
+        set -eo pipefail
+        case "{{.BUILD_DIR}}" in
+          /mnt/*)
+            if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+              echo "[ERROR] BUILD_DIR is on a Windows mount: {{.BUILD_DIR}}" >&2
+              echo "        Under WSL the build must write to a native Linux filesystem -- drvfs does" >&2
+              echo "        not show a process the symbol file it just wrote, so the third module" >&2
+              echo "        fails to import the second. Run it as:" >&2
+              echo "            task {{.PLATFORM}} BUILD_DIR=\$HOME/a2build" >&2
+              exit 1
+            fi
+            ;;
+        esac
       - echo "[INFO] Preparing workspace for {{.PLATFORM}}"
       - mkdir -p {{.BUILD_DIR}}/{{.PLATFORM}}/bin
       - mkdir -p {{.BUILD_DIR}}/{{.PLATFORM}}/work
