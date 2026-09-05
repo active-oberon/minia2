@@ -58,7 +58,7 @@ VAR
 		#END;
 		DW elfheadersize
 		DW 20H
-		DW 3 ; #program header table entries
+		DW 4 ; #program header table entries
 		DW 0 ; section header table entry size
 		DW 0 ; section header number of entries
 		DW 0 ; section header names offset
@@ -99,6 +99,20 @@ VAR
 		DD dynamicsection_end - dynamicsection ; size of dynamic section
 		DD 06H
 		DD 04H
+
+		; The stack is not executable, and until 06.09.2026 nothing here said so. A Linux
+		; kernel reads the absence of PT_GNU_STACK as a file built before the question was
+		; asked, and grants the stack execute permission for compatibility -- so saying
+		; nothing was not neutral, it asked for the old behaviour. Nothing in this runtime
+		; executes from the stack: code arrives as loaded modules, in the heap.
+		DD 6474E551H ; PT_GNU_STACK
+		DD 0 ; offset
+		DD 0 ; vaddr
+		DD 0 ; paddr
+		DD 0 ; segment size (file)
+		DD 0 ; segment size (memory)
+		DD 06H ; PF_R + PF_W, and deliberately no PF_X
+		DD 10H ; alignment
 
 		dynamicsection:
 		DD 05H, base + stringtable
@@ -183,7 +197,7 @@ VAR
 		DD 0
 		DW elfheadersize
 		DW 38H
-		DW 3 ; #program header table entries
+		DW 4 ; #program header table entries
 		DW 0
 		DW 0
 		DW 0
@@ -219,6 +233,20 @@ VAR
 		DQ dynamicsection_end - dynamicsection ; size of dynamic section
 		DQ dynamicsection_end - dynamicsection ; size of dynamic section
 		DQ 08H
+
+		; The stack is not executable, and until 06.09.2026 nothing here said so. A Linux
+		; kernel reads the absence of PT_GNU_STACK as a file built before the question was
+		; asked, and grants the stack execute permission for compatibility -- so saying
+		; nothing was not neutral, it asked for the old behaviour. Nothing in this runtime
+		; executes from the stack: code arrives as loaded modules, in the heap.
+		DD 6474E551H ; PT_GNU_STACK
+		DD 06H ; PF_R + PF_W, and deliberately no PF_X
+		DQ 0 ; offset
+		DQ 0 ; vaddr
+		DQ 0 ; paddr
+		DQ 0 ; segment size (file)
+		DQ 0 ; segment size (memory)
+		DQ 10H ; alignment
 
 		dynamicsection:
 		DQ 05H, base + stringtable
@@ -291,7 +319,7 @@ VAR
 		DD 0
 		DW elfheadersize
 		DW 38H
-		DW 4 ; #program header table entries
+		DW 5 ; #program header table entries
 		DW 0
 		DW 0
 		DW 0
@@ -309,8 +337,8 @@ VAR
 		DQ elfheadersize
 		DQ base + elfheadersize
 		DQ base + elfheadersize
-		DQ 4 * 38H; segment size (file)
-		DQ 4 * 38H; segment size (memory)
+		DQ 5 * 38H; segment size (file)
+		DQ 5 * 38H; segment size (memory)
 		DQ 8H; alignment
 
 		; program header
@@ -346,6 +374,20 @@ VAR
 		DQ dynamicsection_end - dynamicsection ; size of dynamic section
 		DQ dynamicsection_end - dynamicsection ; size of dynamic section
 		DQ 08H
+
+		; The stack is not executable, and until 06.09.2026 nothing here said so. A Linux
+		; kernel reads the absence of PT_GNU_STACK as a file built before the question was
+		; asked, and grants the stack execute permission for compatibility -- so saying
+		; nothing was not neutral, it asked for the old behaviour. Nothing in this runtime
+		; executes from the stack: code arrives as loaded modules, in the heap.
+		DD 6474E551H ; PT_GNU_STACK
+		DD 06H ; PF_R + PF_W, and deliberately no PF_X
+		DQ 0 ; offset
+		DQ 0 ; vaddr
+		DQ 0 ; paddr
+		DQ 0 ; segment size (file)
+		DQ 0 ; segment size (memory)
+		DQ 10H ; alignment
 
 		dynamicsection:
 		DQ 05H, base + stringtable
