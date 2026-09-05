@@ -390,9 +390,129 @@ BEGIN
 	linker.Information (fileName, msg);
 END WriteOutputFile;
 
+(*
+	Finish the program header table of an image that carries one.
+
+	A raw image is written byte for byte, so on Linux the ELF header is not the linker's: it is
+	assembled into Linux.Glue.Mod and lands at the front because that block is placed first. That
+	arrangement has served everything until now, but it cannot answer one question -- where the
+	code ends and the data begins. Glue is one module; the boundary is decided while every block is
+	placed, and Arrangement rounds it up to a section boundary (dataStart) precisely so that the
+	two halves can be mapped with different permissions.
+
+	So Glue writes what it knows -- a PT_LOAD over the whole image, and a PT_NULL behind it -- and
+	this fills in what only the linker knows: the first LOAD is cut down to the code and made
+	read + execute, the PT_NULL becomes a second LOAD over the data, read + write. Until 06.09.2026
+	there was one segment with RWE over the whole image, which is on the same list of things a file
+	says about itself as the single W+X section a PE used to have.
+
+	Nothing here is written blind. It reads the header it is about to write -- e_phoff, e_phentsize
+	and e_phnum are in the file -- and it does nothing at all unless what it finds is what it
+	expects: an ELF magic, a class it knows, exactly one PT_LOAD, a PT_NULL behind it, and a
+	boundary that lies inside the image on a page. An image that fails any of those is written
+	exactly as it was.
+*)
+PROCEDURE CompleteElfSegments (arrangement: Arrangement);
+CONST PtNull = 0; PtLoad = 1; ReadExecute = 5; ReadWrite = 6;
+VAR class, phentsize, phnum, phoff, entry, load, spare, loads: SIZE;
+	imageSize, codeSize, dataSize, base: SIZE;
+
+	PROCEDURE Byte (at: SIZE): SIZE;
+	BEGIN RETURN arrangement.bits.GetBits (ObjectFile.Bits (at * 8), 8)
+	END Byte;
+
+	(* Little endian, which is what every target this writes for is. *)
+	PROCEDURE Get (at, bytes: SIZE): SIZE;
+	VAR value, k: SIZE;
+	BEGIN
+		value := 0;
+		FOR k := bytes - 1 TO 0 BY -1 DO value := value * 100H + Byte (at + k) END;
+		RETURN value
+	END Get;
+
+	PROCEDURE Put (at, bytes, value: SIZE);
+	VAR k: SIZE;
+	BEGIN
+		FOR k := 0 TO bytes - 1 DO
+			arrangement.bits.SetBits (ObjectFile.Bits ((at + k) * 8), 8, value MOD 100H);
+			value := value DIV 100H
+		END
+	END Put;
+
+	PROCEDURE Type (index: SIZE): SIZE;
+	BEGIN RETURN Get (phoff + index * phentsize, 4)
+	END Type;
+
+BEGIN
+	imageSize := arrangement.bits.GetSize () DIV 8;
+	IF imageSize < 64 THEN RETURN END;
+	IF (Byte (0) # 7FH) OR (Byte (1) # ORD ("E")) OR (Byte (2) # ORD ("L")) OR (Byte (3) # ORD ("F")) THEN RETURN END;
+	IF arrangement.dataStart < 0 THEN RETURN END;
+
+	class := Byte (4);
+	IF class = 1 THEN
+		phoff := Get (1CH, 4); phentsize := Get (2AH, 2); phnum := Get (2CH, 2)
+	ELSIF class = 2 THEN
+		phoff := Get (20H, 8); phentsize := Get (36H, 2); phnum := Get (38H, 2)
+	ELSE
+		RETURN
+	END;
+	IF (phnum = 0) OR (phentsize = 0) OR (phoff + phnum * phentsize > imageSize) THEN RETURN END;
+
+	(* Exactly one PT_LOAD, and a PT_NULL somewhere behind it. Two loadable segments mean somebody
+		has already done this, or the header is not the one this knows. *)
+	load := -1; spare := -1; loads := 0;
+	FOR entry := 0 TO phnum - 1 DO
+		IF Type (entry) = PtLoad THEN INC (loads); IF load < 0 THEN load := entry END
+		ELSIF (Type (entry) = PtNull) & (load >= 0) & (spare < 0) THEN spare := entry
+		END
+	END;
+	IF (loads # 1) OR (load < 0) OR (spare < 0) THEN RETURN END;
+
+	codeSize := arrangement.dataStart DIV 8;
+	dataSize := imageSize - codeSize;
+	IF (codeSize <= 0) OR (dataSize <= 0) THEN RETURN END;
+	(* The two segments must not share a page: the kernel maps whole ones, and the second mapping
+		would decide the permissions of the page they shared. Arrangement aligns dataStart for that
+		reason, and this refuses the job rather than write a header that quietly loses the code in
+		the last page of it. *)
+	IF codeSize MOD ImageSectionAlignment # 0 THEN RETURN END;
+
+	IF class = 1 THEN
+		base := Get (phoff + load * phentsize + 8, 4);
+		Put (phoff + load * phentsize + 16, 4, codeSize);	(* p_filesz *)
+		Put (phoff + load * phentsize + 20, 4, codeSize);	(* p_memsz *)
+		Put (phoff + load * phentsize + 24, 4, ReadExecute);	(* p_flags *)
+
+		Put (phoff + spare * phentsize + 0, 4, PtLoad);
+		Put (phoff + spare * phentsize + 4, 4, codeSize);	(* p_offset *)
+		Put (phoff + spare * phentsize + 8, 4, base + codeSize);	(* p_vaddr *)
+		Put (phoff + spare * phentsize + 12, 4, base + codeSize);	(* p_paddr *)
+		Put (phoff + spare * phentsize + 16, 4, dataSize);
+		Put (phoff + spare * phentsize + 20, 4, dataSize);
+		Put (phoff + spare * phentsize + 24, 4, ReadWrite);
+		Put (phoff + spare * phentsize + 28, 4, ImageSectionAlignment)
+	ELSE
+		base := Get (phoff + load * phentsize + 16, 8);
+		Put (phoff + load * phentsize + 32, 8, codeSize);	(* p_filesz *)
+		Put (phoff + load * phentsize + 40, 8, codeSize);	(* p_memsz *)
+		Put (phoff + load * phentsize + 4, 4, ReadExecute);	(* p_flags *)
+
+		Put (phoff + spare * phentsize + 0, 4, PtLoad);
+		Put (phoff + spare * phentsize + 4, 4, ReadWrite);
+		Put (phoff + spare * phentsize + 8, 8, codeSize);	(* p_offset *)
+		Put (phoff + spare * phentsize + 16, 8, base + codeSize);	(* p_vaddr *)
+		Put (phoff + spare * phentsize + 24, 8, base + codeSize);	(* p_paddr *)
+		Put (phoff + spare * phentsize + 32, 8, dataSize);
+		Put (phoff + spare * phentsize + 40, 8, dataSize);
+		Put (phoff + spare * phentsize + 48, 8, ImageSectionAlignment)
+	END
+END CompleteElfSegments;
+
 PROCEDURE WriteBinaryFile (linker: GenericLinker.Linker; arrangement: Arrangement; writer: Files.Writer);
 VAR i: ObjectFile.Bits;
 BEGIN
+	CompleteElfSegments (arrangement);
 	FOR i := 0 TO arrangement.bits.GetSize () - 1 BY 8 DO
 		writer.Char (CHR (arrangement.bits.GetBits (i, 8)));
 	END;
