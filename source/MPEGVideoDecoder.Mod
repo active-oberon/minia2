@@ -1982,7 +1982,7 @@ TYPE
 				ELSIF startCode = SCPack THEN
 					IF ~ReadPackHeader() THEN HALT(1234) END;
 				ELSIF ((ORD(startCode) >= 0BCH) & (ORD(startCode) <= 0FFH)) THEN
-					input.SkipBytes(ORD(input.Get()) * 100H + ORD(input.Get()));
+					input.SkipBytes(SIGNED32(ORD(input.Get())) * 100H + SIGNED32(ORD(input.Get())));
 				ELSE
 					(* we're lost... *)
 					HALT(1234);
@@ -2293,7 +2293,7 @@ TYPE
 					IF ~ReadSystemHeader() THEN RETURN FALSE END;
 				ELSE
 					(* read length field and skip the packet *)
-					length := ORD(input.Get()) * 100H + ORD(input.Get());
+					length := SIGNED32(ORD(input.Get())) * 100H + SIGNED32(ORD(input.Get()));
 					input.SkipBytes(length);
 				END;
 
@@ -2307,7 +2307,7 @@ TYPE
 			END;
 
 			(* read packet header *)
-			length := ORD(input.Get()) * 100H + ORD(input.Get());
+			length := SIGNED32(ORD(input.Get())) * 100H + SIGNED32(ORD(input.Get()));
 			IF nextStartCode # SCPrivateStream2 THEN
 				IF (ORD(input.Peek()) >= 128) & (ORD(input.Peek()) < 192) THEN
 					(* MPEG-2 System *)
