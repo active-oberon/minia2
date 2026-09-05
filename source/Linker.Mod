@@ -5,10 +5,19 @@ IMPORT Commands, Options, Diagnostics, Files, GenericLinker, ObjectFile, BitSets
 TYPE
 	ExportName = ARRAY 128 OF CHAR;
 
+	(*
+		One page of the image and the fixups inside it, which is the shape a PE relocation table
+		has. `wide` is what kind each one is: a fixup of 64 bits needs DIR64 and one of 32 needs
+		HIGHLOW, and until 05.09.2026 every one of them was written as HIGHLOW -- measured on a
+		real link, 33205 of the fixups are 64 bits wide and 3 are not. It never showed, because an
+		image that loads at its preferred base has its relocations read by nobody; it showed the
+		moment ASLR was switched on, as an access violation at startup.
+	*)
 	PatchBlock*= POINTER TO RECORD
-		baseAdr: SIGNED32;
+		baseAdr: GenericLinker.Address;
 		addresses: SIZE;
-		address: ARRAY 1024 OF SIGNED32;
+		address: ARRAY 1024 OF GenericLinker.Address;
+		wide: ARRAY 1024 OF BOOLEAN;
 		next: PatchBlock;
 	END;
 
@@ -22,7 +31,7 @@ TYPE
 			patchBlock := NIL;
 		END Init;
 
-		PROCEDURE GetPatchBlock(adr: SIGNED32): PatchBlock;
+		PROCEDURE GetPatchBlock(adr: GenericLinker.Address): PatchBlock;
 		VAR p, t: PatchBlock;
 		BEGIN
 			t := patchBlock;
@@ -42,12 +51,14 @@ TYPE
 			RETURN p
 		END GetPatchBlock;
 
-		PROCEDURE AddReloc(adr: SIGNED32);
-		VAR aligned: SIGNED32; p: PatchBlock;
+		PROCEDURE AddReloc(adr: GenericLinker.Address; wide: BOOLEAN);
+		VAR aligned: GenericLinker.Address; p: PatchBlock;
 		BEGIN
 			aligned := adr - adr MOD blockSize;
 			p := GetPatchBlock(aligned);
-			p.address[p.addresses] := adr (*- aligned*); INC(p.addresses);
+			p.address[p.addresses] := adr (*- aligned*);
+			p.wide[p.addresses] := wide;
+			INC(p.addresses);
 		END AddReloc;
 
 	END RelocationInfo;
@@ -206,10 +217,21 @@ TYPE
 	BEGIN SELF.bits.SetBits ((pos - displacement) * unit + offset, bits, value);
 	END Patch;
 
+	(*	How wide the field is that this fixup writes into, in bits. A pattern may be written in
+		several pieces -- a displacement that sits inside an instruction word is -- so the pieces
+		are added up. *)
+	PROCEDURE PatternBits(pattern: ObjectFile.Pattern): ObjectFile.Bits;
+	VAR bits: ObjectFile.Bits; i: SIZE;
+	BEGIN
+		bits := 0;
+		FOR i := 0 TO pattern.patterns - 1 DO INC(bits, pattern.pattern[i].bits) END;
+		RETURN bits
+	END PatternBits;
+
 	PROCEDURE CheckReloc*(target: GenericLinker.Address; pattern: ObjectFile.Pattern; CONST patch: ObjectFile.Patch);
 	BEGIN
 		IF (pattern.mode = ObjectFile.Absolute) & (relocInfo # NIL) THEN
-			relocInfo.AddReloc(SIGNED32(target+patch.offset));
+			relocInfo.AddReloc(target + patch.offset, PatternBits(pattern) > 32);
 		END;
 	END CheckReloc;
 
@@ -298,7 +320,9 @@ BEGIN
 	pb := arr.relocInfo.patchBlock; relocations := 0;
 	WHILE pb # NIL DO
 		FOR i := 0 TO pb.addresses -1 DO
-			w.RawInt32( pb.address[i] );  INC( relocations );
+			(*	This format keeps its relocations as 32 bit numbers, and did so when the list itself
+				was 32 bit wide. Widening the list for the PE writer does not widen this. *)
+			w.RawInt32( SIGNED32(pb.address[i]) );  INC( relocations );
 		END;
 		pb := pb.next;
 	END;
@@ -864,10 +888,12 @@ CONST TerminalServerAware = 8000H;	(* IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_A
 	page it writes. Should a loader somewhere refuse, TextCharacteristics + Writable is the whole
 	of the way back.
 *)
+CONST HighLow = 3;	(* IMAGE_REL_BASED_HIGHLOW: the fixup is a 32 bit absolute address *)
+CONST DIR64 = 10;	(* IMAGE_REL_BASED_DIR64: it is a 64 bit one *)
 CONST Writable = SIGNED32(80000000H);
 CONST TextCharacteristics = 60000020H;	(* CODE | MEM_EXECUTE | MEM_READ *)
 CONST DataCharacteristics = SIGNED32(0C0000040H);	(* INITIALIZED_DATA | MEM_READ | MEM_WRITE *)
-VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress: SIZE; BaseAddress: SIGNED32; exportInfo: ExportInfo; relocInfo: RelocationInfo;
+VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress: SIZE; BaseAddress: GenericLinker.Address; exportInfo: ExportInfo; relocInfo: RelocationInfo;
 	TextSize, AlignedTextSize, DataSize, AlignedDataSize: SIZE;
 	resources: Resources; resourceContent: Builder;
 	ResourceSize, AlignedResourceSize, ResourceAddress: SIZE;
@@ -915,8 +941,12 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	BEGIN WriteWORD (value MOD 10000H); WriteWORD (value DIV 10000H);
 	END WriteDWORD;
 
+	(*	The high half used to be a hard zero, which put a ceiling of 4 GB on every address in the
+		optional header -- the image base among them. *)
 	PROCEDURE WritePTR (value: GenericLinker.Address);
-	BEGIN WriteDWORD (SIGNED32(value)); IF bitmode = 64 THEN WriteDWORD (0) END;
+	BEGIN
+		WriteDWORD (value MOD 100000000H);
+		IF bitmode = 64 THEN WriteDWORD (value DIV 100000000H) END;
 	END WritePTR;
 
 	PROCEDURE WriteString(s: ARRAY OF CHAR);
@@ -1249,7 +1279,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			(* export address table *)
 			FOR i := 0 TO exportInfo.exports-1 DO
 				ASSERT(exportInfo.exportAddresses[i] # 0);
-				WriteDWORD(SIGNED32(exportInfo.exportAddresses[i]-BaseAddress+BaseCodeAddress)); (* RVA ! *)
+				WriteDWORD(exportInfo.exportAddresses[i]-BaseAddress+BaseCodeAddress); (* RVA ! *)
 			END;
 
 			(* export name pointer table *)
@@ -1282,7 +1312,15 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 				WriteDWORD(p.baseAdr -BaseAddress+BaseCodeAddress) (* RVA  of block *);
 				WriteDWORD(8+p.addresses*2+2*(p.addresses MOD 2)); (* number bytes of this block *)
 				FOR i := 0 TO p.addresses-1 DO
-					WriteWORD(p.address[i] - p.baseAdr+ 3000H);(* block-relative addresses, highlow *)
+					(*	The top four bits are the kind of fixup and the low twelve the offset in the
+						page. DIR64 (10) for a field of 64 bits, HIGHLOW (3) for one of 32: a
+						relocation that names the wrong width writes half an address and leaves the
+						other half as it was. *)
+					IF p.wide[i] THEN
+						WriteWORD(p.address[i] - p.baseAdr + DIR64 * 1000H)
+					ELSE
+						WriteWORD(p.address[i] - p.baseAdr + HighLow * 1000H)
+					END
 				END;
 				AlignTo(4);
 				p := p.next;
@@ -1304,7 +1342,7 @@ BEGIN
 		version block or a manifest, and what firmware expects is what it already gets. *)
 	IF subSystem = EFISubsystem THEN resources := NIL ELSE resources := arrangement.resources END;
 	IF HasExports() THEN exportInfo.Sort END;
-	BaseAddress := SIGNED32(arrangement.displacement); (* ASSERT (arrangement.displacement = BaseAddress); *)
+	BaseAddress := arrangement.displacement;
 	OptionalHeaderSize := 96 + DirectoryEntries * 8;
 	IF bitmode = 64 THEN INC (OptionalHeaderSize, 16); END;
 	CodeSize := arrangement.bits.GetSize () DIV 8;
@@ -1696,7 +1734,8 @@ PROCEDURE Link* (context: Commands.Context);
 VAR options: Options.Options;
 	silent, useAll, strict: BOOLEAN;
 	codeFileFormat, dataFileFormat: FileFormat;
-	codeDisplacement, dataDisplacement: SIGNED32;
+	codeDisplacement, dataDisplacement: GenericLinker.Address;
+	displacement: SIGNED64;
 	path, extension, codeFileName, dataFileName, moduleName, logFileName, tempName: Files.FileName;
 	diagnostics: Diagnostics.StreamDiagnostics; code, data: Arrangement; linker: GenericLinker.Linker;
 	linkRoot: ARRAY 256 OF CHAR; logFile: Files.File; log: Files.Writer;
@@ -1758,8 +1797,13 @@ BEGIN
 	IF ~options.GetString ("logFileName", logFileName) THEN
 		COPY(codeFileName, logFileName); Files.SplitExtension(logFileName,logFileName,tempName); Files.JoinExtension(logFileName,"log",logFileName);
 	END;
-	IF ~options.GetInteger ("displacement", codeDisplacement) THEN codeDisplacement := 0; END;
-	IF ~options.GetInteger ("dataDisplacement", codeDisplacement) THEN dataDisplacement := codeDisplacement; END;
+	(*	Read as 64 bits: an image base of 140000000H, which is where a 64 bit Windows image
+		conventionally sits, does not fit in the 32 bit reader that used to be here.
+
+		And the second line used to read into `codeDisplacement`: giving `--dataDisplacement` moved
+		the code and left the data displacement with whatever was on the stack. *)
+	IF options.GetInteger64 ("displacement", displacement) THEN codeDisplacement := displacement ELSE codeDisplacement := 0 END;
+	IF options.GetInteger64 ("dataDisplacement", displacement) THEN dataDisplacement := displacement ELSE dataDisplacement := codeDisplacement END;
 	codeFileFormat := GetFileFormat (options, "fileFormat", WriteBinaryFile);
 	dataFileFormat := GetFileFormat (options, "dataFileFormat", codeFileFormat);
 
