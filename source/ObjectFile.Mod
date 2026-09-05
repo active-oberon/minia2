@@ -773,6 +773,7 @@ VAR
 		PROCEDURE Zeros(offset: Bits): Bits;
 		VAR zeros: Bits;
 		BEGIN
+			zeros := 0; (* the textual twin of this procedure has always said so *)
 			WHILE (offset < size) & (section.bits.GetBits(offset, MIN(ByteSize, size-offset)) = 0) DO
 				INC(zeros);
 				INC(offset,ByteSize);

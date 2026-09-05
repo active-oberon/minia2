@@ -1,0 +1,532 @@
+# Tests for source/GenericLinker.Mod -- the linker proper: the block list, what references what,
+# where each block goes and what gets written into the holes.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test LinkerTestShared;System.Load Test"
+#
+# Every module this system loads goes through this file. Loader.Mod is a hundred lines of reading a
+# .Gof plus an Arrangement that allocates in the heap and patches with SYSTEM.PUT; Linker.Mod is the
+# same with a BitSet and a file at the end. The deciding part -- which block is used, which address
+# it gets, and what number goes into a fixup -- is here, and nothing tested it. It was covered only
+# in the sense that a system that got it wrong would not boot, which says nothing about the cases a
+# boot does not take: a reference that resolves to nothing, a fingerprint that disagrees, a block
+# nobody wants, an alias, a section twice.
+#
+# The cases drive the real thing. What they supply is what Loader and Linker supply: an Arrangement.
+# The one in LinkerTestShared is Linker.Mod's own, cut down to a BitSet and a cursor -- addresses in
+# units, content copied in on Allocate, Patch writing bits at pos*unit+offset -- so the addresses
+# and the patched words the cases read back are computed by the linker, not by the test.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE LinkerTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "An arrangement and some sections to link" *)
+
+	IMPORT BitSets, Diagnostics, GenericLinker, ObjectFile;
+
+	TYPE
+		(**	Linker.Mod's arrangement without the file format: a bit set that grows, addresses
+			counted in units, and the section's content copied in where it was placed. *)
+		Memory* = OBJECT (GenericLinker.Arrangement)
+		VAR image-: BitSets.BitSet;
+
+			PROCEDURE &Init*;
+			BEGIN NEW(image, 0)
+			END Init;
+
+			PROCEDURE Allocate* (CONST section: ObjectFile.Section): GenericLinker.Address;
+			VAR address, alignment: ObjectFile.Bits;
+			BEGIN
+				address := image.GetSize();
+				alignment := section.alignment * section.unit;
+				IF alignment = 0 THEN alignment := section.unit END;
+				INC(address, (alignment - address MOD alignment) MOD alignment);
+				IF image.GetSize() < section.bits.GetSize() + address THEN
+					image.Resize(address + section.bits.GetSize())
+				END;
+				BitSets.CopyBits(section.bits, 0, image, address, section.bits.GetSize());
+				RETURN address DIV section.unit
+			END Allocate;
+
+			PROCEDURE Patch* (pos, value: GenericLinker.Address; offset, bits, unit: ObjectFile.Bits);
+			BEGIN image.SetBits(pos * unit + offset, bits, value)
+			END Patch;
+
+			(** What a patched hole in the image says, read as the linker wrote it. *)
+			PROCEDURE Word* (address: GenericLinker.Address; bits: ObjectFile.Bits): SIGNED64;
+			BEGIN RETURN image.GetBits(address * 8, bits)
+			END Word;
+
+		END Memory;
+
+	VAR
+		code-, data-: Memory;
+		diagnostics-: Diagnostics.DiagnosticsList;
+
+	(**	A linker with a fresh image on both sides. `categories` decides which blocks are wanted
+		without being referenced -- GenericLinker.UseAll wants everything, which is what a static
+		link of a program does, and UseAllButInitCode leaves the init code to be reached or
+		dropped, which is what makes dead code die. *)
+	PROCEDURE NewLinker* (categories: SET): GenericLinker.Linker;
+	BEGIN
+		NEW(code); NEW(data); NEW(diagnostics);
+		RETURN NEW GenericLinker.Linker(diagnostics, NIL, categories, code, data)
+	END NewLinker;
+
+	(** A section of `bytes` bytes, filled with nothing, named and fingerprinted. *)
+	PROCEDURE Section* (VAR section: ObjectFile.Section; CONST name: ARRAY OF CHAR;
+			type: INTEGER; fingerprint: ObjectFile.Fingerprint; bytes: SIZE);
+	BEGIN
+		ObjectFile.InitSection(section);
+		section.type := type;
+		ObjectFile.StringToSegmentedName(name, section.identifier.name);
+		section.identifier.fingerprint := fingerprint;
+		section.unit := 8;
+		section.fixed := FALSE;
+		section.alignment := 0;
+		NEW(section.bits, bytes * 8)
+	END Section;
+
+	(**	Put a reference to `callee` in the hole at byte `at`. Sixteen bits: wide enough for the
+		addresses these cases hand out, narrow enough that the linker's own range check runs. *)
+	PROCEDURE Calls* (VAR section: ObjectFile.Section; CONST callee: ARRAY OF CHAR;
+			fingerprint: ObjectFile.Fingerprint; mode: INTEGER; at: SIZE);
+	VAR fixups, index: SIZE; fixup: ObjectFile.Fixups; patterns: ObjectFile.FixupPatterns;
+		name: ObjectFile.SegmentedName;
+	BEGIN
+		NEW(patterns, 1); patterns[0].offset := 0; patterns[0].bits := 16;
+		ObjectFile.StringToSegmentedName(callee, name);
+		fixups := 0; fixup := NIL;
+		index := ObjectFile.AddFixup(fixups, fixup, name, fingerprint, mode, 0, 1, patterns);
+		ObjectFile.AddPatch(fixup[index].patches, fixup[index].patch, 0, at);
+		ObjectFile.SetFixups(section, fixups, fixup)
+	END Calls;
+
+	(** A second name for the byte at `offset` inside the section. *)
+	PROCEDURE Alias* (VAR section: ObjectFile.Section; CONST name: ARRAY OF CHAR; offset: SIZE);
+	VAR aliases, index: SIZE; alias: ObjectFile.Aliases; pooled: ObjectFile.SegmentedName;
+	BEGIN
+		ObjectFile.StringToSegmentedName(name, pooled);
+		aliases := 0; alias := NIL;
+		index := ObjectFile.AddAlias(aliases, alias, pooled, 0, offset);
+		ObjectFile.SetAliases(section, aliases, alias)
+	END Alias;
+
+	(** The address the linker gave the block of this name, or InvalidAddress if it gave none. *)
+	PROCEDURE AddressOf* (linker: GenericLinker.Linker; CONST name: ARRAY OF CHAR): GenericLinker.Address;
+	VAR identifier: ObjectFile.Identifier; block: GenericLinker.Block;
+	BEGIN
+		ObjectFile.StringToSegmentedName(name, identifier.name);
+		identifier.fingerprint := 0;
+		block := linker.FindBlock(identifier);
+		IF block = NIL THEN RETURN GenericLinker.InvalidAddress END;
+		RETURN block.address
+	END AddressOf;
+
+	(**	Whether the linker still knows a block of this name. Before a link every address is
+		invalid, so this is the only way to tell a block that is gone from one not yet placed. *)
+	PROCEDURE Found* (linker: GenericLinker.Linker; CONST name: ARRAY OF CHAR): BOOLEAN;
+	VAR identifier: ObjectFile.Identifier;
+	BEGIN
+		ObjectFile.StringToSegmentedName(name, identifier.name);
+		identifier.fingerprint := 0;
+		RETURN linker.FindBlock(identifier) # NIL
+	END Found;
+
+	(** Take the block of this name out of the linker, the way a failed load has to. *)
+	PROCEDURE Remove* (linker: GenericLinker.Linker; CONST name: ARRAY OF CHAR);
+	VAR identifier: ObjectFile.Identifier; block: GenericLinker.Block;
+	BEGIN
+		ObjectFile.StringToSegmentedName(name, identifier.name);
+		identifier.fingerprint := 0;
+		block := linker.FindBlock(identifier);
+		ASSERT(block # NIL);
+		linker.RemoveBlock(block)
+	END Remove;
+
+	(** Whether the diagnostics carry a message with this text. *)
+	PROCEDURE Said* (CONST message: ARRAY OF CHAR): BOOLEAN;
+	VAR entry: Diagnostics.Entry;
+	BEGIN
+		entry := diagnostics.entries;
+		WHILE entry # NIL DO
+			IF entry.message = message THEN RETURN TRUE END;
+			entry := entry.next
+		END;
+		RETURN FALSE
+	END Said;
+
+	END LinkerTestShared.
+
+positive: a reference between two sections lands on the address the other one got
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; caller, callee: ObjectFile.Section;
+
+	BEGIN
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 1, 8);
+		Shared.Calls(caller, "Test.Callee", 2, ObjectFile.Absolute, 4);
+		Shared.Section(callee, "Test.Callee", ObjectFile.Code, 2, 4);
+
+		linker.AddSection(caller);
+		linker.AddSection(callee);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+
+		(*	Eight bytes of caller, then the callee: the arrangement hands out addresses in the
+			order the linker walks its blocks, and it walks them in the order they came because
+			both are ordinary code. *)
+		ASSERT(Shared.AddressOf(linker, "Test.Caller") = 0);
+		ASSERT(Shared.AddressOf(linker, "Test.Callee") = 8);
+
+		(*	And the hole at byte four of the caller holds that address. This is the whole point of
+			the file: nobody wrote 8 anywhere -- the linker computed it and put it there. *)
+		ASSERT(Shared.code.Word(4, 16) = 8)
+	END Test.
+
+positive: a backward reference is a negative distance
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; caller, callee: ObjectFile.Section;
+
+	BEGIN
+		(*	The callee goes in first, so the caller reaches backwards to it and a relative fixup
+			has to come out negative. It is the shape that broke on AArch64 while the displacement
+			was shifted as an unsigned address: every backward branch then read as out of range. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(callee, "Test.Callee", ObjectFile.Code, 2, 4);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 1, 8);
+		Shared.Calls(caller, "Test.Callee", 2, ObjectFile.Relative, 4);
+
+		linker.AddSection(callee);
+		linker.AddSection(caller);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+		ASSERT(Shared.AddressOf(linker, "Test.Callee") = 0);
+		ASSERT(Shared.AddressOf(linker, "Test.Caller") = 4);
+
+		(*	The hole sits at byte eight -- four into the caller -- and holds 0 minus 8, sixteen
+			bits wide and two's complement, because that is what a relative displacement is. *)
+		ASSERT(Shared.code.Word(8, 16) = 10000H - 8)
+	END Test.
+
+positive: a forward relative reference is the distance ahead
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; caller, callee: ObjectFile.Section;
+
+	BEGIN
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 1, 8);
+		Shared.Calls(caller, "Test.Callee", 2, ObjectFile.Relative, 4);
+		Shared.Section(callee, "Test.Callee", ObjectFile.Code, 2, 4);
+
+		linker.AddSection(caller);
+		linker.AddSection(callee);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+
+		(* the callee is at 8, the hole is at 4, so the distance is 4 *)
+		ASSERT(Shared.code.Word(4, 16) = 4)
+	END Test.
+
+positive: a reference to nothing is an error, and it says what was missing
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; caller: ObjectFile.Section;
+
+	BEGIN
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 1, 8);
+		Shared.Calls(caller, "Test.Missing", 0, ObjectFile.Absolute, 4);
+
+		linker.AddSection(caller);
+		linker.EnterBlocks;
+		linker.Link;
+
+		(*	Nothing offers Test.Missing. A linker that placed the block anyway would hand back a
+			binary that jumps to whatever happened to be in the hole. *)
+		ASSERT(linker.error);
+		ASSERT(Shared.Said("unresolved"))
+	END Test.
+
+positive: a fingerprint that disagrees is an error although the name is there
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; caller, callee: ObjectFile.Section;
+
+	BEGIN
+		(*	The name is there and the interface behind it is not the one the caller was compiled
+			against. This is the check that turns "recompile all sources" into an error instead of
+			a jump into a procedure whose parameters moved. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 1, 8);
+		Shared.Calls(caller, "Test.Callee", 99H, ObjectFile.Absolute, 4);
+		Shared.Section(callee, "Test.Callee", ObjectFile.Code, 42H, 4);
+
+		linker.AddSection(caller);
+		linker.AddSection(callee);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(linker.error);
+		ASSERT(Shared.Said("incompatible"))
+	END Test.
+
+positive: one name, one section
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; first, again: ObjectFile.Section;
+
+	BEGIN
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(first, "Test.Only", ObjectFile.Code, 1, 8);
+		Shared.Section(again, "Test.Only", ObjectFile.Code, 1, 4);
+
+		linker.AddSection(first);
+		linker.EnterBlocks;
+		ASSERT(~linker.error);
+
+		(*	Two sections of one name are two answers to one reference, and the linker refuses
+			rather than picking. Loader.Mod meets this when a module arrives twice. *)
+		linker.AddSection(again);
+		ASSERT(linker.error);
+		ASSERT(Shared.Said("duplicated section"))
+	END Test.
+
+positive: an alias is its section's address plus its own offset
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; first, host, caller: ObjectFile.Section;
+
+	BEGIN
+		(*	An alias is a second name for a place inside a section -- a procedure inside a module's
+			code, in practice. It is not allocated: it takes its address from the section it is an
+			alias of once that section has one, and a reference to the alias resolves to that. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(first, "Test.First", ObjectFile.Code, 1, 4);
+		Shared.Section(host, "Test.Host", ObjectFile.Code, 2, 16);
+		Shared.Alias(host, "Test.Host.@Alias", 8);
+		Shared.Section(caller, "Test.Caller", ObjectFile.Code, 3, 8);
+		Shared.Calls(caller, "Test.Host.@Alias", 0, ObjectFile.Absolute, 0);
+
+		linker.AddSection(first);
+		linker.AddSection(host);
+		linker.AddSection(caller);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+
+		ASSERT(Shared.AddressOf(linker, "Test.First") = 0);
+		ASSERT(Shared.AddressOf(linker, "Test.Host") = 4);
+		ASSERT(Shared.AddressOf(linker, "Test.Host.@Alias") = 12);
+
+		(* and the caller, placed after the sixteen bytes of the host, reached the alias *)
+		ASSERT(Shared.AddressOf(linker, "Test.Caller") = 20);
+		ASSERT(Shared.code.Word(20, 16) = 12)
+	END Test.
+
+positive: entry code comes first and init code before the rest, whatever order they arrived in
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; entry, init, body, code: ObjectFile.Section;
+
+	BEGIN
+		(*	"Must be placed before all other code" is a comment in the module; this is the same
+			sentence as a run. The sections are added in the wrong order on purpose. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(code, "Test.Code", ObjectFile.Code, 1, 4);
+		Shared.Section(body, "Test.Body", ObjectFile.BodyCode, 2, 4);
+		Shared.Section(init, "Test.Init", ObjectFile.InitCode, 3, 4);
+		Shared.Section(entry, "Test.Entry", ObjectFile.EntryCode, 4, 4);
+
+		linker.AddSection(code);
+		linker.AddSection(body);
+		linker.AddSection(init);
+		linker.AddSection(entry);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+
+		ASSERT(Shared.AddressOf(linker, "Test.Entry") = 0);
+		ASSERT(Shared.AddressOf(linker, "Test.Init") = 4);
+		ASSERT(Shared.AddressOf(linker, "Test.Init") < Shared.AddressOf(linker, "Test.Code"));
+		ASSERT(Shared.AddressOf(linker, "Test.Init") < Shared.AddressOf(linker, "Test.Body"))
+	END Test.
+
+positive: what nothing reaches is not placed
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; body, reached, dead: ObjectFile.Section;
+
+	BEGIN
+		(*	UseAllButInitCode is what a dynamic link asks for: a module's init code is wanted only
+			if something reaches it, and this is where code nobody calls stops being carried. The
+			two init sections here differ in exactly one thing -- one of them is referenced. *)
+		linker := Shared.NewLinker(GenericLinker.UseAllButInitCode);
+		Shared.Section(body, "Test.Body", ObjectFile.BodyCode, 1, 4);
+		Shared.Calls(body, "Test.Reached", 2, ObjectFile.Absolute, 0);
+		Shared.Section(reached, "Test.Reached", ObjectFile.InitCode, 2, 4);
+		Shared.Section(dead, "Test.Dead", ObjectFile.InitCode, 3, 4);
+
+		linker.AddSection(body);
+		linker.AddSection(reached);
+		linker.AddSection(dead);
+		linker.EnterBlocks;
+		linker.Link;
+		ASSERT(~linker.error);
+
+		ASSERT(Shared.AddressOf(linker, "Test.Body") # GenericLinker.InvalidAddress);
+		ASSERT(Shared.AddressOf(linker, "Test.Reached") # GenericLinker.InvalidAddress);
+		ASSERT(Shared.AddressOf(linker, "Test.Dead") = GenericLinker.InvalidAddress);
+
+		(* it is still a block the linker knows: dropped from the image, not forgotten *)
+		ASSERT(Shared.Found(linker, "Test.Dead"))
+	END Test.
+
+positive: a module's sections leave together
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; a, b, c: ObjectFile.Section;
+		prefix: ObjectFile.SegmentedName;
+
+	BEGIN
+		(*	This is what Loader.Mod does when a module it was loading turns out not to link: the
+			half-entered module has to leave, all of it and nothing else, or the next attempt meets
+			its own leftovers as duplicated sections. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(a, "Test.A", ObjectFile.Code, 1, 4);
+		Shared.Section(b, "Test.B", ObjectFile.Code, 2, 4);
+		Shared.Section(c, "Other.C", ObjectFile.Code, 3, 4);
+
+		linker.AddSection(a);
+		linker.AddSection(b);
+		linker.AddSection(c);
+		linker.EnterBlocks;
+		ASSERT(Shared.Found(linker, "Test.A"));
+		ASSERT(Shared.Found(linker, "Test.B"));
+
+		ObjectFile.StringToSegmentedName("Test", prefix);
+		linker.RemovePrefixed(prefix);
+
+		ASSERT(~Shared.Found(linker, "Test.A"));
+		ASSERT(~Shared.Found(linker, "Test.B"));
+		ASSERT(Shared.Found(linker, "Other.C"));
+
+		(*	And they left the block list too, not only the table: the section that stayed is now
+			the first thing placed, where before it was third. *)
+		linker.Link;
+		ASSERT(~linker.error);
+		ASSERT(Shared.AddressOf(linker, "Other.C") = 0)
+	END Test.
+
+positive: the table of names finds blocks, and keeps finding them as it grows
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Strings;
+
+	CONST Many = 40;
+
+	VAR
+		table: GenericLinker.HashTableSegmentedName;
+		blocks: ARRAY Many OF GenericLinker.Block;
+		name, absent: ObjectFile.SegmentedName;
+		i: SIZE;
+
+	PROCEDURE Named(i: SIZE; VAR name: ObjectFile.SegmentedName);
+	VAR text, number: ARRAY 32 OF CHAR;
+	BEGIN
+		text := "Test.N";
+		Strings.IntToStr(i, number); Strings.Append(text, number);
+		ObjectFile.StringToSegmentedName(text, name)
+	END Named;
+
+	BEGIN
+		(*	The table starts smaller than what goes into it, so the growth path runs -- and growth
+			is where a table loses entries. Every name is asked for again afterwards. *)
+		NEW(table, 4);
+		ObjectFile.StringToSegmentedName("Test.Absent", absent);
+		ASSERT(table.Get(absent) = NIL);
+
+		FOR i := 0 TO Many - 1 DO
+			NEW(blocks[i]);
+			Named(i, name);
+			table.Put(name, blocks[i])
+		END;
+		ASSERT(table.used = Many);
+
+		FOR i := 0 TO Many - 1 DO
+			Named(i, name);
+			ASSERT(table.Get(name) = blocks[i])
+		END;
+		ASSERT(table.Get(absent) = NIL);
+
+		(* a name put twice is one name, and the second value is the one that answers *)
+		Named(0, name);
+		table.Put(name, blocks[1]);
+		ASSERT(table.used = Many);
+		ASSERT(table.Get(name) = blocks[1])
+	END Test.
+
+positive: a block taken out leaves the table and the list, and takes its own name with it
+
+	MODULE Test;
+	IMPORT GenericLinker, ObjectFile, Shared := LinkerTestShared;
+
+	VAR linker: GenericLinker.Linker; a, b, c: ObjectFile.Section;
+
+	BEGIN
+		(*	RemoveBlock is the single-block form of what RemovePrefixed does wholesale, and it was
+			removing the wrong name: the block before the one asked for, or -- when the block was
+			the first in the list -- nothing, through a NIL pointer. Nothing in the tree called it,
+			so the first caller would have been the one to find out. *)
+		linker := Shared.NewLinker(GenericLinker.UseAll);
+		Shared.Section(a, "Test.A", ObjectFile.Code, 1, 4);
+		Shared.Section(b, "Test.B", ObjectFile.Code, 2, 4);
+		Shared.Section(c, "Test.C", ObjectFile.Code, 3, 4);
+
+		linker.AddSection(a);
+		linker.AddSection(b);
+		linker.AddSection(c);
+		linker.EnterBlocks;
+
+		(* the first one: the case that used to reach through NIL *)
+		Shared.Remove(linker, "Test.A");
+		ASSERT(~Shared.Found(linker, "Test.A"));
+		ASSERT(Shared.Found(linker, "Test.B"));
+		ASSERT(Shared.Found(linker, "Test.C"));
+
+		(* the last one: the case that used to unregister its predecessor instead *)
+		Shared.Remove(linker, "Test.C");
+		ASSERT(~Shared.Found(linker, "Test.C"));
+		ASSERT(Shared.Found(linker, "Test.B"));
+
+		(* and what is left is the only thing placed *)
+		linker.Link;
+		ASSERT(~linker.error);
+		ASSERT(Shared.AddressOf(linker, "Test.B") = 0);
+		ASSERT(Shared.code.image.GetSize() = 4 * 8)
+	END Test.

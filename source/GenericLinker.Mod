@@ -242,13 +242,18 @@ VAR
 			firstBlock := block.next
 		ELSE
 			current := firstBlock;
-			WHILE (current.next # NIL) & (current.next # block) DO
+			(*	current, not current.next, or a block that is not in this list walks off the end
+				and the assignment below writes through NIL instead of the assertion firing. *)
+			WHILE (current # NIL) & (current.next # block) DO
 				current := current.next;
 			END;
 			ASSERT(current # NIL);
 			current.next := block.next;
 		END;
-		hash.Put(current.identifier.name, unused);
+		(*	The name that leaves the table is the removed block's own. It used to be `current` --
+			which is NIL when the block was the first one, and the block BEFORE it otherwise: the
+			one name that must stay went, and the one that had to go stayed findable. *)
+		hash.Put(block.identifier.name, unused);
 	END RemoveBlock;
 
 	PROCEDURE RemovePrefixed*(prefix: ObjectFile.SegmentedName);
