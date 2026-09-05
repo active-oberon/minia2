@@ -1,0 +1,579 @@
+# Tests for source/ObjectFile.Mod -- the object file format itself: segmented names, the name
+# pool of a binary file, and the section with its fixups, aliases and patches.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# This module is the ground everything linked or loaded stands on: the compiler writes sections
+# through it, the linker reads them back through it, and Loader.Mod finds a module's sections by
+# asking it whether one name is a prefix of another. Nothing tested it. What the two Oberon suites
+# prove about it is only what the compiler happens to do with it -- one shape of name, one shape of
+# section, and always the binary form, because that is what a .Gof is.
+#
+# So the cases ask it the questions the compiler never does: a name of more segments than there are
+# slots, a name of none, a section carried out to a stream and read back from it in BOTH forms,
+# and a name pool written by one map and read by another -- which is exactly what happens between
+# writing a .Gof and loading it, and the only reason the numbers in a binary section mean anything.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: a name becomes segments and comes back the same string
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	PROCEDURE Round(CONST from, expected: ARRAY OF CHAR);
+	VAR name: ObjectFile.SegmentedName; back: ObjectFile.SectionName;
+	BEGIN
+		ObjectFile.StringToSegmentedName(from, name);
+		ObjectFile.SegmentedNameToString(name, back);
+		ASSERT(back = expected)
+	END Round;
+
+	BEGIN
+		Round("Trace", "Trace");
+		Round("Modules.Module", "Modules.Module");
+		Round("Heaps.NewRec.@Body", "Heaps.NewRec.@Body");
+
+		(* eight segments is exactly the width of a SegmentedName *)
+		Round("A.B.C.D.E.F.G.H", "A.B.C.D.E.F.G.H");
+
+		(*	More than eight, and the last slot takes the whole rest of the name, dots and all.
+			That is what keeps a long name a name instead of a truncated one. *)
+		Round("A.B.C.D.E.F.G.H.I.J", "A.B.C.D.E.F.G.H.I.J");
+
+		(* no name at all: every slot says absent, and nothing comes back *)
+		Round("", "")
+	END Test.
+
+positive: names compare and equate as their strings do
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	VAR a, b, c: ObjectFile.SegmentedName;
+
+	BEGIN
+		ObjectFile.StringToSegmentedName("Modules.Module", a);
+		ObjectFile.StringToSegmentedName("Modules.Module", b);
+		ObjectFile.StringToSegmentedName("Modules.Name", c);
+
+		ASSERT(ObjectFile.CompareSegmentedNames(a, b) = 0);
+		ASSERT(ObjectFile.CompareSegmentedNames(a, c) < 0);
+		ASSERT(ObjectFile.CompareSegmentedNames(c, a) > 0);
+
+		(* the operator is the cheap one: it compares slots, not the strings behind them *)
+		ASSERT(a = b);
+		ASSERT(~(a = c));
+
+		(* a name is before the longer name that starts with it *)
+		ObjectFile.StringToSegmentedName("Modules", c);
+		ASSERT(ObjectFile.CompareSegmentedNames(c, a) < 0);
+		ASSERT(ObjectFile.CompareSegmentedNames(a, c) > 0)
+	END Test.
+
+positive: a module name is a prefix of its sections and of nothing else
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	VAR eight, past: ObjectFile.SegmentedName;
+
+	PROCEDURE Is(CONST p, of: ARRAY OF CHAR): BOOLEAN;
+	VAR prefix, name: ObjectFile.SegmentedName;
+	BEGIN
+		ObjectFile.StringToSegmentedName(p, prefix);
+		ObjectFile.StringToSegmentedName(of, name);
+		RETURN ObjectFile.IsPrefix(prefix, name)
+	END Is;
+
+	BEGIN
+		(*	This is what Loader.Mod asks to decide whether a section belongs to the module it is
+			loading, so both answers matter. *)
+		ASSERT(Is("Modules", "Modules.Module"));
+		ASSERT(Is("Modules", "Modules"));
+		ASSERT(Is("Modules.Module", "Modules.Module.@Body"));
+
+		(* a longer name is not a prefix of a shorter one *)
+		ASSERT(~Is("Modules.Module", "Modules"));
+
+		(*	And the case the loader depends on: a module whose name merely starts with the same
+			letters is a different module. Segments are compared whole, not as text. *)
+		ASSERT(~Is("Mod", "Modules.Module"));
+		ASSERT(~Is("Modules", "ModulesX.Module"));
+		ASSERT(~Is("Modules.M", "Modules.Module"));
+
+		(*	The one place text does decide is the eighth slot: there is no ninth to compare, so a
+			name that runs past the last segment is taken to be inside it. Pinned because it is a
+			property of the format, not of any caller. *)
+		ObjectFile.StringToSegmentedName("A.B.C.D.E.F.G.H", eight);
+		ObjectFile.StringToSegmentedName("A.B.C.D.E.F.G.Hx", past);
+		ASSERT(ObjectFile.IsPrefix(eight, past));
+		ASSERT(~ObjectFile.IsPrefix(past, eight))
+	END Test.
+
+positive: a nibble survives the trip through a character
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	VAR i: INTEGER;
+
+	BEGIN
+		(* this pair is the whole textual encoding of a section's bytes *)
+		FOR i := 0 TO 15 DO
+			ASSERT(ObjectFile.CharacterToNibble(ObjectFile.NibbleToCharacter(i)) = i)
+		END;
+		ASSERT(ObjectFile.NibbleToCharacter(0) = "0");
+		ASSERT(ObjectFile.NibbleToCharacter(9) = "9");
+		ASSERT(ObjectFile.NibbleToCharacter(10) = "A");
+		ASSERT(ObjectFile.NibbleToCharacter(15) = "F");
+		ASSERT(ObjectFile.CharacterToNibble("0") = 0);
+		ASSERT(ObjectFile.CharacterToNibble("9") = 9);
+		ASSERT(ObjectFile.CharacterToNibble("A") = 10);
+		ASSERT(ObjectFile.CharacterToNibble("F") = 15)
+	END Test.
+
+positive: the categories say which sections are code
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	BEGIN
+		ASSERT(ObjectFile.IsCode(ObjectFile.EntryCode));
+		ASSERT(ObjectFile.IsCode(ObjectFile.InitCode));
+		ASSERT(ObjectFile.IsCode(ObjectFile.ExitCode));
+		ASSERT(ObjectFile.IsCode(ObjectFile.BodyCode));
+		ASSERT(ObjectFile.IsCode(ObjectFile.Code));
+		ASSERT(~ObjectFile.IsCode(ObjectFile.Data));
+		ASSERT(~ObjectFile.IsCode(ObjectFile.Const))
+	END Test.
+
+positive: a fingerprint identifies a symbol, and a name identifies it when there is none
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	VAR here, there: ObjectFile.Identifier;
+
+	BEGIN
+		ObjectFile.StringToSegmentedName("Heaps.NewRec", here.name);
+		ObjectFile.StringToSegmentedName("Heaps.NewRec", there.name);
+		here.fingerprint := 0; there.fingerprint := 0;
+		ASSERT(ObjectFile.Matches(here, there));
+
+		(* the same name is not the same symbol once a fingerprint says otherwise *)
+		ObjectFile.StringToSegmentedName("Heaps.NewArr", there.name);
+		ASSERT(~ObjectFile.Matches(here, there));
+
+		(*	A fingerprint carries the interface, so two names that agree on it are the same symbol
+			whatever they are called -- this is how a renamed import still links. *)
+		here.fingerprint := 42H; there.fingerprint := 42H;
+		ASSERT(ObjectFile.Matches(here, there))
+	END Test.
+
+positive: the pool map answers for the names it holds and not for the others
+
+	MODULE Test;
+	IMPORT ObjectFile, StringPool, Streams;
+
+	VAR map: ObjectFile.PoolMap; sink: Streams.StringWriter; foo, bar: StringPool.Index;
+
+	BEGIN
+		StringPool.GetIndex("Foo", foo);
+		StringPool.GetIndex("Bar", bar);
+		NEW(sink, 256);
+		NEW(map, 8);
+		map.BeginWriting(sink);
+
+		ASSERT(~map.Has(foo));
+		map.PutGlobal(foo);
+		ASSERT(map.Has(foo));
+
+		(*	Local numbers start at one: the empty string is mapped one to one by the constructor
+			and owns zero, which is what lets an absent segment be told from a present one. *)
+		ASSERT(map.Get(foo) = 1);
+
+		(* naming the same string twice is naming it once -- the file must not carry it twice *)
+		map.PutGlobal(foo);
+		ASSERT(map.Get(foo) = 1);
+
+		map.PutGlobal(bar);
+		ASSERT(map.Get(bar) = 2);
+		(*	The absent segment is not a name and never travels in a file. The map answers for it
+			all the same, and with itself -- which is what keeps PutGlobal from trying to write a
+			name for it and tripping over its own assertion. *)
+		ASSERT(map.Has(-1));
+		ASSERT(map.Get(-1) = -1);
+		map.PutGlobal(-1);
+		ASSERT(map.Get(bar) = 2);
+		map.EndWriting;
+
+		map.Clear;
+		ASSERT(~map.Has(foo));
+		ASSERT(~map.Has(bar))
+	END Test.
+
+positive: the name pool one map writes is the pool another map reads
+
+	MODULE Test;
+	IMPORT ObjectFile, StringPool, Streams;
+
+	VAR
+		output: Streams.StringWriter; input: Streams.StringReader;
+		writing, reading: ObjectFile.PoolMap;
+		buffer: ARRAY 256 OF CHAR; length, i: SIZE;
+		name: ObjectFile.SegmentedName; text: ARRAY 64 OF CHAR;
+
+	BEGIN
+		(*	This is the whole reason a binary section is small: it names its symbols by the number
+			the file's own pool gave them, and the loader turns those numbers back into this
+			system's pool indices. Writer and reader are different maps in different runs, so the
+			only thing that keeps the numbers meaningful is that the two agree. *)
+		ObjectFile.StringToSegmentedName("Modules.Module.@Body", name);
+
+		NEW(output, 256); NEW(writing, 64);
+		writing.BeginWriting(output);
+		writing.PutSegmentedName(name);
+		writing.EndWriting;
+		output.Update;
+		output.GetRaw(buffer, length);
+		ASSERT(length > 0);
+
+		NEW(input, 256); input.SetRaw(buffer, 0, length);
+		NEW(reading, 64);
+		reading.Read(input);
+
+		FOR i := 0 TO 2 DO
+			ASSERT(name[i] >= 0);
+			ASSERT(reading.Get(writing.Get(name[i])) = name[i])
+		END;
+		StringPool.GetString(reading.Get(writing.Get(name[0])), text);
+		ASSERT(text = "Modules");
+		StringPool.GetString(reading.Get(writing.Get(name[2])), text);
+		ASSERT(text = "@Body");
+
+		(* the fourth slot is absent, and PutSegmentedName stopped there *)
+		ASSERT(name[3] = -1)
+	END Test.
+
+positive: a section survives the round trip, binary and textual, fixups and aliases with it
+
+	MODULE Test;
+	IMPORT ObjectFile, Streams;
+
+	CONST Bytes = 8;
+
+	VAR
+		written, read: ObjectFile.Section;
+		map: ObjectFile.PoolMap;
+		output: Streams.StringWriter; input: Streams.StringReader;
+		buffer: ARRAY 4096 OF CHAR; length: SIZE;
+
+	PROCEDURE Named(VAR identifier: ObjectFile.Identifier; CONST name: ARRAY OF CHAR;
+			fingerprint: ObjectFile.Fingerprint);
+	BEGIN
+		ObjectFile.StringToSegmentedName(name, identifier.name);
+		identifier.fingerprint := fingerprint
+	END Named;
+
+	(*	One code section with everything a real one carries: a name and a fingerprint, two aliases,
+		a fixup of two patterns and two patches, and bytes with a hole in the middle so the segment
+		encoder has to write two segments and put the second one back at its own offset. *)
+	PROCEDURE Build(VAR section: ObjectFile.Section);
+	VAR fixups, aliases, index: SIZE; fixup: ObjectFile.Fixups; alias: ObjectFile.Aliases;
+		patterns: ObjectFile.FixupPatterns; name: ObjectFile.SegmentedName;
+	BEGIN
+		ObjectFile.InitSection(section);
+		section.type := ObjectFile.Code;
+		Named(section.identifier, "Modules.Module.@Body", 1234567890H);
+		section.unit := 8;
+		section.fixed := FALSE;
+		section.alignment := 16;
+
+		NEW(patterns, 2);
+		patterns[0].offset := 0; patterns[0].bits := 8;
+		patterns[1].offset := 8; patterns[1].bits := 24;
+		fixups := 0;
+		ObjectFile.StringToSegmentedName("Heaps.NewRec", name);
+		index := ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Relative, 2, 2, patterns);
+		ASSERT(index = 0);
+		ObjectFile.AddPatch(fixup[0].patches, fixup[0].patch, 4, 0);
+		ObjectFile.AddPatch(fixup[0].patches, fixup[0].patch, 8, 16);
+		ASSERT(fixup[0].patches = 2);
+		ObjectFile.SetFixups(section, fixups, fixup);
+
+		aliases := 0;
+		ObjectFile.StringToSegmentedName("Modules.Module.@Alias", name);
+		index := ObjectFile.AddAlias(aliases, alias, name, 7H, 24);
+		ASSERT(index = 0);
+		ObjectFile.StringToSegmentedName("Modules.Module.@Second", name);
+		index := ObjectFile.AddAlias(aliases, alias, name, 0, 40);
+		ASSERT(index = 1);
+		ObjectFile.SetAliases(section, aliases, alias);
+
+		NEW(section.bits, Bytes * 8);
+		section.bits.SetBits(0, 8, 0AAH);
+		section.bits.SetBits(8, 8, 0BBH);
+		section.bits.SetBits(48, 8, 0CCH);
+		section.bits.SetBits(56, 8, 0DDH)
+	END Build;
+
+	PROCEDURE Same(CONST a, b: ObjectFile.Section);
+	VAR i, j: SIZE;
+	BEGIN
+		ASSERT(a.type = b.type);
+		ASSERT(a.identifier.name = b.identifier.name);
+		ASSERT(a.identifier.fingerprint = b.identifier.fingerprint);
+		ASSERT(a.unit = b.unit);
+		ASSERT(a.fixed = b.fixed);
+		ASSERT(a.alignment = b.alignment);
+
+		ASSERT(a.aliases = b.aliases);
+		FOR i := 0 TO a.aliases - 1 DO
+			ASSERT(a.alias[i].identifier.name = b.alias[i].identifier.name);
+			ASSERT(a.alias[i].identifier.fingerprint = b.alias[i].identifier.fingerprint);
+			ASSERT(a.alias[i].offset = b.alias[i].offset)
+		END;
+
+		ASSERT(a.fixups = b.fixups);
+		FOR i := 0 TO a.fixups - 1 DO
+			ASSERT(a.fixup[i].identifier.name = b.fixup[i].identifier.name);
+			ASSERT(a.fixup[i].identifier.fingerprint = b.fixup[i].identifier.fingerprint);
+			ASSERT(a.fixup[i].pattern.mode = b.fixup[i].pattern.mode);
+			ASSERT(a.fixup[i].pattern.scale = b.fixup[i].pattern.scale);
+			ASSERT(a.fixup[i].pattern.patterns = b.fixup[i].pattern.patterns);
+			FOR j := 0 TO a.fixup[i].pattern.patterns - 1 DO
+				ASSERT(a.fixup[i].pattern.pattern[j].offset = b.fixup[i].pattern.pattern[j].offset);
+				ASSERT(a.fixup[i].pattern.pattern[j].bits = b.fixup[i].pattern.pattern[j].bits)
+			END;
+			ASSERT(a.fixup[i].patches = b.fixup[i].patches);
+			FOR j := 0 TO a.fixup[i].patches - 1 DO
+				ASSERT(a.fixup[i].patch[j].offset = b.fixup[i].patch[j].offset);
+				ASSERT(a.fixup[i].patch[j].displacement = b.fixup[i].patch[j].displacement)
+			END
+		END;
+
+		ASSERT(a.bits.GetSize() = b.bits.GetSize());
+		FOR i := 0 TO a.bits.GetSize() DIV 8 - 1 DO
+			ASSERT(a.bits.GetBits(i * 8, 8) = b.bits.GetBits(i * 8, 8))
+		END
+	END Same;
+
+	BEGIN
+		Build(written);
+
+		NEW(output, 1024);
+		NEW(map, 64);
+		map.BeginWriting(output);
+		map.PutSegmentedName(written.identifier.name);
+		map.PutSegmentedName(written.fixup[0].identifier.name);
+		map.PutSegmentedName(written.alias[0].identifier.name);
+		map.PutSegmentedName(written.alias[1].identifier.name);
+		map.EndWriting;
+		ObjectFile.WriteSection(output, written, TRUE, map);
+		output.Update;
+		output.GetRaw(buffer, length);
+		ASSERT(length > 0);
+
+		(* the reader is given a fresh map and knows nothing the stream did not tell it *)
+		NEW(input, 1024); input.SetRaw(buffer, 0, length);
+		NEW(map, 64);
+		map.Read(input);
+		ObjectFile.InitSection(read);
+		ObjectFile.ReadSection(input, read, TRUE, map);
+
+		Same(written, read);
+
+		(* the hole came back a hole, and not the byte next to it moved left *)
+		ASSERT(read.bits.GetBits(16, 8) = 0);
+		ASSERT(read.bits.GetBits(40, 8) = 0);
+		ASSERT(read.bits.GetBits(48, 8) = 0CCH);
+
+		(*	The same section in the other form. The textual writer is not a debugging aid that
+			nobody reads back: FoxGenericObjectFile reads a .Gof and writes this, and reads this
+			as an object file too, so it has to be a form and not a printout. It carries names as
+			names, so no pool map takes part. *)
+		NEW(output, 4096);
+		ObjectFile.WriteSection(output, written, FALSE, NIL);
+		output.Update;
+		output.GetRaw(buffer, length);
+		ASSERT(length > 0);
+
+		NEW(input, 4096); input.SetRaw(buffer, 0, length);
+		ObjectFile.InitSection(read);
+		ObjectFile.ReadSection(input, read, FALSE, NIL);
+
+		Same(written, read)
+	END Test.
+
+positive: the fixup, alias and patch lists grow, and an identical fixup is not added twice
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	CONST Many = 40;
+
+	VAR
+		fixups, aliases, patches, index, i: SIZE;
+		fixup: ObjectFile.Fixups; alias: ObjectFile.Aliases; patch: ObjectFile.Patches;
+		patterns: ObjectFile.FixupPatterns; name, other: ObjectFile.SegmentedName;
+
+	BEGIN
+		NEW(patterns, 1); patterns[0].offset := 0; patterns[0].bits := 32;
+		ObjectFile.StringToSegmentedName("Heaps.NewRec", name);
+		ObjectFile.StringToSegmentedName("Heaps.NewArr", other);
+
+		(*	A fixup is a symbol plus how to patch it, and the same symbol patched the same way at
+			another place is the same fixup with another patch -- so adding it again has to give
+			back the one that is there. A backend that got a new one each time would write the
+			symbol into the file once per call site. *)
+		fixups := 0;
+		index := ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Relative, 2, 1, patterns);
+		ASSERT(index = 0);
+		ASSERT(fixups = 1);
+		index := ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Relative, 2, 1, patterns);
+		ASSERT(index = 0);
+		ASSERT(fixups = 1);
+
+		(* another symbol, another fixup *)
+		index := ObjectFile.AddFixup(fixups, fixup, other, 43H, ObjectFile.Relative, 2, 1, patterns);
+		ASSERT(index = 1);
+		ASSERT(fixups = 2);
+
+		(* the same symbol reached a different way is a different fixup *)
+		index := ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Absolute, 2, 1, patterns);
+		ASSERT(index = 2);
+		ASSERT(fixups = 3);
+		index := ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Relative, 4, 1, patterns);
+		ASSERT(index = 3);
+		ASSERT(fixups = 4);
+
+		(*	An alias is a second name for one offset, and two of them are not interchangeable the
+			way two fixups are: every call adds one. *)
+		aliases := 0;
+		index := ObjectFile.AddAlias(aliases, alias, name, 42H, 8);
+		ASSERT(index = 0);
+		index := ObjectFile.AddAlias(aliases, alias, name, 42H, 8);
+		ASSERT(index = 1);
+		ASSERT(aliases = 2);
+
+		(* and the lists grow past whatever they were first given *)
+		patches := 0;
+		FOR i := 0 TO Many - 1 DO
+			ObjectFile.AddPatch(patches, patch, i * 2, i * 4)
+		END;
+		ASSERT(patches = Many);
+		FOR i := 0 TO Many - 1 DO
+			ASSERT(patch[i].offset = i * 4);
+			ASSERT(patch[i].displacement = i * 2)
+		END;
+
+		FOR i := 0 TO Many - 1 DO
+			index := ObjectFile.AddAlias(aliases, alias, name, i + 1, i * 8)
+		END;
+		ASSERT(aliases = Many + 2);
+		FOR i := 0 TO Many - 1 DO
+			ASSERT(alias[i + 2].identifier.fingerprint = i + 1);
+			ASSERT(alias[i + 2].offset = i * 8)
+		END
+	END Test.
+
+positive: an initialised section is empty and a copy of one is its own
+
+	MODULE Test;
+	IMPORT ObjectFile;
+
+	VAR a, b: ObjectFile.Section; text: ObjectFile.SectionName; fixups: SIZE;
+		fixup: ObjectFile.Fixups; patterns: ObjectFile.FixupPatterns;
+		name: ObjectFile.SegmentedName;
+
+	BEGIN
+		ObjectFile.InitSection(a);
+		ASSERT(a.fixups = 0);
+		ASSERT(a.aliases = 0);
+		ASSERT(a.fixup = NIL);
+		ASSERT(a.alias = NIL);
+		ASSERT(a.bits = NIL);
+		ASSERT(~a.fixed);
+
+		(*	An initialised section has no name, and no name has to read back as no name: every
+			slot absent. Anything else and a nameless section stringifies as a row of dots. *)
+		ObjectFile.SegmentedNameToString(a.identifier.name, text);
+		ASSERT(text = "");
+
+		(*	A copy has to be a copy: the linker copies sections out of object files and then
+			resolves them, and a shared bit set would resolve two modules at once. *)
+		NEW(patterns, 1); patterns[0].offset := 0; patterns[0].bits := 32;
+		ObjectFile.StringToSegmentedName("Heaps.NewRec", name);
+		fixups := 0;
+		ASSERT(ObjectFile.AddFixup(fixups, fixup, name, 42H, ObjectFile.Relative, 2, 1, patterns) = 0);
+		ObjectFile.AddPatch(fixup[0].patches, fixup[0].patch, 4, 0);
+		ObjectFile.SetFixups(a, fixups, fixup);
+		ObjectFile.StringToSegmentedName("Modules.Module", a.identifier.name);
+		a.unit := 8;
+		NEW(a.bits, 32);
+		a.bits.SetBits(0, 8, 55H);
+
+		ObjectFile.CopySection(a, b);
+		ASSERT(b.identifier.name = a.identifier.name);
+		ASSERT(b.fixups = 1);
+		ASSERT(b.fixup[0].patches = 1);
+		ASSERT(b.bits.GetBits(0, 8) = 55H);
+
+		a.bits.SetBits(0, 8, 0AAH);
+		ObjectFile.AddPatch(a.fixup[0].patches, a.fixup[0].patch, 8, 16);
+		ASSERT(b.bits.GetBits(0, 8) = 55H);
+		ASSERT(b.fixup[0].patches = 1)
+	END Test.
+
+positive: a name list survives the round trip in both forms
+
+	MODULE Test;
+	IMPORT ObjectFile, Streams;
+
+	VAR
+		written, read: ObjectFile.NameList;
+		map: ObjectFile.PoolMap;
+		output: Streams.StringWriter; input: Streams.StringReader;
+		buffer: ARRAY 1024 OF CHAR; text: ObjectFile.SectionName; length: SIZE;
+
+	BEGIN
+		(*	`offers` and `requires` at the head of an object file are name lists, and they are what
+			the linker reads before it reads a single section: they say which modules the file
+			needs. A name that does not come back is a module that cannot be found. *)
+		NEW(written, 2);
+		ObjectFile.StringToSegmentedName("Modules.Module", written[0]);
+		ObjectFile.StringToSegmentedName("Heaps.NewRec.@Body", written[1]);
+
+		NEW(output, 1024); NEW(map, 64);
+		map.BeginWriting(output);
+		map.PutSegmentedName(written[0]);
+		map.PutSegmentedName(written[1]);
+		map.EndWriting;
+		ObjectFile.WriteNameList(output, written, TRUE, map);
+		output.Update; output.GetRaw(buffer, length);
+
+		NEW(input, 1024); input.SetRaw(buffer, 0, length);
+		NEW(map, 64); map.Read(input);
+		ObjectFile.ReadNameList(input, read, TRUE, map);
+		ASSERT(LEN(read) = 2);
+		ASSERT(read[0] = written[0]);
+		ASSERT(read[1] = written[1]);
+
+		(*	And in the textual form, where the names are written as names. The same list has to
+			come back, or a textual object file is not one. *)
+		NEW(output, 1024);
+		ObjectFile.WriteNameList(output, written, FALSE, NIL);
+		output.Update; output.GetRaw(buffer, length);
+		ASSERT(length > 0);
+
+		NEW(input, 1024); input.SetRaw(buffer, 0, length);
+		ObjectFile.ReadNameList(input, read, FALSE, NIL);
+		ASSERT(LEN(read) = 2);
+		ObjectFile.SegmentedNameToString(read[0], text);
+		ASSERT(text = "Modules.Module");
+		ObjectFile.SegmentedNameToString(read[1], text);
+		ASSERT(text = "Heaps.NewRec.@Body");
+		ASSERT(read[0] = written[0]);
+		ASSERT(read[1] = written[1])
+	END Test.
