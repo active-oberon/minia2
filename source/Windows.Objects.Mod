@@ -420,6 +420,15 @@ BEGIN
 	Kernel32.Sleep(0)
 END Yield;
 
+(**	Step aside for a while. The Unix half of this module has had it since it was written and this
+	one had not, so a program that waited by asking Objects -- `examples/Radio.Mod` did -- compiled
+	on one host and not on the other. An activity is a thread on both hosts, so this waits for the
+	caller and nobody else. *)
+PROCEDURE Sleep*( ms: SIGNED32 );
+BEGIN
+	Kernel32.Sleep(ms)
+END Sleep;
+
 (** Return current process. (DEPRECATED, use ActiveObject) *)
 PROCEDURE CurrentProcess*( ): Process;
 (* The following code replaces RETURN Kernel32.TlsGetValue(tlsIndex) and does not need to leave A2 *)
