@@ -1425,6 +1425,29 @@ VAR hout: HANDLE;
 			It contains the import table for the two procedures Kernel32.GetProcAddress and Kernel32.LoadLibrary that
 			are patched by the PE linker.
 			[CF. Microsoft Portable Executable and Common Object File Format Specification]
+
+			The two loads at the end read that table RIP-relative, and that is the whole of what
+			lets Windows move this image. They used to read it through `401000H+adrLoadLibrary`, an
+			absolute address built from a literal. A literal is not a symbol, so the assembler
+			writes no fixup, so the linker writes no relocation entry, so nothing patches these two
+			addresses when the loader puts the image elsewhere: it fills the import table at the new
+			place and the code goes on reading the old one. That is why DYNAMIC_BASE killed every
+			binary at start with 0xC0000005. Measured, not guessed, and measured twice -- the second
+			time by dumping the relocation table of a linked image: entries exist for the two stores
+			standing right next to these loads, because those go through symbols, and none for the
+			loads themselves. RIP-relative addressing needs no relocation at all.
+
+			The displacement of a RIP operand counts from the END of the instruction, and
+			`MOV RAX,[RIP+disp32]` is exactly seven bytes -- REX.W, opcode, modRM, four of
+			displacement. Hence the 7, and hence a label standing immediately before each load:
+			this assembler makes a single pass, so only a label already defined may appear in a
+			displacement. The parentheses are not decoration either -- a displacement that begins
+			with an identifier is read as a reference to a module symbol rather than as an
+			expression over labels.
+
+			`OFFSET(401000H)` stays. It pins this block first in the code section, which is what
+			makes the import table land at the address the PE header names for it, and it says
+			nothing about where Windows will put the image.
 		*)
 		PROCEDURE {PLAIN, OFFSET(401000H)} EntryPoint*;
 		CODE{SYSTEM.AMD64}
@@ -1463,9 +1486,10 @@ VAR hout: HANDLE;
 			DB 'GetProcAddress',0
 
 		end:
-			MOV RAX,[401000H+adrLoadLibrary]
+			MOV RAX,[RIP+(adrLoadLibrary-end-7)]
 			MOV [LoadLibrary], RAX
-			MOV RAX,[401000H+adrGetProcAddress]
+		getProcAddressFrom:
+			MOV RAX,[RIP+(adrGetProcAddress-getProcAddressFrom-7)]
 			MOV [getProcAddress], RAX
 			MOV EBP, ESP
 			PUSH 0

@@ -1135,18 +1135,28 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			DEP, which this said nothing about until 04.09.2026 -- a PE that does not ask for it is
 			both a hole of its own and, to a reputation engine, a binary from before it existed.
 
-			ASLR (DYNAMIC_BASE, 40H) is NOT here, and that is measured rather than assumed: with it
-			the image is relocated at every start, and a binary built with it set crashes on
-			startup with an access violation -- 05.09.2026, `ob.exe version`, the same binary
-			running the moment the flag is patched out of the header. So the relocations this
-			linker writes do not survive the image being moved. They are HIGHLOW (type 3, see
-			WriteSections), which cannot express a delta outside the low 4 GB, and evidently that
-			is not their only trouble. ASLR -- and HIGH_ENTROPY_VA after it -- waits for a
-			relocation table that is complete and DIR64 wide. Until then this asks for what it can
-			honour.
+			ASLR (DYNAMIC_BASE, 40H) is here for 64 bit images since 05.09.2026, and it took two
+			steps that had to come in this order. First the relocation table learnt to say how wide
+			each entry is, so a 64 bit pointer gets DIR64 and a 32 bit one HIGHLOW. That alone did
+			not help, and the reason was found by measurement: the entry point in
+			Windows.Kernel32.Mod read the import table through an address built from the literal
+			401000H. A literal is not a symbol, so no fixup and no relocation entry ever existed for
+			it -- the image moved, the loader filled the table at its new address, and the code went
+			on reading the old one, which is the 0xC0000005 this comment used to describe as an
+			unexplained failure of the relocations. Those two loads are RIP-relative now and need no
+			relocation.
+
+			HIGH_ENTROPY_VA (20H) is still NOT here, and on purpose: without it the loader keeps the
+			image below 4 GB, which is exactly what the HIGHLOW entries in this table require.
+
+			32 bit images do not get the flag. Their entry point still carries the same literal, and
+			this tree builds no 32 bit Windows target on which the fix could be measured -- asking
+			for what cannot be honoured is how the flag came to be removed the first time.
 		*)
 		(* 70 *)IF subSystem = EFISubsystem THEN
 					IF isDLL THEN WriteWORD (DynamicBase) ELSE WriteWORD (0) END
+				ELSIF bitmode = 64 THEN
+					WriteWORD (DynamicBase + NXCompatible + TerminalServerAware)
 				ELSE
 					WriteWORD (NXCompatible + TerminalServerAware)
 				END;
