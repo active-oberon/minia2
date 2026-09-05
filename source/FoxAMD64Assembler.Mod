@@ -764,8 +764,17 @@ TYPE
 								ELSIF (operands[addressOperand].register = none) & (operands[addressOperand].index # none) THEN
 									modField := 0; (* 32 bit displacement without base register encoded via SIB byte *)
 								ELSIF (operands[addressOperand].register # none) & (InstructionSet.RegisterIndex(operands[addressOperand].register) = RIP) THEN
-									(* if there is displacement on RIP, we still have to use the modRM = 0 case *)
-									IF cpuBits = 64 THEN
+									(*	If there is displacement on RIP, we still have to use the modRM = 0 case.
+
+										`bits64`, not 64. The width is one of bitsDefault/bits16/bits32/bits64 =
+										0/2/4/8 -- every other test of cpuBits in this module says so -- and this
+										one asked whether it equalled 64, which no width ever does. So the only
+										branch that can encode RIP-relative addressing reported that the target
+										was not 64 bit, always, and no code in the tree could use it. Found
+										05.09.2026 by writing the first such instruction: the entry point in
+										Windows.Kernel32.Mod, which has to read the import table without naming
+										the base of the image. *)
+									IF cpuBits = bits64 THEN
 										modField := 0;
 									ELSE
 										Error("invalid effective address: instruction pointer relative addressing only in 64 bit mode")
