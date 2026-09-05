@@ -294,6 +294,16 @@ BEGIN
 	RETURN (got > 0) & (got < SIGNED32(LEN(value)))
 END Environment;
 
+(**
+	This process's own identifier, as the system that started it knows it. What a program needs it
+	for is a name nothing else will pick -- a socket, a scratch file -- and asking the host for it
+	directly is what made programs import Unix and stop building on Windows.
+*)
+PROCEDURE Id* (): SIGNED32;
+BEGIN
+	RETURN Kernel32.GetCurrentProcessId()
+END Id;
+
 (** The arguments of a program, made from a program name and what follows it. *)
 PROCEDURE Arguments* (CONST first, second, third, fourth: ARRAY OF CHAR): Strings.StringArray;
 VAR a: Strings.StringArray; n: SIZE;
