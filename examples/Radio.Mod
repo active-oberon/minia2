@@ -31,12 +31,20 @@ MODULE Radio;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Internet radio: the catal
 	playing, the random one, what is written out -- follows what is shown. `Radio.List` prints
 	the catalogue and needs no terminal at all.
 
-	The catalogue is $XDG_CONFIG_HOME/radio/stations.tsv (or ~/.config/radio), one station a
-	line: genre, name and address, separated by tabs. Lines beginning with # are ignored, which
-	is where its own header lives.
+	The catalogue is $XDG_CONFIG_HOME/radio/stations.tsv -- or ~/.config/radio on Unix, or
+	%USERPROFILE%/.config/radio or %APPDATA%/radio on Windows -- one station a line: genre, name
+	and address, separated by tabs. Lines beginning with # are ignored, which is where its own
+	header lives.
+
+	One thing about mpv itself, learned the hard way on Windows: builds differ in how they open a
+	stream. One that fetches HTTP with its own curl layer feeds the ICY metadata -- the track name a
+	station interleaves into the audio -- straight to the decoder, and the sound croaks while mpv
+	prints `mp3float: Header missing` by the screenful. A build that opens streams through ffmpeg
+	plays the same station without one error. Either use such a build, or put `lavf://` in front of
+	the address in the catalogue, which forces one.
 *)
 
-IMPORT Files, Streams, Strings, UTF8Strings, Commands, Terminal, Frames, Processes, LocalSockets, Unix, Objects,
+IMPORT Files, Streams, Strings, UTF8Strings, Commands, Terminal, Frames, Processes, LocalSockets, Objects,
 	Random, Kernel, Vorbis := OGGVorbisPlayer,
 	(*	One parametric module, instantiated for the kind of thing this program hands about: the
 		waiting is written once, in the library, and named here. *)
@@ -179,14 +187,30 @@ VAR
 
 	(* ---- the catalogue ---- *)
 
+	(*
+		Where this program's own directory is, asked of the system that started it. $XDG_CONFIG_HOME
+		first, because whoever sets it means it; then the Unix place; then the Windows one, which is
+		%APPDATA% and not a dotted directory in the home -- neither $XDG_CONFIG_HOME nor $HOME is
+		set there, and without this the program had no place to look at all.
+	*)
 	PROCEDURE Home (VAR path: ARRAY OF CHAR): BOOLEAN;
-	VAR value: ARRAY 128 OF CHAR;
+	VAR value: ARRAY 256 OF CHAR;
 	BEGIN
 		IF Processes.Environment("XDG_CONFIG_HOME", value) & (value # "") THEN
 			COPY(value, path); Strings.Append(path, "/radio/"); RETURN TRUE
 		END;
 		IF Processes.Environment("HOME", value) & (value # "") THEN
 			COPY(value, path); Strings.Append(path, "/.config/radio/"); RETURN TRUE
+		END;
+		(*	The same layout kept in a Windows profile, which is what someone who works on both
+			hosts ends up with. $HOME is set there only by shells that bring it -- Git's, for one --
+			so a program that asks for $HOME alone finds the catalogue from one shell and not from
+			the next. *)
+		IF Processes.Environment("USERPROFILE", value) & (value # "") THEN
+			COPY(value, path); Strings.Append(path, "/.config/radio/"); RETURN TRUE
+		END;
+		IF Processes.Environment("APPDATA", value) & (value # "") THEN
+			COPY(value, path); Strings.Append(path, "/radio/"); RETURN TRUE
 		END;
 		RETURN FALSE
 	END Home;
@@ -515,6 +539,7 @@ VAR
 	(* `ob run Radio.Mod` invokes the exported command Do. *)
 	PROCEDURE Do* (context: Commands.Context);
 	VAR e: Terminal.Event; leave: BOOLEAN; said: Strings.String; arrival: Arrival;
+		catalogueName: ARRAY 256 OF CHAR;
 	BEGIN
 		IF ~Terminal.Open() THEN
 			context.error.String("Radio: standard input is not a terminal"); context.error.Ln;
@@ -522,13 +547,21 @@ VAR
 		END;
 		(* $TMPDIR before /tmp: Termux has no /tmp at all, and mpv is told this path too. *)
 		IF ~Processes.Environment("TMPDIR", socketPath) OR (socketPath = "") THEN socketPath := "/tmp" END;
-		Strings.Append(socketPath, "/a2-radio-"); Strings.AppendInt(socketPath, Unix.getpid());
+		Strings.Append(socketPath, "/a2-radio-"); Strings.AppendInt(socketPath, Processes.Id());
 		Strings.Append(socketPath, ".sock");
 		playing := -1; volume := 70; paused := FALSE;
 		NEW(dice); dice.InitSeed(SIGNED32(Kernel.GetTicks()));   (* a different station each run *)
 		IF ~Compose() THEN
 			Terminal.Close;
-			context.error.String("Radio: no catalogue in $XDG_CONFIG_HOME/radio/stations.tsv");
+			(*	Naming the file it looked for, rather than the shape of the name: the place differs
+				by host, and a message that says $XDG_CONFIG_HOME on Windows tells nobody where to
+				put anything. *)
+			IF Home(catalogueName) THEN
+				Strings.Append(catalogueName, "stations.tsv");
+				context.error.String("Radio: no catalogue at "); context.error.String(catalogueName)
+			ELSE
+				context.error.String("Radio: no place to look for a catalogue -- set XDG_CONFIG_HOME, HOME, USERPROFILE or APPDATA")
+			END;
 			context.error.Ln; RETURN
 		END;
 		Fit;
@@ -590,7 +623,8 @@ VAR directory, path: ARRAY 256 OF CHAR; i, width, n: SIGNED32;
 BEGIN
 	NEW(catalogue); stations := 0; genres := 0;
 	IF ~Home(directory) THEN
-		context.error.String("Radio: no place to look for a catalogue"); context.error.Ln; RETURN
+		context.error.String("Radio: no place to look for a catalogue -- set XDG_CONFIG_HOME, HOME, USERPROFILE or APPDATA");
+		context.error.Ln; RETURN
 	END;
 	COPY(directory, path); Strings.Append(path, "stations.tsv");
 	IF ~Read(path) THEN
