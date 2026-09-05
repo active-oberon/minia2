@@ -14,3 +14,5 @@ editors/tree-sitter/src/parser.c linguist-generated=true
 editors/tree-sitter/src/grammar.json linguist-generated=true
 editors/tree-sitter/src/node-types.json linguist-generated=true
 editors/tree-sitter/src/tree_sitter/** linguist-vendored=true
+
+data/OBEMBR.BIN -filter -diff -merge
