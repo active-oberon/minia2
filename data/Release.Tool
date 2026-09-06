@@ -979,7 +979,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	ShellCommands.Mod Telnet.Mod	# Telnet Shell (currently broken)
 
 	BIOS & ~COOP { BIOS.MemInfo.Mod }
-	BIOS, WIN { Info.Mod }
+	BIOS, WIN, UNIX { Info.Mod }
 
 	TFClasses.Mod Mail.Mod SMTPClient.Mod
 	TFLog.Mod WebHTTP.Mod							# extended HTTP Server (tf/be)

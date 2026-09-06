@@ -1090,7 +1090,10 @@ CONST
 	PROCEDURE GetProcedureName*(pc: ADDRESS; VAR name: ARRAY OF CHAR; VAR startpc: ADDRESS);
 	VAR m: Modules.Module; offset: SIZE;
 	BEGIN
-		name := "";
+		(*	Both are answers, and every path here has one. `startpc` used to be left as the caller's
+			frame found it on the three paths that find no procedure, and the callers subtract it
+			from `pc` -- the same shape as FindVar's `adr`, fixed 06.09. *)
+		name := "";  startpc := 0;
 		m := Modules.ThisModuleByAdr0(pc);
 		IF m # NIL THEN
 			offset := FindByAdr(m.refs,0,pc);
@@ -1114,14 +1117,15 @@ TYPE
 
 	(* half-stub for module Info to work *)
 	PROCEDURE FindVar*(mod: Modules.Module; CONST name: ARRAY OF CHAR; VAR v: Variable): BOOLEAN;
-	VAR offset: SIZE; adr: ADDRESS;
+	VAR offset: SIZE; adr: ADDRESS; mode: CHAR;
 	BEGIN
 		offset := FindByName(mod.refs, 0,name, TRUE);
 		IF offset < 0 THEN RETURN FALSE END;
 		IF ~Expect(offset, GetChar(mod.refs, offset) = sfVariable) THEN RETURN FALSE END;
 		SkipSize(offset);
 		SkipString(mod.refs, offset);
-		IF GetChar(mod.refs, offset) = sfRelative THEN
+		mode := GetChar(mod.refs, offset);
+		IF (mode = sfRelative) OR (mode = sfIndirect) THEN
 			(*	A variable in a frame has an offset into a frame and no address of its own, and
 				which frame it is is not something this can know. Saying so is the answer. What
 				this used to do was fall through with adr never set and hand back whatever the
@@ -1131,7 +1135,10 @@ TYPE
 		adr := GetAddress(mod.refs, offset);
 
 		v.adr := adr;
-		v.type := 0;
+		(*	The type character follows the address -- see the references section format above. It
+			was answered as 0 whatever the variable was, which is not a code in this format at all,
+			so the one caller that asks (Info.TraceReference) called every pointer not a pointer. *)
+		v.type := ORD(GetChar(mod.refs, offset));
 		v.size := 0;
 		v.n := 0;
 		v.tdadr :=  0;

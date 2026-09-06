@@ -180,6 +180,7 @@ ISO9660Files
 ISO9660Volumes
 In
 Inflate
+Info
 IsoImages
 JSON
 Joysticks

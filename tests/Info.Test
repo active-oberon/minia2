@@ -1,0 +1,501 @@
+# Tests for source/Info.Mod -- what this system can say about its own heap.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test InfoTestShared;System.Load Test"
+#
+# `Info` is the memory side of `System`: what is on the heap, of which types, allocated where, kept
+# alive by which module, which variable or which process. It walks `Machine.memBlockHead` block by
+# block under the heap lock, and it reads private fields of `Heaps` through addresses it finds with
+# `Reflection` -- so it is the module that knows the most about the runtime and is checked by it the
+# least.
+#
+# It had no suite, and on this platform it had no binary either: `data/Release.Tool` listed it as
+# `BIOS, WIN { Info.Mod }`, so the whole module was compiled for bare metal and for Windows and
+# never for Unix, although it needs nothing that Unix does not have. It was built for Linux for the
+# first time on 07.09.2026 without one change to its source, and `configs/headless-core.txt` gained
+# it in the same breath -- the registry had always said `std/system` provides `Info`, and only the
+# build disagreed. Everything below is therefore the first time any of it has been run here.
+#
+# The cases are the commands, because the commands are all this module is. What they ask is what a
+# person asks of a memory tool: does it answer at all, does it answer about the right thing, and are
+# the numbers in the answer numbers rather than decoration.
+#
+# Found while writing these and NOT changed:
+#
+# - `Analyzer.SortBy` is a bubble sort over up to 2048 entries with the comparison inlined, and for
+#   `--sort=4` the comparison resolves both type names through `Modules.ThisTypeByAdr` on every one
+#   of the four million passes. It answers; it takes its time about it.
+# - `AddByType` and `AddByPC` drop a block silently once 2048 distinct types have been seen: the
+#   search loop ends at `LEN(types)` and neither branch below it fires. No case here can make 2048
+#   types.
+# - `ShowRecentAllocators` divides by a `scale` it works out from a 100 ms measurement, with no
+#   guard for that measurement coming back as zero.
+# - `TraceReference` on a pointer variable whose value is NIL prints its heading and then nothing at
+#   all, rather than saying the variable is NIL.
+# - `WriteType` takes a `SIGNED32` address, as `ModulePC` did until 07.09.2026 -- but nothing in the
+#   tree calls `WriteType`, so it is left as the dead code it is.
+# - The `typedesc1` dump in `ModuleDetails` runs until it meets a word below -40000000H, and that
+#   word ends the whole type-descriptor area rather than one type: `Modules.Command` measured 289
+#   words on 07.09.2026, of which the last 260 were the six descriptors that follow it. Bounded at
+#   64 words with an ellipsis rather than solved -- the real end needs `Heaps.StaticTypeBlock`,
+#   which is not readable from here.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE InfoTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Run a command of Info through string streams and read what it wrote" *)
+
+	IMPORT SYSTEM, Commands, Streams, Strings, Modules;
+
+	TYPE
+		Text* = ARRAY 256 * 1024 OF CHAR;
+
+		(** Something on the heap with a name of our own, so that a report can be looked for by it. *)
+		Marker* = POINTER TO RECORD
+			payload: ARRAY 64 OF CHAR
+		END;
+
+	VAR
+		markers: POINTER TO ARRAY OF Marker;	(** kept alive, or a report of the live heap would not hold them *)
+		reader: Streams.StringReader;
+
+	(**	A command is testable through a context of string streams, and out is given as both the
+		output and the error stream: half of what these commands say about a refusal is the refusal. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR arg: Streams.StringReader; out: Streams.StringWriter;
+		context: Commands.Context; result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.SetRaw(argument, 0, Strings.Length(argument));
+		Streams.OpenStringWriter(out, 256 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Put a known number of a known type on the heap and hold on to them. *)
+	PROCEDURE Populate* (count: SIGNED32);
+	VAR i: SIGNED32;
+	BEGIN
+		NEW(markers, count);
+		FOR i := 0 TO count - 1 DO NEW(markers[i]) END
+	END Populate;
+
+	(**	Somewhere to point `ModulePC` at: an address inside this module that can be named. *)
+	PROCEDURE Somewhere*;
+	VAR i: SIGNED32;
+	BEGIN
+		i := 0; INC(i)
+	END Somewhere;
+
+	PROCEDURE AddressOf* (): ADDRESS;
+	BEGIN
+		RETURN SYSTEM.VAL(ADDRESS, Somewhere)
+	END AddressOf;
+
+	(** The way a person writes an address down: the way a trap report prints it. *)
+	PROCEDURE Hex* (value: ADDRESS; VAR text: ARRAY OF CHAR);
+	BEGIN
+		Strings.UIntToHexStr(UNSIGNED64(value), 16, text)
+	END Hex;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	PROCEDURE Where* (CONST text, what: ARRAY OF CHAR): SIZE;
+	BEGIN
+		RETURN Strings.Pos(what, text)
+	END Where;
+
+	(** The `count` characters that follow `what`, which is how one report is held against another. *)
+	PROCEDURE After* (CONST text, what: ARRAY OF CHAR; count: SIZE; VAR out: ARRAY OF CHAR);
+	VAR at, i: SIZE;
+	BEGIN
+		out[0] := 0X;
+		at := Strings.Pos(what, text);
+		IF at < 0 THEN RETURN END;
+		INC(at, Strings.Length(what));
+		i := 0;
+		WHILE (i < count) & (i < LEN(out) - 1) & (text[at + i] # 0X) DO out[i] := text[at + i]; INC(i) END;
+		out[i] := 0X
+	END After;
+
+	(**	The count a type's line in the report opens with: the class letter, then the number of
+		blocks. Read backwards from the name, because the number comes before it. *)
+	PROCEDURE CountOf* (CONST text, name: ARRAY OF CHAR): SIGNED64;
+	VAR at, start: SIZE; value: SIGNED64; any: BOOLEAN;
+	BEGIN
+		at := Strings.Pos(name, text);
+		IF at < 0 THEN RETURN -1 END;
+		start := at;
+		WHILE (start > 0) & (text[start - 1] # 0AX) DO DEC(start) END;
+		WHILE (text[start] # 0X) & ((text[start] < "0") OR (text[start] > "9")) & (start < at) DO INC(start) END;
+		value := 0; any := FALSE;
+		WHILE (text[start] >= "0") & (text[start] <= "9") DO
+			value := 10 * value + (ORD(text[start]) - ORD("0")); INC(start); any := TRUE
+		END;
+		IF ~any THEN RETURN -1 END;
+		RETURN value
+	END CountOf;
+
+	(** How many times, which is what tells "named" from "named twice". *)
+	PROCEDURE Times* (CONST text, what: ARRAY OF CHAR): SIZE;
+	VAR i, j, n, textLength, whatLength: SIZE;
+	BEGIN
+		textLength := Strings.Length(text); whatLength := Strings.Length(what);
+		IF whatLength = 0 THEN RETURN 0 END;
+		n := 0; i := 0;
+		WHILE i + whatLength <= textLength DO
+			j := 0;
+			WHILE (j < whatLength) & (text[i+j] = what[j]) DO INC(j) END;
+			IF j = whatLength THEN INC(n); INC(i, whatLength) ELSE INC(i) END
+		END;
+		RETURN n
+	END Times;
+
+	(**	The number that follows a word in the report, which is how a case reads a count out of a
+		line meant for a person. -1 if the word is not there or nothing follows it. *)
+	PROCEDURE NumberAfter* (CONST text, what: ARRAY OF CHAR): SIGNED64;
+	VAR at: SIZE; value: SIGNED64; any: BOOLEAN;
+	BEGIN
+		at := Strings.Pos(what, text);
+		IF at < 0 THEN RETURN -1 END;
+		INC(at, Strings.Length(what));
+		WHILE (text[at] = " ") DO INC(at) END;
+		value := 0; any := FALSE;
+		WHILE (text[at] >= "0") & (text[at] <= "9") DO
+			value := 10 * value + (ORD(text[at]) - ORD("0")); INC(at); any := TRUE
+		END;
+		IF ~any THEN RETURN -1 END;
+		RETURN value
+	END NumberAfter;
+
+	(** Is this module in the boot image, or was it loaded from a file? A boot module has no data. *)
+	PROCEDURE Linked* (CONST name: ARRAY OF CHAR): BOOLEAN;
+	VAR m: Modules.Module;
+	BEGIN
+		m := Modules.ModuleByName(name);
+		RETURN (m # NIL) & (m.data = NIL)
+	END Linked;
+
+	END InfoTestShared.
+
+positive: with no mask the report is the shape of the heap and nothing else
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		res := T.Run("Info.AllObjects", "", text);
+		ASSERT(res = 0);
+
+		(* Twice: once against the whole heap, once against the used part of it. *)
+		ASSERT(T.Times(text, "UsedBlocks") = 2);
+		ASSERT(T.Said(text, "HeapBlocks"));
+		ASSERT(T.Said(text, "FreeBlocks"));
+		ASSERT(T.Said(text, "SystemBlocks"));
+		ASSERT(T.Said(text, "RecordBlocks"));
+		ASSERT(T.Said(text, "ArrayBlocks"));
+
+		(* No mask means no list, so nothing is counted by type. *)
+		ASSERT(~T.Said(text, "unique types"))
+	END Test.
+
+positive: a mask asks for the types, and the types it names are on the heap
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		T.Populate(500);
+		res := T.Run("Info.AllObjects", "*", text);
+		ASSERT(res = 0);
+
+		(*	500 records of a type this suite invented, so the count is one a case can insist on
+			rather than one it has to accept. *)
+		ASSERT(T.Said(text, "InfoTestShared.Marker"));
+		ASSERT(T.CountOf(text, "InfoTestShared.Marker") = 500);
+		ASSERT(T.Said(text, "unique types"))
+	END Test.
+
+positive: a narrowed report says what it was narrowed out of
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER; selected, total: SIGNED64;
+
+	BEGIN
+		T.Populate(200);
+		res := T.Run("Info.AllObjects", "InfoTestShared*", text);
+		ASSERT(res = 0);
+
+		selected := T.NumberAfter(text, "Selected ");
+		total := T.NumberAfter(text, " of ");
+		ASSERT(selected >= 200);
+		ASSERT(total > selected);
+
+		(*	And the sizes beside those counts. `totalSize` was declared, set to zero and never added
+			to, so the line always ended "of 0B" -- measured 07.09.2026 as
+			"(total size : ~1038KB of 0B)" over a heap of 65 MB. *)
+		ASSERT(T.Said(text, "total size : "));
+		ASSERT(~T.Said(text, "of 0B"))
+	END Test.
+
+positive: every way of sorting answers, and answers about the same heap
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER; found: SIGNED64; i: SIGNED32;
+		order: ARRAY 5 OF ARRAY 16 OF CHAR;
+
+	BEGIN
+		T.Populate(100);
+		order[0] := "--sort=0 *"; order[1] := "--sort=1 *"; order[2] := "--sort=2 *";
+		order[3] := "--sort=3 *"; order[4] := "--sort=4 *";
+		found := -1;
+		FOR i := 0 TO 4 DO
+			res := T.Run("Info.AllObjects", order[i], text);
+			ASSERT(res = 0);
+
+			(*	Sorting changes the order of the lines and nothing else, so the count of unique
+				types is the one number that must not move between them. *)
+			ASSERT(T.Said(text, "InfoTestShared.Marker"));
+			IF found < 0 THEN found := T.NumberAfter(text, "records of ") END;
+			ASSERT(T.NumberAfter(text, "records of ") > 0)
+		END
+	END Test.
+
+positive: by allocation site, each place is named once
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		T.Populate(50);
+		res := T.Run("Info.AllObjects", "--pc *", text);
+		ASSERT(res = 0);
+
+		(*	`Reflection.GetProcedureName` answers with a name that already carries its module, so
+			putting `module.name` and a dot in front of it named everything twice: until 07.09.2026
+			this report read "Streams.Streams.Writer.InitWriter:149". *)
+		ASSERT(T.Said(text, "Streams.Writer.InitWriter"));
+		ASSERT(~T.Said(text, "Streams.Streams."));
+		ASSERT(T.Said(text, "unique types"))
+	END Test.
+
+positive: the details of a module that was linked into the boot image
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		(*	`Modules` is in the boot image, and a module in the boot image has no `data`, no `code`
+			and no `entry` -- the linker built its descriptor, the loader never did. `LEN` of an
+			array that is not there is a segmentation violation, so until 07.09.2026 this command
+			trapped on the fourth thing it printed, for `Modules`, `Kernel`, `Heaps`, `Objects` and
+			every other module of the image -- which is to say for exactly the modules somebody
+			asking for details is asking about. *)
+		ASSERT(T.Linked("Modules"));
+
+		res := T.Run("Info.ModuleDetails", "Modules", text);
+		ASSERT(res = 0);
+
+		ASSERT(T.Said(text, "Modules refcnt = "));
+		ASSERT(T.Said(text, "dataSize = "));
+		ASSERT(T.Said(text, "codeSize = "));
+		ASSERT(T.Said(text, "entries = "));
+		ASSERT(T.Said(text, "types = "));
+		ASSERT(T.Said(text, "ptrAdr:"));
+
+		(* And it says what it found instead of a number, rather than printing nothing. *)
+		ASSERT(T.Said(text, "none"))
+	END Test.
+
+positive: and of a module that was loaded from a file
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		(*	A loaded module has data and code -- and still no `entry`, which is why the same trap
+			was waiting one line further down for every module in the system, not only the image's. *)
+		ASSERT(~T.Linked("InfoTestShared"));
+
+		res := T.Run("Info.ModuleDetails", "InfoTestShared", text);
+		ASSERT(res = 0);
+
+		ASSERT(T.Said(text, "InfoTestShared refcnt = "));
+		ASSERT(T.Said(text, "dataSize = "));
+		ASSERT(T.Said(text, "entries = "));
+
+		(*	The type list names a type as the module declares it, without the module: it is the
+			module's own list. And it holds `@Self`, whose entry has no descriptor at all -- reading
+			one at address 0 is where this command died for every module that has an active object. *)
+		ASSERT(T.Said(text, "type:"));
+		ASSERT(T.Said(text, "Marker"))
+	END Test.
+
+positive: the details of a module that is not loaded are a sentence, not silence
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		res := T.Run("Info.ModuleDetails", "NoSuchModuleAnywhere", text);
+
+		(*	It wrote nothing at all and reported success -- and its own sibling `TraceModule`, forty
+			lines down the same file, says "Module X is not loaded." for the same question. *)
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "NoSuchModuleAnywhere"));
+		ASSERT(T.Said(text, "not loaded"))
+	END Test.
+
+positive: an address of this process names the procedure it is in
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; argument: ARRAY 32 OF CHAR; res: INTEGER;
+
+	BEGIN
+		T.Hex(T.AddressOf(), argument);
+
+		(*	An address on this machine is sixty-four bits and is written in hexadecimal -- it is
+			copied out of a trap report. `ModulePC` read it into a SIGNED32 in decimal, so it
+			stopped at the first letter and looked up a number that was never an address: pasting
+			`00007FA57760B781` asked it about 7. *)
+		res := T.Run("Info.ModulePC", argument, text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "InfoTestShared.Somewhere"))
+	END Test.
+
+positive: an address that belongs to no module is said not to
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		res := T.Run("Info.ModulePC", "10", text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "not found"))
+	END Test.
+
+positive: what a module holds on to, and what a module that is not there holds on to
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		T.Populate(300);
+
+		(*	`markers` is a global of InfoTestShared, so walking that module's roots must reach the
+			three hundred records it points at. *)
+		res := T.Run("Info.TraceModule", "InfoTestShared *", text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "referenced by module InfoTestShared"));
+		ASSERT(T.Said(text, "InfoTestShared.Marker"));
+
+		res := T.Run("Info.TraceModule", "NoSuchModuleAnywhere *", text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "is not loaded"))
+	END Test.
+
+positive: what one variable holds on to, and the three ways of asking wrongly
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		T.Populate(120);
+
+		res := T.Run("Info.TraceReference", "InfoTestShared.markers *", text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "InfoTestShared.Marker"));
+
+		(* A name with no dot in it is not a variable. *)
+		res := T.Run("Info.TraceReference", "markers *", text);
+		ASSERT(T.Said(text, "Expected ModuleName.VariableName"));
+
+		(* A module that is not loaded. *)
+		res := T.Run("Info.TraceReference", "NoSuchModuleAnywhere.x *", text);
+		ASSERT(T.Said(text, "not found"));
+
+		(* And a variable that is not a pointer, which there is nothing to walk from. *)
+		res := T.Run("Info.TraceReference", "Info.numRecentAllocators *", text);
+		ASSERT(T.Said(text, "not a pointer"))
+	END Test.
+
+positive: a process that is not there is said not to be
+
+	MODULE Test;
+	IMPORT T := InfoTestShared;
+
+	VAR text: T.Text; res: INTEGER;
+
+	BEGIN
+		res := T.Run("Info.TraceProcessID", "999999 *", text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "999999"));
+		ASSERT(T.Said(text, "not found"));
+
+		(* The refusal when the number is missing altogether is a different one. *)
+		res := T.Run("Info.TraceProcessID", "", text);
+		ASSERT(T.Said(text, "Expected ProcessID"))
+	END Test.
+
+positive: the recent allocators are named once each, and the report is dated when it was made
+
+	MODULE Test;
+	IMPORT Info, T := InfoTestShared;
+
+	VAR first, second: T.Text; res: INTEGER; early, late: ARRAY 24 OF CHAR;
+
+	BEGIN
+		Info.AddAllocatorLogger;
+		T.Populate(50);
+
+		res := T.Run("Info.RecentAllocators", "", first);
+		ASSERT(res = 0);
+		ASSERT(T.Said(first, "recent allocators"));
+		ASSERT(T.Said(first, "Heaps.NewRec"));
+
+		(*	Same doubling as the report by allocation site, from the same cause. *)
+		ASSERT(~T.Said(first, "Heaps.Heaps."));
+
+		T.Populate(50);
+		res := T.Run("Info.RecentAllocators", "", second);
+		ASSERT(res = 0);
+
+		(*	The heading carries the time the report was made. It was written as the time held in
+			`recentAllocators[i]` with `i` still holding whatever the frame did -- the variable is
+			assigned four lines further down -- so the heading was the first slot's timestamp and
+			did not move between two reports taken seconds apart. Measured 07.09.2026: both said
+			t = 00000872086C1FAA while every line under them had changed. *)
+		T.After(first, "t = ", 16, early);
+		T.After(second, "t = ", 16, late);
+		ASSERT(early # "");
+		ASSERT(late # "");
+		ASSERT(early # late)
+	END Test.

@@ -199,6 +199,7 @@ TYPE
 			selected := 0; total := 0;
 			FOR i := 0 TO nofElements-1 DO
 				INC(total, types[i].count);
+				INC(totalSize, types[i].size);	(* declared, zeroed and never added to: the line always ended "of 0B" *)
 				module := NIL;
 				IF (types[i].pc # 0) THEN
 					module := Modules.ThisModuleByAdr(types[i].pc);
@@ -214,15 +215,14 @@ TYPE
 						COPY(typedesc.name,copy);
 						Strings.AppendX(string, copy);
 					ELSE
+						(*	GetProcedureName answers "Streams.Writer.InitWriter", module and all,
+							so putting module.name in front of it read "Streams.Streams.Writer...". *)
 						string := "";
-						COPY(module.name,copy);
-						Strings.AppendX(string, copy);
-						Strings.AppendX(string, ".");
 						Reflection.GetProcedureName(types[i].pc, copy,startpc);
 						Strings.AppendX(string, copy);
-						Strings.Append(string,":");
+						Strings.AppendX(string,":");
 						Strings.IntToStr(SIGNED32(types[i].pc - startpc), copy);
-						Strings.Append(string,copy);
+						Strings.AppendX(string,copy);
 					END;
 
 					IF Strings.Match(mask, string) THEN
@@ -377,17 +377,32 @@ BEGIN
 			context.out.String(m.name);
 			context.out.String(" refcnt = "); context.out.Int(m.refcnt, 1);
 			context.out.String(" sb ="); context.out.Hex(m.sb, 9);
-			context.out.String(" dataSize = "); context.out.Int(LEN(m.data), 1);
-			context.out.String(" codeSize = "); context.out.Int(LEN(m.code), 1);
-			context.out.String(" refSize = "); context.out.Int(LEN(m.refs), 1);
-			context.out.String(" entries = "); context.out.Int(LEN(m.entry), 1);
-			context.out.String(" commands = "); context.out.Int(LEN(m.command), 1);
-			context.out.String(" modules = "); context.out.Int(LEN(m.module), 1);
-			context.out.String(" types = "); context.out.Int(LEN(m.typeInfo), 1);
-			context.out.String(" pointers = "); context.out.Int(LEN(m.ptrAdr), 1);
+			(*	`data`, `code` and `entry` are NIL for a module the linker put in the boot image and
+				`entry` for every module there is, so LEN of them was a segmentation violation on
+				the first module anybody would ask about. *)
+			context.out.String(" dataSize = ");
+			IF m.data # NIL THEN context.out.Int(LEN(m.data), 1) ELSE context.out.String("none") END;
+			context.out.String(" codeSize = ");
+			IF m.code # NIL THEN context.out.Int(LEN(m.code), 1) ELSE context.out.String("none") END;
+			context.out.String(" refSize = ");
+			IF m.refs # NIL THEN context.out.Int(LEN(m.refs), 1) ELSE context.out.String("none") END;
+			context.out.String(" entries = ");
+			IF m.entry # NIL THEN context.out.Int(LEN(m.entry), 1) ELSE context.out.String("none") END;
+			context.out.String(" commands = ");
+			IF m.command # NIL THEN context.out.Int(LEN(m.command), 1) ELSE context.out.String("none") END;
+			context.out.String(" modules = ");
+			IF m.module # NIL THEN context.out.Int(LEN(m.module), 1) ELSE context.out.String("none") END;
+			context.out.String(" types = ");
+			IF m.typeInfo # NIL THEN context.out.Int(LEN(m.typeInfo), 1) ELSE context.out.String("none") END;
+			context.out.String(" pointers = ");
+			IF m.ptrAdr # NIL THEN context.out.Int(LEN(m.ptrAdr), 1) ELSE context.out.String("none") END;
 			context.out.Ln; context.out.String("  ptrAdr:");
-			FOR i := 0 TO LEN(m.ptrAdr)-1 DO
-				context.out.Char(" "); context.out.Int(m.ptrAdr[i]-m.sb, 1)
+			IF m.ptrAdr # NIL THEN
+				FOR i := 0 TO LEN(m.ptrAdr)-1 DO
+					context.out.Char(" "); context.out.Int(m.ptrAdr[i]-m.sb, 1)
+				END
+			ELSE
+				context.out.String(" none")
 			END;
 			context.out.Ln;
 			IF options.GetFlag("details") THEN
@@ -405,6 +420,7 @@ BEGIN
 					context.out.String("none"); context.out.Ln;
 				END;
 			END;
+			IF m.typeInfo # NIL THEN
 			FOR i := 0 TO LEN(m.typeInfo) - 1 DO
 				context.out.Ln; context.out.String("  type:");
 				context.out.Hex(m.typeInfo[i].tag, 9);
@@ -413,27 +429,45 @@ BEGIN
 					(* type descriptor info *)
 				context.out.Ln; context.out.String("  typedesc1:");
 				p := m.typeInfo[i].tag; (* address of static type descriptor *)
-				REPEAT
-					SYSTEM.GET(p, k);
-					IF ABS(k) <= 4096 THEN context.out.Char(" "); context.out.Int(k, 1)
-					ELSE context.out.Hex(k, 9)
-					END;
-					INC(p, AddressSize)
-				UNTIL k < -40000000H;
-					(* methods *)
-				context.out.Ln; context.out.String("  typedescmths:");
-				p := SYSTEM.VAL(ADDRESS, m.typeInfo[i].tag) + Modules.Mth0Ofs;
-				j := 0;
-				SYSTEM.GET(p, procAdr);
-				WHILE procAdr # Heaps.MethodEndMarker DO
-					context.out.Ln; context.out.Int(j, 3); context.out.Char(" ");
-					Reflection.WriteProc(context.out, procAdr);
-					DEC(p, AddressSize);
+				IF p = 0 THEN
+					(*	`@Self` of every module with an active object is an entry with no descriptor,
+						and reading one at address 0 is where this command died. *)
+					context.out.String(" none")
+				ELSE
+					(*	ponytail: 64 words, because the word this stops on belongs to the end of the
+						whole descriptor area and not to this type -- `Modules.Command` measured 289
+						words on 07.09.2026, the last 260 of them the descriptors that follow it.
+						Raise the ceiling to a real end when Heaps.StaticTypeBlock is readable here. *)
+					j := 0;
+					REPEAT
+						SYSTEM.GET(p, k);
+						IF ABS(k) <= 4096 THEN context.out.Char(" "); context.out.Int(k, 1)
+						ELSE context.out.Hex(k, 9)
+						END;
+						INC(p, AddressSize); INC(j)
+					UNTIL (k < -40000000H) OR (j = 64);
+					IF j = 64 THEN context.out.String(" ...") END;
+						(* methods *)
+					context.out.Ln; context.out.String("  typedescmths:");
+					p := SYSTEM.VAL(ADDRESS, m.typeInfo[i].tag) + Modules.Mth0Ofs;
+					j := 0;
 					SYSTEM.GET(p, procAdr);
-					INC(j)
+					WHILE (procAdr # Heaps.MethodEndMarker) & (j < 64) DO
+						context.out.Ln; context.out.Int(j, 3); context.out.Char(" ");
+						Reflection.WriteProc(context.out, procAdr);
+						DEC(p, AddressSize);
+						SYSTEM.GET(p, procAdr);
+						INC(j)
+					END;
+					IF j = 64 THEN context.out.Ln; context.out.String("  ...") END
 				END
+			END
 			END;
 			context.out.Ln
+		ELSE
+			(* Its own sibling TraceModule says this; this one used to say nothing and report Ok. *)
+			context.error.String("Module "); context.error.String(modn);
+			context.error.String(" is not loaded."); context.error.Ln
 		END;
 	END;
 END ModuleDetails;
@@ -441,13 +475,15 @@ END ModuleDetails;
 (** Find a procedure, given the absolute PC address. *)
 
 PROCEDURE ModulePC*(context : Commands.Context);	(** pc *)
-VAR pc : SIGNED32;
+VAR pc : ADDRESS;
 BEGIN
-	context.arg.SkipWhitespace; context.arg.Int32(pc, FALSE);
+	(*	The address is copied out of a trap report, so it is 64 bits wide and written in hex. Read
+		into a SIGNED32 in decimal, `00007FA57760B781` stopped at the first letter and asked about 7. *)
+	context.arg.SkipWhitespace; context.arg.Address(pc, TRUE);
 	IF Modules.ThisModuleByAdr(pc) # NIL THEN
 		Reflection.WriteProc(context.out, pc);
 	ELSE
-		context.out.Hex(pc, 8); context.out.String(" not found")
+		context.out.Address(pc); context.out.String(" not found")
 	END;
 	context.out.Ln;
 END ModulePC;
@@ -504,7 +540,7 @@ BEGIN
         scale := (Machine.GetTimer() - scale) DIV 100; (* 1 ms resolution *)
 	END;
 	out.String("----------- recent allocators, t = ");
-	out.Hex(recentAllocators[i].time, -16);
+	out.Hex(time, -16);	(* was recentAllocators[i].time, with i assigned four lines below this *)
 	out.String(" ---------------"); out.Ln;
 	Machine.Acquire(Machine.Heaps);
 	i := numRecentAllocators;
@@ -533,13 +569,16 @@ BEGIN
 			pc := recentAllocators[i].pc[pcs];
 
 			module := Modules.ThisModuleByAdr(pc);
-			out.String(module.name);
-			out.String(".");
-			Reflection.GetProcedureName(pc, name,startpc);
-			out.String(name);
-			out.String(":");
-			out.Int(pc-startpc,1);
-			out.String(" ");
+			IF module = NIL THEN
+				out.Address(pc); out.String(" ")	(* the walk runs off the top frame into nobody's code *)
+			ELSE
+				(* GetProcedureName's answer already carries the module -- see ShowBlocks. *)
+				Reflection.GetProcedureName(pc, name,startpc);
+				out.String(name);
+				out.String(":");
+				out.Int(pc-startpc,1);
+				out.String(" ")
+			END;
 		END;
 		out.Ln;
 		DEC(i); i := i MOD LEN(recentAllocators);
@@ -632,7 +671,11 @@ BEGIN
 			IF (module # NIL) THEN
 				COPY(array[1]^, varName);
 				IF Reflection.FindVar(module, varName, variable) THEN
-					IF (variable.type = 13) OR (variable.type = 29) THEN
+					(*	Decimal 13 and 29 were codes of an older references section. In this one a
+						pointer is 21X or 22X, and FindVar answered 0 for everything until 07.09.2026,
+						so every pointer variable was refused as not a pointer. *)
+					IF (variable.type = ORD(Reflection.sfTypePointerToRecord))
+						OR (variable.type = ORD(Reflection.sfTypePointerToArray)) THEN
 						NEW(analyzer, MaxNofTypes);
 						context.out.String("Heap blocks reference by variable "); context.out.String(modVar);
 						context.out.Char(":"); context.out.Ln;
@@ -744,6 +787,11 @@ VAR
 	mark : SIZE;
 BEGIN
 	ASSERT(analyzer # NIL);
+	(*	Heaps.Mark only pushes a block onto the mark stack; what follows the pointers out of it is
+		TraverseMarkStack, exported for this on 07.09.2026. Without it every one of the three
+		commands below reported the roots and nothing a root reaches -- a module holding an array of
+		five hundred records answered "2 dynamic records". *)
+	Heaps.TraverseMarkStack;
 	currentMarkValue := GetCurrentMarkValue();
 	memBlock := Machine.memBlockHead;
 	WHILE memBlock # NIL DO

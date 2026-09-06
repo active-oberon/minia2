@@ -304,8 +304,11 @@ BEGIN
 	END
 END Mark;
 
-(** Mark - Mark an object and its decendents. Used by findRoots. *)
-PROCEDURE TraverseMarkStack();
+(**	Mark - Mark an object and its decendents. Used by findRoots.
+	Exported 07.09.2026: `Mark` only pushes a block onto this stack, so anybody who marks roots and
+	then reads the marks -- `Info`'s three "what keeps this alive" commands -- counted the roots and
+	nothing they point at until they could drain it. *)
+PROCEDURE TraverseMarkStack*();
 VAR orgBlock: ADDRESS;(*: ADDRESS*); staticTypeBlock {UNTRACED}: StaticTypeBlock;
 	orgHeapBlock {UNTRACED}, next{UNTRACED}: HeapBlock;
 	currentArrayElemAdr, lastArrayElemAdr: ADDRESS; i: SIZE;
