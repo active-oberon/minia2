@@ -1,0 +1,358 @@
+# Tests for source/ShellCommands.Mod -- the other shell in this tree: the one a telnet client gets.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ShellCommandsTestShared ShellCommands;System.Load Test"
+#
+# `Shell` is what a terminal talks to and it has its own suite. This is the second implementation of
+# the same idea -- ejz's, from the telnet days -- and `Telnet.Mod` is its only caller in the tree:
+# a line of text in, `Execute`, a line of output back. It parses the same grammar, `cmd { par }`
+# with `|`, `<`, `>` and `>>`, keeps a table of aliases per session, and ships nine commands of its
+# own. Nothing had ever run any of it outside a telnet session, and a telnet session is not a thing
+# a case can open.
+#
+# It can be run without one: `ShellCommands.Context` is exported and takes the four streams. So a
+# case here is a session over strings -- a line handed to `Execute`, and whatever came back on the
+# writer. The cases ask what a shell is asked: does a command get its arguments, does a pipe carry
+# anything, does a redirection write the file, does an alias resolve. And they ask the two things
+# that happen when one of these commands is typed at the *other* shell, where there is no session
+# behind it at all.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ShellCommandsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A telnet session made of two strings" *)
+
+	IMPORT ShellCommands, Commands, Files, Streams, Strings;
+
+	TYPE
+		(**	A session over strings: what the client typed goes in, what the shell answered comes
+			out. The object itself stands in for the connection a real session has behind it. *)
+		Session* = OBJECT
+		VAR
+			context-: ShellCommands.Context;
+			out: Streams.StringWriter;
+			res-: INTEGER;
+			message-: ARRAY 128 OF CHAR;
+
+			PROCEDURE &Init* (CONST input: ARRAY OF CHAR);
+			VAR in: Streams.StringReader;
+			BEGIN
+				Streams.OpenStringReader(in, input);
+				Streams.OpenStringWriter(out, 16 * 1024);
+				NEW(context, SELF, in, out, out)
+			END Init;
+
+			(** One line of the session. The result is the shell's, and so is the message. *)
+			PROCEDURE Run* (CONST cmdline: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+			VAR line: ARRAY 256 OF CHAR;
+			BEGIN
+				COPY(cmdline, line);
+				res := 0; message := "";
+				ShellCommands.Execute(context, line, res, message);
+				out.Update;
+				out.Get(text);
+				RETURN res
+			END Run;
+
+		END Session;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** Write a file the case is about, under a name of its own. *)
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content);
+		writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** Read every character of a file back. FALSE when there is no such file. *)
+	PROCEDURE ReadBack* (CONST filename: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+	VAR file: Files.File; reader: Files.Reader; length: SIZE;
+	BEGIN
+		text := "";
+		file := Files.Old(filename);
+		IF file = NIL THEN RETURN FALSE END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(text, 0, LEN(text) - 1, length);
+		text[length] := 0X;
+		RETURN TRUE
+	END ReadBack;
+
+	(** Run one command the ordinary way, through Commands, with a context that is not a session. *)
+	PROCEDURE Activate* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Activate;
+
+	END ShellCommandsTestShared.
+
+positive: a command is given all of its arguments, not the first character of them
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		NEW(session, "");
+		(*	the argument reader a context is born with is one byte wide -- the empty one that
+			Commands.Context.Init substitutes for NIL -- and SetRaw clamps to the reader's own
+			buffer without saying so. Every command in this shell got the first character of its
+			arguments: `echo hello` answered `h`. *)
+		ASSERT(session.Run("echo hello", text) = 0);
+		ASSERT(T.Said(text, "hello"));
+
+		ASSERT(session.Run("echo one two three", text) = 0);
+		ASSERT(T.Said(text, "one two three"));
+
+		(*	and a name that is longer than one character reaches the command that looks it up *)
+		ASSERT(session.Run("help echo", text) = 0);
+		ASSERT(T.Said(text, "echo { par }"));
+		ASSERT(~T.Said(text, "no such alias"))
+	END Test.
+
+positive: a command with nothing after it reads the session's own input
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		NEW(session, "what the client typed next");
+		ASSERT(session.Run("echo", text) = 0);
+		ASSERT(T.Said(text, "what the client typed next"))
+	END Test.
+
+positive: the aliases a session is born with, and one added to them
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR session: T.Session; text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		NEW(session, "");
+		(*	nine of them, and each is a name, the command behind it, and a line of help *)
+		ASSERT(session.Run("alias", text) = 0);
+		ASSERT(T.Said(text, "echo"));
+		ASSERT(T.Said(text, "ShellCommands.Echo"));
+		ASSERT(T.Said(text, "dir [ pattern ]"));
+		ASSERT(T.Said(text, "ver"));
+
+		(*	a new one is echoed back and then answers *)
+		ASSERT(session.Run("alias say ShellCommands.Echo 'say something'", text) = 0);
+		ASSERT(T.Said(text, "say"));
+		ASSERT(session.Run("say through the alias", text) = 0);
+		ASSERT(T.Said(text, "through the alias"));
+
+		(*	and its help is the third word of the line that made it *)
+		ASSERT(session.Run("help say", text) = 0);
+		ASSERT(T.Said(text, "say something"));
+
+		(*	a name that is not an alias is answered, not refused *)
+		ASSERT(session.Run("help nosuchalias", text) = 0);
+		ASSERT(T.Said(text, "no such alias"))
+	END Test.
+
+positive: what the machine is, and what is loaded on it
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR session: T.Session; text: ARRAY 8192 OF CHAR;
+
+	BEGIN
+		NEW(session, "");
+		ASSERT(session.Run("ver", text) = 0);
+		ASSERT(T.Said(text, "A2"));
+
+		(*	every module in the system, with the count of what holds it *)
+		ASSERT(session.Run("mods", text) = 0);
+		ASSERT(T.Said(text, "Modules"));
+		ASSERT(T.Said(text, "ShellCommands"))
+	END Test.
+
+positive: a pipe carries what one command wrote into the next
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		NEW(session, "");
+		(*	the first command of a pipe is given a context of its own, and the arguments it was
+			parsed with have to follow it there *)
+		ASSERT(session.Run("echo through the pipe | echo", text) = 0);
+		ASSERT(T.Said(text, "through the pipe"))
+	END Test.
+
+positive: a redirection writes the file, and two of them append to it
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	CONST FileName = "ShellCommands.Test.out.tmp.txt";
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		NEW(session, "");
+		ASSERT(session.Run("echo written by the shell > ShellCommands.Test.out.tmp.txt", text) = 0);
+		ASSERT(T.ReadBack(FileName, text));
+		ASSERT(T.Said(text, "written by the shell"));
+
+		(*	and the second one goes after the first, not over it *)
+		ASSERT(session.Run("echo and then some >> ShellCommands.Test.out.tmp.txt", text) = 0);
+		ASSERT(T.ReadBack(FileName, text));
+		ASSERT(T.Said(text, "written by the shell"));
+		ASSERT(T.Said(text, "and then some"))
+	END Test.
+
+positive: a file read into a command, and one that is not there
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	CONST FileName = "ShellCommands.Test.in.tmp.txt";
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Write(FileName, "read out of a file");
+
+		NEW(session, "");
+		ASSERT(session.Run("echo < ShellCommands.Test.in.tmp.txt", text) = 0);
+		ASSERT(T.Said(text, "read out of a file"));
+
+		(*	and a name that is not a file is a refusal with words, not a trap *)
+		ASSERT(session.Run("echo < ShellCommands.Test.no-such.tmp.txt", text) # 0);
+		ASSERT(T.Said(session.message, "input file not found"))
+	END Test.
+
+positive: del says what it did to each name it was given
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared, Files;
+
+	CONST FileName = "ShellCommands.Test.doomed.tmp.txt";
+
+	VAR session: T.Session; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Write(FileName, "not for long");
+		ASSERT(Files.Old(FileName) # NIL);
+
+		NEW(session, "");
+		ASSERT(session.Run("del ShellCommands.Test.doomed.tmp.txt", text) = 0);
+		ASSERT(T.Said(text, "done"));
+		ASSERT(Files.Old(FileName) = NIL);
+
+		(*	and a name that was never a file is a number, not a refusal *)
+		ASSERT(session.Run("del ShellCommands.Test.never-was.tmp.txt", text) = 0);
+		ASSERT(T.Said(text, "error: "))
+	END Test.
+
+positive: dir lists what matches the pattern, and free says why it cannot
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	CONST FileName = "ShellCommands.Test.listed.tmp.txt";
+
+	VAR session: T.Session; text: ARRAY 8192 OF CHAR;
+
+	BEGIN
+		T.Write(FileName, "0123456789");
+
+		NEW(session, "");
+		ASSERT(session.Run("dir ShellCommands.Test.listed.*", text) = 0);
+		ASSERT(T.Said(text, FileName));
+		(*	the size is on the line as well, and it is the size that was written *)
+		ASSERT(T.Said(text, "10"));
+
+		(*	a module nobody loaded cannot be freed, and the answer says so *)
+		ASSERT(session.Run("free NoSuchModuleAnywhere", text) = 0);
+		ASSERT(T.Said(text, "NoSuchModuleAnywhere"));
+		ASSERT(~T.Said(text, "done"))
+	END Test.
+
+positive: a session with nothing behind it does not trap at the end of a command
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared, ShellCommands, Streams;
+
+	VAR
+		context: ShellCommands.Context; in: Streams.StringReader; out: Streams.StringWriter;
+		line: ARRAY 256 OF CHAR; text: ARRAY 1024 OF CHAR; res: INTEGER;
+		message: ARRAY 128 OF CHAR;
+
+	BEGIN
+		(*	Telnet hands the connection to the context and every command ends by asking whether
+			that is a pipe to close. `NIL IS Pipes.Pipe` is not FALSE in this compiler, it is a
+			segmentation violation -- and the two procedures above the one that asks guard their
+			own type tests with a NIL test, so the idiom was known and this one missed it. *)
+		Streams.OpenStringReader(in, "");
+		Streams.OpenStringWriter(out, 4096);
+		NEW(context, NIL, in, out, out);
+
+		COPY("ver", line);
+		res := 0; message := "";
+		ShellCommands.Execute(context, line, res, message);
+		out.Update; out.Get(text);
+		ASSERT(res = 0);
+		ASSERT(T.Said(text, "A2"));
+
+		(*	exit asks the same question of the same NIL *)
+		COPY("exit", line);
+		res := 0; message := "";
+		ShellCommands.Execute(context, line, res, message);
+		out.Update; out.Get(text);
+		ASSERT(T.Said(text, "logout"))
+	END Test.
+
+positive: these commands typed at the other shell refuse, rather than reading through NIL
+
+	MODULE Test;
+	IMPORT T := ShellCommandsTestShared;
+
+	VAR text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		(*	every one of these is a command anybody can type, and the ordinary shell's context is
+			not a session: the alias table is reached through a type test that answers NIL, and
+			execute takes the context apart with a type guard that does not hold. Refusing with a
+			line of text is the answer; reading through NIL is not. *)
+		(*	the result alone does not tell the two apart: Commands runs a command in a body that is
+			{ACTIVE, SAFE}, so a trap inside it comes back as a result too. The words do. *)
+		ASSERT(T.Activate("ShellCommands.Alias", "", text) # 0);
+		ASSERT(T.Said(text, "no shell session"));
+
+		ASSERT(T.Activate("ShellCommands.Help", "echo", text) # 0);
+		ASSERT(T.Said(text, "no shell session"));
+
+		ASSERT(T.Activate("ShellCommands.Start", "ShellCommands.Version", text) # 0);
+		ASSERT(T.Said(text, "no shell session"));
+
+		(*	and the ones that need nothing of the session still work from anywhere *)
+		ASSERT(T.Activate("ShellCommands.Version", "", text) = 0);
+		ASSERT(T.Said(text, "A2"))
+	END Test.

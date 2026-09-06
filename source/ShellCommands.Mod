@@ -80,13 +80,36 @@ TYPE
 			SELF.C := C; alias := NIL
 		END New;
 
+		(*	Give the context the arguments of the command about to run in it. It has to be a reader
+			of its own and not the one the context was born with: for a NIL argument reader
+			Commands.Context.Init substitutes an empty one **one byte wide**, and SetRaw clamps to
+			the reader's own buffer without saying so -- which gave every command in this shell the
+			first character of its arguments and nothing else. A NIL here means no arguments at
+			all, and that has to be an empty reader too, or the one byte of the empty reader reads
+			as an argument and a command that would fall back on the session's input never does. *)
+		PROCEDURE SetArguments(arguments: CmdParameters; length: SIZE);
+		VAR arg: Streams.StringReader;
+		BEGIN
+			IF (arguments = NIL) OR (length <= 0) THEN length := 0 END;
+			NEW(arg, length + 1);
+			IF length > 0 THEN arg.SetRaw(arguments^, 0, length) END;
+			Init(in, arg, out, error, caller)
+		END SetArguments;
+
 	END Context;
 
 	Command = OBJECT
 	VAR
 		ctx: Context;
 		cmd: String;
+		args: CmdParameters; argLen: SIZE;   (* the arguments belong to the command, not to a context *)
 		next: Command;
+
+		PROCEDURE SetArguments(arguments: CmdParameters; length: SIZE);
+		BEGIN
+			args := arguments; argLen := length;
+			ctx.SetArguments(args, argLen)
+		END SetArguments;
 
 		PROCEDURE SetContext(C: ANY; in: Streams.Reader; out, err: Streams.Writer);
 		VAR a: AliasList;
@@ -94,14 +117,15 @@ TYPE
 			IF (C # ctx.C) OR (in # ctx.in) OR (out # ctx.out) OR (err # ctx.error) THEN
 				a := ctx.alias;
 				NEW(ctx, C, in, out, err);
-				ctx.alias := a
+				ctx.alias := a;
+				ctx.SetArguments(args, argLen)   (* a new context is not a reason to lose them *)
 			END
 		END SetContext;
 
 		PROCEDURE &Init*(ctx: Context);
 		BEGIN
 			ASSERT(ctx # NIL);
-			SELF.ctx := ctx; cmd := ""; next := NIL
+			SELF.ctx := ctx; cmd := ""; args := NIL; argLen := 0; next := NIL
 		END Init;
 
 	END Command;
@@ -134,16 +158,27 @@ VAR ctx: Context;
 BEGIN
 	IF (p # NIL) & (p IS Context) THEN
 		ctx := p(Context);
-		IF ctx.C IS Pipes.Pipe THEN
+		IF (ctx.C # NIL) & (ctx.C IS Pipes.Pipe) THEN   (* NIL IS T traps: the two above guard, this did not *)
 			ctx.out.Update(); ctx.C(Pipes.Pipe).Close()
 		END
 	END
 END Close;
 
+(*	The alias table lives in the session, and these two are commands anybody can type at the other
+	shell, where the context is not a session and GetAliasList answers NIL. Saying so is the answer;
+	reading through the NIL is not. *)
+PROCEDURE NoSession(context : Commands.Context);
+BEGIN
+	context.error.String("ShellCommands: no shell session -- this command needs one"); context.error.Ln;
+	context.error.Update;
+	context.result := Commands.CommandError
+END NoSession;
+
 PROCEDURE Alias*(context : Commands.Context);
 VAR al: AliasList; alias, cmd, help: String;
 BEGIN
 	al := GetAliasList(context);
+	IF al = NIL THEN NoSession(context); RETURN END;
 	IF context.arg.GetString(alias) & context.arg.GetString(cmd) THEN
 		context.out.String(alias); context.out.Char(09X); context.out.String(cmd); context.out.Ln;
 		IF context.arg.GetString(help) THEN
@@ -208,7 +243,7 @@ BEGIN
 	IF (context # NIL) & (context IS Context) THEN
 		context.out.Ln(); context.out.String("logout"); context.out.Ln();
 		ctx := context(Context);
-		IF ctx.C IS Streams.Connection THEN
+		IF (ctx.C # NIL) & (ctx.C IS Streams.Connection) THEN
 			ctx.C(Streams.Connection).Close()
 		END
 	END;
@@ -236,6 +271,7 @@ VAR name: String; al: AliasList; a: CmdAlias;
 BEGIN
 	IF ~context.arg.GetString(name) THEN name := "help" END;
 	al := GetAliasList(context);
+	IF al = NIL THEN NoSession(context); RETURN END;
 	a := al.Find(name);
 	IF a # NIL THEN
 		context.out.String(a.help);
@@ -268,6 +304,10 @@ VAR
 	in, pR: Streams.Reader; out, err, pW: Streams.Writer; file: Files.FileName; F, newF: Files.File; fR: Files.Reader;
 	fW: Files.Writer; pipe: Pipes.Pipe; a: CmdAlias; cmdString : POINTER TO ARRAY OF CHAR;
 BEGIN
+	IF (context = NIL) OR ~(context IS Context) THEN
+		(* Start and Execute are reachable from anywhere; the type guard below is not a check *)
+		res := -1; COPY("ShellCommands: no shell session -- this command needs one", msg); RETURN
+	END;
 	ctx := context(Context);
 	len := LEN(cmdline); newF := NIL; cmds := NIL; prev := NIL;
 	IF ctx.alias = NIL THEN NEW(ctx.alias) END; ofs := 0;
@@ -302,11 +342,10 @@ BEGIN
 			cmdString[j] := " "; INC(j);
 			cmdString[j] := 0X;
 
-			IF (cmd.ctx.arg IS Streams.StringReader) THEN
-				cmd.ctx.arg(Streams.StringReader).SetRaw(cmdString^, 0, j +1);
-			END;
+			cmd.SetArguments(cmdString, j);
 		ELSE
-			cmdString := NIL
+			cmdString := NIL;
+			cmd.SetArguments(NIL, 0)   (* and not what the command before it on the line was given *)
 		END;
 		CASE filter OF
 		"|": ofs := i+1; R.SetRaw(cmdline, ofs, len-ofs);
@@ -405,7 +444,8 @@ BEGIN
 		string[LEN(string)-1] := 0X;
 		execute(context, string^, {}, res, msg);
 		IF res # 0 THEN
-			context.out.Int(res, 0); context.out.String(": "); context.out.String(msg); context.out.Ln()
+			context.out.Int(res, 0); context.out.String(": "); context.out.String(msg); context.out.Ln();
+			context.result := Commands.CommandError   (* printing it is not the same as reporting it *)
 		END
 	END;
 	Close(context);
