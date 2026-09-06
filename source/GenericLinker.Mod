@@ -584,6 +584,14 @@ BEGIN
 		reader.SkipWhitespace;
 		IF reader.res = Streams.Ok THEN linker.AddSection (section); END;
 	END;
+	(*	`Peek` answers 0X at both ends -- the file's and a section's -- but it clears the end of file
+		it finds at the file's, so `res` is `Ok` after the last whole section and is not after one
+		that was read short. The short section itself is dropped by the guard in the loop; without
+		this the file was then accepted as though it had ended where it was cut, and a loader linked
+		whatever had arrived and reported no error at all. *)
+	IF reader.res # Streams.Ok THEN
+		linker.Error("", "object file ends in the middle of a section");
+	END;
 END Load;
 
 BEGIN
