@@ -151,6 +151,10 @@ TYPE
 					WHILE (Dates.CompareDateTime(info.trigger, currentTime) # 1) DO
 						Dates.AddHours(info.trigger, 1);
 					END;
+				ELSIF (repeatType = Daily) THEN   (* the one kind of repeat that had no branch here *)
+					WHILE (Dates.CompareDateTime(info.trigger, currentTime) # 1) DO
+						Dates.AddDays(info.trigger, 1);
+					END;
 				ELSIF (repeatType = Weekly) THEN
 					WHILE (Dates.CompareDateTime(info.trigger, currentTime) # 1) DO
 						Dates.AddDays(info.trigger, 7);
@@ -291,7 +295,9 @@ TYPE
 		PROCEDURE Select*(selector : SelectorProcedure; CONST dt : Dates.DateTime; VAR tasks : TaskArray; VAR nofSelectedTasks, nofTasks : SIGNED32);
 		VAR task : Task; i : SIGNED32;
 		BEGIN
-			Clear(tasks);
+			(*	the array is what Select hands back, so a caller starts with nothing -- and Clear
+				asserts it is given something. The one caller in the tree starts with NIL. *)
+			IF (tasks # NIL) THEN Clear(tasks); END;
 			lock.AcquireRead;
 			(* first count number of selected tasks *)
 			nofTasks := SELF.nofTasks;
@@ -333,8 +339,9 @@ TYPE
 		PROCEDURE Add*(task : Task);
 		VAR t : Task;
 		BEGIN
+			(*	the id is the task's from the moment it is made; giving it a new one here took it
+				away from any caller holding the old one, on every re-add ConfirmTask does *)
 			ASSERT((task # NIL) & (task.list = NIL));
-			task.id := GetId();
 			lock.AcquireWrite;
 			IF (head = NIL) OR (Dates.CompareDateTime(task.GetTrigger(), head.GetTrigger()) = -1) THEN
 				task.next := head;
@@ -473,10 +480,11 @@ BEGIN {EXCLUSIVE}
 	RETURN id;
 END GetId;
 
+(**	The list this module keeps and its scheduler watches. It used to make a new empty one on every
+	call, so nothing a caller added was ever in the list the module holds, and two callers never saw
+	each other's tasks. *)
 PROCEDURE GetTaskList*() : TaskList;
-VAR taskList : TaskList;
 BEGIN
-	NEW(taskList);
 	RETURN taskList;
 END GetTaskList;
 

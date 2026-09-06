@@ -1,0 +1,395 @@
+# Tests for source/TaskScheduler.Mod -- a command, a moment, and how often to do it again.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test TaskSchedulerTestShared;System.Load Test"
+#
+# A task is a command with a trigger and a repeat type; a list keeps them sorted by trigger, saves
+# them to a file and reads them back; and an active object is supposed to watch the clock. The one
+# thing that opens it is `WMTaskScheduler`, a window, so nothing headless had ever touched it, and
+# it had no test.
+#
+# What the cases ask is the two questions the module is for. When does a repeating task next come
+# round -- for each of the seven kinds of repeat, because they are written one branch apiece and a
+# missing branch looks exactly like a working one until somebody asks. And does a list of them
+# survive being written to a file and read back, in order and complete.
+#
+# Not asked, and it is not a defect that the cases cannot ask it: the scheduler's own body calls
+# `Task.Check`, and `Check` is an empty IF inside an empty IF. Nothing in this module ever fires a
+# task. `TriggerNow` is what runs the command, and only a window calls it.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE TaskSchedulerTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Tasks made to order, and the clock they are measured against" *)
+
+	IMPORT TaskScheduler, Dates, Strings;
+
+	(** A task with a name, a command and a moment, and nothing else. *)
+	PROCEDURE NewTask* (CONST name, command: ARRAY OF CHAR; trigger: Dates.DateTime;
+			repeatType: SIGNED32): TaskScheduler.Task;
+	VAR task: TaskScheduler.Task; info: TaskScheduler.TaskInfo;
+	BEGIN
+		NEW(task);
+		COPY(name, info.name);
+		COPY(name, info.description);
+		COPY(command, info.command);
+		info.image := "";
+		info.repeatType := repeatType;
+		info.trigger := trigger;
+		task.SetInfo(info);
+		task.SetTrigger(trigger, repeatType);
+		RETURN task
+	END NewTask;
+
+	(** A moment this many seconds before now. *)
+	PROCEDURE Ago* (seconds: SIGNED32): Dates.DateTime;
+	VAR dt: Dates.DateTime;
+	BEGIN
+		dt := Dates.Now();
+		Dates.AddSeconds(dt, -seconds);
+		RETURN dt
+	END Ago;
+
+	(** Is this moment still to come? *)
+	PROCEDURE Future* (dt: Dates.DateTime): BOOLEAN;
+	BEGIN
+		RETURN Dates.CompareDateTime(Dates.Now(), dt) = -1
+	END Future;
+
+	(** How many whole seconds from now until then, and negative if it has gone by. *)
+	PROCEDURE Until* (dt: Dates.DateTime): SIGNED32;
+	VAR now: Dates.DateTime; days, hours, minutes, seconds: SIGNED32;
+	BEGIN
+		now := Dates.Now();
+		IF Dates.CompareDateTime(now, dt) = 1 THEN
+			Dates.TimeDifference(dt, now, days, hours, minutes, seconds);
+			RETURN -(((days * 24 + hours) * 60 + minutes) * 60 + seconds)
+		ELSE
+			Dates.TimeDifference(now, dt, days, hours, minutes, seconds);
+			RETURN ((days * 24 + hours) * 60 + minutes) * 60 + seconds
+		END
+	END Until;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	END TaskSchedulerTestShared.
+
+positive: a task keeps what it was told, and has a number of its own
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR a, b: TaskScheduler.Task; info: TaskScheduler.TaskInfo; when: Dates.DateTime;
+
+	BEGIN
+		when := Dates.Now();
+		a := T.NewTask("nightly", "System.Show nightly", when, TaskScheduler.Once);
+		b := T.NewTask("weekly", "System.Show weekly", when, TaskScheduler.Once);
+
+		info := a.GetInfo();
+		ASSERT(info.name = "nightly");
+		ASSERT(info.command = "System.Show nightly");
+		ASSERT(info.repeatType = TaskScheduler.Once);
+
+		(*	two tasks made one after the other are two tasks *)
+		ASSERT(a.id # b.id);
+
+		(*	and a task that is in no list says so *)
+		ASSERT(a.list = NIL)
+	END Test.
+
+positive: a repeat that has gone by is moved forward, whichever repeat it is
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR task: TaskScheduler.Task; trigger: Dates.DateTime;
+
+	PROCEDURE Moved (CONST what: ARRAY OF CHAR; secondsAgo, repeatType: SIGNED32): BOOLEAN;
+	BEGIN
+		task := T.NewTask(what, "System.Show x", T.Ago(secondsAgo), repeatType);
+		trigger := task.GetTrigger();
+		RETURN T.Future(trigger)
+	END Moved;
+
+	BEGIN
+		(*	each kind of repeat is a branch of its own, and a branch that is not there looks
+			exactly like a branch that works until the trigger is asked for. Daily was not there:
+			a task set to run every day at a time that had already gone by stayed in the past for
+			good. *)
+		ASSERT(Moved("second", 5, TaskScheduler.EverySecond));
+		ASSERT(Moved("minute", 5 * 60, TaskScheduler.EveryMinute));
+		ASSERT(Moved("hourly", 5 * 3600, TaskScheduler.Hourly));
+		ASSERT(Moved("daily", 2 * 24 * 3600, TaskScheduler.Daily));
+		ASSERT(Moved("weekly", 20 * 24 * 3600, TaskScheduler.Weekly));
+		ASSERT(Moved("monthly", 100 * 24 * 3600, TaskScheduler.Monthly));
+		ASSERT(Moved("yearly", 800 * 24 * 3600, TaskScheduler.Yearly));
+
+		(*	and it is moved to the next one, not past it: a daily task two days late comes round
+			within a day *)
+		ASSERT(Moved("daily", 2 * 24 * 3600, TaskScheduler.Daily));
+		ASSERT(T.Until(trigger) <= 24 * 3600);
+
+		ASSERT(Moved("hourly", 5 * 3600, TaskScheduler.Hourly));
+		ASSERT(T.Until(trigger) <= 3600)
+	END Test.
+
+positive: a task that happens once stays where it was put, past or future
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR task: TaskScheduler.Task; when, trigger: Dates.DateTime; days, hours, minutes, seconds: SIGNED32;
+
+	BEGIN
+		when := T.Ago(3600);
+		task := T.NewTask("once", "System.Show once", when, TaskScheduler.Once);
+		trigger := task.GetTrigger();
+		ASSERT(Dates.Equal(trigger, when));
+		ASSERT(~T.Future(trigger));
+
+		(*	and the time left on something that has gone by is nothing at all, not a negative *)
+		task.Left(days, hours, minutes, seconds);
+		ASSERT(days = 0); ASSERT(hours = 0); ASSERT(minutes = 0); ASSERT(seconds = 0);
+
+		(*	one an hour ahead has an hour left, give or take the second this case takes to run *)
+		when := T.Ago(-3600);
+		task := T.NewTask("later", "System.Show later", when, TaskScheduler.Once);
+		task.Left(days, hours, minutes, seconds);
+		ASSERT(days = 0);
+		ASSERT((hours = 1) OR ((hours = 0) & (minutes = 59)))
+	END Test.
+
+positive: a list holds its tasks in the order they come round
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR
+		list: TaskScheduler.TaskList; soon, later, latest: TaskScheduler.Task;
+		found: TaskScheduler.Task; soonId: SIGNED32;
+
+	BEGIN
+		NEW(list);
+		ASSERT(list.GetNofTasks() = 0);
+
+		(*	added out of order on purpose *)
+		later := T.NewTask("later", "System.Show later", T.Ago(-2 * 3600), TaskScheduler.Once);
+		soon := T.NewTask("soon", "System.Show soon", T.Ago(-3600), TaskScheduler.Once);
+		latest := T.NewTask("latest", "System.Show latest", T.Ago(-3 * 3600), TaskScheduler.Once);
+
+		(*	the number belongs to the task from the moment it is made, and going into a list is not
+			an occasion to give it another one: FindById is there for callers who keep the number
+			rather than the task. *)
+		soonId := soon.id;
+
+		list.Add(later); list.Add(latest); list.Add(soon);
+		ASSERT(soon.id = soonId);
+		ASSERT(list.GetNofTasks() = 3);
+		ASSERT(soon.list = list);
+
+		(*	a task is found by the number it was given when it was made, and it keeps that number
+			when it goes into a list *)
+		found := list.FindById(soonId);
+		ASSERT(found = soon);
+		found := list.FindById(latest.id);
+		ASSERT(found = latest);
+		ASSERT(list.FindById(MAX(SIGNED32)) = NIL);
+
+		(*	taken out, it is out, and it says so *)
+		list.Remove(soon);
+		ASSERT(list.GetNofTasks() = 2);
+		ASSERT(soon.list = NIL);
+		ASSERT(list.FindById(soonId) = NIL);
+
+		list.Reset;
+		ASSERT(list.GetNofTasks() = 0)
+	END Test.
+
+positive: a selection with no array to put it in makes one
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR
+		list: TaskScheduler.TaskList; tasks: TaskScheduler.TaskArray;
+		selected, total: SIGNED32; dt: Dates.DateTime;
+
+	PROCEDURE All (time: Dates.DateTime; task: TaskScheduler.Task): BOOLEAN;
+	BEGIN
+		RETURN TRUE
+	END All;
+
+	PROCEDURE None (time: Dates.DateTime; task: TaskScheduler.Task): BOOLEAN;
+	BEGIN
+		RETURN FALSE
+	END None;
+
+	BEGIN
+		NEW(list);
+		list.Add(T.NewTask("a", "System.Show a", T.Ago(-3600), TaskScheduler.Once));
+		list.Add(T.NewTask("b", "System.Show b", T.Ago(-7200), TaskScheduler.Once));
+		dt := Dates.Now();
+
+		(*	the array is what Select hands back and the caller starts with nothing -- which is what
+			the one caller in the tree does. Select began by emptying it, and emptying nothing was
+			an ASSERT: the window died on its first tick. *)
+		tasks := NIL;
+		list.Select(All, dt, tasks, selected, total);
+		ASSERT(tasks # NIL);
+		ASSERT(selected = 2);
+		ASSERT(total = 2);
+		ASSERT(tasks[0] # NIL);
+		ASSERT(tasks[1] # NIL);
+
+		(*	a selector that wants nothing selects nothing, and the total is still the total *)
+		list.Select(None, dt, tasks, selected, total);
+		ASSERT(selected = 0);
+		ASSERT(total = 2);
+		ASSERT(tasks[0] = NIL)
+	END Test.
+
+positive: a list written to a file is the list that is read back
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	CONST FileName = "TaskScheduler.Test.tasks.tmp.txt";
+
+	VAR
+		list, reloaded: TaskScheduler.TaskList; task: TaskScheduler.Task;
+		info: TaskScheduler.TaskInfo; tasks: TaskScheduler.TaskArray;
+		selected, total: SIGNED32; i: SIGNED32; names: ARRAY 3 OF BOOLEAN;
+
+	PROCEDURE All (time: Dates.DateTime; task: TaskScheduler.Task): BOOLEAN;
+	BEGIN
+		RETURN TRUE
+	END All;
+
+	BEGIN
+		NEW(list);
+		list.Add(T.NewTask("first", "System.Show first", T.Ago(-3600), TaskScheduler.Once));
+		list.Add(T.NewTask("second", "System.Show second", T.Ago(-7200), TaskScheduler.Daily));
+		list.Add(T.NewTask("third", "System.Show third", T.Ago(-10800), TaskScheduler.Weekly));
+		ASSERT(list.Store(FileName));
+
+		NEW(reloaded);
+		ASSERT(reloaded.Load(FileName));
+		ASSERT(reloaded.GetNofTasks() = 3);
+
+		tasks := NIL;
+		reloaded.Select(All, Dates.Now(), tasks, selected, total);
+		ASSERT(selected = 3);
+
+		FOR i := 0 TO 2 DO names[i] := FALSE END;
+		FOR i := 0 TO 2 DO
+			task := tasks[i];
+			ASSERT(task # NIL);
+			info := task.GetInfo();
+			IF info.name = "first" THEN
+				names[0] := TRUE;
+				ASSERT(info.command = "System.Show first");
+				ASSERT(info.repeatType = TaskScheduler.Once)
+			ELSIF info.name = "second" THEN
+				names[1] := TRUE;
+				ASSERT(info.command = "System.Show second");
+				ASSERT(info.repeatType = TaskScheduler.Daily)
+			ELSIF info.name = "third" THEN
+				names[2] := TRUE;
+				ASSERT(info.command = "System.Show third");
+				ASSERT(info.repeatType = TaskScheduler.Weekly)
+			END
+		END;
+		FOR i := 0 TO 2 DO ASSERT(names[i]) END;
+
+		(*	a file that is not there is a no, not a trap *)
+		NEW(reloaded);
+		ASSERT(~reloaded.Load("TaskScheduler.Test.no-such-file.tmp.txt"))
+	END Test.
+
+positive: the names of the repeat types, and a number that is not one of them
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler;
+
+	VAR string: ARRAY 32 OF CHAR;
+
+	BEGIN
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Once, string); ASSERT(string = "Once");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.EverySecond, string); ASSERT(string = "Each Second");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.EveryMinute, string); ASSERT(string = "Each Minute");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Hourly, string); ASSERT(string = "Hourly");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Daily, string); ASSERT(string = "Daily");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Weekly, string); ASSERT(string = "Weekly");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Monthly, string); ASSERT(string = "Monthly");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Yearly, string); ASSERT(string = "Yearly");
+		TaskScheduler.GetRepeatTypeString(TaskScheduler.Unknown, string); ASSERT(string = "Unknown");
+		TaskScheduler.GetRepeatTypeString(MAX(SIGNED32), string); ASSERT(string = "Unknown")
+	END Test.
+
+positive: the array helpers copy, empty and compare
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR a, b: TaskScheduler.TaskArray; task: TaskScheduler.Task; i: SIGNED32;
+
+	BEGIN
+		NEW(a, 3);
+		FOR i := 0 TO 2 DO
+			a[i] := T.NewTask("t", "System.Show t", Dates.Now(), TaskScheduler.Once)
+		END;
+
+		b := NIL;
+		TaskScheduler.Copy(a, b);
+		ASSERT(b # NIL);
+		ASSERT(LEN(b) = 3);
+		ASSERT(TaskScheduler.IsEqual(a, b));
+		FOR i := 0 TO 2 DO ASSERT(b[i] = a[i]) END;
+
+		(*	one different task and they are not the same list any more *)
+		task := b[1];
+		b[1] := T.NewTask("u", "System.Show u", Dates.Now(), TaskScheduler.Once);
+		ASSERT(~TaskScheduler.IsEqual(a, b));
+		b[1] := task;
+		ASSERT(TaskScheduler.IsEqual(a, b));
+
+		(*	arrays of different length are never the same *)
+		NEW(b, 2);
+		ASSERT(~TaskScheduler.IsEqual(a, b));
+
+		(*	emptying leaves nothing, and two empty arrays of one length are the same *)
+		TaskScheduler.Clear(a);
+		FOR i := 0 TO 2 DO ASSERT(a[i] = NIL) END;
+		NEW(b, 3);
+		ASSERT(TaskScheduler.IsEqual(a, b))
+	END Test.
+
+positive: the list the scheduler works from is the one the module hands out
+
+	MODULE Test;
+	IMPORT T := TaskSchedulerTestShared, TaskScheduler, Dates;
+
+	VAR first, second: TaskScheduler.TaskList; task: TaskScheduler.Task;
+
+	BEGIN
+		(*	the module keeps one list and an activity that watches it. Asking for the list used to
+			make a new empty one every time, so nothing a caller added was ever in the list the
+			module itself holds, and two callers never saw each other's tasks. *)
+		first := TaskScheduler.GetTaskList();
+		ASSERT(first # NIL);
+
+		task := T.NewTask("shared", "System.Show shared", T.Ago(-3600), TaskScheduler.Once);
+		first.Add(task);
+
+		second := TaskScheduler.GetTaskList();
+		ASSERT(second = first);
+		ASSERT(second.FindById(task.id) = task);
+
+		first.Remove(task);
+		ASSERT(second.GetNofTasks() = 0)
+	END Test.
