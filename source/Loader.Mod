@@ -192,14 +192,18 @@ TYPE
 
 	END HashTableIntAny;
 
-	Data=RECORD size, alignment: SIZE; bytes: Modules.Bytes; address: ADDRESS; END;
+	(*	`wholePages` is set for the code of a module and for nothing else. It makes the usable
+		region start on a page and end on one, which is what lets Modules protect the code without
+		the first or last page of it being shared with a neighbour -- see Machine.ProtectCode. It
+		costs a page of slack per module, and the alignment slack was there before it. *)
+	Data=RECORD size, alignment: SIZE; bytes: Modules.Bytes; address: ADDRESS; wholePages: BOOLEAN; END;
 
 	Arrangement* = OBJECT (GenericLinker.Arrangement);
 	VAR
 		code, data: Data;
 
 		PROCEDURE & InitArrangement;
-		BEGIN InitData(code); InitData(data);
+		BEGIN InitData(code); InitData(data); code.wholePages := TRUE;
 		END InitArrangement;
 
 		PROCEDURE Preallocate*(CONST section: ObjectFile.Section);
@@ -448,6 +452,7 @@ VAR
 	PROCEDURE InitData(VAR data: Data);
 	BEGIN
 		data.address := 0; data.size := 0; data.alignment := 0; data.bytes := NIL;
+		data.wholePages := FALSE;
 	END InitData;
 
 
@@ -468,6 +473,13 @@ VAR
 	VAR address: ADDRESS; size: SIZE;
 	BEGIN
 		IF (data.bytes = NIL) OR (LEN(data.bytes) # data.size + data.alignment) THEN
+			(*	Every section has been preallocated by now -- GenericLinker runs the whole Prearrange
+				pass before the first Arrange -- so this is the one moment at which the size is final
+				and the array has not been made yet. *)
+			IF data.wholePages THEN
+				IF data.alignment < Machine.PageSize THEN data.alignment := Machine.PageSize END;
+				INC(data.size, (-data.size) MOD Machine.PageSize)
+			END;
 			NEW(data.bytes, data.size + data.alignment);
 			data.address := ADDRESSOF(data.bytes[0]);
 			IF data.alignment > 0 THEN

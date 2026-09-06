@@ -195,6 +195,66 @@ VAR
 	#END
 	END FlushDCacheRange;
 
+	(*
+		W^X for the code that arrives after the image. A module is loaded into the heap, and the
+		heap is where every other object lives too, so until these two existed the only way to be
+		able to execute a loaded module was to make the whole heap executable -- which is what both
+		hosts did, and is the "behaves like a shellcode loader" line of the table in the plan.
+
+		The pair is deliberately narrow. It moves whole pages, because that is the unit the MMU
+		works in, and it rounds inward -- from the first page boundary at or after `adr` to the
+		last one at or before the end -- so a neighbour sharing the first or last page of the range
+		is never touched. A range holding no whole page is left alone, which is also why neither
+		reports failure: there is nothing a caller could do about it beyond what it does already,
+		namely leave the memory writable.
+
+		Who writes into module code, and therefore who has to unprotect first, is a short and
+		closed list: the loader, before any of this runs; the wipe in Modules.FreeModule; and the
+		breakpoints DAP plants. The sweeper is NOT on it. Modules keeps freed modules on freeRoot
+		so that ThisModuleByAdr can still name an address inside one, so a module's code stays
+		reachable for as long as the process lives and never reaches Heaps.InitFreeBlock.
+	*)
+	CONST PageSize* = Unix.PageSize;
+
+	(*	The whole pages inside [adr, adr+len), and none that a neighbour shares. *)
+	PROCEDURE WholePages (adr: ADDRESS; len: SIZE; VAR from, to: ADDRESS);
+	BEGIN
+		IF len <= 0 THEN from := 0; to := 0; RETURN END;
+		from := adr + (-adr) MOD Unix.PageSize;
+		to := adr + len; DEC(to, to MOD Unix.PageSize)
+	END WholePages;
+
+	PROCEDURE ProtectCode * (adr: ADDRESS; len: SIZE);
+	VAR from, to: ADDRESS;
+	BEGIN
+		WholePages(adr, len, from, to);
+		IF (from < to) & (Unix.mprotect(from, to - from, 5 (* READ EXEC *)) # 0) THEN
+			Unix.Perror("Machine.ProtectCode: mprotect")
+		END
+	END ProtectCode;
+
+	PROCEDURE UnprotectCode * (adr: ADDRESS; len: SIZE);
+	VAR from, to: ADDRESS;
+	BEGIN
+		WholePages(adr, len, from, to);
+		IF (from < to) & (Unix.mprotect(from, to - from, 7 (* READ WRITE EXEC *)) # 0) THEN
+			Unix.Perror("Machine.UnprotectCode: mprotect")
+		END
+	END UnprotectCode;
+
+	(*	DiscardCode is the third of the set and the one that takes execution away for good: what
+		Modules.FreeModule leaves behind is not code any more, and making it writable again without
+		taking the execute bit off would put the one thing this whole item is about -- memory that is
+		writable and executable at once -- back into the heap, a module at a time. *)
+	PROCEDURE DiscardCode * (adr: ADDRESS; len: SIZE);
+	VAR from, to: ADDRESS;
+	BEGIN
+		WholePages(adr, len, from, to);
+		IF (from < to) & (Unix.mprotect(from, to - from, 3 (* READ WRITE *)) # 0) THEN
+			Unix.Perror("Machine.DiscardCode: mprotect")
+		END
+	END DiscardCode;
+
 	(**
 	 * Invalidate Data Cache for the specified virtual address range. If len is negative, flushes the whole cache.
 	 * This is used on some architecture to interact with DMA hardware (e.g. Ethernet and USB. It can be
@@ -281,7 +341,11 @@ VAR
 			endBlockAdr := 0;
 			memoryBlock := NIL;
 		ELSE
-			IF Unix.mprotect( adr, alloc, 7 (* READ WRITE EXEC *) ) # 0 THEN
+			(*	READ WRITE, and no EXEC. The heap was executable in its entirety until 06.09.2026,
+				for one reason: a loaded module's code lives in it and has to run. It does not need
+				the whole heap for that -- Modules.Initialize now makes exactly that module's pages
+				read and execute, and Loader gives them whole pages so nothing else is inside. *)
+			IF Unix.mprotect( adr, alloc, 3 (* READ WRITE *) ) # 0 THEN
 				Unix.Perror( "Machine.ExpandHeap: mprotect" )
 			END;
 			mBlock := adr;

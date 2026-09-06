@@ -62,8 +62,10 @@ CONST
 	HeapGenerateExceptions* = 4H;
 	HeapZeroMemory* = 8H;
 
-	(** protect (VirtualAlloc) flags *)
-	PageReadWrite* = 2;  PageExecuteReadWrite* = 6;
+	(**	protect (VirtualAlloc, VirtualProtect) flags. These are bit numbers rather than the values
+		Windows takes, because the procedures below want an INTEGERSET: PAGE_READWRITE is 4, hence
+		bit 2; PAGE_EXECUTE_READ is 20H, hence 5; PAGE_EXECUTE_READWRITE is 40H, hence 6. *)
+	PageReadWrite* = 2;  PageExecuteRead* = 5;  PageExecuteReadWrite* = 6;
 
 	(** global memory flags *)
 	GMemMoveable* = 1;  GMemShare* = 13;
@@ -941,6 +943,11 @@ VAR
 			calling process. *)
 	VirtualFree-: PROCEDURE {WINAPI} ( lpAddress: ADDRESS;  dwSize: SIZE;
 																  dwFreeType: INTEGERSET ): BOOL;
+	(** The VirtualProtect function changes the protection of a region of committed pages that is
+			already mapped. The old protection is written back, and it cannot be left out: Windows fails
+			the call outright when the pointer for it is NIL. *)
+	VirtualProtect-: PROCEDURE {WINAPI} ( lpAddress: ADDRESS;  dwSize: SIZE;
+																  flNewProtect: INTEGERSET;  VAR lpflOldProtect: INTEGERSET ): BOOL;
 	(** The WaitForSingleObject function returns when one of the following occurs:
 			The specified object is in the signaled state.
 			The time-out interval elapses. *)
@@ -1206,6 +1213,7 @@ VAR
 		GetProcAddress(mod, "TryEnterCriticalSection", SYSTEM.VAL(ADDRESS, TryEnterCriticalSection));
 		GetProcAddress(mod, "VirtualAlloc",SYSTEM.VAL(ADDRESS,VirtualAlloc));
 		GetProcAddress(mod, "VirtualFree",SYSTEM.VAL(ADDRESS,VirtualFree));
+		GetProcAddress(mod, "VirtualProtect",SYSTEM.VAL(ADDRESS,VirtualProtect));
 		GetProcAddress(mod, "WaitForSingleObject",SYSTEM.VAL(ADDRESS,WaitForSingleObject));
 
 		GetProcAddress(mod, "WriteFile",SYSTEM.VAL(ADDRESS,WriteFile));
