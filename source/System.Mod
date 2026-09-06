@@ -398,12 +398,17 @@ END Watch;
 PROCEDURE RenameExtension*(context : Commands.Context);
 VAR
 	enumerator : Files.Enumerator;
-	oe, ne, temp: ARRAY 16 OF CHAR;
+	oe, ne: ARRAY 16 OF CHAR;
+	temp: Files.FileName;
 	name, file, ext : Files.FileName; flags : SET; time, date: SIGNED32; size: Files.Size; res : INTEGER;
 BEGIN
 	context.arg.SkipWhitespace; context.arg.String(oe);
 	context.arg.SkipWhitespace; context.arg.String(ne);
 	NEW(enumerator);
+	(*	temp was as wide as the extension itself, and Strings.Append does not look at how wide
+		what it appends to is: "*." and an extension of fourteen characters or more wrote past
+		the end of it. An extension is at most fifteen characters, so a file name holds any
+		pattern they can make. *)
 	temp := "*.";
 	Strings.Append(temp, oe);
 	enumerator.Open(temp, {});
