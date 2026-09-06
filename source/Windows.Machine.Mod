@@ -461,6 +461,59 @@ END ID;
 PROCEDURE FlushDCacheRange * (adr: ADDRESS; len: SIZE);
 END FlushDCacheRange;
 
+CONST PageSize* = 1000H;	(* what VirtualProtect rounds to on every Windows this runs on *)
+
+(*
+	W^X for the code that arrives after the image. A module is loaded into the heap, and the
+	heap is where every other object lives too, so until these two existed the only way to be
+	able to execute a loaded module was to make the whole heap executable -- which is what both
+	hosts did, and is the "behaves like a shellcode loader" line of the table in the plan.
+
+	The pair is deliberately narrow. It moves whole pages, because that is the unit the MMU
+	works in, and it rounds inward -- from the first page boundary at or after `adr` to the
+	last one at or before the end -- so a neighbour sharing the first or last page of the range
+	is never touched. A range holding no whole page is left alone, which is also why neither
+	reports failure: there is nothing a caller could do about it beyond what it does already,
+	namely leave the memory writable.
+
+	Who writes into module code, and therefore who has to unprotect first, is a short and
+	closed list: the loader, before any of this runs; the wipe in Modules.FreeModule; and the
+	breakpoints DAP plants. The sweeper is NOT on it. Modules keeps freed modules on freeRoot
+	so that ThisModuleByAdr can still name an address inside one, so a module's code stays
+	reachable for as long as the process lives and never reaches Heaps.InitFreeBlock.
+*)
+PROCEDURE SetPageProtection (adr: ADDRESS; len: SIZE; protection: INTEGERSET; CONST caller: ARRAY OF CHAR);
+VAR from, to: ADDRESS; previous: INTEGERSET;
+BEGIN
+	IF len <= 0 THEN RETURN END;
+	from := adr + (-adr) MOD PageSize;
+	to := adr + len; DEC(to, to MOD PageSize);
+	IF from >= to THEN RETURN END;
+	IF Kernel32.VirtualProtect(from, to - from, protection, previous) = Kernel32.False THEN
+		Trace.String(caller); Trace.String(": VirtualProtect failed, error ");
+		Trace.Int(Kernel32.GetLastError(), 0); Trace.Ln
+	END
+END SetPageProtection;
+
+PROCEDURE ProtectCode * (adr: ADDRESS; len: SIZE);
+BEGIN
+	SetPageProtection(adr, len, {Kernel32.PageExecuteRead}, "Machine.ProtectCode")
+END ProtectCode;
+
+PROCEDURE UnprotectCode * (adr: ADDRESS; len: SIZE);
+BEGIN
+	SetPageProtection(adr, len, {Kernel32.PageExecuteReadWrite}, "Machine.UnprotectCode")
+END UnprotectCode;
+
+(*	DiscardCode is the third of the set and the one that takes execution away for good: what
+	Modules.FreeModule leaves behind is not code any more, and making it writable again without
+	taking the execute bit off would put the one thing this whole item is about -- memory that is
+	writable and executable at once -- back into the heap, a module at a time. *)
+PROCEDURE DiscardCode * (adr: ADDRESS; len: SIZE);
+BEGIN
+	SetPageProtection(adr, len, {Kernel32.PageReadWrite}, "Machine.DiscardCode")
+END DiscardCode;
+
 (**
  * Invalidate Data Cache for the specified virtual address range. If len is negative, flushes the whole cache.
  * This is used on some architecture to interact with DMA hardware (e.g. Ethernet and USB. It can be
@@ -907,9 +960,14 @@ END InsertMemoryBlock;
 		ELSE
 			initVal := NIL
 		END;
-		adr := Kernel32.VirtualAlloc(initVal, alloc, {Kernel32.MEMCommit, Kernel32.MEMReserve}, {Kernel32.PageExecuteReadWrite});
+		(*	PAGE_READWRITE, and no execute. The heap was PAGE_EXECUTE_READWRITE in its entirety
+			until 06.09.2026, for one reason: a loaded module's code lives in it and has to run. It
+			does not need the whole heap for that -- Modules.Initialize now makes exactly that
+			module's pages read and execute, and Loader gives them whole pages so that nothing else
+			is inside them. *)
+		adr := Kernel32.VirtualAlloc(initVal, alloc, {Kernel32.MEMCommit, Kernel32.MEMReserve}, {Kernel32.PageReadWrite});
 		IF adr = NilVal THEN (* allocation failed *)
-			adr := Kernel32.VirtualAlloc(NilVal, alloc, {Kernel32.MEMCommit}, {Kernel32.PageExecuteReadWrite});
+			adr := Kernel32.VirtualAlloc(NilVal, alloc, {Kernel32.MEMCommit}, {Kernel32.PageReadWrite});
 		END;
 		continue := adr = initVal;
 		ASSERT(adr MOD StaticBlockSize = 0); (* is fulfilled because VirtualAlloc is on page granularity *)

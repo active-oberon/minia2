@@ -706,28 +706,63 @@ END Start;
 	machines, one byte, where the trap reports the address after it; BRK on A64, a word, where it
 	reports the instruction itself and the caches have to be told -- writing code and then running
 	it is what Modules.Mod flushes for after it copies a section in. *)
+(*	A module's code is read and execute once it is initialised (Modules.Initialize), so the two
+	places that write an instruction into it have to take the protection off first and put it back
+	after. The rounding is outward here, unlike Machine.ProtectCode: what has to be writable is the
+	page the instruction sits on, all of it, and an instruction can straddle two. Machine rounds
+	inward, so the pages are named exactly and it changes nothing.
+
+	The window is one instruction wide and another thread can be executing on the same page while it
+	is open. That is the price of patching code in place, and it is the same price every debugger
+	that plants a trap instruction pays. *)
+PROCEDURE Around (adr: ADDRESS; len: SIZE; VAR from: ADDRESS; VAR size: SIZE);
+VAR to: ADDRESS;
+BEGIN
+	from := adr - adr MOD Machine.PageSize;
+	to := adr + len; INC(to, (-to) MOD Machine.PageSize);
+	size := to - from
+END Around;
+
+PROCEDURE Writable (adr: ADDRESS; len: SIZE);
+VAR from: ADDRESS; size: SIZE;
+BEGIN Around(adr, len, from, size); Machine.UnprotectCode(from, size)
+END Writable;
+
+PROCEDURE Executable (adr: ADDRESS; len: SIZE);
+VAR from: ADDRESS; size: SIZE;
+BEGIN Around(adr, len, from, size); Machine.ProtectCode(from, size)
+END Executable;
+
 PROCEDURE Plant (adr: ADDRESS; VAR saved: SIGNED32);
 #IF ARM64 THEN
 BEGIN
 	saved := SYSTEM.GET32(adr);
+	Writable(adr, 4);
 	SYSTEM.PUT32(adr, SIGNED32(0D4200000H));                  (* BRK #0 *)
+	Executable(adr, 4);
 	Machine.FlushDCacheRange(adr, 4)
 #ELSE
 VAR byte: CHAR;
 BEGIN
 	SYSTEM.GET(adr, byte); saved := ORD(byte);
-	SYSTEM.PUT(adr, 0CCX)                                      (* INT 3 *)
+	Writable(adr, 1);
+	SYSTEM.PUT(adr, 0CCX);                                     (* INT 3 *)
+	Executable(adr, 1)
 #END
 END Plant;
 
 PROCEDURE Restore (adr: ADDRESS; saved: SIGNED32);
 #IF ARM64 THEN
 BEGIN
+	Writable(adr, 4);
 	SYSTEM.PUT32(adr, saved);
+	Executable(adr, 4);
 	Machine.FlushDCacheRange(adr, 4)
 #ELSE
 BEGIN
-	SYSTEM.PUT(adr, CHR(saved))
+	Writable(adr, 1);
+	SYSTEM.PUT(adr, CHR(saved));
+	Executable(adr, 1)
 #END
 END Restore;
 

@@ -268,6 +268,12 @@ BEGIN
 		END;
 		IF (module.code # NIL) & (LEN(module.code) > 0)  THEN
 			Machine.FlushDCacheRange(ADDRESSOF(module.code[0]), LEN(module.code));
+			(*	The one moment at which the code is finished and has not run yet: sections are copied
+				in, fixups are applied, imports are initialised. From here the module's own code is
+				read and execute, and the heap around it does not have to be executable on its
+				account. Loader gave the array whole pages so that only this module's code is inside
+				them. *)
+			Machine.ProtectCode(ADDRESSOF(module.code[0]), LEN(module.code));
 		END;
 		IF module.body # NIL THEN
 			module.body
@@ -692,6 +698,11 @@ BEGIN
 				FOR i := 0 TO LEN(m.ptrAdr)-1 DO SYSTEM.PUT (m.ptrAdr[i], NIL) END;
 			END;
 			IF ClearCode & (m.code # NIL) THEN
+				(*	One of the three places that write into a module's code, and the reason the
+					protection has to come off rather than the wipe be skipped: an address inside a
+					freed module still has to answer, which is why the module stays on freeRoot and
+					its code is never swept. It does not go back on -- what is left is not code. *)
+				Machine.DiscardCode(ADDRESSOF(m.code[0]), LEN(m.code));
 				FOR i := 0 TO LEN(m.code)-1 DO m.code[i] := 0CCX END
 			END;
 			(* remove references to module data *)
