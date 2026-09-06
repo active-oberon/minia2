@@ -19,7 +19,9 @@ VAR
 	length, i : SIZE;
 BEGIN
 	length := LEN(array); nofProcesses := 0;
-	FOR i := 0 TO i-1 DO array[i] := NIL; END;
+	(*	the bound used to be i-1, read before i was ever set: the array was not emptied at all,
+		and whatever the caller left in it past nofProcesses read back as part of the snapshot. *)
+	FOR i := 0 TO length-1 DO array[i] := NIL; END;
 	Machine.Acquire(Machine.Heaps);
 
 	Heaps.FullSweep; (* this is strictly required because when the sweep phase has not yet finished, heap blocks might be free *)
