@@ -1,0 +1,347 @@
+# Tests for source/System.Mod -- the commands a session is made of: run a list of them, run one
+# of them again and again, say what is loaded, say what time it is.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test SystemTestShared;System.Load Test"
+#
+# `oberon do "..."` ends in System.DoCommands, the shell's lines end in commands from here, and
+# every `.Tool` file in the tree is a list of them. The module had no test of its own. What the
+# tree proves about it is what a session that worked proves: a command spelled right, with the
+# arguments it wanted, in a system where the module it names is loaded.
+#
+# So the cases ask the other half. A list that fails in the middle -- does the rest of it run, and
+# does anything say which one failed. A comment in a list, and a comment inside a comment, because
+# a `.Tool` file is mostly comment and the blanking is done in place. A count of zero, and no
+# count at all. A module that is not loaded, asked about by three different commands, which give
+# three different answers. A timer number that is not a timer.
+#
+# A case is a command, an argument and what came back on the writer the caller handed it -- the
+# helper in the first case is that and nothing more, and it is the same shape Commands.Test uses.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE SystemTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "One command run, and what it wrote" *)
+
+	IMPORT Commands, Streams, Strings;
+
+	VAR
+		counted-: SIGNED32;   (** how many times Count below has been activated *)
+
+	(**	Run one command with one argument and hand back everything it wrote -- what it said and
+		what it complained about, because a case about a refusal is a case about the words of the
+		refusal. The result is the command's own, which is what Commands.Activate reports. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** A command that counts itself, for the cases about how many times something ran. *)
+	PROCEDURE Count*;
+	BEGIN
+		INC(counted)
+	END Count;
+
+	(** Start counting again. *)
+	PROCEDURE Clear*;
+	BEGIN
+		counted := 0
+	END Clear;
+
+	(** A command that reports a failure, for the cases about a list that stops. *)
+	PROCEDURE Fail* (context: Commands.Context);
+	BEGIN
+		INC(counted);
+		context.result := 1
+	END Fail;
+
+	BEGIN
+		counted := 0
+	END SystemTestShared.
+
+positive: what is handed to Show is what Show writes
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.Show", "hello world", text) = Commands.Ok);
+		ASSERT(text = "hello world");
+
+		(* the whole argument, punctuation and all: Show copies, it does not parse *)
+		ASSERT(T.Run("System.Show", "a ~ b (* c *)", text) = Commands.Ok);
+		ASSERT(text = "a ~ b (* c *)");
+
+		(* and Ln is a line and nothing else: a carriage return and a line feed, the pair *)
+		ASSERT(T.Run("System.Ln", "", text) = Commands.Ok);
+		ASSERT(text[0] = 0DX);
+		ASSERT(text[1] = 0AX);
+		ASSERT(text[2] = 0X)
+	END Test.
+
+positive: the time is written the way the format says it is
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands, Strings;
+
+	VAR text: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.Time", "", text) = Commands.Ok);
+		(*	"dd.mm.yyyy hh:nn:ss" and a line: nineteen characters in a shape, not a particular
+			moment. A case about a clock can say what the answer looks like and no more. *)
+		ASSERT(Strings.Length(text) >= 19);
+		ASSERT(text[2] = ".");
+		ASSERT(text[5] = ".");
+		ASSERT(text[10] = " ");
+		ASSERT(text[13] = ":");
+		ASSERT(text[16] = ":")
+	END Test.
+
+positive: a difference of times is days, hours, minutes and seconds, and reads the same both ways
+
+	MODULE Test;
+	IMPORT System, Dates, Streams;
+
+	VAR
+		earlier, later, close: Dates.DateTime;
+		out: Streams.StringWriter; forwards, backwards: ARRAY 64 OF CHAR;
+
+		PROCEDURE At (year, month, day, hour, minute, second: SIGNED32): Dates.DateTime;
+		VAR when: Dates.DateTime;
+		BEGIN
+			when.year := year; when.month := month; when.day := day;
+			when.hour := hour; when.minute := minute; when.second := second;
+			RETURN when
+		END At;
+
+	BEGIN
+		earlier := At(2026, 9, 6, 10, 0, 0);
+		later := At(2026, 9, 8, 13, 4, 5);
+
+		Streams.OpenStringWriter(out, 64);
+		System.ShowTimeDifference(earlier, later, out);
+		out.Get(forwards);
+		ASSERT(forwards = "2d 3h 4m 5s");
+
+		(*	Which of the two came first is not the caller's business to sort out: Dates puts them
+			in order itself, so the difference of a pair is one number however it is asked. *)
+		System.ShowTimeDifference(later, earlier, out);
+		out.Get(backwards);
+		ASSERT(backwards = forwards);
+
+		(* and the units that are not there are left out, from the largest down *)
+		Streams.OpenStringWriter(out, 64);
+		close := At(2026, 9, 6, 10, 0, 7);
+		System.ShowTimeDifference(earlier, close, out);
+		out.Get(forwards);
+		ASSERT(forwards = "7s")
+	END Test.
+
+positive: a list of commands is run, and in the order it is written
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Clear;
+		ASSERT(T.Run("System.DoCommands",
+			"SystemTestShared.Count ~ SystemTestShared.Count ~ SystemTestShared.Count ~", text) = Commands.Ok);
+		ASSERT(T.counted = 3)
+	END Test.
+
+positive: a list stops where the first command fails, and says which one it was
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Clear;
+		ASSERT(T.Run("System.DoCommands",
+			"SystemTestShared.Count ~ SystemTestShared.Fail ~ SystemTestShared.Count ~", text) # Commands.Ok);
+		(* two ran, the third never started *)
+		ASSERT(T.counted = 2);
+		ASSERT(T.Said(text, "SystemTestShared.Fail"));
+		ASSERT(T.Said(text, "failed"))
+	END Test.
+
+positive: a comment in a list is not a command, and neither is a comment inside one
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		(*	A .Tool file is mostly comment, and the blanking happens in the string itself: what a
+			comment is replaced by is spaces of its own length, so what stands behind it keeps the
+			position it had. Nesting is counted, not matched, which is what lets a commented-out
+			block hold a comment of its own. *)
+		T.Clear;
+		ASSERT(T.Run("System.DoCommands",
+			"(* SystemTestShared.Fail ~ *) SystemTestShared.Count ~", text) = Commands.Ok);
+		ASSERT(T.counted = 1);
+
+		T.Clear;
+		ASSERT(T.Run("System.DoCommands",
+			"(* outer (* inner *) still outer ~ *) SystemTestShared.Count ~", text) = Commands.Ok);
+		ASSERT(T.counted = 1)
+	END Test.
+
+positive: a command is repeated the number of times it is given, and no times for none
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Clear;
+		ASSERT(T.Run("System.Repeat", "4 SystemTestShared.Count", text) = Commands.Ok);
+		ASSERT(T.counted = 4);
+
+		(* nought times is nought times, and so is a count that is not a number at all *)
+		T.Clear;
+		ASSERT(T.Run("System.Repeat", "0 SystemTestShared.Count", text) = Commands.Ok);
+		ASSERT(T.counted = 0);
+
+		T.Clear;
+		ASSERT(T.Run("System.Repeat", "SystemTestShared.Count", text) = Commands.Ok);
+		ASSERT(T.counted = 0)
+	END Test.
+
+positive: three commands are asked about a module that is not loaded, and answer three ways
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		(*	IsLoaded answers the question and succeeds -- "no" is an answer. WhoImports and
+			ListCommands have nothing to answer with, so they refuse, and a refusal is a result
+			the caller can act on as well as words on the error stream. *)
+		ASSERT(T.Run("System.IsLoaded", "NoSuchModuleAtAll", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Module NoSuchModuleAtAll is not loaded."));
+
+		ASSERT(T.Run("System.IsLoaded", "SystemTestShared", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Module SystemTestShared is loaded."));
+
+		ASSERT(T.Run("System.WhoImports", "NoSuchModuleAtAll", text) # Commands.Ok);
+		ASSERT(T.Said(text, "is not loaded"));
+
+		ASSERT(T.Run("System.ListCommands", "NoSuchModuleAtAll", text) # Commands.Ok);
+		ASSERT(T.Said(text, "Module not found"))
+	END Test.
+
+positive: the commands of a module are listed by their whole names
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 8192 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.ListCommands", "System", text) = Commands.Ok);
+		(*	Module and procedure, the way a command string is written, so that what is listed can
+			be typed back in. *)
+		ASSERT(T.Said(text, "System.Show"));
+		ASSERT(T.Said(text, "System.DoCommands"));
+		ASSERT(T.Said(text, "System.Time"))
+	END Test.
+
+positive: a word System.List does not know is refused with the words it does know
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.List", "nonsense", text) = Commands.CommandParseError);
+		ASSERT(T.Said(text, "plugins"));
+		ASSERT(T.Said(text, "modules"));
+		ASSERT(T.Said(text, "commands"))
+	END Test.
+
+positive: the state of a module is its name, its checksum and what its variables hold
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 8192 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.ModuleState", "SystemTestShared", text) = Commands.Ok);
+		ASSERT(T.Said(text, "SystemTestShared"));
+		ASSERT(T.Said(text, "crc"));
+		ASSERT(T.Said(text, "counted"));
+
+		(* and a module that cannot be loaded is refused, by name *)
+		ASSERT(T.Run("System.ModuleState", "NoSuchModuleAtAll", text) # Commands.Ok);
+		ASSERT(T.Said(text, "NoSuchModuleAtAll"))
+	END Test.
+
+positive: a timer that is started has time elapsed on it, and a timer that is not a timer is refused
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("System.Timer", "start", text) = Commands.Ok);
+		ASSERT(T.Run("System.Timer", "elapsed", text) = Commands.Ok);
+		(* a duration, whatever it is, ends in seconds *)
+		ASSERT(T.Said(text, "s"));
+
+		(*	Sixteen timers, numbered from nought. A number outside that is not a timer, and the
+			answer is the usage rather than a slot of somebody else's. *)
+		ASSERT(T.Run("System.Timer", "start 99", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Usage: System.Timer"));
+
+		(* and a word it does not know is the usage too *)
+		ASSERT(T.Run("System.Timer", "nonsense", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Usage: System.Timer"))
+	END Test.
+
+positive: an extension wider than the pattern it is put into does not write past it
+
+	MODULE Test;
+	IMPORT T := SystemTestShared, Commands;
+
+	VAR text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		(*	The pattern is "*." and the extension behind it, and the array it was built in was as
+			wide as an extension alone -- so fourteen characters and up wrote past its end. An
+			extension that long is nonsense, and nonsense is what a command is handed when a
+			person mistypes; it is not a reason to trap.
+
+			Nothing is renamed here: no file in the tester's directory has an extension of
+			fourteen z's, so the enumerator finds none and the command is the pattern-building
+			and the two lines around it. *)
+		ASSERT(T.Run("System.RenameExtension", "zzzzzzzzzzzzzzz aaaaaaaaaaaaaaa", text) = Commands.Ok);
+		ASSERT(T.Said(text, "-- Renaming Extension --"));
+		ASSERT(T.Said(text, "-- all done --"))
+	END Test.
