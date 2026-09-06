@@ -1,0 +1,397 @@
+# Tests for source/Errors.Mod -- the table that turns a number nobody remembers into a sentence.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ErrorsTestShared Errors;System.Load Test"
+#
+# `res = 1503` is what a failing call in this system hands back, and `errors.txt` in `data/` is
+# where the words for it live: one line per code, `1503<TAB>out of stack space`, and a line whose
+# code is a multiple of a hundred naming the group the codes under it belong to. The module reads
+# that file and answers `GetErrorMessage`. It had no test, and the file it ships with was never
+# read back by anything that checked the answers.
+#
+# So the cases write their own little file and ask it back. What a group line does to the codes
+# under it, and what it does to itself. A code with nothing written after it. A comment, and a
+# comment that is not in the first column, because the shipped file is half comment. Two loads in
+# a row, because the module keeps state between them. A line longer than the buffer that reads it.
+# And a code nobody wrote down at all, which is the answer a program actually gets most of the
+# time.
+#
+# A case is a file written, `Errors.Open` run on it, and a lookup -- the helpers in the first case
+# are that and nothing more, and the runner is the same shape System.Test and Commands.Test use.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ErrorsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A file written, a command run, and what it wrote" *)
+
+	IMPORT Commands, Files, Streams, Strings;
+
+	VAR
+		tab-, eol-: ARRAY 3 OF CHAR;   (** the two separators the file format is made of *)
+
+	(**	Run one command with one argument and hand back everything it wrote -- what it said and
+		what it complained about, because a case about a refusal is a case about the words of the
+		refusal. The result is the command's own, which is what Commands.Activate reports. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(**	Append one line and the end of it. Bounded, because a case that quietly wrote past its own
+		buffer would be a case about nothing. *)
+	PROCEDURE Line* (VAR buffer: ARRAY OF CHAR; CONST text: ARRAY OF CHAR);
+	BEGIN
+		Strings.AppendX(buffer, text);
+		Strings.AppendX(buffer, eol)
+	END Line;
+
+	(** Append one line of the format the module reads: a code, a tab, and the words for it. *)
+	PROCEDURE Entry* (VAR buffer: ARRAY OF CHAR; CONST code, text: ARRAY OF CHAR);
+	BEGIN
+		Strings.AppendX(buffer, code);
+		Strings.AppendX(buffer, tab);
+		Strings.AppendX(buffer, text);
+		Strings.AppendX(buffer, eol)
+	END Entry;
+
+	(** Write the file the case is about, under a name of its own. *)
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content);
+		writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** Write a file and load it in one go, and hand back what Open said about it. *)
+	PROCEDURE Load* (CONST filename, content: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	BEGIN
+		Write(filename, content);
+		RETURN Run("Errors.Open", filename, text)
+	END Load;
+
+	BEGIN
+		tab[0] := 09X; tab[1] := 0X;
+		eol[0] := 0DX; eol[1] := 0AX; eol[2] := 0X
+	END ErrorsTestShared.
+
+positive: a file that is not there is a refusal with a number, and nothing is loaded
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		ASSERT(T.Run("Errors.Open", "Errors.Test.no-such-file.tmp.txt", text) = Commands.Ok);
+		(*	the command reports through its output, not through its result: it is a load, not a
+			parse error, and the number it prints is the one the parser uses for a missing file *)
+		ASSERT(T.Said(text, "Errors.Test.no-such-file.tmp.txt"));
+		ASSERT(T.Said(text, "failed"));
+
+		(*	and the table is empty afterwards, whatever was in it before *)
+		ASSERT(T.Run("Errors.Show", "", text) = Commands.Ok);
+		ASSERT(T.Said(text, "No error messages loaded"));
+
+		(*	a lookup still answers, because the answer to an unknown code is a sentence too *)
+		message := Errors.GetErrorMessage(1503);
+		ASSERT(message.text # NIL);
+		ASSERT(T.Said(message.text^, "1503"))
+	END Test.
+
+positive: what the file says is what the lookup gives back
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	CONST FileName = "Errors.Test.plain.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1500", "Memory");
+		T.Entry(content, "1501", "out of physical pages");
+		T.Entry(content, "1503", "out of stack space");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+		ASSERT(T.Said(text, "messages loaded"));
+
+		(*	the group line names the module the codes under it belong to *)
+		message := Errors.GetErrorMessage(1501);
+		ASSERT(message.text^ = "out of physical pages");
+		ASSERT(message.moduleName = "Memory");
+
+		message := Errors.GetErrorMessage(1503);
+		ASSERT(message.text^ = "out of stack space");
+		ASSERT(message.moduleName = "Memory");
+
+		(*	and one that is not in the file is not in the table, whatever else is *)
+		message := Errors.GetErrorMessage(1502);
+		ASSERT(message.moduleName = "Unknown")
+	END Test.
+
+positive: a code nobody wrote down still gets a message, and it names the number
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands, Strings;
+
+	CONST FileName = "Errors.Test.unknown.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1301", "Lock timeout");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		(*	the contract the header states: text is never NIL, whatever was asked *)
+		message := Errors.GetErrorMessage(4711);
+		ASSERT(message.text # NIL);
+		ASSERT(Strings.Pos("4711", message.text^) >= 0);
+		ASSERT(message.moduleName = "Unknown");
+
+		(*	a negative code is a code: res is signed and the callers use it that way *)
+		message := Errors.GetErrorMessage(-1);
+		ASSERT(message.text # NIL);
+		ASSERT(Strings.Pos("-1", message.text^) >= 0);
+
+		(*	zero as well, and it is the commonest number there is *)
+		message := Errors.GetErrorMessage(0);
+		ASSERT(message.text # NIL)
+	END Test.
+
+positive: ToStream writes the text, the module and the number
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Streams, Commands;
+
+	CONST FileName = "Errors.Test.stream.tmp.txt";
+
+	VAR
+		text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR;
+		out: Streams.StringWriter; written: ARRAY 256 OF CHAR;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1300", "Locks");
+		T.Entry(content, "1301", "Lock timeout");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		Streams.OpenStringWriter(out, 1024);
+		Errors.ToStream(1301, out);
+		out.Get(written);
+		ASSERT(written = "Lock timeout (Locks:1301)");
+
+		(*	and a code with no module behind it says the number alone -- the name of a module that
+			is not known is not worth printing *)
+		Streams.OpenStringWriter(out, 1024);
+		Errors.ToStream(4711, out);
+		out.Get(written);
+		ASSERT(T.Said(written, "4711"));
+		ASSERT(~T.Said(written, "Unknown:"))
+	END Test.
+
+positive: a group line is a name, and it is also a code somebody can ask about
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	CONST FileName = "Errors.Test.group.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		(*	this is the head of the shipped data/errors.txt, cut down. Three of these six lines are
+			ordinary error codes that happen to divide by a hundred, and the format has no way of
+			saying so -- the parser guesses by the number alone. *)
+		content := "";
+		T.Entry(content, "0000", "ok/no error");
+		T.Entry(content, "0014", "out of heap space");
+		T.Entry(content, "0300", "not implemented yet");
+		T.Entry(content, "0301", "abstract method/placeholder procedure");
+		T.Entry(content, "1500", "Memory");
+		T.Entry(content, "1501", "out of physical pages");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		(*	a group line names the codes below it, and that much works *)
+		message := Errors.GetErrorMessage(1501);
+		ASSERT(message.text^ = "out of physical pages");
+		ASSERT(message.moduleName = "Memory");
+
+		(*	but a group line is a line of the file, and what it says has to come back when it is
+			asked for. `res = 0` is the commonest result in the system and `errors.txt` has a
+			sentence for it; so has 300. Neither could be looked up. *)
+		message := Errors.GetErrorMessage(0);
+		ASSERT(message.text^ = "ok/no error");
+
+		message := Errors.GetErrorMessage(300);
+		ASSERT(message.text^ = "not implemented yet");
+
+		message := Errors.GetErrorMessage(1500);
+		ASSERT(message.text^ = "Memory")
+	END Test.
+
+positive: a code with nothing written after it does not take the next line for its own
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	CONST FileName = "Errors.Test.empty.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1300", "Locks");
+		T.Line(content, "1301");
+		T.Entry(content, "1302", "lock not held");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		(*	the line ends where the line ends: 1301 has no text, and 1302 still has its own *)
+		message := Errors.GetErrorMessage(1301);
+		ASSERT(message.text # NIL);
+		ASSERT(message.text^ = "");
+
+		message := Errors.GetErrorMessage(1302);
+		ASSERT(message.text^ = "lock not held")
+	END Test.
+
+positive: a comment is skipped wherever it starts on the line
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	CONST FileName = "Errors.Test.comment.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "# Code", "description");
+		T.Entry(content, "1300", "Locks");
+		T.Line(content, "  # a note about the codes below, written by hand and indented");
+		T.Entry(content, "1301", "Lock timeout");
+		T.Line(content, "");
+		T.Entry(content, "1302", "lock not held");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+		ASSERT(T.Said(text, "messages loaded"));
+
+		(*	a comment is a comment whether or not it starts in the first column, and a blank line
+			is not the end of the file *)
+		message := Errors.GetErrorMessage(1301);
+		ASSERT(message.text^ = "Lock timeout");
+
+		message := Errors.GetErrorMessage(1302);
+		ASSERT(message.text^ = "lock not held")
+	END Test.
+
+positive: what one file said is forgotten before the next one is read
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR; content: ARRAY 1024 OF CHAR; message: Errors.ErrorMessage;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1500", "Memory");
+		T.Entry(content, "1501", "out of physical pages");
+		ASSERT(T.Load("Errors.Test.first.tmp.txt", content, text) = Commands.Ok);
+		message := Errors.GetErrorMessage(1501);
+		ASSERT(message.moduleName = "Memory");
+
+		(*	the second file names no group before its first code. That code belongs to no module,
+			and it must not be handed the name the previous file left behind. *)
+		content := "";
+		T.Entry(content, "2001", "no such device");
+		ASSERT(T.Load("Errors.Test.second.tmp.txt", content, text) = Commands.Ok);
+
+		message := Errors.GetErrorMessage(2001);
+		ASSERT(message.text^ = "no such device");
+		ASSERT(message.moduleName # "Memory");
+
+		(*	and what the first file held is gone: Open starts the table over *)
+		message := Errors.GetErrorMessage(1501);
+		ASSERT(message.moduleName = "Unknown")
+	END Test.
+
+positive: Show lists what is loaded and says so when nothing is
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands;
+
+	CONST FileName = "Errors.Test.show.tmp.txt";
+
+	VAR text: ARRAY 4096 OF CHAR; content: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		content := "";
+		T.Entry(content, "1300", "Locks");
+		T.Entry(content, "1301", "Lock timeout");
+		T.Entry(content, "1302", "lock not held");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		(*	one number, one message *)
+		ASSERT(T.Run("Errors.Show", "1301", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Lock timeout"));
+		ASSERT(T.Said(text, "Locks"));
+		ASSERT(~T.Said(text, "lock not held"));
+
+		(*	no number, all of them *)
+		ASSERT(T.Run("Errors.Show", "", text) = Commands.Ok);
+		ASSERT(T.Said(text, "Lock timeout"));
+		ASSERT(T.Said(text, "lock not held"));
+
+		(*	a number nobody wrote down is answered, not refused *)
+		ASSERT(T.Run("Errors.Show", "4711", text) = Commands.Ok);
+		ASSERT(T.Said(text, "4711"))
+	END Test.
+
+positive: a line longer than the buffer that reads it is cut, and the next line still arrives
+
+	MODULE Test;
+	IMPORT T := ErrorsTestShared, Errors, Commands, Strings;
+
+	CONST FileName = "Errors.Test.long.tmp.txt";
+
+	VAR
+		text: ARRAY 1024 OF CHAR; content: ARRAY 2048 OF CHAR; long: ARRAY 1024 OF CHAR;
+		message: Errors.ErrorMessage; i: SIGNED32;
+
+	BEGIN
+		long := "";
+		FOR i := 0 TO 599 DO Strings.AppendX(long, "x") END;
+
+		content := "";
+		T.Entry(content, "1300", "Locks");
+		T.Entry(content, "1301", long);
+		T.Entry(content, "1302", "lock not held");
+		ASSERT(T.Load(FileName, content, text) = Commands.Ok);
+
+		(*	the reader is given a fixed line buffer and it keeps to it *)
+		message := Errors.GetErrorMessage(1301);
+		ASSERT(message.text # NIL);
+		ASSERT(Strings.Length(message.text^) < 600);
+		ASSERT(message.text^[0] = "x");
+
+		(*	and the rest of the long line was consumed, not left to be read as the next one *)
+		message := Errors.GetErrorMessage(1302);
+		ASSERT(message.text^ = "lock not held")
+	END Test.
