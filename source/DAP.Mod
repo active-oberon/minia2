@@ -57,6 +57,37 @@ TYPE
 		`ob dap` turns it into a stopped event; PET moves the caret there. *)
 	Stopped* = PROCEDURE {DELEGATE} (CONST why, description: ARRAY OF CHAR);
 
+	(*	The lock the breakpoints are patched under, and it is not an optimisation.
+
+		A breakpoint is written by whichever activity reaches it: the program's, when it runs into
+		one and the trap handler takes them all back out, and the session's, when the client asks
+		for other lines or goes away. Both can be inside the machinery at once -- a `continue`
+		leaves the program running and a `disconnect` arrives while it is.
+
+		That was harmless while a module's code was writable. It stopped being harmless when it
+		became read and execute: a patch is now unprotect, write, protect, and two of them at once
+		is one activity making the page writable while the other has just made it executable again.
+		The write that follows lands on a read-only page. Measured as a trap in Restore, three runs
+		in four, in the case that plants a breakpoint in a loop and then disconnects.
+
+		So the window is not the mprotect pair -- it is the spots and the code together, because a
+		spot's `armed` and the byte in the code have to agree. Held over Plant and Restore and over
+		the loops that call them, never over Hold, `say`, or anything else that waits. *)
+	Patching = OBJECT
+	VAR taken: BOOLEAN;
+
+		PROCEDURE Acquire;
+		BEGIN {EXCLUSIVE}
+			AWAIT(~taken); taken := TRUE
+		END Acquire;
+
+		PROCEDURE Release;
+		BEGIN {EXCLUSIVE}
+			taken := FALSE
+		END Release;
+
+	END Patching;
+
 VAR
 	traced: ARRAY TraceCapacity OF CHAR;
 	tracedLength: SIZE;
@@ -80,11 +111,13 @@ TYPE
 		spots: ARRAY MaxSpots OF Spot; spotCount: SIGNED32;
 		released, stepping: BOOLEAN;
 		say: Stopped;
+		patching: Patching;              (* one patch at a time, whoever is doing it *)
 
 		PROCEDURE &Init* (stop: Stopped);
 		BEGIN
 			say := stop; count := 0; stopped := FALSE; released := FALSE;
-			spotCount := 0; wishCount := 0; armed := FALSE; stepping := FALSE; standing := 0
+			spotCount := 0; wishCount := 0; armed := FALSE; stepping := FALSE; standing := 0;
+			NEW(patching)
 		END Init;
 
 		(*	Walk collects the frames of the activity that stopped, the way
@@ -106,7 +139,9 @@ TYPE
 		PROCEDURE Trapped* (sig, trapno: SIGNED32; pc, bp, sp, stackHigh: ADDRESS);
 		BEGIN
 			IF stopped THEN RETURN END;         (* a second trap has nowhere to be reported *)
+			patching.Acquire;
 			Disarm;                             (* the program is over: its code is its own again *)
+			patching.Release;
 			Walk(pc, bp, sp, stackHigh);
 			Cause(sig, trapno, reason);
 			standing := 0;
@@ -122,13 +157,14 @@ TYPE
 		VAR at: ADDRESS; i: SIGNED32; ours: BOOLEAN;
 		BEGIN
 			at := Hit(pc);
+			patching.Acquire;
 			i := At(at);
-			IF i < 0 THEN RETURN FALSE END;
+			IF i < 0 THEN patching.Release; RETURN FALSE END;
 			pc := at;
 			IF ~spots[i].armed THEN
 				(*	One of ours, taken out of the code a moment ago -- the client detached, or asked
 					for other lines, while the program was running into this one. It carries on. *)
-				RETURN TRUE
+				patching.Release; RETURN TRUE
 			END;
 			ours := ~spots[i].wanted;
 			Disarm;                             (* the code is the program's own while it stands still *)
@@ -136,10 +172,13 @@ TYPE
 			IF ours & ~stepping THEN
 				(*	Planted for one reason only: to write the breakpoint just stepped off back in,
 					now that the program is no longer standing on it. *)
-				standing := 0; ArmAll; RETURN TRUE
+				standing := 0; ArmAll; patching.Release; RETURN TRUE
 			END;
-			Walk(at, bp, sp, stackHigh);
+			(*	Said before the lock goes: the spot being stood on is the one ArmAll must leave
+				alone, so nobody may plant while it is still nought. *)
 			standing := at;
+			patching.Release;
+			Walk(at, bp, sp, stackHigh);
 			stopped := TRUE;
 			IF ours THEN say("step", "") ELSE say("breakpoint", "") END;
 			Hold;
@@ -226,13 +265,15 @@ TYPE
 		PROCEDURE Arm*;
 		VAR i: SIGNED32;
 		BEGIN
+			patching.Acquire;
 			Disarm; Drop(TRUE);
 			FOR i := 0 TO wishCount - 1 DO
 				wishes[i].adr := DebugMap.AddressOf(wishes[i].source, wishes[i].line, wishes[i].actual);
 				Add(wishes[i].adr, TRUE)
 			END;
 			armed := TRUE;
-			ArmAll
+			ArmAll;
+			patching.Release
 		END Arm;
 
 		(*	Where the program could be a moment from now: every other statement of the procedure it
@@ -271,7 +312,11 @@ TYPE
 		PROCEDURE Resume* (step, leave: BOOLEAN);
 		BEGIN
 			stepping := step;
+			patching.Acquire;
 			IF stopped & (standing # 0) THEN Steps(standing, leave); ArmAll END;
+			patching.Release;
+			(*	Let go only once the code is patched: from here the program is running, and it runs
+				into what was planted a moment ago. *)
 			Release
 		END Resume;
 
@@ -280,7 +325,9 @@ TYPE
 			rather than be reported as having trapped. *)
 		PROCEDURE Detach*;
 		BEGIN
-			Disarm; standing := 0; stepping := FALSE
+			patching.Acquire;
+			Disarm; standing := 0; stepping := FALSE;
+			patching.Release
 		END Detach;
 
 	END Core;
