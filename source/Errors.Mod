@@ -111,14 +111,18 @@ END Get;
 PROCEDURE ParseLine(reader : Streams.Reader; VAR errorMessage : ErrorMessage; VAR res : INTEGER);
 VAR line : ARRAY MaxLineLength OF CHAR;
 BEGIN
+	errorMessage.text := NIL; (* the caller must not read what this line did not set *)
 	IF reader.GetInteger(errorMessage.code, FALSE) THEN
-		reader.SkipWhitespace;
+		reader.SkipSpaces; (* spaces and tabs only: the text of an entry ends where its line ends *)
 		reader.Ln(line);
-		IF (reader.res = Ok) THEN
-			errorMessage.text := Strings.NewString(line);
+		IF (reader.res = Streams.Ok) OR (reader.res = Streams.EOF) THEN
+			errorMessage.text := Strings.NewString(line); res := Ok;
+		ELSE
+			res := reader.res;
 		END;
+	ELSE
+		res := reader.res;
 	END;
-	res := reader.res;
 END ParseLine;
 
 PROCEDURE ParseFile(CONST filename : Files.FileName; VAR res : INTEGER);
@@ -128,23 +132,28 @@ BEGIN
 	IF (file # NIL) THEN
 		res := Ok;
 		Files.OpenReader(reader, file, 0);
-		WHILE (res = Ok) & (reader.res # Streams.EOF) DO
-			ch := reader.Peek();
-			IF (ch # "#") THEN
+		(*	Peek answers 0X at the end of the file and clears the EOF it saw there, so the end of the
+			file is that 0X and not reader.res. The loop used to test reader.res, ran one turn too many
+			and read a number that was not there -- which reported every well-formed file as broken. *)
+		reader.SkipWhitespace; (* leading blank lines, and the indentation of the first line *)
+		ch := reader.Peek();
+		WHILE (res = Ok) & (ch # 0X) DO
+			IF (ch = "#") THEN
+				reader.SkipLn; (* line comment, wherever on the line it begins *)
+			ELSE
 				ParseLine(reader, errorMessage, res);
 				IF (res = Ok) THEN
-					IF (errorMessage.code MOD 100 # 0) THEN
-						errorMessage.moduleName := lastModuleName;
-						Add(errorMessage);
-					ELSE
-						COPY(errorMessage.text^, lastModuleName);
-					END;
+					(*	a code that divides by a hundred names the group the codes under it belong to --
+						and is a code in its own right as well: errors.txt writes 0 and 300 that way. *)
+					IF (errorMessage.code MOD 100 = 0) THEN COPY(errorMessage.text^, lastModuleName); END;
+					errorMessage.moduleName := lastModuleName;
+					Add(errorMessage);
 				END;
-			ELSE
-				reader.SkipLn; (* skip line comment *)
 			END;
+			reader.SkipWhitespace;
+			ch := reader.Peek();
 		END;
-		IF (reader.res = Streams.Ok) OR (reader.res = Streams.EOF)  THEN res := Ok; ELSE res := Error; END;
+		IF (res = Ok) & ((reader.res = Streams.Ok) OR (reader.res = Streams.EOF)) THEN res := Ok; ELSE res := Error; END;
 	ELSE
 		res := FileNotFound;
 	END;
@@ -154,7 +163,7 @@ END ParseFile;
 PROCEDURE Open*(context : Commands.Context); (** [filename] ~ *)
 VAR filename : Files.FileName; res : INTEGER;
 BEGIN {EXCLUSIVE}
-	index := 0; cache := NIL;
+	index := 0; cache := NIL; lastModuleName := UnknownModule; (* what the last file named is not this file's *)
 	context.arg.SkipWhitespace; context.arg.String(filename);
 	IF (filename = "") THEN COPY(DefaultErrorMessageFile, filename); END;
 	context.out.String("Errors: Loading error messages from file "); context.out.String(filename);
@@ -200,7 +209,7 @@ END Show;
 
 BEGIN
 	index := 0;
-	lastModuleName := "";
+	lastModuleName := UnknownModule;
 END Errors.
 
 Errors.Open ~
