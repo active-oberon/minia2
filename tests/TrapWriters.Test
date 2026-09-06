@@ -1,0 +1,420 @@
+# Tests for source/TrapWriters.Mod -- where the words of a trap go.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test TrapWritersTestShared;System.Load Test"
+#
+# When something traps, `Traps` asks this module for a writer, prints the whole report into it --
+# the registers, the stack, the names of the procedures on it -- and then calls `Trapped`. What
+# `GetWriter` hands out is not a stream to anywhere: it is a 32K buffer in an object that is already
+# allocated, because inside a trap nothing may be allocated and no lock may be taken. The output
+# happens afterwards, from that object's own activity, which wakes every 100 ms and, if the flag is
+# set, hands the collected text to each installed factory in turn. `FileTrapWriter` installs one
+# that writes to a file, `WMTrapWriter` one that opens a window; with none installed the words go to
+# the kernel log and nowhere else.
+#
+# So this module is a list, a buffer and a hundred milliseconds, and every part of it runs at the
+# worst moment a system has. It had no test.
+#
+# A case cannot trap on purpose here -- a real trap ends the case -- but it does not have to: what a
+# trap does is write to the writer `GetWriter` answers and then call `Trapped`, and a case can do
+# both. What the cases ask is what anyone with a list of subscribers asks: does what was written
+# reach everyone installed, does it reach the one who installed twice only once, does what was
+# written for one trap show up again at the next, does removing one leave the others, and is what is
+# left after the last one removed the same thing as before the first was installed.
+#
+# Every case measures first, then puts the module back the way it found it, and only then asserts.
+# The order matters: a factory is a procedure in the case's own shared module, `System.Free` takes
+# that module away between cases, and a factory left installed would be a dangling procedure the
+# next real trap would call.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE TrapWritersTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Two trap writer factories and the time to let them run" *)
+
+	IMPORT Kernel, Streams, Strings;
+
+	VAR
+		(** Where the two factories below send what a trap wrote. *)
+		first, second: Streams.StringWriter;
+
+	(** Two subscribers, told apart by which writer they hand out. *)
+	PROCEDURE FirstFactory* (): Streams.Writer;
+	BEGIN
+		RETURN first
+	END FirstFactory;
+
+	PROCEDURE SecondFactory* (): Streams.Writer;
+	BEGIN
+		RETURN second
+	END SecondFactory;
+
+	(** Both writers new and empty, so that a case starts from nothing having arrived. *)
+	PROCEDURE Fresh*;
+	BEGIN
+		(*	Wider than the trap writer's own buffer, so that what a case measures about a report too
+			long to fit is the trap writer's limit and not the test's. *)
+		Streams.OpenStringWriter(first, 64 * 1024);
+		Streams.OpenStringWriter(second, 64 * 1024)
+	END Fresh;
+
+	(**	What has reached each of them since it was last asked. Reading empties the writer, which is
+		what makes "and not again at the next trap" a question a case can put. *)
+	PROCEDURE FirstGot* (VAR text: ARRAY OF CHAR);
+	BEGIN first.Get(text)
+	END FirstGot;
+
+	PROCEDURE SecondGot* (VAR text: ARRAY OF CHAR);
+	BEGIN second.Get(text)
+	END SecondGot;
+
+	(**	The text is written out by the trap writer's own activity, which sleeps 100 ms between
+		looks. Wait long enough for it to have looked several times. *)
+	PROCEDURE Settle*;
+	VAR timer: Kernel.Timer;
+	BEGIN
+		NEW(timer); timer.Sleep(500)
+	END Settle;
+
+	(** Does the text hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** How many times, which is the difference between "everyone got it" and "someone got it twice". *)
+	PROCEDURE Times* (CONST text, what: ARRAY OF CHAR): SIZE;
+	VAR i, j, n, textLength, whatLength: SIZE;
+	BEGIN
+		textLength := Strings.Length(text); whatLength := Strings.Length(what);
+		IF whatLength = 0 THEN RETURN 0 END;
+		n := 0; i := 0;
+		WHILE i + whatLength <= textLength DO
+			j := 0;
+			WHILE (j < whatLength) & (text[i+j] = what[j]) DO INC(j) END;
+			IF j = whatLength THEN INC(n); INC(i, whatLength) ELSE INC(i) END
+		END;
+		RETURN n
+	END Times;
+
+	END TrapWritersTestShared.
+
+positive: with nothing installed there is still a writer, and it is the same one every time
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters;
+
+	VAR one, other: Streams.Writer;
+
+	BEGIN
+		TrapWriters.RemoveAll;	(* whatever an earlier case may have left *)
+
+		one := TrapWriters.GetWriter();
+		other := TrapWriters.GetWriter();
+
+		(*	A trap handler is not in a position to check what it was handed, so there is no such
+			thing as no writer: with nobody subscribed the words go to the kernel log. *)
+		ASSERT(one # NIL);
+		ASSERT(one = other)
+	END Test.
+
+positive: what was written before a trap reaches the factory installed for it
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR beforeInstall, afterInstall: Streams.Writer; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		beforeInstall := TrapWriters.GetWriter();
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		afterInstall := TrapWriters.GetWriter();
+
+		afterInstall.String("Trap 5.8 (ASSERT failed)"); afterInstall.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(text);
+
+		TrapWriters.RemoveAll;
+
+		(* the writer a trap gets is now the pooled one, not the log *)
+		ASSERT(beforeInstall # afterInstall);
+		ASSERT(T.Said(text, "Trap 5.8 (ASSERT failed)"))
+	END Test.
+
+positive: two subscribers both get the whole of it
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR writer: Streams.Writer; firstText, secondText: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		TrapWriters.InstallTrapWriterFactory(T.SecondFactory);
+
+		writer := TrapWriters.GetWriter();
+		writer.String("StackTraceBack:"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(firstText); T.SecondGot(secondText);
+
+		TrapWriters.RemoveAll;
+
+		(*	One buffer, read once and handed to each in turn -- so what the second one gets is not
+			the leavings of the first. *)
+		ASSERT(T.Said(firstText, "StackTraceBack:"));
+		ASSERT(T.Said(secondText, "StackTraceBack:"))
+	END Test.
+
+positive: installing the same factory twice does not write it out twice
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR writer: Streams.Writer; text: ARRAY 1024 OF CHAR; times: SIZE;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		(*	`FileTrapWriter.Install` is a command, and a command can be typed twice. *)
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+
+		writer := TrapWriters.GetWriter();
+		writer.String("halted"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(text);
+
+		TrapWriters.RemoveAll;
+
+		times := T.Times(text, "halted");
+		ASSERT(times = 1)
+	END Test.
+
+positive: what one trap wrote is not written again at the next
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR writer: Streams.Writer; firstTrap, secondTrap: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		writer := TrapWriters.GetWriter();
+
+		writer.String("the first trap"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(firstTrap);
+
+		writer.String("the second trap"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(secondTrap);
+
+		TrapWriters.RemoveAll;
+
+		(*	The buffer is one object that outlives every trap, so emptying it is the whole of what
+			keeps a report from being the report before it as well. *)
+		ASSERT(T.Said(firstTrap, "the first trap"));
+		ASSERT(T.Said(secondTrap, "the second trap"));
+		ASSERT(~T.Said(secondTrap, "the first trap"))
+	END Test.
+
+positive: taking one subscriber out leaves the other
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR writer: Streams.Writer; firstText, secondText: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		TrapWriters.InstallTrapWriterFactory(T.SecondFactory);
+		TrapWriters.UninstallTrapWriterFactory(T.FirstFactory);
+
+		writer := TrapWriters.GetWriter();
+		writer.String("after the first one left"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(firstText); T.SecondGot(secondText);
+
+		TrapWriters.RemoveAll;
+
+		ASSERT(firstText = "");
+		ASSERT(T.Said(secondText, "after the first one left"))
+	END Test.
+
+positive: taking one out that was never in leaves the other alone
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR writer: Streams.Writer; secondText: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		TrapWriters.InstallTrapWriterFactory(T.SecondFactory);
+		TrapWriters.UninstallTrapWriterFactory(T.FirstFactory);	(* not there; the list walks past its end *)
+
+		writer := TrapWriters.GetWriter();
+		writer.String("still subscribed"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.SecondGot(secondText);
+
+		TrapWriters.RemoveAll;
+
+		ASSERT(T.Said(secondText, "still subscribed"))
+	END Test.
+
+positive: when the last subscriber goes, the writer is the one it was before the first arrived
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR before, during, after: Streams.Writer;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		before := TrapWriters.GetWriter();
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		during := TrapWriters.GetWriter();
+		TrapWriters.UninstallTrapWriterFactory(T.FirstFactory);
+		after := TrapWriters.GetWriter();
+
+		TrapWriters.RemoveAll;
+
+		(*	The pooled writer and its activity exist only while somebody is subscribed: the last one
+			out takes it with them, and the log has the words again. *)
+		ASSERT(before # during);
+		ASSERT(after = before)
+	END Test.
+
+positive: RemoveAll takes every subscriber, and nothing arrives after it
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters, T := TrapWritersTestShared;
+
+	VAR before, after, writer: Streams.Writer; firstText, secondText: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		TrapWriters.RemoveAll; T.Fresh;
+
+		before := TrapWriters.GetWriter();
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		TrapWriters.InstallTrapWriterFactory(T.SecondFactory);
+		TrapWriters.RemoveAll;
+		after := TrapWriters.GetWriter();
+
+		writer := TrapWriters.GetWriter();
+		writer.String("nobody is listening"); writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(firstText); T.SecondGot(secondText);
+
+		ASSERT(after = before);
+		ASSERT(firstText = "");
+		ASSERT(secondText = "")
+	END Test.
+
+positive: a report too long for the buffer keeps its head and loses its tail, and says nothing about it
+
+	MODULE Test;
+	IMPORT Streams, Strings, TrapWriters, T := TrapWritersTestShared;
+
+	CONST TooMuch = 40000;	(* more than the buffer holds, which is 32K and not exported *)
+
+	VAR writer: Streams.Writer; text: ARRAY 64 * 1024 OF CHAR; i, length: SIZE;
+
+	BEGIN
+		(*	The buffer is allocated once, at install, because nothing may be allocated inside a trap
+			-- so what does not fit is dropped where it is written, by `Streams.Writer.Char`, which
+			stops at `StringFull` and reports it nowhere the trap handler looks. A recursive trap
+			through deep stacks is how a report gets this long, and it is the report one would most
+			want whole. The raw trace still has all of it: `TrapWriter.Char` sends every character
+			to `Trace.Char` before buffering it, and that is the reason it does. *)
+		TrapWriters.RemoveAll; T.Fresh;
+
+		TrapWriters.InstallTrapWriterFactory(T.FirstFactory);
+		writer := TrapWriters.GetWriter();
+
+		writer.String("<the beginning of the report>");
+		FOR i := 1 TO TooMuch DO writer.Char("x") END;
+		writer.String("<the end of the report>");
+		writer.Update;
+		TrapWriters.Trapped;
+		T.Settle;
+		T.FirstGot(text);
+
+		TrapWriters.RemoveAll;
+
+		length := Strings.Length(text);
+		ASSERT(length > 0);
+		ASSERT(T.Said(text, "<the beginning of the report>"));
+		ASSERT(~T.Said(text, "<the end of the report>"));
+		ASSERT(length < TooMuch)
+	END Test.
+
+positive: a trap with nobody subscribed is not an error
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters;
+
+	VAR writer: Streams.Writer;
+
+	BEGIN
+		(*	This is the state a system boots in and the state `Cleanup` leaves it in when it goes
+			down, so it is the state a trap is most likely to happen in. *)
+		TrapWriters.RemoveAll;
+
+		writer := TrapWriters.GetWriter();
+		writer.String(""); writer.Update;
+		TrapWriters.Trapped;
+
+		ASSERT(TrapWriters.GetWriter() = writer)
+	END Test.
+
+positive: the trace and the log install and leave like anyone else
+
+	MODULE Test;
+	IMPORT Streams, TrapWriters;
+
+	VAR before, withTrace, afterTrace, withLog, afterLog: Streams.Writer;
+
+	BEGIN
+		(*	The two factories the module keeps for itself. Nothing is written through them here: what
+			they hand out is the console, and a case that wrote to it would say so in the middle of
+			the test report. *)
+		TrapWriters.RemoveAll;
+		before := TrapWriters.GetWriter();
+
+		TrapWriters.InstallTraceWriter;
+		withTrace := TrapWriters.GetWriter();
+		TrapWriters.RemoveTraceWriter;
+		afterTrace := TrapWriters.GetWriter();
+
+		TrapWriters.InstallLogWriter;
+		withLog := TrapWriters.GetWriter();
+		TrapWriters.RemoveLogWriter;
+		afterLog := TrapWriters.GetWriter();
+
+		TrapWriters.RemoveAll;
+
+		ASSERT(withTrace # before);
+		ASSERT(afterTrace = before);
+		ASSERT(withLog # before);
+		ASSERT(afterLog = before)
+	END Test.

@@ -515,7 +515,10 @@ VAR
 			Files.OpenReader(reader, file, 0);
 			NEW(arrangement); NEW(stringWriter,256);
 			Streams.OpenWriter( Log, KernelLog.Send );
-			NEW(diagnostics,Log);
+			(*	The diagnostics go into the string writer, because `msg` is read out of it below and
+				`msg` is the only thing the caller of a loader ever sees. They reach the log all the
+				same: the last line of this procedure prints `msg` there. *)
+			NEW(diagnostics,stringWriter);
 			IF TraceBlocks THEN debug := Log ELSE debug := NIL END;
 			NEW(linker, diagnostics, debug, arrangement, arrangement,name);
 			IF TraceLoading THEN Trace.String("before linking"); Trace.Ln END;
@@ -563,11 +566,25 @@ VAR
 		ELSE
 			res := FileNotFound;  COPY(fileName, msg);  Modules.Append(" not found", msg)
 		END;
+		(*	`Ok` and no module is the one answer a caller cannot act on: `Modules.ThisModule` hands
+			both on unchanged, and whoever asked for the module is left with no module and no reason
+			for it. An object file cut short right after its header ended here -- no section was
+			read whole, so nothing was linked, so nothing went wrong. *)
+		IF (res = Ok) & (module = NIL) THEN
+			res := LinkerError;
+			COPY(fileName, msg); Modules.Append(" holds no module ", msg); Modules.Append(name, msg)
+		END;
 		IF res # Ok THEN module := NIL END;
 		IF (res # Ok) & (res # FileNotFound) THEN D.String(msg);D.Ln END;
 		RETURN module
 	FINALLY
+		(*	Two things arrive here. The header of an object file is read with ASSERTs, so a file
+			that is not one at all traps rather than reaching the branch above -- and this is what
+			keeps a stray file in the search path from taking the system down. The other is a module
+			whose own body trapped, which `Modules.Initialize` runs from inside this procedure. The
+			message says only what is true of both: the trap is caught, not read. *)
 		res := CommandTrapped;
+		COPY("loading ", msg); Modules.Append(fileName, msg); Modules.Append(" trapped", msg);
 		RETURN NIL
 	END LoadObj;
 

@@ -1,0 +1,454 @@
+# Tests for source/Loader.Mod -- the thing that turns a file on disk into a module in memory.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test LoaderTestShared;System.Load Test"
+#
+# Every module this system runs came through here. `Loader.Install` registers `LoadObj` with
+# `Modules` for the object file extension of the build, and from then on every `IMPORT`, every
+# command typed at a shell and every `System.Load` ends in `LoadObj`: read the file, hand it to
+# `GenericLinker`, allocate what it asks for in the heap, patch the fixups and publish the module.
+# It had no test, and it was covered only in the sense that a system whose loader is broken does not
+# start -- which says nothing at all about the paths a start does not take, and those are exactly
+# the paths a *user* takes: a file that is not there, a file left over from another build, a file
+# that a disk or a download cut in half.
+#
+# What a case can drive here is the whole of it, because a case can make an object file: it writes a
+# module, calls `Compiler.Compile` on it through a command context, and hands the object file that
+# comes out to `LoadObj` by hand. The whole file proves the loader whole -- the module loads, its
+# body has run, and a command in it answers -- and that same file, copied with one byte changed or
+# with its tail cut off, is every broken file a loader has to survive.
+#
+# The extension is not spelled out anywhere in the cases: `LoaderTestShared` works it out the way
+# `Loader.Install` works it out, from `Machine.GetConfig("ObjectFileExtension")` and then
+# `Machine.DefaultObjectFileExtension`, so the suite says the same thing on a build that names its
+# object files differently.
+#
+# `Arrangement` is where the loaded bytes are put and where the fixups are written. Its constructor
+# is not exported, so a case cannot make one -- but the type is, so a case can extend it, and an
+# extension of it patches with the very code the loader patches with. That is what the last three
+# cases do.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE LoaderTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Object files to load: whole ones, old ones and half-written ones" *)
+
+	IMPORT Commands, Files, Machine, Streams, Strings;
+
+	CONST
+		(**	Where the version digit sits in the header of an object file. `GenericLinker.ReadHeader`
+			reads the magic (`FoxOFB` or `FoxOFT`), whitespace, a `v`, the number and a `.`, so for a
+			one-digit version the digit is the ninth byte. *)
+		VersionDigit* = 8;
+
+	VAR
+		(** The extension this build's loader is installed for, dot included. *)
+		extension-: ARRAY 32 OF CHAR;
+
+	(** The file name `Modules` would look a module up under, worked out the way `Loader.Install` does. *)
+	PROCEDURE ObjectFileName* (CONST name: ARRAY OF CHAR; VAR fileName: ARRAY OF CHAR);
+	BEGIN
+		COPY(name, fileName); Strings.Append(fileName, extension)
+	END ObjectFileName;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Write a file of text. *)
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content);
+		writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** Write the first `len` bytes of `bytes` as a file. *)
+	PROCEDURE WriteBytes* (CONST filename: ARRAY OF CHAR; CONST bytes: ARRAY OF CHAR; len: SIZE);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.Bytes(bytes, 0, len);
+		writer.Update;
+		Files.Register(file)
+	END WriteBytes;
+
+	(** Read a whole file; answers how many bytes it had, or -1 if it is not there. *)
+	PROCEDURE Read* (CONST filename: ARRAY OF CHAR; VAR bytes: ARRAY OF CHAR): SIZE;
+	VAR file: Files.File; reader: Files.Reader; len: SIZE;
+	BEGIN
+		file := Files.Old(filename);
+		IF file = NIL THEN RETURN -1 END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(bytes, 0, LEN(bytes), len);
+		RETURN len
+	END Read;
+
+	(**	Write a module of `content` under `name`, compile it, and answer the name of the object file
+		the compiler left behind. *)
+	PROCEDURE CompiledToObjectFile* (CONST name, content: ARRAY OF CHAR; VAR fileName: ARRAY OF CHAR): BOOLEAN;
+	VAR source: ARRAY 64 OF CHAR; text: ARRAY 1024 OF CHAR; res: INTEGER;
+	BEGIN
+		COPY(name, source); Strings.Append(source, ".Mod");
+		Write(source, content);
+		res := Run("Compiler.Compile", source, text);
+		ObjectFileName(name, fileName);
+		RETURN (res = 0) & (Files.Old(fileName) # NIL)
+	END CompiledToObjectFile;
+
+	BEGIN
+		Machine.GetConfig("ObjectFileExtension", extension);
+		IF extension = "" THEN COPY(Machine.DefaultObjectFileExtension, extension) END
+	END LoaderTestShared.
+
+positive: a module the case compiles is loaded, has run, and answers to its name
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestWhole";
+		Source = "MODULE LoaderTestWhole; IMPORT Commands; VAR answer*: SIGNED32; PROCEDURE Say* (context: Commands.Context); BEGIN context.out.Int(answer, 1); context.out.Update END Say; BEGIN answer := 42 END LoaderTestWhole.";
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName: ARRAY 256 OF CHAR; text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+		ASSERT(Modules.ModuleByName(Name) = NIL);	(* nothing has loaded it yet *)
+
+		msg := "untouched";
+		module := Loader.LoadObj(Name, fileName, res, msg);
+
+		ASSERT(res = Modules.Ok);
+		ASSERT(module # NIL);
+		ASSERT(module.name = Name);
+		ASSERT(msg = "");	(* nothing went wrong, so nothing is said *)
+
+		(* published under its own name, and not merely handed back *)
+		ASSERT(Modules.ModuleByName(Name) # NIL);
+
+		(*	The body ran and the code is code: `answer` was set by the module body of the file just
+			loaded, and a command in it writes the number out. *)
+		res := T.Run("LoaderTestWhole.Say", "", text);
+		ASSERT(T.Said(text, "42"))
+	END Test.
+
+positive: a file that is not there is refused, and the refusal names the file
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName: ARRAY 256 OF CHAR;
+
+	BEGIN
+		T.ObjectFileName("LoaderTestNoSuchModule", fileName);
+		msg := "untouched";
+		module := Loader.LoadObj("LoaderTestNoSuchModule", fileName, res, msg);
+
+		ASSERT(res # Modules.Ok);
+		ASSERT(module = NIL);
+		ASSERT(T.Said(msg, fileName));
+		ASSERT(T.Said(msg, "not found"))
+	END Test.
+
+positive: a file that is not an object file at all is refused, and says which file it was
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName: ARRAY 256 OF CHAR;
+
+	BEGIN
+		(*	The header is read with ASSERTs -- an object file is written by us, so anything else
+			traps inside `GenericLinker.ReadHeader`. `LoadObj` catches that in its FINALLY, and that
+			is what keeps a stray file in the search path from taking the system down. What the
+			caller is handed afterwards still has to be an answer. *)
+		T.ObjectFileName("LoaderTestNotAnObjectFile", fileName);
+		T.Write(fileName, "this is a text file that happens to have the extension of an object file");
+
+		msg := "untouched";
+		module := Loader.LoadObj("LoaderTestNotAnObjectFile", fileName, res, msg);
+
+		ASSERT(res = Loader.CommandTrapped);	(* the trap was caught, the system is still here *)
+		ASSERT(module = NIL);
+		ASSERT(msg # "");
+		ASSERT(T.Said(msg, fileName))
+	END Test.
+
+positive: an object file from another version is refused, and the refusal says why
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestOldVersion";
+		Source = "MODULE LoaderTestOldVersion; VAR x*: SIGNED32; BEGIN x := 1 END LoaderTestOldVersion.";
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName, oldName: ARRAY 256 OF CHAR;
+		bytes: ARRAY 65536 OF CHAR; len: SIZE;
+
+	BEGIN
+		(*	A whole object file with one digit of its header changed: the file a compiler that is no
+			longer the one running left in a build directory. A version it does not know is the one
+			malformed header `GenericLinker` reports instead of asserting on, so it is the way to ask
+			what a caller of `LoadObj` is told when the linker refuses. *)
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+		len := T.Read(fileName, bytes);
+		ASSERT(len > T.VersionDigit);
+		ASSERT((bytes[T.VersionDigit] >= "0") & (bytes[T.VersionDigit] <= "9"));
+		bytes[T.VersionDigit] := "1";	(* version 1, which no build of this tree ever wrote *)
+
+		T.ObjectFileName("LoaderTestOldVersionCopy", oldName);
+		T.WriteBytes(oldName, bytes, len);
+
+		msg := "untouched";
+		module := Loader.LoadObj("LoaderTestOldVersionCopy", oldName, res, msg);
+
+		ASSERT(res # Modules.Ok);
+		ASSERT(module = NIL);
+		(*	The linker said "invalid object file version encountered. Recompile sources." and that
+			one sentence is the whole of what the caller needs. *)
+		ASSERT(msg # "");
+		ASSERT(T.Said(msg, "version"))
+	END Test.
+
+positive: an object file that ends in the middle of a section is refused
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestHalfWritten";
+		Source = "MODULE LoaderTestHalfWritten; VAR x*: SIGNED32; BEGIN x := 1 END LoaderTestHalfWritten.";
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName, halfName: ARRAY 256 OF CHAR;
+		bytes: ARRAY 65536 OF CHAR; len: SIZE;
+
+	BEGIN
+		(*	A file whose tail is gone -- a disk that filled up, a copy that stopped. The header is
+			whole, so nothing asserts; the last section is read short and dropped. Nothing may come
+			of that but a refusal: the one answer a loader must never give is that all is well and
+			here is no module. *)
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+		len := T.Read(fileName, bytes);
+		ASSERT(len > 64);
+
+		T.ObjectFileName("LoaderTestHalfWrittenCopy", halfName);
+		T.WriteBytes(halfName, bytes, len DIV 2);
+
+		msg := "untouched";
+		module := Loader.LoadObj("LoaderTestHalfWrittenCopy", halfName, res, msg);
+
+		ASSERT(module = NIL);
+		ASSERT(res # Modules.Ok);
+		ASSERT(msg # "")
+	END Test.
+
+positive: an object file cut short right after its header is refused
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestHeaderOnly";
+		Source = "MODULE LoaderTestHeaderOnly; IMPORT Commands; VAR answer*: SIGNED32; PROCEDURE Say* (context: Commands.Context); BEGIN context.out.Int(answer, 1); context.out.Update END Say; BEGIN answer := 42 END LoaderTestHeaderOnly.";
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName, cutName: ARRAY 256 OF CHAR;
+		bytes: ARRAY 65536 OF CHAR; len: SIZE;
+
+	BEGIN
+		(*	Where the cut falls decides what the loader hits, and the same file cut at every twentieth
+			of its length answers three different ways: near the end it traps inside a section header,
+			in the middle the fixups of the sections that did arrive point at blocks that did not, and
+			in the first quarter -- the header is whole, no section is -- there was nothing to link,
+			so nothing went wrong, so `LoadObj` answered `Ok` and handed back NIL. That last one is
+			the answer this case is for. *)
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+		len := T.Read(fileName, bytes);
+		ASSERT(len > 64);
+
+		T.ObjectFileName("LoaderTestHeaderOnlyCopy", cutName);
+		T.WriteBytes(cutName, bytes, len DIV 4);
+
+		msg := "untouched";
+		module := Loader.LoadObj("LoaderTestHeaderOnlyCopy", cutName, res, msg);
+
+		ASSERT(module = NIL);
+		ASSERT(res # Modules.Ok);
+		ASSERT(msg # "")
+	END Test.
+
+positive: a half-written module is not loaded, and whoever asked for it is told
+
+	MODULE Test;
+	IMPORT Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestHalfSeen";
+		Source = "MODULE LoaderTestHalfSeen; VAR x*: SIGNED32; BEGIN x := 1 END LoaderTestHalfSeen.";
+
+	VAR module: Modules.Module; res: INTEGER; msg, fileName, halfName: ARRAY 256 OF CHAR;
+		bytes: ARRAY 65536 OF CHAR; len: SIZE;
+
+	BEGIN
+		(*	The same file, reached the way anything in a running system reaches it: by name, through
+			`Modules`, which is the only caller `LoadObj` has once it is installed. *)
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+		len := T.Read(fileName, bytes);
+
+		T.ObjectFileName("LoaderTestHalfSeenCopy", halfName);
+		T.WriteBytes(halfName, bytes, len DIV 2);
+
+		res := Modules.Ok; msg := "untouched";
+		module := Modules.ThisModule("LoaderTestHalfSeenCopy", res, msg);
+
+		ASSERT(module = NIL);
+		ASSERT(res # Modules.Ok)	(* and not "loaded fine, here is nothing" *)
+	END Test.
+
+positive: a patch of whole bytes writes the bytes, least significant first
+
+	MODULE Test;
+	IMPORT Loader;
+
+	TYPE
+		(*	`Arrangement`'s constructor is not exported, so this is how a case comes by one. `Patch`
+			uses none of the object's state -- it writes through the address it is given -- so what
+			runs here is the loader's own code, on memory the case owns. *)
+		Patcher = OBJECT (Loader.Arrangement)
+			PROCEDURE & InitPatcher;
+			BEGIN
+			END InitPatcher;
+		END Patcher;
+
+	VAR patcher: Patcher; bytes: ARRAY 8 OF CHAR; i: SIZE;
+
+	BEGIN
+		NEW(patcher);
+		FOR i := 0 TO LEN(bytes) - 1 DO bytes[i] := 0X END;
+
+		patcher.Patch(ADDRESSOF(bytes[0]), 0ABCDH, 0, 16, 8);
+
+		ASSERT(bytes[0] = 0CDX);
+		ASSERT(bytes[1] = 0ABX);
+		ASSERT(bytes[2] = 0X)	(* and not one byte further *)
+	END Test.
+
+positive: a patch of a few bits keeps the bits around them
+
+	MODULE Test;
+	IMPORT Loader;
+
+	TYPE
+		Patcher = OBJECT (Loader.Arrangement)
+			PROCEDURE & InitPatcher;
+			BEGIN
+			END InitPatcher;
+		END Patcher;
+
+	VAR patcher: Patcher; bytes: ARRAY 8 OF CHAR; i: SIZE;
+
+	BEGIN
+		(*	The displacement of a branch on a machine with fixed width instructions sits inside the
+			instruction word, so a fixup that does not fill its bytes has to leave the instruction
+			around it alone. This used to be an assertion instead, which made every such fixup a
+			trap -- see the comment on `Loader.Arrangement.Patch`. *)
+		NEW(patcher);
+		FOR i := 0 TO LEN(bytes) - 1 DO bytes[i] := 0FFX END;
+
+		patcher.Patch(ADDRESSOF(bytes[0]), 0, 1, 2, 8);	(* two zero bits at bit 1 *)
+
+		ASSERT(bytes[0] = 0F9X);	(* 11111001: bits 1 and 2 cleared, the other six untouched *)
+		ASSERT(bytes[1] = 0FFX);
+
+		FOR i := 0 TO LEN(bytes) - 1 DO bytes[i] := 0X END;
+		patcher.Patch(ADDRESSOF(bytes[0]), 3, 1, 2, 8);	(* two one bits at bit 1 *)
+		ASSERT(bytes[0] = 06X)
+	END Test.
+
+positive: a patch offset of more than a byte moves on to the next byte
+
+	MODULE Test;
+	IMPORT Loader;
+
+	TYPE
+		Patcher = OBJECT (Loader.Arrangement)
+			PROCEDURE & InitPatcher;
+			BEGIN
+			END InitPatcher;
+		END Patcher;
+
+	VAR patcher: Patcher; bytes: ARRAY 8 OF CHAR; i: SIZE;
+
+	BEGIN
+		(* whole bytes of the offset are part of the position *)
+		NEW(patcher);
+		FOR i := 0 TO LEN(bytes) - 1 DO bytes[i] := 0X END;
+
+		patcher.Patch(ADDRESSOF(bytes[0]), 1, 9, 1, 8);
+
+		ASSERT(bytes[0] = 0X);
+		ASSERT(bytes[1] = 02X);	(* bit 1 of the byte after the one addressed *)
+
+		FOR i := 0 TO LEN(bytes) - 1 DO bytes[i] := 0X END;
+		patcher.Patch(ADDRESSOF(bytes[0]), 0FFH, 16, 8, 8);
+		ASSERT(bytes[0] = 0X);
+		ASSERT(bytes[1] = 0X);
+		ASSERT(bytes[2] = 0FFX)
+	END Test.
+
+positive: the loader can be taken out and put back
+
+	MODULE Test;
+	IMPORT Loader, Modules, T := LoaderTestShared;
+
+	CONST
+		Name = "LoaderTestAfterRemove";
+		Source = "MODULE LoaderTestAfterRemove; VAR x*: SIGNED32; BEGIN x := 7 END LoaderTestAfterRemove.";
+
+	VAR module, withoutLoader: Modules.Module; withoutRes, withRes: INTEGER;
+		msg, fileName: ARRAY 256 OF CHAR;
+
+	BEGIN
+		(*	`Remove` is what the term handler calls when the system goes down and `Install` is what
+			the module body calls when it comes up. Nothing else calls either, so nothing ever found
+			out whether the pair is a pair. Both halves are measured before anything is asserted: a
+			case that leaves this system without a loader takes every later case with it. *)
+		ASSERT(T.CompiledToObjectFile(Name, Source, fileName));
+
+		Loader.Remove;
+		msg := "untouched";
+		withoutLoader := Modules.ThisModule(Name, withoutRes, msg);
+
+		Loader.Install;
+		msg := "untouched";
+		module := Modules.ThisModule(Name, withRes, msg);
+
+		ASSERT(withoutLoader = NIL);
+		ASSERT(withoutRes # Modules.Ok);
+
+		ASSERT(module # NIL);
+		ASSERT(withRes = Modules.Ok);
+		ASSERT(module.name = Name)
+	END Test.
