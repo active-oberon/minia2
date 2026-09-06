@@ -88,7 +88,7 @@ VAR
 
 		TrapWriters.Trapped;
 
-		IF p.obj = NIL THEN	(* the main thread is not associated with any object *)
+		IF (p = NIL) OR (p.obj = NIL) THEN	(* the main thread is not associated with any object *)
 			Unix.exit( -1 )
 		ELSE
 			S.GET( S.VAL( ADDRESS, p.obj ) - AddrSize, tag );
@@ -208,6 +208,11 @@ VAR
 		handler: ExceptionHandler;
 		w: Streams.Writer;
 	BEGIN
+		(*	Neither is written on every path to its reader: `trapno` only under `sig = 5`, `handler`
+			only when there is a process to search the frames of -- and a local here holds whatever
+			the frame held. *)
+		trapno := 0;  handler.pc := 0;
+
 		IF sig IN {1, 2, 14, 15} (* SIGHUP, SIGINT, SIGALRM, SIGTERM *) THEN
 			(* ignore *) RETURN
 		END;
@@ -284,7 +289,13 @@ VAR
 				| 7:		w.String( "  (index out of range)" )
 				| 8:		w.String( "  (ASSERT failed)" )
 				| 9:		w.String( "  (array dimension error)" )
+				|10:	w.String( "  (array allocation error)" )
 				|12:	w.String( "  (division error)" )
+				|13:	w.String( "  (keyboard interrupt)" )
+				|14:	w.String( "  (out of memory)" )
+				|15:	w.String( "  (deadlock (active objects))" )
+				|16:	w.String( "  (procedure returned)" )
+				|23:	w.String( "  (Exceptions.Raise)" )
 				ELSE
 					IF trapno >= 30 THEN  w.String( "  (programmed HALT)" )
 					ELSE  w.String( "  (unknown exception)" )
@@ -323,6 +334,13 @@ VAR
 			Reflection.StackTraceBack( w, pc, bp, sp, sp+512, TRUE, FALSE );
 			END;
 		w.Ln; w.Ln;
+
+		(*	Inside the text, not after it: `FinishTrap` writes the end marker and hands the report
+			on, so a line printed past that point reaches whoever reads by the markers not at all. *)
+		IF handler.pc # 0 THEN
+			w.String( "### program continues with exception handler ###" );   w.Ln
+		END;
+
 		w.String("----------------------------------------------------"); w.Ln;
 
 		FinishTrap( w, process);
@@ -337,9 +355,6 @@ VAR
 		END;
 
 		IF handler.pc # 0 THEN
-			w.Ln;
-			w.String( "### program continues with exception handler ###" );   w.Ln;
-
 			Unix.ModifyContext( mc, handler.pc, handler.fp, handler.sp );
 			RETURN  (*! to exception handler !! *)
 		END;

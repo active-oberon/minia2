@@ -1,0 +1,571 @@
+# Tests for source/Unix.Traps.Mod -- the words a program gets when it is already too late.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test TrapsTestShared;System.Load Test"
+#
+# This is the module every other defect in this tree comes out through: the processor raises a
+# signal, `Traps.Trap` catches it and writes the only account anyone will ever get of what the
+# program was doing -- the number, the words for the number, the registers, the process, the stack
+# and the names of the variables on it. `Reflection` writes the stack and has a suite; `TrapWriters`
+# carries the text away and has one; the handler between them had none.
+#
+# It had none for a plain reason: a trap ends the activity it happens in, so a case cannot simply
+# trap. It does not have to. A trap ends *one* activity, and a case can make one on purpose: an
+# `OBJECT ... BEGIN {ACTIVE}` whose body traps dies alone, while the case that started it watches.
+# What the handler said is read back through the one interface the module has to the outside --
+# a trap writer factory, the same one `FileTrapWriter` and `WMTrapWriter` install.
+#
+# So every case here is: install the factory, start an activity that traps in a chosen way, wait
+# the hundred milliseconds `TrapWriters` sleeps between looks, and read the report as a string.
+#
+# The cases ask what a person reading a trap report asks. Does the number have words, and are they
+# the right words? Do the words exist at all for the numbers this system raises on its own -- the
+# one the heap raises when memory is gone, the one the compiler plants in a procedure that must not
+# return? Does the account begin and end where it says it does, or is there text outside it that
+# nobody will see? And what is a debugger told, given that `DAP.Mod` is the only other caller of
+# this module in the tree and it reads both of the hooks below.
+#
+# Found while writing these and NOT changed:
+#
+# - The branches for signals 1, 2 and 14 in the big CASE are unreachable. `Trap` returns at its
+#   first line for `sig IN {1, 2, 14, 15}`, so "Hangup signal", "User interrupt" and "Alarm signal"
+#   can never be printed. The early return is deliberate -- those signals are not errors -- so the
+#   dead branches are left where they are rather than the return weakened to reach them.
+# - `Traps.Trapped` is called after `UnlockTrap`, so a debugger holding the dying activity is
+#   holding it with the trap mutex free and the shared 32K buffer open to the next trap. Reaching
+#   that needs two activities trapping at once, which no case here does.
+# - `FinishTrap` copies `module.name` plus "." plus the type name into an `ARRAY 72 OF CHAR`, fed
+#   from two `Modules.Name` of 96 each. It is only ever compared against "Oberon-System.OberonRunner",
+#   which fits, so the truncation cannot be reached from here.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE TrapsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Make a trap happen where a test can survive it, and read back what was said about it" *)
+
+	IMPORT SYSTEM, Kernel, Streams, Strings, TrapWriters, Traps;
+
+	CONST
+		(**	What `Fire` can be asked for. Where the compiler has a number of its own for the thing
+			(FoxIntermediateBackend.Mod, "compiler generated traps") that number is the name here,
+			so a case says what it means and the report can be checked against it. *)
+		With* = 1; Case* = 2; Return* = 3; TypeGuard* = 6; Index* = 7; Assert* = 8; Division* = 12;
+
+		(** Numbers the system raises with SYSTEM.HALT rather than the compiler with an instruction. *)
+		ArrayForm* = 10; Keyboard* = 13; OutOfMemory* = 14; Deadlock* = 15; NoReturn* = 16;
+		Raise* = 23; Halt* = 40;
+
+		(** And the three that are not a trap number at all. *)
+		Segv* = 100;		(** a signal, not a trap instruction *)
+		Caught* = 101;		(** traps under a FINALLY, so the activity lives on *)
+
+		(* The trap writer's own activity sleeps 100 ms between looks; give it several. *)
+		Settle = 500;
+
+	TYPE
+		Text* = ARRAY 64 * 1024 OF CHAR;
+
+		BaseRec = RECORD END;
+		DerivedRec = RECORD (BaseRec) x: SIGNED32 END;
+		Base = POINTER TO BaseRec;
+		Derived = POINTER TO DerivedRec;
+		Pointer = POINTER TO RECORD field: SIGNED32 END;
+
+	VAR
+		sink: Streams.StringWriter;
+
+		(** What the two hooks a debugger uses were told, for the cases that install them. *)
+		sawSig-, sawTrapno-: SIGNED32;
+		sawPC-: ADDRESS;
+		toldTimes-, askedTimes-: SIGNED32;
+
+		caughtIt-: BOOLEAN;	(** did the FINALLY of `Caught` actually run *)
+
+	PROCEDURE Factory (): Streams.Writer;
+	BEGIN
+		RETURN sink
+	END Factory;
+
+	(**	The Handler side of the debugger interface: what `Traps` tells a debugger about an activity
+		it is about to end. *)
+	PROCEDURE Told* (sig, trapno: SIGNED32; pc, bp, sp, stackHigh: ADDRESS);
+	BEGIN
+		sawSig := sig; sawTrapno := trapno; sawPC := pc; INC(toldTimes)
+	END Told;
+
+	(**	The Resumer side: asked before anything else is done about a trap, because only a debugger
+		knows which instructions it planted. FALSE means the trap is the program's own. *)
+	PROCEDURE Asked* (VAR pc: ADDRESS; bp, sp, stackHigh: ADDRESS): BOOLEAN;
+	BEGIN
+		INC(askedTimes); sawPC := pc; RETURN FALSE
+	END Asked;
+
+	(** A fresh sink, nothing seen yet, and the factory installed. *)
+	PROCEDURE Attach*;
+	BEGIN
+		Streams.OpenStringWriter(sink, 64 * 1024);
+		sawSig := -1; sawTrapno := -1; sawPC := 0; toldTimes := 0; askedTimes := 0; caughtIt := FALSE;
+		TrapWriters.InstallTrapWriterFactory(Factory)
+	END Attach;
+
+	(**	Everything this module put into the system taken out again -- the factory and both hooks are
+		procedures of a module `System.Free` is about to take away, and one left behind is what the
+		next real trap would call. *)
+	PROCEDURE Detach*;
+	BEGIN
+		Traps.Trapped := NIL; Traps.Breakpoint := NIL;
+		TrapWriters.UninstallTrapWriterFactory(Factory)
+	END Detach;
+
+	PROCEDURE {NORETURN} MustNotReturn;
+	BEGIN
+	END MustNotReturn;
+
+	PROCEDURE Missing (n: SIGNED32): SIGNED32;
+	BEGIN
+		IF n = 0 THEN RETURN 1 END		(* and no RETURN on the other path *)
+	END Missing;
+
+	PROCEDURE Under;
+	VAR a: ARRAY 4 OF CHAR; i: SIGNED32;
+	BEGIN
+		i := 9; a[i] := "x"
+	FINALLY
+		caughtIt := TRUE
+	END Under;
+
+	(*	One procedure per way of going wrong. HALT takes a constant, so the numbers the system
+		raises by hand cannot share a branch. *)
+	PROCEDURE Bang (which: SIGNED32);
+	VAR a: ARRAY 4 OF CHAR; i, j, d: SIGNED32; b: Base; p: Pointer;
+	BEGIN
+		i := 9; j := 0; d := 0;
+		CASE which OF
+		| With:			NEW(b); WITH b: Derived DO d := b.x END
+		| Case:			CASE i OF 1: | 2: END
+		| Return:		d := Missing(5)
+		| TypeGuard:	NEW(b); d := b(Derived).x
+		| Index:		a[i] := "x"
+		| Assert:		ASSERT(i = 0)
+		| Division:		d := 10 DIV j
+		| ArrayForm:	SYSTEM.HALT(10)
+		| Keyboard:		SYSTEM.HALT(13)
+		| OutOfMemory:	SYSTEM.HALT(14)
+		| Deadlock:		SYSTEM.HALT(15)
+		| NoReturn:		MustNotReturn
+		| Raise:		SYSTEM.HALT(23)
+		| Halt:			HALT(40)
+		| Segv:			p := NIL; p.field := 1
+		| Caught:		Under
+		END
+	END Bang;
+
+	TYPE
+		(*	Not {SAFE}: a safe body is restarted after a trap, and these are meant to die once. *)
+		Trapper = OBJECT
+		VAR which: SIGNED32;
+
+			PROCEDURE &Init (w: SIGNED32);
+			BEGIN
+				which := w
+			END Init;
+
+		BEGIN {ACTIVE}
+			Bang(which)
+		END Trapper;
+
+	(**	Start an activity that goes wrong in the named way, and come back when the trap writer has
+		had time to hand the report on. *)
+	PROCEDURE Fire* (which: SIGNED32);
+	VAR trapper: Trapper; timer: Kernel.Timer;
+	BEGIN
+		NEW(trapper, which);
+		NEW(timer); timer.Sleep(Settle)
+	END Fire;
+
+	(** What has reached the factory since it was last asked. Reading empties the sink. *)
+	PROCEDURE Report* (VAR text: ARRAY OF CHAR);
+	BEGIN
+		sink.Get(text)
+	END Report;
+
+	(** Does the report hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** Where, which is how one part of a report is placed against another. *)
+	PROCEDURE Where* (CONST text, what: ARRAY OF CHAR): SIZE;
+	BEGIN
+		RETURN Strings.Pos(what, text)
+	END Where;
+
+	(**	The marker `Traps` writes at the start of the trap text, and the one it writes at the end.
+		Everything that belongs to the report is between them; anything outside is text nobody who
+		reads by the markers will see. *)
+	PROCEDURE Marker* (which: CHAR; VAR mark: ARRAY OF CHAR);
+	BEGIN
+		mark[0] := which; mark[1] := 0X
+	END Marker;
+
+	END TrapsTestShared.
+
+positive: an activity that traps is reported, and the case that started it lives on
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(*	The whole method of this suite in one case: the trap happened somewhere else, the words
+			arrived here, and this activity is still running to read them. *)
+		ASSERT(T.Said(text, "Trap "));
+		ASSERT(T.Said(text, "StackTraceBack:"))
+	END Test.
+
+positive: the account begins and ends with the markers that say where it begins and ends
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text; begins, ends: ARRAY 2 OF CHAR;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Assert);
+		T.Report(text);
+		T.Detach;
+
+		T.Marker(1X, begins); T.Marker(2X, ends);
+
+		(*	1X and 2X are not decoration: `WMTrapWriter` opens a window on the first and closes the
+			text on the second, and anything outside the pair is text that reaches nobody. *)
+		ASSERT(T.Where(text, begins) >= 0);
+		ASSERT(T.Where(text, ends) > T.Where(text, begins));
+		ASSERT(T.Where(text, "Trap ") > T.Where(text, begins));
+		ASSERT(T.Where(text, "StackTraceBack:") < T.Where(text, ends))
+	END Test.
+
+positive: the report says which system and when, before it says anything else
+
+	MODULE Test;
+	IMPORT Machine, T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(*	A trap report is read long after the fact and often out of a file, so the first thing in
+			it is which build produced it. *)
+		ASSERT(T.Said(text, Machine.version));
+		ASSERT(T.Where(text, Machine.version) < T.Where(text, "Trap "))
+	END Test.
+
+positive: the numbers the compiler plants have the words the compiler means by them
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+		PROCEDURE Says (which: SIGNED32; CONST number, words: ARRAY OF CHAR);
+		BEGIN
+			T.Fire(which);
+			T.Report(text);
+			ASSERT(T.Said(text, number));
+			ASSERT(T.Said(text, words))
+		END Says;
+
+	BEGIN
+		T.Attach;
+
+		(*	The numbers are FoxIntermediateBackend.Mod's own, under "compiler generated traps".
+			These seven are the ones a program written in this language actually runs into. *)
+		Says(T.With, "Trap 5.1", "WITH guard failed");
+		Says(T.Case, "Trap 5.2", "CASE invalid");
+		Says(T.Return, "Trap 5.3", "RETURN missing");
+		Says(T.TypeGuard, "Trap 5.6", "type guard failed");
+		Says(T.Index, "Trap 5.7", "index out of range");
+		Says(T.Assert, "Trap 5.8", "ASSERT failed");
+		Says(T.Division, "Trap 5.12", "division error");
+
+		T.Detach
+	END Test.
+
+positive: and so do the numbers the system raises on its own
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+		PROCEDURE Says (which: SIGNED32; CONST number, words: ARRAY OF CHAR);
+		BEGIN
+			T.Fire(which);
+			T.Report(text);
+			ASSERT(T.Said(text, number));
+			ASSERT(T.Said(text, words));
+			ASSERT(~T.Said(text, "unknown exception"))
+		END Says;
+
+	BEGIN
+		T.Attach;
+
+		(*	Not the compiler's numbers but the runtime's, raised with SYSTEM.HALT, and every one of
+			them said "unknown exception" until 07.09.2026 -- while the Windows twin of this module,
+			`Windows.Traps.Mod`, named all six. `Heaps.Mod` raises 14 when a NEW cannot be served,
+			which is to say the report a person gets when memory runs out named neither the cause
+			nor anything else. 16 is the compiler's: a procedure marked {NORETURN} that returned. *)
+		Says(T.ArrayForm, "Trap 5.10", "array allocation error");
+		Says(T.Keyboard, "Trap 5.13", "keyboard interrupt");
+		Says(T.OutOfMemory, "Trap 5.14", "out of memory");
+		Says(T.Deadlock, "Trap 5.15", "deadlock");
+		Says(T.NoReturn, "Trap 5.16", "procedure returned");
+		Says(T.Raise, "Trap 5.23", "Exceptions.Raise");
+
+		T.Detach
+	END Test.
+
+positive: a HALT the program wrote itself is named a HALT
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Halt);
+		T.Report(text);
+		T.Detach;
+
+		ASSERT(T.Said(text, "Trap 5.40"));
+		ASSERT(T.Said(text, "programmed HALT"))
+	END Test.
+
+positive: a signal that is not a trap instruction is named by the signal
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Segv);
+		T.Report(text);
+		T.Detach;
+
+		(*	Reading through NIL raises no trap number on this backend -- the processor does it, and
+			the report has a signal and no dot. *)
+		ASSERT(T.Said(text, "Trap 11"));
+		ASSERT(T.Said(text, "Segmentation violation"));
+		ASSERT(~T.Said(text, "Trap 5."))
+	END Test.
+
+positive: the registers are there, and by the names this machine calls them
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(*	The three that mean something to anybody, printed for every architecture. *)
+		ASSERT(T.Said(text, "SP = "));
+		ASSERT(T.Said(text, "FP = "));
+		ASSERT(T.Said(text, "PC = "));
+
+		(* And the machine's own, so that a disassembly can be read against them. *)
+		#IF AMD64 THEN
+			ASSERT(T.Said(text, "RAX = ")); ASSERT(T.Said(text, "R15 = "))
+		#ELSIF ARM64 THEN
+			ASSERT(T.Said(text, "X0 = ")); ASSERT(T.Said(text, "pstate = "))
+		#END;
+
+		ASSERT(T.Where(text, "SP = ") < T.Where(text, "Process:"))
+	END Test.
+
+positive: the report names the process and the procedure that went wrong
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(* Which activity it was -- there is more than one, and that is the point of the suite. *)
+		ASSERT(T.Said(text, "Process:"));
+		ASSERT(T.Said(text, "TrapsTestShared.Trapper"));
+
+		(*	And where in the program. `Reflection` writes these lines; what this case asks is that
+			`Traps` gave it a stack that leads back to the body that trapped. *)
+		ASSERT(T.Said(text, "TrapsTestShared.Bang"));
+		ASSERT(T.Said(text, "TrapsTestShared.Trapper.@Body"));
+		ASSERT(T.Where(text, "StackTraceBack:") < T.Where(text, "TrapsTestShared.Bang"))
+	END Test.
+
+positive: an exception handler is reported inside the account, not after it
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR text: T.Text; ends: ARRAY 2 OF CHAR;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Caught);
+		T.Report(text);
+		T.Detach;
+
+		T.Marker(2X, ends);
+
+		(* The FINALLY did catch it: the activity ran on past the trap. *)
+		ASSERT(T.caughtIt);
+
+		(*	And the report says so. Until 07.09.2026 the line was written after `FinishTrap` had
+			already closed the text with 2X and handed it on -- measured at the time as the marker
+			at 1119 and the line at 1122 -- so a reader who stops at the end marker never saw it,
+			and with no trap writer installed at all (the ordinary case) it stayed in the log
+			writer's buffer unflushed and was never seen by anyone. *)
+		ASSERT(T.Said(text, "program continues with exception handler"));
+		ASSERT(T.Where(text, "program continues with exception handler") < T.Where(text, ends))
+	END Test.
+
+positive: what a debugger is told about a trap it did not plant
+
+	MODULE Test;
+	IMPORT Traps, T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		Traps.Trapped := T.Told;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(*	`DAP.Mod` is the only other caller of this module in the tree, and this hook is how it
+			is handed the frames of an activity that is about to stop existing. *)
+		ASSERT(T.toldTimes = 1);
+		ASSERT(T.sawSig = 5);
+		ASSERT(T.sawTrapno = 7);
+		ASSERT(T.sawPC # 0);
+
+		(* Being told does not take the place of the report. *)
+		ASSERT(T.Said(text, "index out of range"))
+	END Test.
+
+positive: and about a signal, where there is no trap number to tell
+
+	MODULE Test;
+	IMPORT Traps, T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		Traps.Trapped := T.Told;
+		T.Fire(T.Segv);
+		T.Report(text);
+		T.Detach;
+
+		ASSERT(T.toldTimes = 1);
+		ASSERT(T.sawSig = 11);
+
+		(*	Nothing pushed a trap number, so there is none to pass on. Until 07.09.2026 the number
+			handed over here was whatever the handler's own frame happened to hold: `trapno` is only
+			assigned under `sig = 5`, and Active Oberon does not zero a local. It read 0 in practice,
+			which is why nothing ever noticed. The Windows twin reads its equivalent unconditionally. *)
+		ASSERT(T.sawTrapno = 0)
+	END Test.
+
+positive: the debugger is asked first whether the trap is a breakpoint it planted
+
+	MODULE Test;
+	IMPORT Traps, T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		Traps.Breakpoint := T.Asked;
+		T.Fire(T.Assert);
+		T.Report(text);
+		T.Detach;
+
+		(*	Every trap in this system is SIGTRAP, so this hook is consulted on all of them, and it
+			is consulted before a word is written -- a breakpoint is not an error and must not print
+			like one. Answering FALSE means the trap is the program's own. *)
+		ASSERT(T.askedTimes = 1);
+		ASSERT(T.sawPC # 0);
+		ASSERT(T.Said(text, "ASSERT failed"))
+	END Test.
+
+positive: a trap the debugger does not answer for is still asked about only once
+
+	MODULE Test;
+	IMPORT Traps, T := TrapsTestShared;
+
+	VAR text: T.Text;
+
+	BEGIN
+		T.Attach;
+		Traps.Breakpoint := T.Asked;
+		Traps.Trapped := T.Told;
+		T.Fire(T.Index);
+		T.Report(text);
+		T.Detach;
+
+		(*	Both hooks on the same trap: asked before, told after, once each. A second ask would
+			mean the trap re-entered the handler, which is what the recursion counter is for. *)
+		ASSERT(T.askedTimes = 1);
+		ASSERT(T.toldTimes = 1);
+		ASSERT(T.Said(text, "Trap 5.7"))
+	END Test.
+
+positive: two activities that trap one after the other get one report each
+
+	MODULE Test;
+	IMPORT T := TrapsTestShared;
+
+	VAR first, second: T.Text;
+
+	BEGIN
+		T.Attach;
+		T.Fire(T.Assert);
+		T.Report(first);
+		T.Fire(T.Index);
+		T.Report(second);
+		T.Detach;
+
+		(*	The buffer `Traps` writes into is one 32K array shared by the whole system, drained and
+			reset by the trap writer's activity between traps. What one report said must not turn up
+			in the next. *)
+		ASSERT(T.Said(first, "ASSERT failed"));
+		ASSERT(~T.Said(first, "index out of range"));
+		ASSERT(T.Said(second, "index out of range"));
+		ASSERT(~T.Said(second, "ASSERT failed"))
+	END Test.
