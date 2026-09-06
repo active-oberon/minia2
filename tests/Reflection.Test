@@ -1,0 +1,441 @@
+# Tests for source/Reflection.Mod -- the references section a module carries, and what is read
+# back out of it: the name of a procedure an address is in, the variables of a scope, the symbol
+# a name stands for.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ReflectionTestShared;System.Load Test"
+#
+# Every trap dump in this system is written through here, and so is every answer the debugger
+# gives about where a program stands and what it holds. The module had no test of its own. What
+# the tree proves about it is what a trap that came out readable proves: a section the compiler
+# had just written, walked once, in the one order the writer wrote it in.
+#
+# So the cases walk it the other ways. The readers first, because everything else stands on them:
+# each `Get` has a `Skip` twin, and the two have to move the offset by the same amount or every
+# symbol behind the first string is read out of the middle of something else. Then the ends: a
+# section that stops in the middle of an address, a name longer than what it is read into, a
+# string with no 0X behind it. A malformed section is not a hypothetical here -- it is what a
+# trap dump is asked to survive, and a trap handler that traps takes the report with it.
+#
+# Then the section as a whole, against the one module whose contents the case knows for certain:
+# its own. A procedure found by name and the same procedure found by the address it starts at,
+# the name of an address read back, a module variable found by name.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ReflectionTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A references section written by hand, and things to find in a real one" *)
+
+	IMPORT Modules, Reflection, SYSTEM;
+
+	VAR
+		(**	Two module variables with names nothing else in the tree has, for the cases that ask
+			a real section what it holds. *)
+		markerOne*: SIGNED32;
+		markerTwo*: ARRAY 8 OF CHAR;
+
+	(**	A procedure with a name of its own, for the cases that go from a name to an address and
+		back. It has to be exported, or the compiler is free to leave it out.
+
+		`counted` is here for the case about variables that live in a frame: the section says of
+		it that it stands at an offset into one, which is a different thing from an address. *)
+	PROCEDURE Marked* (): SIGNED32;
+	VAR counted: SIGNED32;
+	BEGIN
+		counted := markerOne + 1;
+		RETURN counted
+	END Marked;
+
+	(**	--- a section written by hand ---------------------------------------------------------
+
+		The readers take a Modules.Bytes and an offset they move. Handing them a section this
+		module wrote is the only way to ask what happens at its end, because a section the
+		compiler wrote never stops in the middle of anything. *)
+
+	TYPE Section* = Modules.Bytes;
+
+	VAR at-: SIZE;   (** where the last Put left off, so a case can say how long the section is *)
+
+	PROCEDURE Start* (VAR section: Section; length: SIZE);
+	BEGIN
+		NEW(section, length); at := 0
+	END Start;
+
+	PROCEDURE PutChar* (section: Section; ch: CHAR);
+	BEGIN
+		section[at] := ch; INC(at)
+	END PutChar;
+
+	PROCEDURE PutAddress* (section: Section; adr: ADDRESS);
+	VAR i: SIZE; byte: CHAR;
+	BEGIN
+		FOR i := 0 TO SIZEOF(ADDRESS)-1 DO
+			SYSTEM.GET(ADDRESSOF(adr) + i, byte); section[at] := byte; INC(at)
+		END
+	END PutAddress;
+
+	PROCEDURE PutSize* (section: Section; size: SIZE);
+	VAR i: SIZE; byte: CHAR;
+	BEGIN
+		FOR i := 0 TO SIZEOF(SIZE)-1 DO
+			SYSTEM.GET(ADDRESSOF(size) + i, byte); section[at] := byte; INC(at)
+		END
+	END PutSize;
+
+	PROCEDURE PutSet* (section: Section; set: SET);
+	VAR i: SIZE; byte: CHAR;
+	BEGIN
+		FOR i := 0 TO SIZEOF(SET)-1 DO
+			SYSTEM.GET(ADDRESSOF(set) + i, byte); section[at] := byte; INC(at)
+		END
+	END PutSet;
+
+	PROCEDURE PutString* (section: Section; CONST string: ARRAY OF CHAR);
+	VAR i: SIZE;
+	BEGIN
+		i := 0;
+		WHILE string[i] # 0X DO section[at] := string[i]; INC(at); INC(i) END;
+		section[at] := 0X; INC(at)
+	END PutString;
+
+	(**	This module, which is the one a case can say things about with certainty. *)
+	PROCEDURE Own* (): Modules.Module;
+	VAR result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		RETURN Modules.ThisModule("ReflectionTestShared", result, message)
+	END Own;
+
+	BEGIN
+		markerOne := 41; markerTwo := "hello"
+	END ReflectionTestShared.
+
+positive: every reader and its skip twin move the offset by the same amount
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection;
+
+	VAR
+		section: T.Section;
+		read, skipped: SIZE;
+		ch: CHAR; adr: ADDRESS; size: SIZE; set: SET; text: ARRAY 32 OF CHAR;
+
+	BEGIN
+		(*	One of each, in the order a symbol is written: this is what a reader walking a section
+			it does not intend to look at has to be able to step over. If a Get and its Skip
+			disagree by one byte, every symbol behind that point is read out of the middle of
+			another one -- and nothing says so, because the bytes are still bytes. *)
+		T.Start(section, 256);
+		T.PutChar(section, 0F2X);
+		T.PutAddress(section, 0DEADBEEFH);
+		T.PutSize(section, 1234);
+		T.PutSet(section, {1, 5, 30});
+		T.PutString(section, "Modules.Module");
+		T.PutChar(section, 0F1X);              (* a sentinel, so the end is recognisable *)
+
+		read := 0;
+		ch := Reflection.GetChar(section, read);
+		ASSERT(ch = 0F2X);
+		adr := Reflection.GetAddress(section, read);
+		ASSERT(adr = 0DEADBEEFH);
+		size := Reflection.GetSize(section, read);
+		ASSERT(size = 1234);
+		set := Reflection.GetSet(section, read);
+		ASSERT(set = {1, 5, 30});
+		Reflection.GetString(section, read, text);
+		ASSERT(text = "Modules.Module");
+		ASSERT(Reflection.GetChar(section, read) = 0F1X);
+		ASSERT(read = T.at);
+
+		skipped := 0;
+		Reflection.SkipChar(skipped);
+		Reflection.SkipAddress(skipped);
+		Reflection.SkipSize(skipped);
+		Reflection.SkipSet(skipped);
+		Reflection.SkipString(section, skipped);
+		Reflection.SkipChar(skipped);
+		ASSERT(skipped = read)
+	END Test.
+
+positive: a reader stops where the section stops instead of reading past it
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection;
+
+	VAR section: T.Section; offset: SIZE; adr: ADDRESS; size: SIZE; set: SET;
+
+	BEGIN
+		(*	A section that ends in the middle of a value. The compiler never writes one, which is
+			exactly why nothing here was ever asked the question -- and the one caller who cannot
+			afford the answer to be a trap is the trap handler, which is reading a section it
+			already has reason to distrust. Every reader says so in its own way (a zero, an empty
+			set), and none of them may walk off the array to say it. *)
+		T.Start(section, 3);
+		T.PutChar(section, 0F2X); T.PutChar(section, 0AAX); T.PutChar(section, 0BBX);
+
+		offset := 1;
+		adr := Reflection.GetAddress(section, offset);
+		ASSERT(offset <= LEN(section^));
+
+		offset := 1;
+		size := Reflection.GetSize(section, offset);
+		ASSERT(offset <= LEN(section^));
+
+		offset := 1;
+		set := Reflection.GetSet(section, offset);
+		ASSERT(offset <= LEN(section^));
+
+		(* and a reader asked to start past the end says so rather than reading there *)
+		offset := LEN(section^);
+		ASSERT(Reflection.GetChar(section, offset) = 0X)
+	END Test.
+
+positive: a name longer than what it is read into is cut, not written past it
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection;
+
+	VAR
+		section: T.Section; offset: SIZE;
+		short: ARRAY 8 OF CHAR;
+		guard: ARRAY 8 OF CHAR;
+
+	BEGIN
+		(*	Names in a section are as long as the source made them, and every caller reads one into
+			an array of its own width -- Reflection.Name is 256, DebugMap has its own, a trap
+			writer another. A name wider than the array is not a hypothetical: it is a long
+			procedure in a long scope, and the read used to run off the end of the array. *)
+		T.Start(section, 128);
+		T.PutString(section, "a name far longer than eight characters");
+
+		guard := "guard";
+		offset := 0;
+		Reflection.GetString(section, offset, short);
+		ASSERT(short[LEN(short)-1] = 0X);       (* terminated inside its own array *)
+		ASSERT(guard = "guard");                (* and the array behind it is untouched *)
+		(* the offset still stands behind the whole name, so the next symbol is found *)
+		ASSERT(offset = T.at)
+	END Test.
+
+positive: a string with no end does not carry the reader past the end of the section
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection;
+
+	VAR section: T.Section; offset: SIZE; text: ARRAY 64 OF CHAR;
+
+	BEGIN
+		(*	GetString stops when the section does, because GetChar hands it a 0X there. Its skip
+			twin read the array directly and had nothing to stop it. Two twins in one file that
+			disagree about the end of the same array is the shape this suite is looking for. *)
+		T.Start(section, 4);
+		T.PutChar(section, "a"); T.PutChar(section, "b"); T.PutChar(section, "c"); T.PutChar(section, "d");
+
+		offset := 0;
+		Reflection.SkipString(section, offset);
+		ASSERT(offset <= LEN(section^));
+
+		offset := 0;
+		Reflection.GetString(section, offset, text);
+		ASSERT(offset <= LEN(section^))
+	END Test.
+
+positive: a procedure found by name is the procedure found by its address
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules;
+
+	VAR
+		module: Modules.Module; refs: Modules.Bytes;
+		byName, byAddress, walk: SIZE;
+		start, ending: ADDRESS;
+		name: ARRAY 128 OF CHAR;
+
+	BEGIN
+		module := T.Own();
+		ASSERT(module # NIL);
+		refs := module.refs;
+		ASSERT(refs # NIL);                     (* a module compiled without them proves nothing *)
+
+		byName := Reflection.FindByName(refs, 0, "Marked", TRUE);
+		ASSERT(byName >= 0);
+
+		(*	What stands in the section for a procedure, in the order the writer wrote it: the kind,
+			the scope it is in, its name, the first address of its code, the address behind its
+			last, and its flags. This is the walk DAP.Report does to read a frame. *)
+		walk := byName;
+		ASSERT(Reflection.GetChar(refs, walk) = Reflection.sfProcedure);
+		Reflection.SkipSize(walk);
+		Reflection.GetString(refs, walk, name);
+		ASSERT(name = "Marked");
+		start := Reflection.GetAddress(refs, walk);
+		ending := Reflection.GetAddress(refs, walk);
+		ASSERT(start # 0);
+		ASSERT(ending > start);
+
+		(* and now the other way round: the address lands on the same symbol *)
+		byAddress := Reflection.FindByAdr(refs, 0, start);
+		ASSERT(byAddress = byName);
+
+		(* an address inside the procedure is inside it too, and one behind it is not *)
+		ASSERT(Reflection.FindByAdr(refs, 0, start + 1) = byName);
+		ASSERT(Reflection.FindByAdr(refs, 0, ending) # byName)
+	END Test.
+
+positive: the name of an address is the name of the procedure it is in
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules;
+
+	VAR
+		module: Modules.Module; refs: Modules.Bytes; walk: SIZE;
+		start, startpc: ADDRESS;
+		name: ARRAY 128 OF CHAR;
+
+	BEGIN
+		module := T.Own();
+		refs := module.refs;
+		walk := Reflection.FindByName(refs, 0, "Marked", TRUE);
+		ASSERT(walk >= 0);
+		Reflection.SkipChar(walk); Reflection.SkipSize(walk); Reflection.SkipString(refs, walk);
+		start := Reflection.GetAddress(refs, walk);
+
+		(*	This is what a trap dump prints for a frame and what the debugger answers a stackTrace
+			with: a full name, scope by scope, and the address the procedure begins at. *)
+		Reflection.GetProcedureName(start, name, startpc);
+		ASSERT(name = "ReflectionTestShared.Marked");
+		ASSERT(startpc = start)
+	END Test.
+
+positive: a full name is the symbol and the scopes above it
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules;
+
+	VAR module: Modules.Module; at: SIZE; name: ARRAY 128 OF CHAR;
+
+	BEGIN
+		module := T.Own();
+		at := Reflection.FindByName(module.refs, 0, "markerOne", TRUE);
+		ASSERT(at >= 0);
+		Reflection.GetFullName(module.refs, at, name);
+		ASSERT(name = "ReflectionTestShared.markerOne")
+	END Test.
+
+positive: a module variable is found by name, at the address the variable is at
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules;
+
+	VAR module: Modules.Module; variable: Reflection.Variable;
+
+	BEGIN
+		module := T.Own();
+		ASSERT(Reflection.FindVar(module, "markerOne", variable));
+		(*	A module variable is at an address of its own, and the section says which -- this is
+			how Info reads a running system's variables without a debugger. *)
+		ASSERT(variable.adr = ADDRESSOF(T.markerOne));
+
+		ASSERT(Reflection.FindVar(module, "markerTwo", variable));
+		ASSERT(variable.adr = ADDRESSOF(T.markerTwo));
+
+		(* and a name that is not there is not there *)
+		ASSERT(~Reflection.FindVar(module, "noSuchVariableAtAll", variable))
+	END Test.
+
+positive: the state of a module is its variables and what they hold
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules, Streams, Strings;
+
+	VAR module: Modules.Module; out: Streams.StringWriter; text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		module := T.Own();
+		Streams.OpenStringWriter(out, 4096);
+		Reflection.ModuleState(out, module);
+		out.Get(text);
+
+		ASSERT(Strings.Pos("ReflectionTestShared", text) >= 0);
+		ASSERT(Strings.Pos("markerOne", text) >= 0);
+		ASSERT(Strings.Pos("markerTwo", text) >= 0);
+		(* the value, not just the name: 41 was put there by the module body *)
+		ASSERT(Strings.Pos("41", text) >= 0)
+	END Test.
+
+positive: the name of a procedure is written for an address, and nothing is written for none
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules, Streams, Strings;
+
+	VAR
+		module: Modules.Module; walk: SIZE; start: ADDRESS;
+		out: Streams.StringWriter; text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		module := T.Own();
+		walk := Reflection.FindByName(module.refs, 0, "Marked", TRUE);
+		Reflection.SkipChar(walk); Reflection.SkipSize(walk); Reflection.SkipString(module.refs, walk);
+		start := Reflection.GetAddress(module.refs, walk);
+
+		Streams.OpenStringWriter(out, 256);
+		Reflection.WriteProc(out, start);
+		out.Get(text);
+		ASSERT(Strings.Pos("Marked", text) >= 0);
+
+		(*	An address in no module at all: the trap handler hands this one in whenever a stack
+			holds a return address into code the loader never placed, and it must come back with
+			something rather than with a trap of its own. *)
+		Streams.OpenStringWriter(out, 256);
+		Reflection.WriteProc(out, 1);
+		out.Get(text)
+	END Test.
+
+positive: a module with no references section is asked all the same, and says nothing
+
+	MODULE Test;
+	IMPORT Reflection, Modules;
+
+	VAR refs: Modules.Bytes; name: ARRAY 64 OF CHAR; startpc: ADDRESS;
+
+	BEGIN
+		(*	A module compiled without references has none, and the trap handler asks about one
+			anyway: it has an address and no say in which module the address is in. The two
+			searches read the first byte of the section before looking at whether there is one. *)
+		refs := NIL;
+		ASSERT(Reflection.FindByName(refs, 0, "anything", FALSE) < 0);
+		ASSERT(Reflection.FindByAdr(refs, 0, 1000H) < 0);
+
+		(* and a search asked to start behind the section is asked about a byte that is not there *)
+		NEW(refs, 4);
+		ASSERT(Reflection.FindByName(refs, LEN(refs^), "anything", FALSE) < 0);
+		ASSERT(Reflection.FindByAdr(refs, LEN(refs^), 1000H) < 0);
+
+		(*	GetProcedureName goes through both of them, and it is what every frame of every trap
+			dump is written with. An address in no module at all has no name and must not be a
+			trap of its own. *)
+		name := "something";
+		Reflection.GetProcedureName(1, name, startpc);
+		ASSERT(name = "")
+	END Test.
+
+positive: a variable in a frame has no address of its own, and is not given one
+
+	MODULE Test;
+	IMPORT T := ReflectionTestShared, Reflection, Modules;
+
+	VAR module: Modules.Module; variable: Reflection.Variable;
+
+	BEGIN
+		module := T.Own();
+
+		(*	`counted` is a local of ReflectionTestShared.Marked, and the section says so: it stands
+			at an offset into a frame rather than at an address. FindVar read the kind, took the
+			branch that reads no address, and then handed back `adr` -- which it had never set, so
+			the answer was whatever its own frame held. There is no right address to give, so the
+			answer is that there is none. *)
+		ASSERT(~Reflection.FindVar(module, "counted", variable));
+
+		(* a module variable still has one *)
+		ASSERT(Reflection.FindVar(module, "markerOne", variable));
+		ASSERT(variable.adr = ADDRESSOF(T.markerOne))
+	END Test.

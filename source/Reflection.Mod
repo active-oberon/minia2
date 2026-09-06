@@ -183,14 +183,20 @@ CONST
 		INC(offset, SIZEOF(ADDRESS));
 	END SkipAddress;
 
-	(* consume a size in the byte stream *)
+	(*	consume a size in the byte stream
+
+		Through GetChar, like GetAddress above and unlike what stood here: reading the array
+		directly checked the first byte of the value and none of the rest, so a section that ends
+		in the middle of a size walked off the end of it. A truncated section is not a
+		hypothetical -- it is what the trap handler is asked to read when something is already
+		wrong, and a trap handler that traps takes the report with it. *)
 	PROCEDURE GetSize*(refs: Modules.Bytes; VAR offset: SIZE): SIZE;
 	VAR size: SIZE; i: SIZE;
 	BEGIN
+		size := 0;
 		IF ~Expect(offset, offset < LEN(refs)) THEN RETURN 0 END;
 		FOR i := 0 TO SIZEOF(SIZE)-1 DO
-			SYSTEM.PUT8(ADDRESSOF(size)+i, refs[offset]);
-			INC(offset);
+			SYSTEM.PUT8(ADDRESSOF(size)+i, GetChar(refs, offset));
 		END;
 		RETURN size;
 	END GetSize;
@@ -201,14 +207,14 @@ CONST
 		INC(offset, SIZEOF(SIZE));
 	END SkipSize;
 
-	(* consume a set in the byte stream *)
+	(* consume a set in the byte stream -- through GetChar, for the reason given at GetSize *)
 	PROCEDURE GetSet*(refs: Modules.Bytes; VAR offset: SIZE): SET;
 	VAR set: SET; i: SIZE;
 	BEGIN
+		set := {};
 		IF ~Expect(offset, offset < LEN(refs)) THEN RETURN {} END;
 		FOR i := 0 TO SIZEOF(SET)-1 DO
-			SYSTEM.PUT8(ADDRESSOF(set)+i, refs[offset]);
-			INC(offset);
+			SYSTEM.PUT8(ADDRESSOF(set)+i, GetChar(refs, offset));
 		END;
 		RETURN set;
 	END GetSet;
@@ -219,22 +225,34 @@ CONST
 		INC(offset, SIZEOF(SET));
 	END SkipSet;
 
-	(* consume a string in the byte stream *)
+	(*	consume a string in the byte stream
+
+		A name is as long as the source made it and every caller reads one into an array of its
+		own width. What did not fit used to be written behind the array; now it is dropped, and
+		the offset still ends up behind the whole name so that the next symbol is where it should
+		be. GetChar hands back 0X once the section is out, which is what ends the loop on a
+		section with no 0X in it. *)
 	PROCEDURE GetString*(refs: Modules.Bytes; VAR offset: SIZE; VAR string: ARRAY OF CHAR);
 	VAR ch: CHAR; i: SIZE;
 	BEGIN
 		i := 0;
 		REPEAT
 			ch := GetChar(refs, offset);
-			string[i] := ch;
-			INC(i);
+			IF i < LEN(string)-1 THEN string[i] := ch; INC(i) END;
 		UNTIL ch = 0X;
+		string[i] := 0X;
 	END GetString;
 
-	(* skip a string in the byte stream *)
+	(*	skip a string in the byte stream
+
+		Its twin GetString stops where the section stops, because it reads through GetChar; this
+		one read the array itself and had nothing to stop it, so a name with no 0X behind it
+		carried the offset off the end. Two readers of one array that disagree about where it
+		ends leave the caller no way to be right. *)
 	PROCEDURE SkipString*(refs: Modules.Bytes; VAR offset: SIZE);
 	BEGIN
-		WHILE(refs[offset] # 0X) DO INC(offset) END; INC(offset);
+		WHILE (offset < LEN(refs)) & (refs[offset] # 0X) DO INC(offset) END;
+		IF Expect(offset, offset < LEN(refs)) THEN INC(offset) END;
 	END SkipString;
 
 	(* extract a full name from the byte stream by traversing up the symbols in their scopes *)
@@ -925,6 +943,9 @@ CONST
 	VAR search: Search;
 	BEGIN
 		InitSearch(search);
+		(*	A module compiled without a references section has none, and the trap handler asks
+			about one all the same -- it has an address and no say in which module it is in. *)
+		IF (refs = NIL) OR (offset < 0) OR (offset >= LEN(refs)) THEN RETURN search.pos END;
 		COPY(name, search.name);
 		IF skipFirstSymbol THEN search.minLevel := 1 END;
 		CASE refs[offset] OF
@@ -941,6 +962,7 @@ CONST
 	VAR search: Search;
 	BEGIN
 		InitSearch(search);
+		IF (refs = NIL) OR (offset < 0) OR (offset >= LEN(refs)) THEN RETURN search.pos END;
 		search.pc := pc;
 		CASE refs[offset] OF
 			sfModule: FindInModule(refs, offset, 0, search);
@@ -1092,7 +1114,7 @@ TYPE
 
 	(* half-stub for module Info to work *)
 	PROCEDURE FindVar*(mod: Modules.Module; CONST name: ARRAY OF CHAR; VAR v: Variable): BOOLEAN;
-	VAR offset: SIZE; size: SIZE;adr: ADDRESS;
+	VAR offset: SIZE; adr: ADDRESS;
 	BEGIN
 		offset := FindByName(mod.refs, 0,name, TRUE);
 		IF offset < 0 THEN RETURN FALSE END;
@@ -1100,10 +1122,13 @@ TYPE
 		SkipSize(offset);
 		SkipString(mod.refs, offset);
 		IF GetChar(mod.refs, offset) = sfRelative THEN
-			size := GetSize(mod.refs, offset);
-		ELSE (* absolute *)
-			adr := GetAddress(mod.refs, offset);
+			(*	A variable in a frame has an offset into a frame and no address of its own, and
+				which frame it is is not something this can know. Saying so is the answer. What
+				this used to do was fall through with adr never set and hand back whatever the
+				caller's own frame happened to hold there. *)
+			RETURN FALSE
 		END;
+		adr := GetAddress(mod.refs, offset);
 
 		v.adr := adr;
 		v.type := 0;
