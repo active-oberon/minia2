@@ -406,10 +406,15 @@ TYPE
 					checkSet: NameSet;  ent: Unix.Dirent;
 
 					PROCEDURE GetEntryName;
-					VAR i: SIGNED16;  adr: ADDRESS;
+					VAR i: SIGNED16;  adr: ADDRESS;  ch: CHAR;
 					BEGIN
-						i := -1;  adr := ADDRESSOF( ent.name );
-						REPEAT  INC( i );  S.GET( adr, fileName[i] );  INC( adr )  UNTIL fileName[i] = 0X
+						i := 0;  adr := ADDRESSOF( ent.name );
+						LOOP
+							S.GET( adr, ch );  INC( adr );
+							IF (ch = 0X) OR (i = LEN( fileName ) - 1) THEN  EXIT  END;
+							fileName[i] := ch;  INC( i )
+						END;
+						fileName[i] := 0X
 					END GetEntryName;
 
 					PROCEDURE EnumDir( CONST dirName: ARRAY OF CHAR );
@@ -625,6 +630,7 @@ TYPE
 				PROCEDURE Read*( VAR r: Files.Rider;  VAR x: CHAR );
 				VAR offset: SIZE;  buf: Buffer;
 				BEGIN  {EXCLUSIVE}
+					IF ~Positioned( r ) THEN  x := 0X;  r.res := 1;  r.eof := TRUE;  RETURN  END;
 					buf := r.hint(Buffer);  offset := r.bpos;
 					IF r.apos # buf.org THEN
 						SetX( r, r.apos + offset );
@@ -643,7 +649,12 @@ TYPE
 				PROCEDURE ReadBytes*( VAR r: Files.Rider;  VAR x: ARRAY OF CHAR;  ofs, len: SIZE );
 				VAR xpos, offset, restInBuf, min: SIZE;  buf: Buffer;
 				BEGIN  {EXCLUSIVE}
-					x[ofs] := 0X;  xpos := ofs;
+					IF ~Positioned( r ) THEN  r.res := len;  r.eof := TRUE;  RETURN  END;
+					(*	No bytes asked for is no bytes written: this used to open with x[ofs] := 0X,
+						which clears a byte nobody asked about and writes past the end of x when
+						ofs is the length of x. *)
+					IF len <= 0 THEN  r.res := 0;  r.eof := FALSE;  RETURN  END;
+					xpos := ofs;
 					buf := r.hint(Buffer);  offset := r.bpos;
 					WHILE len > 0 DO
 						IF (r.apos # buf.org) OR (offset >= Bufsize) THEN
@@ -666,6 +677,7 @@ TYPE
 				PROCEDURE Write*( VAR r: Files.Rider;  x: CHAR );
 				VAR buf: Buffer;  offset: SIZE;
 				BEGIN  {EXCLUSIVE}
+					IF ~Positioned( r ) THEN  r.res := 1;  r.eof := TRUE;  RETURN  END;
 					buf := r.hint(Buffer);  offset := r.bpos;
 					IF (r.apos # buf.org) OR (offset >= Bufsize) THEN
 						SetX( r, r.apos + offset );
@@ -679,6 +691,7 @@ TYPE
 				PROCEDURE WriteBytes*( VAR r: Files.Rider;  CONST x: ARRAY OF CHAR;  ofs, len: SIZE );
 				VAR xpos, min, restInBuf, offset: SIZE;  buf: Buffer;
 				BEGIN  {EXCLUSIVE}
+					IF ~Positioned( r ) THEN  r.res := len;  r.eof := TRUE;  RETURN  END;
 					xpos := ofs;  buf := r.hint(Buffer);  offset := r.bpos;
 					WHILE len > 0 DO
 						IF (r.apos # buf.org) OR (offset >= Bufsize) THEN
@@ -793,23 +806,28 @@ TYPE
 
 
 				PROCEDURE Finalize*;
-				VAR r: SIGNED32;
+				VAR r: SIGNED32;  closed: BOOLEAN;
 				BEGIN {EXCLUSIVE}
+					closed := FALSE;
 					IF tempFile THEN
 						IF fd # NoDesc THEN
 							r := Unix.close( fd );
-							fd := NoDesc
+							fd := NoDesc;  closed := TRUE
 						END;
 						r := Unix.unlink( ADDRESSOF( workName ) );
 					ELSE
 						FlushBuffers;
 						IF fd # NoDesc THEN
 							r := Unix.close( fd );
-							fd := NoDesc;
+							fd := NoDesc;  closed := TRUE
 						END;
 					END;
 					state := Closed;
-					DecOpenFiles()
+					(*	Only a descriptor that was opened counted up, and this counted down whatever
+						had happened -- including a second Finalize on the same file, which the
+						collection's finalizer does after Close has already run. The number is what
+						UnixOpen waits on when the process is out of descriptors. *)
+					IF closed THEN  DecOpenFiles()  END
 				END Finalize;
 
 				PROCEDURE Close;
@@ -829,6 +847,14 @@ TYPE
 
 			END File;
 	
+	(*	Positioned tells a rider that has been through Set from one that has not. All four methods
+		began `r.hint(Buffer)`, and a type guard on NIL is Trap 11 in this compiler, so using a
+		rider before positioning it killed the activity instead of being refused. *)
+	PROCEDURE Positioned( CONST r: Files.Rider ): BOOLEAN;
+	BEGIN
+		RETURN (r.hint # NIL) & (r.hint IS Buffer)
+	END Positioned;
+
 	PROCEDURE HasInternal(name: ARRAY OF CHAR; VAR fullName: ARRAY OF CHAR; VAR flags: SET): BOOLEAN;
 	VAR r: SIGNED32; p: ADDRESS; stat: Unix.Status;
 	BEGIN
@@ -884,15 +910,19 @@ TYPE
 (*===================================================================*)
 
 	PROCEDURE StripPath*( CONST path: ARRAY OF CHAR;  VAR name: ARRAY OF CHAR );
-	VAR i, p: SIGNED16;  c: CHAR;
+	VAR i, p: SIZE;  c: CHAR;
 	BEGIN
 		i := 0;  p := 0;
-		REPEAT
+		WHILE (i < LEN( path )) & (path[i] # 0X) DO
 			IF path[i] = '/' THEN  p := i + 1  END;
 			INC( i )
-		UNTIL path[i] = 0X;
-		i := 0;
-		REPEAT  c := path[p];  name[i] := c;  INC( i );  INC( p )  UNTIL c = 0X
+		END;
+		(* the answer is an open array of the caller's choosing, and it is often the shorter one *)
+		i := 0;  c := path[p];
+		WHILE (c # 0X) & (i < LEN( name ) - 1) & (p < LEN( path ) - 1) DO
+			name[i] := c;  INC( i );  INC( p );  c := path[p]
+		END;
+		name[i] := 0X
 	END StripPath;
 
 
@@ -974,22 +1004,29 @@ TYPE
 	END Append;
 
 	PROCEDURE AppendName( VAR path: Filename;  CONST filename: ARRAY OF CHAR );
-	VAR i, j, max: SIGNED32;
+	VAR i, max: SIGNED32;
 	BEGIN
-		i := 0;  j := 0;  max := LEN( path ) - 1;
+		i := 0;  max := LEN( path ) - 1;
 		WHILE path[i] # 0X DO  INC( i )  END;
-		IF (i > 0) & (path[i - 1] # "/") THEN  path[i] := "/";  INC( i );  path[i] := 0X  END;
+		(* max was worked out here and then never used; the separator was written without it *)
+		IF (i > 0) & (i < max) & (path[i - 1] # "/") THEN  path[i] := "/";  INC( i );  path[i] := 0X  END;
 		Append( path, filename );
 	END AppendName;
 
 
 	PROCEDURE AppendInt( VAR str: Filename; n: SIGNED32 );
-	VAR i: SIGNED32;
+	VAR digits: ARRAY 12 OF CHAR;  i, k, max: SIGNED32;
 	BEGIN
+		(*	The digits used to be written out from the units up, so a process number of 50595 became
+			59505 in the name of every temporary file. Nothing broke -- a number reversed is still
+			unique -- which is why it stayed that way. *)
+		IF n < 0 THEN  n := 0  END;
 		i := 0;
-		WHILE str[i] # 0X DO  INC(i)  END;
-		WHILE n > 0 DO  str[i] := CHR( n MOD 10 + ORD('0') );  n := n DIV 10;  INC(i)  END;
-		str[i] := 0X
+		REPEAT  digits[i] := CHR( n MOD 10 + ORD('0') );  n := n DIV 10;  INC(i)  UNTIL (n = 0) OR (i = LEN( digits ));
+		k := 0;  max := LEN( str ) - 1;
+		WHILE str[k] # 0X DO  INC(k)  END;
+		WHILE (i > 0) & (k < max) DO  DEC(i);  str[k] := digits[i];  INC(k)  END;
+		str[k] := 0X
 	END AppendInt;
 
 
@@ -1030,37 +1067,41 @@ TYPE
 
 
 	PROCEDURE MakePath( CONST dir, name: ARRAY OF CHAR;  VAR dest: ARRAY OF CHAR );
-	VAR i, j: SIGNED16;
+	VAR i, j, max: SIZE;
 	BEGIN
-		i := 0;  j := 0;
-		WHILE dir[i] # 0X DO  dest[i] := dir[i];  INC( i )  END;
-		IF (i>0) & (dest[i - 1] # "/") THEN  dest[i] := "/";  INC( i )  END;
-		WHILE name[j] # 0X DO  dest[i] := name[j];  INC( i );  INC( j )  END;
+		i := 0;  j := 0;  max := LEN( dest ) - 1;
+		WHILE (i < max) & (dir[i] # 0X) DO  dest[i] := dir[i];  INC( i )  END;
+		IF (i > 0) & (i < max) & (dest[i - 1] # "/") THEN  dest[i] := "/";  INC( i )  END;
+		WHILE (i < max) & (name[j] # 0X) DO  dest[i] := name[j];  INC( i );  INC( j )  END;
 		dest[i] := 0X
 	END MakePath;
 
 
 	PROCEDURE ScanPath( VAR pos: SIGNED32;  VAR dir: ARRAY OF CHAR );
-	VAR i: SIGNED32;  ch: CHAR;
+	VAR i, max: SIZE;  ch: CHAR;
 	BEGIN
-		i := 0;  ch := searchPath[pos];
+		i := 0;  max := LEN( dir ) - 1;  ch := searchPath[pos];
 		WHILE ch = Separator DO  INC( pos );  ch := searchPath[pos]  END;
-		WHILE (ch >= " ") & (ch # Separator) DO  dir[i] := ch;  INC( i );  INC( pos );  ch := searchPath[pos]  END;
+		WHILE (ch >= " ") & (ch # Separator) DO
+			IF i < max THEN  dir[i] := ch;  INC( i )  END;
+			INC( pos );  ch := searchPath[pos]
+		END;
 		dir[i] := 0X
 	END ScanPath;
 
 
 	PROCEDURE GetTempName( CONST finalName: ARRAY OF CHAR;  VAR tempName: Filename );
-	VAR n, i, j, pe, pid: SIGNED32;
+	VAR n, i, j, pe, pid, max: SIGNED32;
 	BEGIN
 		INC(tempno);  n := tempno;  i := 0;  j := 0; pe := 1;
 		WHILE finalName[j] = ' ' DO  INC(j)  END;   (* skip leading spaces *)
+		max := LEN( tempName ) - 1;
 		IF finalName[j] # "/" THEN  (* relative pathname *)
-			WHILE cwd[i] # 0X DO  tempName[i] := cwd[i];  INC(i)  END;
-			IF tempName[i - 1] # '/' THEN  tempName[i] := '/';  INC(i)  END;
+			WHILE (i < max) & (cwd[i] # 0X) DO  tempName[i] := cwd[i];  INC(i)  END;
+			IF (i > 0) & (i < max) & (tempName[i - 1] # '/') THEN  tempName[i] := '/';  INC(i)  END;
 			pe := i - 1
 		END;
-		WHILE finalName[j] # 0X DO  tempName[i] := finalName[j];  INC(i);  INC(j)  END;
+		WHILE (i < max) & (finalName[j] # 0X) DO  tempName[i] := finalName[j];  INC(i);  INC(j)  END;
 		WHILE (i > pe) & (tempName[i-1] # '/') DO  DEC(i)  END;  (* remove filename *)
 		tempName[i] := 0X;
 		Append( tempName, ".tmp." );
@@ -1085,8 +1126,13 @@ TYPE
 		(* get current working directory *)
 		a := Unix.getenv( ADDRESSOF( "PWD" ) );
 		IF a > 0 THEN
+			(* $PWD is as long as the person's directories are, and this runs before any program *)
 			i := 0;
-			REPEAT  S.GET( a, ch );  INC( a );  cwd[i] := ch;  INC( i )  UNTIL ch = 0X;
+			REPEAT
+				S.GET( a, ch );  INC( a );
+				IF i = LEN( cwd ) - 1 THEN  ch := 0X  END;
+				cwd[i] := ch;  INC( i )
+			UNTIL ch = 0X;
 		ELSE
 			(* $PWD not set *)
 			a := Unix.getcwd( ADDRESSOF( cwd ), LEN( cwd ) )
@@ -1104,6 +1150,7 @@ TYPE
 			REPEAT
 				S.GET( a, ch );  INC( a );
 				IF ch = ":" THEN  ch := Separator  END;
+				IF i = LEN( searchPath ) - 1 THEN  ch := 0X  END;
 				searchPath[i] := ch;  INC( i )
 			UNTIL ch = 0X;
 		END;
@@ -1150,13 +1197,24 @@ TYPE
 		RETURN n
 	END UnixRead;
 
+	(*	write(2) may write less than it was given, and every caller here treated what came back as
+		either an error or the whole buffer -- Flush marked the buffer clean and TryRename went on to
+		unlink the original. Write until it is all out or it fails. *)
 	PROCEDURE UnixWrite( fd: SIGNED32; buf: ADDRESS; len: SIZE ): SIZE;
-	VAR n: SIZE;
+	VAR n, written: SIZE;
 	BEGIN
-		REPEAT
-			n := Unix.write( fd, buf, len )
-		UNTIL (n >= 0) OR (Unix.errno() # Unix.EINTR);
-		RETURN n
+		written := 0;
+		WHILE written < len DO
+			n := Unix.write( fd, buf + written, len - written );
+			IF n < 0 THEN
+				IF Unix.errno() # Unix.EINTR THEN  RETURN n  END
+			ELSIF n = 0 THEN
+				RETURN written
+			ELSE
+				INC( written, n )
+			END
+		END;
+		RETURN written
 	END UnixWrite;
 
 
@@ -1170,11 +1228,19 @@ TYPE
 			END; 
 			i := 0;  j := 0;
 			WHILE searchPath[i] # 0X DO  INC( i )  END;
-			searchPath[i] := Separator;  INC( i );
-			REPEAT
-				ch := full[j];  searchPath[i] := ch;
-				INC( j );  INC( i );
-			UNTIL ch = 0X;
+			(*	A command anybody can type, appending to a global array of 1024 with a loop that
+				stopped only at the terminator of what was typed. *)
+			IF i < LEN( searchPath ) - 2 THEN
+				searchPath[i] := Separator;  INC( i );
+				REPEAT
+					ch := full[j];
+					IF i = LEN( searchPath ) - 1 THEN  ch := 0X  END;
+					searchPath[i] := ch;
+					INC( j );  INC( i );
+				UNTIL ch = 0X
+			ELSE
+				context.error.String( "UnixFiles.AddSearchPath: the search path is full" );  context.error.Ln
+			END;
 		END;
 	END AddSearchPath;
 

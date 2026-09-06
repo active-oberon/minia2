@@ -53,7 +53,7 @@ positive: the helpers these tests are written with
 
 		(** Numbers the system raises with SYSTEM.HALT rather than the compiler with an instruction. *)
 		ArrayForm* = 10; Keyboard* = 13; OutOfMemory* = 14; Deadlock* = 15; NoReturn* = 16;
-		Raise* = 23; Halt* = 40;
+		Rethrow* = 18; Raise* = 23; Halt* = 40;
 
 		(** And the three that are not a trap number at all. *)
 		Segv* = 100;		(** a signal, not a trap instruction *)
@@ -153,6 +153,7 @@ positive: the helpers these tests are written with
 		| OutOfMemory:	SYSTEM.HALT(14)
 		| Deadlock:		SYSTEM.HALT(15)
 		| NoReturn:		MustNotReturn
+		| Rethrow:		SYSTEM.HALT(18)
 		| Raise:		SYSTEM.HALT(23)
 		| Halt:			HALT(40)
 		| Segv:			p := NIL; p.field := 1
@@ -326,12 +327,15 @@ positive: and so do the numbers the system raises on its own
 			them said "unknown exception" until 07.09.2026 -- while the Windows twin of this module,
 			`Windows.Traps.Mod`, named all six. `Heaps.Mod` raises 14 when a NEW cannot be served,
 			which is to say the report a person gets when memory runs out named neither the cause
-			nor anything else. 16 is the compiler's: a procedure marked {NORETURN} that returned. *)
+			nor anything else. 16 and 18 are the compiler's: a procedure marked {NORETURN} that
+			returned, and the exception a monitor rethrows once it has let its lock go -- 18 turned
+			up on 07.09.2026 in a real trap inside a Files method and read "unknown exception". *)
 		Says(T.ArrayForm, "Trap 5.10", "array allocation error");
 		Says(T.Keyboard, "Trap 5.13", "keyboard interrupt");
 		Says(T.OutOfMemory, "Trap 5.14", "out of memory");
 		Says(T.Deadlock, "Trap 5.15", "deadlock");
 		Says(T.NoReturn, "Trap 5.16", "procedure returned");
+		Says(T.Rethrow, "Trap 5.18", "rethrown after unlock");
 		Says(T.Raise, "Trap 5.23", "Exceptions.Raise");
 
 		T.Detach

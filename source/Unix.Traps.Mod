@@ -295,6 +295,7 @@ VAR
 				|14:	w.String( "  (out of memory)" )
 				|15:	w.String( "  (deadlock (active objects))" )
 				|16:	w.String( "  (procedure returned)" )
+				|18:	w.String( "  (exception rethrown after unlock)" )
 				|23:	w.String( "  (Exceptions.Raise)" )
 				ELSE
 					IF trapno >= 30 THEN  w.String( "  (programmed HALT)" )

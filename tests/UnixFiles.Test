@@ -1,0 +1,458 @@
+# Tests for source/Unix.UnixFiles.Mod -- the file system every other module in this tree reaches
+# through Files.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test UnixFilesTestShared;System.Load Test"
+#
+# `Files` is the interface and this is the implementation under it on Linux: four 4K buffers per
+# file, a finalized collection so that a file opened twice by two different names is one object, a
+# search path, and the temporary file that every `Files.New` is until it is registered. `Files` has
+# a suite of its own and it exercises this module all the way down -- but through `Files`, which is
+# to say only along the paths a working program takes.
+#
+# The cases here take the other paths: an array that is too small for what is copied into it, a
+# rider that was never positioned, a length of zero, a name that has to be built. That is where this
+# module keeps its defects, and they are all one shape -- the module carries a bounded `Append` and
+# then writes half its strings with a loop that has no bound at all.
+#
+# Found while writing these and NOT changed:
+#
+# - `AppendName` computes `max := LEN(path) - 1` and never reads it, and the "/" it inserts is
+#   written without it. Reaching that write needs a directory path of exactly 255 characters, which
+#   no case here builds; the bound is put back regardless.
+# - `Initialize` copies `$PWD` into a 256-character array and `$AOSPATH` into a 1024-character one
+#   with two loops that stop only at the terminator, and it runs in the module body -- so a deep
+#   enough working directory corrupts memory before any program starts. Bounded, but no case can
+#   reach a module body that has already run.
+# - `AddSearchPath` appends to the same 1024-character array the same way, and it is a command, so
+#   a person can reach it by typing. Bounded; not covered, because a case that proved it red would
+#   have to corrupt a global the rest of the run shares.
+# - `SetX` clamps a position with `SIGNED32(fsize)`, so nothing in this file system can be seek past
+#   two gigabytes. Reaching it means writing two gigabytes.
+# - `SetAttributes` is an empty body with the assignment commented out, so `Files.File.SetAttributes`
+#   is a no-op here that reports nothing. Pinned in a case rather than changed: setting the flag
+#   without a chmod behind it would be a different lie.
+# - `NameSet`, which keeps `Enumerate` from reporting the same name twice from two search paths,
+#   holds each name in 64 characters. Two different names sharing a 63-character prefix are one
+#   name to it, and the second is dropped from the enumeration.
+# - `Match` is the recursive wildcard matcher, exponential on a mask like `*a*a*a*`.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE UnixFilesTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A scratch file and the questions a test asks about one" *)
+
+	IMPORT Files, Strings, Unix;
+
+	TYPE
+		Line* = ARRAY 512 OF CHAR;
+
+	VAR
+		serial: SIGNED32;
+
+	(**	A name nothing else in the run will use. The tag comes from the case, because the cases of one
+		file share a working directory and the shared module is freed between them, so a counter of
+		its own would hand the second case the first case's leftovers. *)
+	PROCEDURE Scratch* (CONST tag: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
+	VAR number: ARRAY 16 OF CHAR;
+	BEGIN
+		INC(serial);
+		Strings.IntToStr(serial, number);
+		COPY("scratch-", name); Strings.Append(name, tag); Strings.Append(name, "-");
+		Strings.Append(name, number); Strings.Append(name, ".txt")
+	END Scratch;
+
+	(** Write a string to a named file and register it, which is what makes the name real. *)
+	PROCEDURE Put* (CONST name, content: ARRAY OF CHAR): BOOLEAN;
+	VAR f: Files.File; w: Files.Writer; res: INTEGER;
+	BEGIN
+		f := Files.New(name);
+		IF f = NIL THEN RETURN FALSE END;
+		Files.OpenWriter(w, f, 0);
+		w.String(content); w.Update;
+		Files.Register(f);
+		res := 0;
+		RETURN TRUE
+	END Put;
+
+	(** And read it back the way anybody else would. *)
+	PROCEDURE Get* (CONST name: ARRAY OF CHAR; VAR content: ARRAY OF CHAR): BOOLEAN;
+	VAR f: Files.File; r: Files.Reader;
+	BEGIN
+		content[0] := 0X;
+		f := Files.Old(name);
+		IF f = NIL THEN RETURN FALSE END;
+		Files.OpenReader(r, f, 0);
+		r.Ln(content);
+		RETURN TRUE
+	END Get;
+
+	(** The last part of a path, which is the part a name of our making is in. *)
+	PROCEDURE LastPart* (CONST path: ARRAY OF CHAR; VAR part: ARRAY OF CHAR);
+	VAR i, start, j: SIZE;
+	BEGIN
+		start := 0; i := 0;
+		WHILE path[i] # 0X DO
+			IF path[i] = "/" THEN start := i + 1 END;
+			INC(i)
+		END;
+		j := 0;
+		WHILE (path[start] # 0X) & (j < LEN(part) - 1) DO part[j] := path[start]; INC(j); INC(start) END;
+		part[j] := 0X
+	END LastPart;
+
+	(** This process's number, as a person writes it. *)
+	PROCEDURE ProcessNumber* (VAR digits: ARRAY OF CHAR);
+	BEGIN
+		Strings.IntToStr(Unix.getpid(), digits)
+	END ProcessNumber;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** A string of `count` copies of one character, for the arrays that are meant to be too small. *)
+	PROCEDURE Fill* (VAR text: ARRAY OF CHAR; count: SIZE; ch: CHAR);
+	VAR i: SIZE;
+	BEGIN
+		IF count > LEN(text) - 1 THEN count := LEN(text) - 1 END;
+		FOR i := 0 TO count - 1 DO text[i] := ch END;
+		text[count] := 0X
+	END Fill;
+
+	END UnixFilesTestShared.
+
+positive: what is written to a file is what comes back out of it
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; line: T.Line;
+
+	BEGIN
+		T.Scratch("roundtrip", name);
+		ASSERT(T.Put(name, "the quick brown fox"));
+		ASSERT(T.Get(name, line));
+		ASSERT(line = "the quick brown fox");
+
+		(* And the name it was registered under is the name it now has. *)
+		ASSERT(Files.Old(name) # NIL)
+	END Test.
+
+positive: a rider that was never given a position is refused, not followed
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; ch: CHAR;
+
+	BEGIN
+		T.Scratch("norider", name);
+		ASSERT(T.Put(name, "something"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+
+		(*	A Files.Rider is a record, and a record that has not been through `Set` has no buffer in
+			its hint. Every one of the four methods began `r.hint(Buffer)`, and a type guard on NIL
+			is `Trap 11` in this compiler -- so the answer to using a rider before positioning it was
+			the death of the activity. It is a refusal now: the rider says so in its `res`. *)
+		f.Read(r, ch);
+		ASSERT(r.res # Files.Ok);
+		ASSERT(r.eof)
+	END Test.
+
+positive: reading nothing leaves the array alone
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; buffer: ARRAY 8 OF CHAR;
+
+	BEGIN
+		T.Scratch("nolength", name);
+		ASSERT(T.Put(name, "abcdef"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		f.Set(r, 0);
+
+		buffer[0] := "Z"; buffer[1] := 0X;
+
+		(*	`ReadBytes` opened with `x[ofs] := 0X` before it had looked at `len`, so asking for no
+			bytes wrote one -- and asking for no bytes at the end of an array wrote past it. *)
+		f.ReadBytes(r, buffer, 0, 0);
+		ASSERT(buffer[0] = "Z");
+		ASSERT(r.res = Files.Ok);
+
+		(* And asking for some still reads them. *)
+		f.ReadBytes(r, buffer, 0, 3);
+		ASSERT(buffer[0] = "a");
+		ASSERT(buffer[2] = "c")
+	END Test.
+
+positive: a name too long for what it is copied into is cut, not written past
+
+	MODULE Test;
+	IMPORT UnixFiles, Strings, T := UnixFilesTestShared;
+
+	VAR path: ARRAY 300 OF CHAR; small: ARRAY 16 OF CHAR;
+
+	BEGIN
+		T.Fill(path, 250, "a");
+		path[0] := "/";
+
+		(*	`StripPath` is exported, takes an open array for the answer, and copied into it with a
+			REPEAT that stopped only at the terminator of the source: measured 07.09.2026 as
+			`Trap 5.7 (index out of range)` at UnixFiles.StripPath:165. *)
+		UnixFiles.StripPath(path, small);
+		ASSERT(Strings.Length(small) = LEN(small) - 1);
+		ASSERT(small[0] = "a")
+	END Test.
+
+positive: and a name that fits is copied whole
+
+	MODULE Test;
+	IMPORT UnixFiles;
+
+	VAR name: ARRAY 64 OF CHAR;
+
+	BEGIN
+		UnixFiles.StripPath("/one/two/three.txt", name);
+		ASSERT(name = "three.txt");
+
+		UnixFiles.StripPath("nodirectory.txt", name);
+		ASSERT(name = "nodirectory.txt")
+	END Test.
+
+positive: the numbers in the name of a temporary file read the way they are written
+
+	MODULE Test;
+	IMPORT Files, Strings, T := UnixFilesTestShared;
+
+	VAR f: Files.File; w: Files.Writer; path: Files.FileName; part: Files.FileName;
+		pid: ARRAY 32 OF CHAR;
+
+	BEGIN
+		(*	Every Files.New is a temporary file until it is registered, and its name is built by
+			`AppendInt`, which wrote the digits of a number from the units up: measured 07.09.2026
+			as a process number of 50595 appearing in the name as 59505. Nothing broke, because a
+			number reversed is still unique -- which is why it stayed that way. *)
+		f := Files.New("");
+		ASSERT(f # NIL);
+		Files.OpenWriter(w, f, 0); w.String("x"); w.Update;
+		f.GetName(path);
+
+		T.LastPart(path, part);
+		ASSERT(T.Said(part, ".tmp."));
+
+		T.ProcessNumber(pid);
+		ASSERT(Strings.Pos(pid, part) >= 0)
+	END Test.
+
+positive: the working directory is where the harness put us, and can be moved and moved back
+
+	MODULE Test;
+	IMPORT Files, UnixFiles, T := UnixFilesTestShared;
+
+	VAR here, there: Files.FileName; done: BOOLEAN; res: INTEGER;
+
+	BEGIN
+		UnixFiles.GetWorkingDirectory(here);
+		ASSERT(here # "");
+		ASSERT(here[0] = "/");
+
+		Files.CreateDirectory("below", res);
+		ASSERT(res = Files.Ok);
+
+		UnixFiles.ChangeDirectory("below", done);
+		ASSERT(done);
+		UnixFiles.GetWorkingDirectory(there);
+		ASSERT(there # here);
+		ASSERT(T.Said(there, "below"));
+
+		UnixFiles.ChangeDirectory(here, done);
+		ASSERT(done);
+		UnixFiles.GetWorkingDirectory(there);
+		ASSERT(there = here);
+
+		(* A directory that is not there is a refusal, not a move. *)
+		UnixFiles.ChangeDirectory("nowhere-at-all", done);
+		ASSERT(~done);
+		UnixFiles.GetWorkingDirectory(there);
+		ASSERT(there = here)
+	END Test.
+
+positive: registering puts the temporary file where it was asked to go
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; f: Files.File; w: Files.Writer; before, after: Files.FileName;
+		line: T.Line;
+
+	BEGIN
+		T.Scratch("toolong", name);
+
+		f := Files.New(name);
+		ASSERT(f # NIL);
+		Files.OpenWriter(w, f, 0); w.String("registered"); w.Update;
+
+		(*	It answers with the name it was asked for from the start -- `GetName` prefers the name
+			it is to be registered under -- but nothing is at that name yet: the bytes are in a
+			temporary file beside it. *)
+		f.GetName(before);
+		ASSERT(T.Said(before, name));
+		ASSERT(Files.Old(name) = NIL);
+
+		Files.Register(f);
+
+		f.GetName(after);
+		ASSERT(after = before);
+		ASSERT(Files.Old(name) # NIL);
+		ASSERT(T.Get(name, line));
+		ASSERT(line = "registered")
+	END Test.
+
+positive: deleting what is not there says what went wrong
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; res: INTEGER; key: SIGNED32;
+
+	BEGIN
+		T.Scratch("tempname", name);
+		ASSERT(T.Put(name, "here for now"));
+		ASSERT(Files.Old(name) # NIL);
+
+		Files.Delete(name, res);
+		ASSERT(res = Files.Ok);
+		ASSERT(Files.Old(name) = NIL);
+
+		(* And the second time it is an error with a number, not a silent success. *)
+		Files.Delete(name, res);
+		ASSERT(res # Files.Ok);
+
+		key := 0
+	END Test.
+
+positive: enumerating names what was made and does not name what was removed
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR first, second: Files.FileName; enum: Files.Enumerator;
+		name: Files.FileName; flags: SET; time, date: SIGNED32; size: Files.Size;
+		sawFirst, sawSecond: BOOLEAN; res: INTEGER;
+
+	BEGIN
+		T.Scratch("workdir-a", first); T.Scratch("workdir-b", second);
+		ASSERT(T.Put(first, "one"));
+		ASSERT(T.Put(second, "two"));
+		Files.Delete(second, res);
+		ASSERT(res = Files.Ok);
+
+		NEW(enum);
+		enum.Open("scratch*.txt", {});
+		sawFirst := FALSE; sawSecond := FALSE;
+		WHILE enum.HasMoreEntries() DO
+			IF enum.GetEntry(name, flags, time, date, size) THEN
+				IF T.Said(name, first) THEN sawFirst := TRUE END;
+				IF T.Said(name, second) THEN sawSecond := TRUE END
+			END
+		END;
+		enum.Close;
+
+		ASSERT(sawFirst);
+		ASSERT(~sawSecond)
+	END Test.
+
+positive: one file opened twice is one object
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; one, other: Files.File;
+
+	BEGIN
+		T.Scratch("register", name);
+		ASSERT(T.Put(name, "shared"));
+
+		(*	The collection is searched by device and inode before a second File is made, so two
+			names for one file -- and the same name twice -- answer with the same object, and the
+			four buffers behind it are one set of buffers. *)
+		one := Files.Old(name);
+		other := Files.Old(name);
+		ASSERT(one # NIL);
+		ASSERT(one = other);
+		ASSERT(one.Length() = 6)
+	END Test.
+
+positive: reading past the end is the end, not an error
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; ch: CHAR; i: SIGNED32;
+
+	BEGIN
+		T.Scratch("delete", name);
+		ASSERT(T.Put(name, "abc"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		ASSERT(f.Length() = 3);
+
+		f.Set(r, 0);
+		FOR i := 1 TO 3 DO f.Read(r, ch); ASSERT(~r.eof) END;
+
+		f.Read(r, ch);
+		ASSERT(r.eof);
+		ASSERT(ch = 0X);
+
+		(* And a position past the end is the end, because Set clamps it there. *)
+		f.Set(r, 1000);
+		ASSERT(f.Pos(r) = 3)
+	END Test.
+
+positive: setting the attributes of a file here changes nothing, and says nothing
+
+	MODULE Test;
+	IMPORT Files, T := UnixFilesTestShared;
+
+	VAR name: Files.FileName; f: Files.File; before, after: SET;
+
+	BEGIN
+		T.Scratch("enumerate", name);
+		ASSERT(T.Put(name, "attributes"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+
+		before := f.GetAttributes();
+		f.SetAttributes(before + {Files.ReadOnly});
+		after := f.GetAttributes();
+
+		(*	Pinned, not fixed: the body of SetAttributes is the assignment, commented out. A caller
+			is told nothing, and the file is neither marked nor chmod'ed. *)
+		ASSERT(after = before)
+	END Test.
+
+positive: a path is cleaned the way the comment above the procedure says
+
+	MODULE Test;
+	IMPORT UnixFiles;
+
+	VAR path: ARRAY 256 OF CHAR;
+
+	BEGIN
+		path := "/aaa/../bbb/./ccc/../ddd/.";
+		UnixFiles.CleanPath(path);
+		ASSERT(path = "/bbb/ddd");
+
+		path := "/one//two";
+		UnixFiles.CleanPath(path);
+		ASSERT(path = "/one/two");
+
+		path := "/three/";
+		UnixFiles.CleanPath(path);
+		ASSERT(path = "/three")
+	END Test.
