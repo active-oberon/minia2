@@ -1,0 +1,340 @@
+# Tests for source/ProcessInfo.Mod and source/ProcessInfo0.Mod -- what the system can say about the
+# activities running in it.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ProcessInfoTestShared;System.Load Test"
+#
+# `System.ShowProcesses` and `System.ShowStacks` are written through these two, and so is `Fido`,
+# the watchdog that prints what the system was doing when it stopped answering. The lower one comes
+# in two: on Unix it walks the list of processes from `Objects.root`, and on Windows and on bare
+# metal it walks the heap block by block looking for records whose type tag is `Objects.Process`.
+# The upper one holds the array that comes back, sorts it, searches it and prints it. Neither had a
+# test, and the two lower ones did not agree with each other about what a caller is handed.
+#
+# A case cannot make a process to order, but it does not have to: the system it runs in is full of
+# them and it is one itself. So the cases are built on the array a snapshot returns and on
+# `Objects.CurrentProcess()`, which is the one process a case knows by name.
+#
+# What the cases ask is what a caller of an array-shaped API asks, and it is where these two turned
+# out to be wrong: does a copy leave the source alone, does a search that finds nothing say so, and
+# is an array given to be filled emptied first. The three answers were no.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ProcessInfoTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A snapshot of the processes, and what was written about them" *)
+
+	IMPORT Objects, ProcessInfo, Streams, Strings;
+
+	TYPE
+		(** As big as every caller in the tree makes it. *)
+		Snapshot* = POINTER TO ARRAY ProcessInfo.MaxNofProcesses OF Objects.Process;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** The process this case is running as: the one process a case knows by name. *)
+	PROCEDURE Me* (): Objects.Process;
+	BEGIN
+		RETURN Objects.CurrentProcess()
+	END Me;
+
+	(**	Fill every slot of an array with one process, so that a procedure which is supposed to
+		empty it can be caught not doing so. *)
+	PROCEDURE Fill* (VAR processes: ProcessInfo.ProcessArray; with: Objects.Process);
+	VAR i: SIZE;
+	BEGIN
+		FOR i := 0 TO LEN(processes) - 1 DO processes[i] := with END
+	END Fill;
+
+	(** How many slots of an array are not NIL. *)
+	PROCEDURE Occupied* (CONST processes: ProcessInfo.ProcessArray): SIZE;
+	VAR i, n: SIZE;
+	BEGIN
+		n := 0;
+		FOR i := 0 TO LEN(processes) - 1 DO
+			IF processes[i] # NIL THEN INC(n) END
+		END;
+		RETURN n
+	END Occupied;
+
+	(** A writer to read back from. *)
+	PROCEDURE NewWriter* (): Streams.StringWriter;
+	VAR out: Streams.StringWriter;
+	BEGIN
+		Streams.OpenStringWriter(out, 16 * 1024);
+		RETURN out
+	END NewWriter;
+
+	END ProcessInfoTestShared.
+
+positive: a snapshot of the system holds the process that asked for it
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR snapshot: T.Snapshot; count, i: SIZE; me: Objects.Process;
+
+	BEGIN
+		me := T.Me();
+		ASSERT(me # NIL);
+
+		NEW(snapshot);
+		ProcessInfo.GetProcesses(snapshot^, count);
+
+		(*	a running system has processes in it, and the case is one of them *)
+		ASSERT(count > 0);
+		ASSERT(count <= LEN(snapshot^));
+
+		(*	every slot that was filled holds a process, and none of them is finished -- the walk
+			skips the terminated ones on purpose *)
+		FOR i := 0 TO count - 1 DO
+			ASSERT(snapshot[i] # NIL);
+			ASSERT(snapshot[i].mode # Objects.Terminated)
+		END;
+
+		ASSERT(ProcessInfo.Find(snapshot^, me.id) = me)
+	END Test.
+
+positive: an array given to be filled is emptied first
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo;
+
+	VAR snapshot: T.Snapshot; count: SIZE;
+
+	BEGIN
+		NEW(snapshot);
+		(*	the walk writes the processes it finds into the front of the array and says how many.
+			What is behind them has to be nothing, or a caller that looks past the count -- Clear
+			is the one in the same module that does -- finds a process that is not in the snapshot.
+			The loop that was meant to empty it read its own bound before setting it:
+			`FOR i := 0 TO i-1`, with i whatever the frame held. *)
+		T.Fill(snapshot^, T.Me());
+		ASSERT(T.Occupied(snapshot^) = LEN(snapshot^));
+
+		ProcessInfo.GetProcesses(snapshot^, count);
+		ASSERT(count > 0);
+		ASSERT(count < LEN(snapshot^));
+		ASSERT(snapshot[count] = NIL);
+		ASSERT(snapshot[LEN(snapshot^) - 1] = NIL);
+		ASSERT(T.Occupied(snapshot^) = count)
+	END Test.
+
+positive: a copy is as long as the shorter of the two, and the last of it is copied like the rest
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR
+		three: ARRAY 3 OF Objects.Process; five: ARRAY 5 OF Objects.Process;
+		me: Objects.Process; i: SIZE;
+
+	BEGIN
+		me := T.Me();
+
+		(*	into a longer array: everything arrives, and what is past it is emptied *)
+		FOR i := 0 TO 2 DO three[i] := me END;
+		FOR i := 0 TO 4 DO five[i] := NIL END;
+		ProcessInfo.Copy(three, five);
+		ASSERT(five[0] = me);
+		ASSERT(five[1] = me);
+		ASSERT(five[2] = me);   (* the emptying used to begin one slot too early *)
+		ASSERT(five[3] = NIL);
+		ASSERT(five[4] = NIL);
+
+		(*	into a shorter one: as much as fits, and all of it *)
+		FOR i := 0 TO 4 DO five[i] := me END;
+		FOR i := 0 TO 2 DO three[i] := NIL END;
+		ProcessInfo.Copy(five, three);
+		ASSERT(three[0] = me);
+		ASSERT(three[1] = me);
+		ASSERT(three[2] = me);
+
+		(*	and the source is what it was *)
+		FOR i := 0 TO 4 DO ASSERT(five[i] = me) END
+	END Test.
+
+positive: a search that finds nothing says nothing, and not the last thing it looked at
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR five: ARRAY 5 OF Objects.Process; me: Objects.Process; i: SIZE;
+
+	BEGIN
+		me := T.Me();
+
+		(*	a full array and an id nobody in it has. The walk stopped one slot short of the end and
+			then handed back whatever stood there, so the answer to "not found" was the last
+			process in the array -- and the last slot's own id was never compared at all. *)
+		FOR i := 0 TO 4 DO five[i] := me END;
+		ASSERT(ProcessInfo.Find(five, me.id) = me);
+		ASSERT(ProcessInfo.Find(five, MAX(INTEGER)) = NIL);
+
+		(*	an array with room to spare: the search stops at the first empty slot *)
+		FOR i := 0 TO 4 DO five[i] := NIL END;
+		five[0] := me;
+		ASSERT(ProcessInfo.Find(five, me.id) = me);
+		ASSERT(ProcessInfo.Find(five, MAX(INTEGER)) = NIL);
+
+		(*	and an array of nothing holds nothing *)
+		FOR i := 0 TO 4 DO five[i] := NIL END;
+		ASSERT(ProcessInfo.Find(five, me.id) = NIL)
+	END Test.
+
+positive: Clear empties the whole array
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR five: ARRAY 5 OF Objects.Process; i: SIZE;
+
+	BEGIN
+		FOR i := 0 TO 4 DO five[i] := T.Me() END;
+		ProcessInfo.Clear(five);
+		ASSERT(T.Occupied(five) = 0)
+	END Test.
+
+positive: a sort is descending, and it loses nobody
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR snapshot: T.Snapshot; count, i: SIZE; me: Objects.Process;
+
+	BEGIN
+		me := T.Me();
+		NEW(snapshot);
+		ProcessInfo.GetProcesses(snapshot^, count);
+		ASSERT(count > 1);
+
+		(*	the id is the one field of a live process that does not change under the case: mode and
+			priority do, and an ordering asserted over them would be a coin toss. *)
+		ProcessInfo.Sort(snapshot^, count, ProcessInfo.SortByID);
+		FOR i := 0 TO count - 2 DO
+			ASSERT(snapshot[i].id >= snapshot[i + 1].id)
+		END;
+		ASSERT(ProcessInfo.Find(snapshot^, me.id) = me);
+
+		(*	the other two orderings run over the same array and lose nobody *)
+		ProcessInfo.Sort(snapshot^, count, ProcessInfo.SortByPriority);
+		ASSERT(T.Occupied(snapshot^) = count);
+		ASSERT(ProcessInfo.Find(snapshot^, me.id) = me);
+
+		ProcessInfo.Sort(snapshot^, count, ProcessInfo.SortByMode);
+		ASSERT(T.Occupied(snapshot^) = count);
+		ASSERT(ProcessInfo.Find(snapshot^, me.id) = me);
+
+		(*	each of the three is a comparison and answers FALSE about one and the same process *)
+		ASSERT(~ProcessInfo.SortByID(me, me));
+		ASSERT(~ProcessInfo.SortByPriority(me, me));
+		ASSERT(~ProcessInfo.SortByMode(me, me));
+
+		(*	and sorting nothing is not an error *)
+		ProcessInfo.Sort(snapshot^, 0, ProcessInfo.SortByID);
+		ASSERT(T.Occupied(snapshot^) = count)
+	END Test.
+
+positive: a process is found by its number, and a number nobody has finds nothing
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects;
+
+	VAR me: Objects.Process;
+
+	BEGIN
+		me := T.Me();
+		ASSERT(ProcessInfo.GetProcess(me.id) = me);
+		ASSERT(ProcessInfo.GetProcess(MAX(INTEGER)) = NIL)
+	END Test.
+
+positive: a mode is three letters, and a number that is not a mode is three question marks
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects, Streams;
+
+	VAR out: Streams.StringWriter; text: ARRAY 64 OF CHAR;
+
+	PROCEDURE Mode (mode: INTEGER; VAR text: ARRAY OF CHAR);
+	BEGIN
+		out := T.NewWriter();
+		ProcessInfo.WriteMode(mode, out);
+		out.Get(text)
+	END Mode;
+
+	BEGIN
+		Mode(Objects.Ready, text); ASSERT(text = "rdy");
+		Mode(Objects.Running, text); ASSERT(text = "run");
+		Mode(Objects.AwaitingLock, text); ASSERT(text = "awl");
+		Mode(Objects.AwaitingCond, text); ASSERT(text = "awc");
+		Mode(Objects.AwaitingEvent, text); ASSERT(text = "awe");
+		Mode(Objects.Terminated, text); ASSERT(text = "rip");
+		Mode(MAX(INTEGER), text); ASSERT(text = "???")
+	END Test.
+
+positive: the flags of a process are written by name, and an empty set writes nothing
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects, Streams;
+
+	VAR out: Streams.StringWriter; text: ARRAY 256 OF CHAR;
+
+	PROCEDURE Flags (flags: SET; VAR text: ARRAY OF CHAR);
+	BEGIN
+		out := T.NewWriter();
+		ProcessInfo.WriteFlags(flags, out);
+		out.Get(text)
+	END Flags;
+
+	BEGIN
+		Flags({}, text); ASSERT(text = "");
+		Flags({Objects.Restart}, text); ASSERT(text = "restart");
+		Flags({Objects.Resistant}, text); ASSERT(text = "resistant");
+		Flags({Objects.SelfTermination}, text); ASSERT(text = "selftermination");
+
+		(*	more than one, and they are separated -- the order is the order of the tests, not of
+			the set *)
+		Flags({Objects.Restart, Objects.Preempted}, text);
+		ASSERT(text = "restart, preempted");
+
+		Flags({Objects.PleaseHalt, Objects.Unbreakable, Objects.SelfTermination}, text);
+		ASSERT(text = "pleaseHalt, unbreakable, selftermination")
+	END Test.
+
+positive: what is written about one process, and about its stack
+
+	MODULE Test;
+	IMPORT T := ProcessInfoTestShared, ProcessInfo, Objects, Streams, Strings;
+
+	VAR out: Streams.StringWriter; text: ARRAY 16384 OF CHAR; me: Objects.Process; number: ARRAY 16 OF CHAR;
+
+	PROCEDURE Deep;
+	BEGIN
+		ProcessInfo.ShowStack(me, out)
+	END Deep;
+
+	BEGIN
+		me := T.Me();
+
+		out := T.NewWriter();
+		ProcessInfo.ShowProcess(me, out);
+		out.Get(text);
+		(*	the number of the process and the three letters of its mode, on one line *)
+		Strings.IntToStr(me.id, number);
+		ASSERT(T.Said(text, number));
+		ASSERT(T.Said(text, "run"));
+
+		out := T.NewWriter();
+		Deep;
+		out.Get(text);
+		ASSERT(T.Said(text, "Current Procedure:"));
+		ASSERT(T.Said(text, "Mode:"));
+		ASSERT(T.Said(text, "Flags:"));
+		ASSERT(T.Said(text, "Stack Trace Back:"));
+		(*	the frame that asked is in the trace, by name *)
+		ASSERT(T.Said(text, "Test.Deep"))
+	END Test.

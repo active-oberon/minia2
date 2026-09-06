@@ -26,7 +26,8 @@ BEGIN
 	FOR i := 0 TO length - 1 DO
 		to[i] := from[i];
 	END;
-	FOR i := length - 1 TO toLength - 1 DO
+	(* from length, not from length-1: the emptying used to begin on the last slot it had copied *)
+	FOR i := length TO toLength - 1 DO
 		to[i] := NIL;
 	END;
 END Copy;
@@ -50,9 +51,12 @@ END Sort;
 PROCEDURE Find*(CONST processes : ProcessArray; id : INTEGER) : Objects.Process;
 VAR process : Objects.Process; i : SIZE;
 BEGIN
+	(*	The walk used to stop at LEN-1, so the last slot's own id was never compared -- and then the
+		slot it had stopped on was handed back whatever stood there, which made the answer to
+		"nobody has that id" the last process in a full array. *)
 	i := 0;
-	WHILE (i < LEN(processes)-1) & (processes[i] # NIL) & (processes[i].id # id) DO INC(i); END;
-	IF (i < LEN(processes)) THEN
+	WHILE (i < LEN(processes)) & (processes[i] # NIL) & (processes[i].id # id) DO INC(i); END;
+	IF (i < LEN(processes)) & (processes[i] # NIL) THEN
 		process := processes[i];
 	ELSE
 		process := NIL;
@@ -120,7 +124,10 @@ BEGIN
 		IF adr # 0 THEN	(* can be 0 when snapshot is taken *)
 			SYSTEM.GET(adr-SIZEOF(ADDRESS), adr); DEC(adr, adr MOD 8);
 			IF adr = SYSTEM.TYPECODE(Modules.Module) THEN
-				mod := SYSTEM.VAL(Modules.Module, adr);
+				(*	the module is what is waited on, not the type descriptor that was just read out
+					of it to identify it: adr holds the tag by now, and reading a name out of that
+					is reading a name out of the wrong record *)
+				mod := SYSTEM.VAL(Modules.Module, t.waitingOn);
 				out.String(mod.name)
 			ELSE
 				Reflection.WriteType(out, adr)
