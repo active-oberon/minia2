@@ -1,0 +1,267 @@
+# Tests for source/In.Mod and source/Out.Mod -- FOF's teaching console I/O, and the smallest pair of
+# modules in std/system.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test InOutTestShared;System.Load Test"
+#
+# Thirty-three lines and sixty-four. Every procedure in both is one line: `Commands.GetContext().out`
+# or `.arg`, and then the thing the caller asked for. They exist so that a first program can say
+# `Out.String("hello")` without knowing what a context is, and six modules that `community/matrix`
+# ships do not compile without `Out`.
+#
+# Which makes them a test of exactly one thing, and it is not the forwarding: **whose** streams a
+# command gets when it does not ask for them. `Commands.GetContext()` reads the context off the
+# running activity, and a command started by `Commands.Activate` with a context of string streams
+# has to see those and not the console's. So every case here is a little command in the first case's
+# module, activated with a string in and a string out, reporting what it saw.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE InOutTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Little commands that read with In and write with Out" *)
+
+	IMPORT In, Out, Commands, Streams, Strings;
+
+	VAR
+		read-: BOOLEAN;   (** did the last reading command get what it asked for? *)
+
+	(**	Run one command with one argument and hand back everything it wrote. The command is
+		activated the ordinary way, so what In and Out reach for is what Commands puts on the
+		activity -- which is the whole question these two modules raise. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** -- commands that write through Out -- *)
+
+	PROCEDURE WriteAll*;
+	BEGIN
+		Out.String("s="); Out.String("text"); Out.Ln;
+		Out.String("c="); Out.Char("x"); Out.Ln;
+		Out.String("i="); Out.Int(-42); Out.Ln;
+		Out.String("w="); Out.Int(7, 4); Out.Ln;
+		Out.String("h="); Out.Hex(255); Out.Ln;
+		Out.String("f="); Out.Float(1.5); Out.Ln;
+		Out.String("e="); Out.Set({1, 3}); Out.Ln;
+		Out.Update
+	END WriteAll;
+
+	(** -- commands that read through In and write what they read -- *)
+
+	PROCEDURE EchoString*;
+	VAR s: ARRAY 256 OF CHAR;
+	BEGIN
+		read := In.String(s);
+		Out.String("["); Out.String(s); Out.String("]");
+		Out.Update
+	END EchoString;
+
+	PROCEDURE EchoInt*;
+	VAR i: INTEGER;
+	BEGIN
+		read := In.Int(i);
+		Out.String("["); Out.Int(i); Out.String("]");
+		Out.Update
+	END EchoInt;
+
+	PROCEDURE EchoHex*;
+	VAR i: INTEGER;
+	BEGIN
+		read := In.Int(i, TRUE);
+		Out.String("["); Out.Int(i); Out.String("]");
+		Out.Update
+	END EchoHex;
+
+	PROCEDURE EchoReal*;
+	VAR r: FLOAT64;
+	BEGIN
+		read := In.Real(r);
+		Out.String("["); Out.Float(r, 8, 2); Out.String("]");
+		Out.Update
+	END EchoReal;
+
+	PROCEDURE EchoChar*;
+	VAR c: CHAR;
+	BEGIN
+		read := In.Char(c);
+		Out.String("["); Out.Char(c); Out.String("]");
+		Out.Update
+	END EchoChar;
+
+	PROCEDURE EchoTwice*;
+	VAR first, second: ARRAY 64 OF CHAR;
+	BEGIN
+		read := In.String(first) & In.String(second);
+		Out.String("["); Out.String(first); Out.String("|"); Out.String(second); Out.String("]");
+		Out.Update
+	END EchoTwice;
+
+	(** The streams these two reach for, against the ones the caller handed over. *)
+	PROCEDURE Whose* (context: Commands.Context);
+	BEGIN
+		IF Out.GetWriter() = context.out THEN
+			context.out.String("same writer")
+		ELSE
+			context.out.String("another writer")
+		END;
+		context.out.String(" ");
+		IF In.GetArg() = context.arg THEN
+			context.out.String("same reader")
+		ELSE
+			context.out.String("another reader")
+		END;
+		context.out.Update
+	END Whose;
+
+	END InOutTestShared.
+
+positive: what a command writes with Out goes to the caller that started it
+
+	MODULE Test;
+	IMPORT T := InOutTestShared, Commands;
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("InOutTestShared.WriteAll", "", text) = Commands.Ok);
+
+		ASSERT(T.Said(text, "s=text"));
+		ASSERT(T.Said(text, "c=x"));
+		ASSERT(T.Said(text, "i=-42"));
+
+		(*	the second argument of Int is a field width and it defaults to one, so a number wider
+			than the field is written whole and a narrower one is padded *)
+		ASSERT(T.Said(text, "w=   7"));
+
+		(*	Hex defaults to a field of -16, which means sixteen digits with leading zeros *)
+		ASSERT(T.Said(text, "h=00000000000000FF"));
+
+		(*	Float is FloatFix underneath, and its defaults are three digits after the point in a
+			field at least four wide -- so 1.5 arrives padded *)
+		ASSERT(T.Said(text, "f=  1.500"));
+
+		(*	and a set is written the way the writer underneath writes one: from the top element
+			down, with runs collapsed to `..`. Not this module's choice, but it is what a first
+			program sees. *)
+		ASSERT(T.Said(text, "e={3, 1}"))
+	END Test.
+
+positive: what a command reads with In is the argument the caller gave it
+
+	MODULE Test;
+	IMPORT T := InOutTestShared, Commands;
+
+	VAR text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("InOutTestShared.EchoString", "hello", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[hello]"));
+		ASSERT(T.read);
+
+		(*	a word at a time, and the second call goes on where the first stopped *)
+		ASSERT(T.Run("InOutTestShared.EchoTwice", "one two", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[one|two]"));
+		ASSERT(T.read);
+
+		(*	a quoted argument is one argument, spaces and all *)
+		ASSERT(T.Run("InOutTestShared.EchoString", "'one two'", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[one two]"));
+
+		(*	and nothing to read is a no, not a trap *)
+		ASSERT(T.Run("InOutTestShared.EchoString", "", text) = Commands.Ok);
+		ASSERT(~T.read);
+		ASSERT(T.Said(text, "[]"))
+	END Test.
+
+positive: a number read by In is decimal, and hexadecimal only when it is asked for
+
+	MODULE Test;
+	IMPORT T := InOutTestShared, Commands;
+
+	VAR text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		(*	`In.Int(i)` used to default to hexadecimal, so a first program that asked for a number
+			and was given 42 got 66, and -42 got -66. In a module whose purpose is a first
+			program's arguments. *)
+		ASSERT(T.Run("InOutTestShared.EchoInt", "42", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[42]"));
+		ASSERT(T.read);
+
+		ASSERT(T.Run("InOutTestShared.EchoInt", "-42", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[-42]"));
+
+		(*	letters are not decimal digits, and the read stops rather than guessing *)
+		ASSERT(T.Run("InOutTestShared.EchoInt", "FF", text) = Commands.Ok);
+		ASSERT(~T.read);
+
+		(*	asked for, hexadecimal is hexadecimal -- and the H postfix is optional, whatever the
+			comment on the procedure used to claim: the reader underneath does not require it *)
+		ASSERT(T.Run("InOutTestShared.EchoHex", "FFH", text) = Commands.Ok);
+		ASSERT(T.read);
+		ASSERT(T.Said(text, "[255]"));
+
+		ASSERT(T.Run("InOutTestShared.EchoHex", "FF", text) = Commands.Ok);
+		ASSERT(T.read);
+		ASSERT(T.Said(text, "[255]"));
+
+		ASSERT(T.Run("InOutTestShared.EchoHex", "42", text) = Commands.Ok);
+		ASSERT(T.Said(text, "[66]"))
+	END Test.
+
+positive: a real and a character come back the way they were written
+
+	MODULE Test;
+	IMPORT T := InOutTestShared, Commands;
+
+	VAR text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Run("InOutTestShared.EchoReal", "1.5", text) = Commands.Ok);
+		ASSERT(T.read);
+		ASSERT(T.Said(text, "1.50"));
+
+		ASSERT(T.Run("InOutTestShared.EchoReal", "-0.25", text) = Commands.Ok);
+		ASSERT(T.read);
+		ASSERT(T.Said(text, "-0.25"));
+
+		(*	a character is the first one that is not a space: In skips whitespace before it reads *)
+		ASSERT(T.Run("InOutTestShared.EchoChar", "  z", text) = Commands.Ok);
+		ASSERT(T.read);
+		ASSERT(T.Said(text, "[z]"));
+
+		(*	and at the end of the argument there is no character, which is a no *)
+		ASSERT(T.Run("InOutTestShared.EchoChar", "", text) = Commands.Ok);
+		ASSERT(~T.read)
+	END Test.
+
+positive: the streams these two reach for are the ones the caller handed over
+
+	MODULE Test;
+	IMPORT T := InOutTestShared, Commands;
+
+	VAR text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		(*	this is the whole of what In and Out are: a command that never mentions a context still
+			gets the caller's streams, because Commands puts the context on the activity and
+			GetContext reads it back off. *)
+		ASSERT(T.Run("InOutTestShared.Whose", "", text) = Commands.Ok);
+		ASSERT(T.Said(text, "same writer"));
+		ASSERT(T.Said(text, "same reader"))
+	END Test.
