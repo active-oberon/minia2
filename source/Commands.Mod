@@ -158,10 +158,14 @@ BEGIN
 	moduleName := ""; procedureName := ""; msg := "";
 	maxlen := LEN(moduleName); cmdlen := LEN(cmdstr);
 	i := 0; WHILE (i < cmdlen) & (i < maxlen-1) & (cmdstr[i] # Delimiter) & (cmdstr[i] # 0X) DO moduleName[i] := cmdstr[i]; INC(i); END;
-	IF (i >= maxlen)  THEN
-		COPY("Module name too long", msg);
-	ELSIF (i >= cmdlen) THEN
+	IF (i >= cmdlen) THEN
 		COPY("Command string not 0X terminated", msg);
+	ELSIF (i >= maxlen-1) & (cmdstr[i] # Delimiter) & (cmdstr[i] # 0X) THEN
+		(*	The loop above never lets i reach maxlen, so the test that used to stand here (i >= maxlen)
+			could not be true and a module name too wide for a Modules.Name was reported as a missing
+			delimiter instead. It is too wide when the loop stopped at the full width AND the name has
+			not ended -- a name of exactly maxlen-1 characters and the 0X behind it fills the type. *)
+		COPY("Module name too long", msg);
 	ELSIF (cmdstr[i] # Delimiter) THEN
 		COPY('Expected ModuleName "." [ProcedureName]', msg);
 	ELSE
@@ -172,7 +176,10 @@ BEGIN
 		WHILE (i < cmdlen) & (j < maxlen-1) & (cmdstr[i] # 0X) DO procedureName[j] := cmdstr[i]; INC(j); INC(i); END;
 		IF (i >= cmdlen) THEN
 			COPY("Command string not 0X terminated", msg);
-		ELSIF (j >= maxlen-1) THEN
+		ELSIF (j >= maxlen-1) & (cmdstr[i] # 0X) THEN
+			(*	Same width and the same reason as above: stopping at the full width is an overflow only
+				if the name goes on. Without the second test a procedure name of exactly maxlen-1
+				characters -- one that fits -- was refused. *)
 			COPY("Command name too long", msg);
 		ELSE
 			procedureName[j] := 0X;

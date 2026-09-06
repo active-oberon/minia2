@@ -1,0 +1,454 @@
+# Tests for source/Shell.Mod -- the command interpreter: a line of text read from a stream, cut
+# into commands, arguments and redirections, and handed to Commands one by one.
+#
+# Pipes are the one thing in that list with no case here, and not for want of trying: a pipe in
+# this shell does not work at all. Measured -- `System.Show hello | <a command that copies its
+# input to its output>` prints the NEXT LINE OF THE SCRIPT and nothing else. CmdLine builds the
+# pipe and then hands both of its ends to the same command: `prev.context.Init(r, ...)` gives the
+# writing command the pipe's reader, and the reading command is never told about the pipe at all,
+# so it goes on reading the shell's own input and eats the rest of the session. The write end is
+# never closed either -- the line that would do it is commented out in Execute -- so once the
+# first half is fixed the second half would wait for an end that never comes. Making a pipe work
+# needs the writing command to be run by something that closes the pipe when it returns, which is
+# a change of shape and not a bounds check. Left as it is, on purpose, and written down here.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ShellTestShared;System.Load Test"
+#
+# This is what a person types at. `oberon` with no arguments ends in Shell.Start, and everything
+# a session does goes through the little recursive-descent parser inside it. Nothing tested it,
+# and the reason is the same one that leaves a loader untested: a shell that cannot parse is a
+# shell nobody can use, so the lines that work are walked a thousand times a day and the lines
+# that do not are walked by nobody.
+#
+# The cases are those lines. A quote that keeps a ">" from being a redirection. A redirection that
+# is asked for a file name and given none. An "&" with words behind it. An alias standing for a
+# command, and an alias standing for another alias. And the ordinary ones too, because until now
+# nothing said in a test that "System.Show hello" prints hello.
+#
+# The shell reads from a string and writes to one, so a case is a script and an expectation --
+# see the helper module in the first case. Its error stream is the same string, because the point
+# of most of these is what it says when it refuses.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ShellTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A shell driven by a string and read back from one" *)
+
+	IMPORT Shell, Streams, Strings;
+
+	(**	Add a line to a script. A shell line ends at the first CR or LF it sees and every later
+		one of the other kind is skipped, so one LF per line is a script. *)
+	PROCEDURE Line* (VAR script: ARRAY OF CHAR; CONST command: ARRAY OF CHAR);
+	BEGIN
+		Strings.Append(script, command);
+		Strings.AppendChar(script, 0AX)
+	END Line;
+
+	(**	Run a script through a shell of its own and hand back everything it wrote -- what it says
+		and what it complains about, in the order it said them.
+
+		The shell dies when its input ends, which is why AwaitDeath returns at all: a script is
+		the whole session. Echo is off and the prompt is empty so that the text is the answer and
+		nothing else. *)
+	PROCEDURE Run* (CONST script: ARRAY OF CHAR; VAR text: ARRAY OF CHAR);
+	VAR in: Streams.StringReader; out: Streams.StringWriter; shell: Shell.Shell;
+	BEGIN
+		Streams.OpenStringReader(in, script);
+		Streams.OpenStringWriter(out, 8192);
+		NEW(shell, in, out, out, FALSE, "");
+		shell.AwaitDeath;
+		out.Get(text)
+	END Run;
+
+	(** Does the shell's output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(**	How many times. The cases that make the shell refuse a line use it on the banner: the
+		body of a shell is SAFE, so a trap inside it does not take the system down -- it starts
+		the body over, and the banner comes a second time. A banner counted once is a line
+		refused rather than a line that trapped. *)
+	PROCEDURE Times* (CONST text, what: ARRAY OF CHAR): SIZE;
+	VAR i, j, n, textLength, whatLength: SIZE;
+	BEGIN
+		textLength := Strings.Length(text); whatLength := Strings.Length(what);
+		IF whatLength = 0 THEN RETURN 0 END;
+		n := 0; i := 0;
+		WHILE i + whatLength <= textLength DO
+			j := 0;
+			WHILE (j < whatLength) & (text[i+j] = what[j]) DO INC(j) END;
+			IF j = whatLength THEN INC(n); INC(i, whatLength) ELSE INC(i) END
+		END;
+		RETURN n
+	END Times;
+
+	(** A run of one character, for the cases about what does not fit. *)
+	PROCEDURE Fill* (VAR s: ARRAY OF CHAR; ch: CHAR; count: SIZE);
+	VAR i: SIZE;
+	BEGIN
+		ASSERT(count < LEN(s));
+		FOR i := 0 TO count-1 DO s[i] := ch END;
+		s[count] := 0X
+	END Fill;
+
+	END ShellTestShared.
+
+positive: a shell says what it is and then does what it is told
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "version");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "Shell v1.0"));
+		(*	the banner is one thing and the answer to "version" another: the version is said twice,
+			once before the script and once by the command in it *)
+		ASSERT(ShellTestShared.Said(text, "Enter 'help' if needed"))
+	END Test.
+
+positive: help lists the words the shell answers itself
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "help");
+		ShellTestShared.Run(script, text);
+		(*	these six are the whole of what the shell does without Commands: everything else in a
+			line is a module and a procedure *)
+		ASSERT(ShellTestShared.Said(text, "alias"));
+		ASSERT(ShellTestShared.Said(text, "batch"));
+		ASSERT(ShellTestShared.Said(text, "clear"));
+		ASSERT(ShellTestShared.Said(text, "version"));
+		ASSERT(ShellTestShared.Said(text, "help"));
+		ASSERT(ShellTestShared.Said(text, "exit"))
+	END Test.
+
+positive: a command in a line is run and writes where the shell writes
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "System.Show hello");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "hello"))
+	END Test.
+
+positive: everything behind the command name is one argument, spaces and all
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "System.Show a b c");
+		ShellTestShared.Run(script, text);
+		(*	the shell cuts the name off at the first space and hands the rest over untouched -- it
+			does not split arguments, and a command that wants them split does that itself *)
+		ASSERT(ShellTestShared.Said(text, "a b c"))
+	END Test.
+
+positive: quotes keep a redirection sign from being one
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, 'System.Show "a > b"');
+		ShellTestShared.Run(script, text);
+		(*	Inside quotes the scanner still recognises ">", and the argument scanner still stops at
+			it -- unless a quote is open. That is the whole mechanism, and it is why the quotes
+			themselves stay in the argument: the shell does not strip them, it only counts them. *)
+		ASSERT(ShellTestShared.Said(text, '"a > b"'));
+		ASSERT(~ShellTestShared.Said(text, "file not found"))
+	END Test.
+
+positive: a redirection with no file name behind it is refused by name
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "System.Show a >");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "invalid file name."));
+		ASSERT(ShellTestShared.Said(text, "Error at position "))
+	END Test.
+
+positive: a line the parser runs out of is refused by name too
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		(*	"&" says do not wait, and after it the line must end. A word behind it is not an
+			argument of anything. *)
+		ShellTestShared.Line(script, "System.Show a & b");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "too many arguments."));
+
+		(* and a line that starts where a command cannot *)
+		script := "";
+		ShellTestShared.Line(script, ">");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "invalid command."))
+	END Test.
+
+positive: a command that is not there is reported and the shell reads on
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "System.NoSuchCommandAtAll");
+		ShellTestShared.Line(script, "System.Show still here");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "Error in command: System.NoSuchCommandAtAll"));
+		ASSERT(ShellTestShared.Said(text, "not found"));
+		(* the line after a failing one is a line like any other *)
+		ASSERT(ShellTestShared.Said(text, "still here"))
+	END Test.
+
+positive: exit ends the session and what stands after it is not read
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "exit");
+		ShellTestShared.Line(script, "System.Show never");
+		ShellTestShared.Run(script, text);
+		ASSERT(~ShellTestShared.Said(text, "never"))
+	END Test.
+
+positive: an alias is the command it stands for
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "alias say=System.Show");
+		ShellTestShared.Line(script, "say hello");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "say = System.Show"));
+		ASSERT(ShellTestShared.Said(text, "hello"))
+	END Test.
+
+positive: an alias carries its own arguments in front of the line's
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "alias greet=System.Show hello");
+		ShellTestShared.Line(script, "greet world");
+		ShellTestShared.Run(script, text);
+		(*	the alias's own arguments come first, then a space, then what was typed -- this is the
+			one place in the shell where a string is moved inside itself *)
+		ASSERT(ShellTestShared.Said(text, "hello world"))
+	END Test.
+
+positive: an alias standing for an alias is followed to the end
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "alias say=System.Show");
+		ShellTestShared.Line(script, "alias s=say");
+		ShellTestShared.Line(script, "s deep");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "deep"))
+	END Test.
+
+positive: an alias is taken away by naming it with nothing behind the sign
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		script := "";
+		ShellTestShared.Line(script, "alias say=System.Show");
+		ShellTestShared.Line(script, "alias say=");
+		ShellTestShared.Line(script, "say hello");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "say removed"));
+		(*	and now it is not a command string at all: "say" has no dot in it, so it is Commands.Split
+			that refuses it and the loader is never asked *)
+		ASSERT(ShellTestShared.Said(text, 'Expected ModuleName "." [ProcedureName]'))
+	END Test.
+
+positive: what a command writes goes into a file when the line says so
+
+	MODULE Test;
+	IMPORT ShellTestShared, Files, Streams;
+
+	VAR
+		script, text: ARRAY 1024 OF CHAR;
+		file: Files.File; reader: Files.Reader; back: ARRAY 64 OF CHAR;
+		length: SIZE; res: INTEGER;
+
+	BEGIN
+		Files.Delete("ShellTest.Out", res);
+
+		script := "";
+		ShellTestShared.Line(script, "System.Show first > ShellTest.Out");
+		ShellTestShared.Line(script, "System.Show second >> ShellTest.Out");
+		ShellTestShared.Run(script, text);
+
+		file := Files.Old("ShellTest.Out");
+		ASSERT(file # NIL);
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(back, 0, LEN(back)-1, length);
+		back[length] := 0X;
+
+		(*	The argument keeps the space that stood in front of the ">", because whitespace is not
+			what ends an argument -- the redirection sign is. And ">>" opened the same file at its
+			end instead of a new one. *)
+		ASSERT(back = "first second ");
+
+		Files.Delete("ShellTest.Out", res);
+		ASSERT(res = Files.Ok)
+	END Test.
+
+positive: a command name wider than the field that holds it is refused, not written past it
+
+	MODULE Test;
+	IMPORT ShellTestShared;
+
+	VAR script, text: ARRAY 2048 OF CHAR; name: ARRAY 512 OF CHAR;
+
+	BEGIN
+		(*	A Command holds a CmdLen of name. The loop that read one had no end of its own, so a
+			longer name walked off the array and trapped -- measured, index out of range in
+			Shell.Shell.Parse.Cmd with i = 64. The shell's body is SAFE, so the trap did not take
+			the system down: it started the shell over, banner and all. That is what the count
+			below is for. *)
+		ShellTestShared.Fill(name, "x", 200);
+		script := "";
+		ShellTestShared.Line(script, name);
+		ShellTestShared.Line(script, "System.Show alive");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "command name too long."));
+		ASSERT(ShellTestShared.Said(text, "alive"));
+		ASSERT(ShellTestShared.Times(text, "Shell v1.0") = 1)
+	END Test.
+
+positive: a redirection to a name wider than a file name is refused the same way
+
+	MODULE Test;
+	IMPORT ShellTestShared, Strings;
+
+	VAR script, text: ARRAY 2048 OF CHAR; line, name: ARRAY 512 OF CHAR;
+
+	BEGIN
+		(*	The same shape one level down: the token scanner wrote into a Files.FileName without
+			looking at how wide one is -- index out of range in Shell.Shell.Parse.Token with
+			i = 272. A name that does not fit is not a name. *)
+		ShellTestShared.Fill(name, "y", 400);
+		line := "System.Show a > "; Strings.Append(line, name);
+		script := "";
+		ShellTestShared.Line(script, line);
+		ShellTestShared.Line(script, "System.Show alive");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "invalid file name."));
+		ASSERT(ShellTestShared.Said(text, "alive"));
+		ASSERT(ShellTestShared.Times(text, "Shell v1.0") = 1)
+	END Test.
+
+positive: an alias wider than an alias is refused and no alias is made
+
+	MODULE Test;
+	IMPORT ShellTestShared, Strings;
+
+	VAR script, text: ARRAY 2048 OF CHAR; line, name: ARRAY 512 OF CHAR;
+
+	BEGIN
+		ShellTestShared.Fill(name, "z", 200);
+		line := "alias "; Strings.Append(line, name); Strings.Append(line, "=System.Show");
+		script := "";
+		ShellTestShared.Line(script, line);
+		ShellTestShared.Line(script, "System.Show alive");
+		ShellTestShared.Run(script, text);
+		ASSERT(ShellTestShared.Said(text, "alias name too long"));
+		ASSERT(ShellTestShared.Said(text, "alive"));
+		ASSERT(ShellTestShared.Times(text, "Shell v1.0") = 1)
+	END Test.
+
+positive: an alias and a line whose arguments together do not fit are cut, not written past the end
+
+	MODULE Test;
+	IMPORT ShellTestShared, Strings;
+
+	VAR script, text: ARRAY 8192 OF CHAR; line, own, typed: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		(*	This is the one place in the shell where a string is moved inside its own array, and
+			nothing said the alias's arguments and the line's still fit in it together. Three
+			thousand and three thousand do not fit in a ParamLen.
+
+			"q" and "w" because they stand in nothing the shell says by itself -- not in the
+			banner, not in the echo of the alias it just made, not in "alive". *)
+		ShellTestShared.Fill(own, "q", 3000);
+		ShellTestShared.Fill(typed, "w", 3000);
+
+		line := "alias big=System.Show "; Strings.Append(line, own);
+		script := "";
+		ShellTestShared.Line(script, line);
+		line := "big "; Strings.Append(line, typed);
+		ShellTestShared.Line(script, line);
+		ShellTestShared.Line(script, "System.Show alive");
+		ShellTestShared.Run(script, text);
+
+		(*	Twice three thousand: the alias command echoes what it made, and then the command it
+			stands for is handed those same arguments in front of the line's. Both times whole --
+			it is the line's own that are cut, and they are cut where the array ends rather than
+			written past it. *)
+		ASSERT(ShellTestShared.Times(text, "q") = 6000);
+		ASSERT(ShellTestShared.Times(text, "w") > 0);
+		ASSERT(ShellTestShared.Times(text, "w") < 3000);
+		ASSERT(ShellTestShared.Said(text, "alive"));
+		ASSERT(ShellTestShared.Times(text, "Shell v1.0") = 1)
+	END Test.
