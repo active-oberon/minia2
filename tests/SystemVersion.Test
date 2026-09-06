@@ -1,0 +1,48 @@
+# Tests for source/SystemVersion.Mod -- one number that says which kernel this is.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Fifty-one lines. It adds up the checksums of the fourteen modules that make a kernel -- `Machine`,
+# `Heaps`, `Modules`, `Objects`, `Kernel`, `Streams`, `Commands`, `Files`, `Loader` and the rest --
+# into one CRC, and takes that number once at load time into `BootCRC`. Two systems that answer the
+# same number are the same system underneath, which is the whole of what it is for. It had no test.
+#
+# The cases cannot say what the number *is* -- it is whatever this build's modules hash to -- so
+# they say what a number for identifying something has to be: the same every time it is asked while
+# nothing has changed, and equal to the one taken at load, because nothing in the list has been
+# reloaded since.
+#
+# `SystemVersion` is not in the `System.Free` list of the options line above, and that is the point:
+# freeing and reloading it would take a fresh `BootCRC` and the case about it would say nothing.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the number is the same every time it is asked
+
+	MODULE Test;
+	IMPORT SystemVersion;
+
+	VAR first, second: SIGNED32;
+
+	BEGIN
+		first := SystemVersion.GetKernelCRC();
+		second := SystemVersion.GetKernelCRC();
+		ASSERT(first = second);
+
+		(*	the kernel modules named in the sum are loaded in any system that can run this case at
+			all, so the sum is not the sum of nothing *)
+		ASSERT(first # 0)
+	END Test.
+
+positive: the number taken at load is the number the kernel still answers
+
+	MODULE Test;
+	IMPORT SystemVersion;
+
+	BEGIN
+		(*	BootCRC is taken once, in the module body. Nothing in the list of fourteen has been
+			freed or reloaded since, so the two have to agree -- and if they ever stop agreeing,
+			that is the module doing its job and saying the kernel underneath has changed. *)
+		ASSERT(SystemVersion.BootCRC = SystemVersion.GetKernelCRC());
+		ASSERT(SystemVersion.BootCRC # 0)
+	END Test.
