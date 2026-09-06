@@ -83,6 +83,7 @@ VAR
 	PROCEDURE FileStart*(context: Commands.Context);   (* start writing to a the file Debugging.Text *)
 	VAR w: Files.Writer;  filename: ARRAY 256 OF CHAR;
 	BEGIN
+		FileEnd;   (* a second start over a first used to drop the first file unregistered *)
 		IF context # NIL THEN
 			context.arg.String(filename);
 		ELSE
@@ -97,7 +98,11 @@ VAR
 
 	PROCEDURE FileEnd*;   (* stop writing to Debugging.Text *)
 	BEGIN
-		Log.Update;  Files.Register( f );  f.Update;  f := NIL;  Log := DefaultLog;
+		Log.Update;
+		IF f # NIL THEN   (* ending a log that was never started is what one types after a trap *)
+			Files.Register( f );  f.Update;  f := NIL
+		END;
+		Log := DefaultLog;
 	END FileEnd;
 
 	(* shortcut for String, usage deprecated *)
@@ -145,9 +150,12 @@ VAR
 		Log.Hex( i, j );
 	END Hex;
 
+	(*	Sixteen hex digits, which is what HIntHex means in Trace, KernelLog and DebugLog. Writing
+		the two halves apart in a field one digit wide made 1 come out as "01", and MOD and DIV on
+		a negative never reach zero, so -1 came out as thirty-two F's. *)
 	PROCEDURE HIntHex*( x: SIGNED64 );
 	BEGIN
-		Hex( SHORT( ASH( x, -32 ) ),1 );  Hex( SHORT( x ),1 )
+		Hex( x, -16 )
 	END HIntHex;
 
 	PROCEDURE Char*( c: CHAR );

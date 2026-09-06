@@ -1,0 +1,346 @@
+# Tests for source/Debugging.Mod -- the printf of this system: what you reach for when the debugger
+# is not an option, because what you are debugging is what the debugger stands on.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test DebuggingTestShared Debugging;System.Load Test"
+#
+# Every one of its writers goes to one stream, `Log`, and `Log` is exported read-only -- so the
+# module cannot be pointed at a string writer from outside. It can be pointed at a file, and that
+# is what `FileStart` and `FileEnd` are for; so a case here writes to a file of its own and reads
+# it back, which is also the only path through those two that anything ever exercised.
+#
+# The cases ask what the writers write, which nobody had ever read back: a set, the type of a
+# pointer, a string that is only a pool index, and a sixty-four bit number in hex. They ask what
+# `Enter` and `Exit` bracket, and whether the lock they take is given back. And they ask the two
+# questions about `FileStart` and `FileEnd` that a session in trouble asks by accident -- ending a
+# file that was never started, and starting a second one over the first.
+#
+# What is not asked, and why: `Halt` halts, `DisableGC` turns the collector off for the rest of the
+# process, and `ReportProcedureDescriptors` walks every module in the system. None of the three has
+# an answer a case could read.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE DebuggingTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A command run, a log file read back" *)
+
+	IMPORT Commands, Debugging, Files, Streams, Strings;
+
+	(**	Run one command with one argument and hand back everything it wrote -- what it said and
+		what it complained about, because a case about a refusal is a case about the words of the
+		refusal. The result is the command's own, which is what Commands.Activate reports. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** Point the log at a file of this case's own. *)
+	PROCEDURE Start* (CONST filename: ARRAY OF CHAR);
+	VAR text: ARRAY 256 OF CHAR;
+	BEGIN
+		ASSERT(Run("Debugging.FileStart", filename, text) = Commands.Ok)
+	END Start;
+
+	(**	Read every character of a file back. FALSE when there is no such file, which is an answer a
+		case may be after. *)
+	PROCEDURE ReadBack* (CONST filename: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+	VAR file: Files.File; reader: Files.Reader; length: SIZE;
+	BEGIN
+		text := "";
+		file := Files.Old(filename);
+		IF file = NIL THEN RETURN FALSE END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(text, 0, LEN(text) - 1, length);
+		text[length] := 0X;
+		RETURN TRUE
+	END ReadBack;
+
+	(** Close the log file and read it back. *)
+	PROCEDURE Stop* (CONST filename: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		Debugging.FileEnd;
+		RETURN ReadBack(filename, text)
+	END Stop;
+
+	END DebuggingTestShared.
+
+positive: what is written between FileStart and FileEnd is in the file, and nothing else is
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.plain.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		(*	before the file is started the log goes to the kernel log, and this line is not in any
+			file this case can read *)
+		Debugging.String("before");
+
+		T.Start(FileName);
+		Debugging.String("inside");
+		Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+		ASSERT(T.Said(text, "inside"));
+		ASSERT(~T.Said(text, "before"));
+
+		(*	and after the end the log is back where it was: this does not reach the file either *)
+		Debugging.String("after");
+		Debugging.Update;
+		ASSERT(T.ReadBack(FileName, text));
+		ASSERT(T.Said(text, "inside"));
+		ASSERT(~T.Said(text, "after"))
+	END Test.
+
+positive: the little writers write what the stream underneath them writes
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.writers.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Start(FileName);
+		Debugging.String("s=");  Debugging.Str("str");  Debugging.Ln;
+		Debugging.String("i=");  Debugging.Int(-42, 0);  Debugging.Ln;
+		Debugging.String("h=");  Debugging.Hex(255, -4);  Debugging.Ln;
+		Debugging.String("c=");  Debugging.Char("x");  Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+
+		ASSERT(T.Said(text, "s=str"));
+		ASSERT(T.Said(text, "i=-42"));
+		ASSERT(T.Said(text, "h=00FF"));
+		ASSERT(T.Said(text, "c=x"))
+	END Test.
+
+positive: a set is written as its members between braces, and an empty one as nothing between them
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.set.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Start(FileName);
+		Debugging.String("a"); Debugging.Set({}); Debugging.Ln;
+		Debugging.String("b"); Debugging.Set({0}); Debugging.Ln;
+		Debugging.String("c"); Debugging.Set({1, 3, 5}); Debugging.Ln;
+		Debugging.String("d"); Debugging.Set({MAX(SET)}); Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+
+		ASSERT(T.Said(text, "a{}"));
+		ASSERT(T.Said(text, "b{0}"));
+		ASSERT(T.Said(text, "c{1,3,5}"));
+
+		(*	the top element of a set is written too -- the loop has to reach MAX(SET), not the
+			width of an INTEGER *)
+		ASSERT(T.Said(text, "d{"));
+		ASSERT(~T.Said(text, "d{}"))
+	END Test.
+
+positive: Type names the module and the record a pointer points at
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.type.tmp.txt";
+
+	TYPE Thing = POINTER TO RECORD n: SIGNED32 END;
+
+	VAR text: ARRAY 1024 OF CHAR; thing: Thing;
+
+	BEGIN
+		NEW(thing);
+		T.Start(FileName);
+		Debugging.String("a="); Debugging.Type(thing); Debugging.Ln;
+		Debugging.String("b="); Debugging.Type(NIL); Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+
+		(*	the name is the module's and the type's, joined by a dot: that is the whole point of
+			asking a pointer what it is *)
+		ASSERT(T.Said(text, "a=Test."));
+		ASSERT(T.Said(text, "b=NIL (no type)"))
+	END Test.
+
+positive: Str0 writes back the string a pool index stands for
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging, StringPool;
+
+	CONST FileName = "Debugging.Test.pool.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; index: StringPool.Index;
+
+	BEGIN
+		StringPool.GetIndex("a name that is only a number until somebody asks", index);
+		T.Start(FileName);
+		Debugging.String("n="); Debugging.Str0(index); Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+		ASSERT(T.Said(text, "n=a name that is only a number until somebody asks"))
+	END Test.
+
+positive: Enter opens a bracket and names the process, Exit closes it, and the lock is given back
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging, Strings;
+
+	CONST FileName = "Debugging.Test.enter.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; i: SIGNED32;
+
+	BEGIN
+		T.Start(FileName);
+		(*	four times round: Enter takes a write lock and Exit gives it back, and a case that ran
+			once would not notice if it did not *)
+		FOR i := 1 TO 4 DO
+			Debugging.Enter;
+			Debugging.String("body");
+			Debugging.Exit
+		END;
+		ASSERT(T.Stop(FileName, text));
+
+		(*	"{ [P <id> <type of the active object>] hh:mm:ss body }" *)
+		ASSERT(T.Said(text, "{ [P "));
+		ASSERT(T.Said(text, "body"));
+		ASSERT(T.Said(text, "}"));
+		ASSERT(Strings.Pos("{ [P ", text) < Strings.Pos("body", text))
+	END Test.
+
+positive: a sixty-four bit number in hex is sixteen digits wide
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.hex.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR;
+
+	BEGIN
+		T.Start(FileName);
+		Debugging.String("a="); Debugging.HIntHex(1); Debugging.Ln;
+		Debugging.String("b="); Debugging.HIntHex(-1); Debugging.Ln;
+		Debugging.String("c="); Debugging.HIntHex(100000000H); Debugging.Ln;
+		ASSERT(T.Stop(FileName, text));
+
+		(*	the name says it writes the two halves of a 64-bit word, and every other HIntHex in the
+			tree -- Trace's, KernelLog's, DebugLog's -- says "always prints 16 digits". This one
+			shifted the halves apart and asked for a field one digit wide, so 1 came out "01" and
+			-1 came out as thirty-two F's: MOD and DIV on a negative number never reach zero, so
+			each half ran to the sixteen-digit ceiling on its own. *)
+		ASSERT(T.Said(text, "a=0000000000000001"));
+		ASSERT(T.Said(text, "b=FFFFFFFFFFFFFFFF"));
+		ASSERT(T.Said(text, "c=0000000100000000"))
+	END Test.
+
+positive: ending a log that was never started, and starting a second one over the first
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging, Files;
+
+	CONST
+		First = "Debugging.Test.first.tmp.txt";
+		Second = "Debugging.Test.second.tmp.txt";
+
+	VAR text: ARRAY 1024 OF CHAR; file: Files.File;
+
+	BEGIN
+		(*	the log has no file behind it here, and ending it is the natural thing to type after a
+			session that trapped. It used to read through a NIL file. *)
+		Debugging.FileEnd;
+		Debugging.String("still writing");
+		Debugging.Update;
+
+		(*	twice in a row, because that is what happens when the first one is typed twice *)
+		Debugging.FileEnd;
+
+		(*	a second FileStart over a first: the first file was created but never registered, so
+			what was written to it went nowhere and there was no file to find afterwards *)
+		T.Start(First);
+		Debugging.String("into the first");
+		Debugging.Ln;
+		T.Start(Second);
+		Debugging.String("into the second");
+		Debugging.Ln;
+		ASSERT(T.Stop(Second, text));
+		ASSERT(T.Said(text, "into the second"));
+		ASSERT(~T.Said(text, "into the first"));
+
+		file := Files.Old(First);
+		ASSERT(file # NIL);
+		ASSERT(T.Stop(First, text));
+		ASSERT(T.Said(text, "into the first"))
+	END Test.
+
+positive: a stack trace back names the procedure that asked for it
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.trace.tmp.txt";
+
+	VAR text: ARRAY 8192 OF CHAR;
+
+	PROCEDURE Deep;
+	BEGIN
+		Debugging.TraceBack
+	END Deep;
+
+	BEGIN
+		T.Start(FileName);
+		Deep;
+		ASSERT(T.Stop(FileName, text));
+
+		ASSERT(T.Said(text, "Debugging.TraceBack"));
+		(*	the frame the call was made from is in the trace, by name *)
+		ASSERT(T.Said(text, "Test.Deep"))
+	END Test.
+
+positive: a region of memory is written word by word, and the nil region is named rather than read
+
+	MODULE Test;
+	IMPORT T := DebuggingTestShared, Debugging;
+
+	CONST FileName = "Debugging.Test.memory.tmp.txt";
+
+	TYPE Block = POINTER TO RECORD a, b, c, d: SIGNED64 END;
+
+	VAR text: ARRAY 8192 OF CHAR; block: Block; from: ADDRESS;
+
+	BEGIN
+		NEW(block); block.a := 1; block.b := 2; block.c := 3; block.d := 4;
+		from := ADDRESS OF block.a;
+
+		T.Start(FileName);
+		Debugging.Memory(0, 16);
+		Debugging.Memory(from, from + 3 * SIZEOF(SIGNED64));
+		ASSERT(T.Stop(FileName, text));
+
+		(*	address 0 is not read, it is named -- a region that is not there is the commonest thing
+			to be looking at when this is what you are reaching for *)
+		ASSERT(T.Said(text, "NIL Region"));
+
+		(*	and a region that is there is written between its two markers, one line per word, with
+			the offset from the start of the region on each *)
+		ASSERT(T.Said(text, ">>>>>"));
+		ASSERT(T.Said(text, "<<<<<"));
+		ASSERT(T.Said(text, "H ("))
+	END Test.
