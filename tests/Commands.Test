@@ -1,0 +1,367 @@
+# Tests for source/Commands.Mod -- the command path: a command string cut into a module name and a
+# procedure name, and a command started in an active object of its own with a context of streams.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test CommandsTestShared;System.Load Test"
+#
+# Every command this system ever runs comes through here. `oberon do "..."`, the shell, the
+# tester itself, a button in the window system -- all of them end in Commands.Activate, and all of
+# them start with Commands.Split. Nothing tested either. What the tree proves about them is only
+# what a command that works proves: a name that is there, short enough, spelled right.
+#
+# So the cases ask the questions a working command never asks. A name as wide as Modules.Name
+# allows -- the width at which the module says yes and the check inside says no. A name wider than
+# that. A string with no delimiter at all, and one with several. A command that is not there, and
+# one whose module is. And on the other side of Activate: whether what a command writes reaches
+# the writer the caller handed it, whether a command that reports a failure makes Activate report
+# one, and whether a sequence stops where the first failure is.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE CommandsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Commands that say they ran, and in what order" *)
+
+	IMPORT Commands;
+
+	TYPE
+		(*	The order commands ran in, written down by the commands themselves. It is an object
+			because PAR hands the notes to activities of their own: without the lock a case would
+			be reading a string while another process writes it, and without AWAIT it would have
+			to guess how long to wait for one. *)
+		Log* = OBJECT
+		VAR
+			text-: ARRAY 64 OF CHAR;
+			count-: SIZE;
+
+			PROCEDURE Note (ch: CHAR);
+			BEGIN {EXCLUSIVE}
+				IF count < LEN(text)-1 THEN text[count] := ch; INC(count); text[count] := 0X END
+			END Note;
+
+			(** Wait until that many commands have noted themselves. *)
+			PROCEDURE Await* (until: SIZE);
+			BEGIN {EXCLUSIVE}
+				AWAIT(count >= until)
+			END Await;
+
+			(** Start again. *)
+			PROCEDURE Clear*;
+			BEGIN {EXCLUSIVE}
+				count := 0; text[0] := 0X
+			END Clear;
+
+			PROCEDURE &Init*;
+			BEGIN
+				count := 0; text[0] := 0X
+			END Init;
+
+		END Log;
+
+	VAR log-: Log;
+
+	(**	Write the first character of the argument down and succeed. *)
+	PROCEDURE Note* (context: Commands.Context);
+	BEGIN
+		log.Note(context.arg.Get())
+	END Note;
+
+	(**	Write the first character of the argument down and report a failure. A command reports one
+		by putting it in its context -- that is what Commands.Activate reads back. *)
+	PROCEDURE Fail* (context: Commands.Context);
+	BEGIN
+		log.Note(context.arg.Get());
+		context.result := 1
+	END Fail;
+
+	(**	A command of the other kind: no context at all. Both shapes are called through the same
+		Activate, and the parameterless one is the shape the tester's own commands have. *)
+	PROCEDURE Bare*;
+	BEGIN
+		log.Note("!")
+	END Bare;
+
+	BEGIN
+		NEW(log)
+	END CommandsTestShared.
+
+positive: a command string is a module name, a dot and a procedure name
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+
+	VAR moduleName, procedureName: Modules.Name; res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		Commands.Split("System.Show", moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(moduleName = "System");
+		ASSERT(procedureName = "Show");
+		ASSERT(msg = "")
+	END Test.
+
+positive: only the first dot separates, the rest belong to the procedure name
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+
+	VAR moduleName, procedureName: Modules.Name; res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		Commands.Split("A.B.C", moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(moduleName = "A");
+		ASSERT(procedureName = "B.C")
+	END Test.
+
+positive: a module name with nothing after the dot is a command string too
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+
+	VAR moduleName, procedureName: Modules.Name; res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		(*	Documented, and Activate leans on it: the module is loaded and its body runs, but no
+			procedure is called afterwards. *)
+		Commands.Split("System.", moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(moduleName = "System");
+		ASSERT(procedureName = "")
+	END Test.
+
+positive: a string without a delimiter is not a command string
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+
+	VAR moduleName, procedureName: Modules.Name; res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		Commands.Split("System", moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.CommandParseError);
+		ASSERT(msg = 'Expected ModuleName "." [ProcedureName]');
+
+		(* the empty string takes the same road, and must not read past its own end doing it *)
+		Commands.Split("", moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.CommandParseError);
+		ASSERT(moduleName = "");
+		ASSERT(procedureName = "")
+	END Test.
+
+positive: a name as wide as the name type allows still fits
+
+	MODULE Test;
+	IMPORT Commands, Modules, Strings;
+
+	VAR
+		moduleName, procedureName: Modules.Name;
+		cmd: ARRAY 512 OF CHAR;
+		res: INTEGER; msg: ARRAY 128 OF CHAR;
+		width, i: SIZE;
+
+	BEGIN
+		(*	A Modules.Name holds LEN-1 characters and the 0X after them. A name of exactly that
+			many is a name, not an overflow -- and the width is asked of the type rather than
+			written down here, so that the case still means this if the type changes. *)
+		width := LEN(moduleName) - 1;
+
+		FOR i := 0 TO width-1 DO cmd[i] := "a" END;
+		cmd[width] := "."; cmd[width+1] := 0X;
+		Commands.Split(cmd, moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(Strings.Length(moduleName) = width);
+		ASSERT(procedureName = "");
+
+		(* and the same width on the other side of the dot *)
+		cmd[0] := "A"; cmd[1] := ".";
+		FOR i := 0 TO width-1 DO cmd[2+i] := "b" END;
+		cmd[2+width] := 0X;
+		Commands.Split(cmd, moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(moduleName = "A");
+		ASSERT(Strings.Length(procedureName) = width)
+	END Test.
+
+positive: a name wider than the name type is named as such
+
+	MODULE Test;
+	IMPORT Commands, Modules;
+
+	VAR
+		moduleName, procedureName: Modules.Name;
+		cmd: ARRAY 512 OF CHAR;
+		res: INTEGER; msg: ARRAY 128 OF CHAR;
+		width, i: SIZE;
+
+	BEGIN
+		width := LEN(moduleName) - 1;
+
+		(* one character past what the name holds, and the dot is still there behind it *)
+		FOR i := 0 TO width DO cmd[i] := "a" END;
+		cmd[width+1] := "."; cmd[width+2] := "B"; cmd[width+3] := 0X;
+		Commands.Split(cmd, moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.CommandParseError);
+		ASSERT(msg = "Module name too long");
+
+		(* and past what the procedure name holds *)
+		cmd[0] := "A"; cmd[1] := ".";
+		FOR i := 0 TO width DO cmd[2+i] := "b" END;
+		cmd[2+width+1] := 0X;
+		Commands.Split(cmd, moduleName, procedureName, res, msg);
+		ASSERT(res = Commands.CommandParseError);
+		ASSERT(msg = "Command name too long")
+	END Test.
+
+positive: what a command writes goes to the writer the caller handed it
+
+	MODULE Test;
+	IMPORT Commands, Streams;
+
+	VAR
+		arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		res: INTEGER; msg: ARRAY 128 OF CHAR; text: ARRAY 64 OF CHAR;
+
+	BEGIN
+		Streams.OpenStringReader(arg, "hello world");
+		Streams.OpenStringWriter(out, 256);
+		NEW(context, NIL, arg, out, out, NIL);
+
+		(* System.Show copies its argument to its output, so it measures the whole path *)
+		Commands.Activate("System.Show", context, {Commands.Wait}, res, msg);
+		ASSERT(res = Commands.Ok);
+		out.Get(text);
+		ASSERT(text = "hello world")
+	END Test.
+
+positive: a command that is not there says which one
+
+	MODULE Test;
+	IMPORT Commands;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		(*	The module is here and the procedure is not: that is the answer Commands gives itself,
+			word for word, and the shell prints it. *)
+		Commands.Activate("System.NoSuchCommandAtAll", NIL, {Commands.Wait}, res, msg);
+		ASSERT(res = Commands.CommandNotFound);
+		ASSERT(msg = "Command System.NoSuchCommandAtAll not found");
+
+		(* the module is not here either: the loader answers, and it must answer something *)
+		Commands.Activate("NoSuchModuleAtAll.Nothing", NIL, {Commands.Wait}, res, msg);
+		ASSERT(res # Commands.Ok);
+		ASSERT(msg # "")
+	END Test.
+
+positive: a command string that does not parse never reaches the loader
+
+	MODULE Test;
+	IMPORT Commands;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		Commands.Activate("NotACommandString", NIL, {Commands.Wait}, res, msg);
+		ASSERT(res = Commands.CommandParseError);
+		ASSERT(msg = 'Expected ModuleName "." [ProcedureName]')
+	END Test.
+
+positive: a command reporting a failure makes the activation report one
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		CommandsTestShared.log.Clear;
+		Commands.Activate("CommandsTestShared.Fail", NIL, {Commands.Wait}, res, msg);
+		ASSERT(res # Commands.Ok);
+		ASSERT(msg = "Command not successful");
+		(* it did run: the failure is the command's answer, not a refusal to start it *)
+		ASSERT(CommandsTestShared.log.count = 1)
+	END Test.
+
+positive: a command without a context is called too
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		(*	Two shapes go through the same Activate -- PROCEDURE and PROCEDURE(Commands.Context) --
+			and it looks for them in that order. The parameterless one has no way to report a
+			failure, so it is always Ok. *)
+		CommandsTestShared.log.Clear;
+		Commands.Activate("CommandsTestShared.Bare", NIL, {Commands.Wait}, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(CommandsTestShared.log.text = "!")
+	END Test.
+
+positive: SEQ runs a string of commands in the order it is written
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		CommandsTestShared.log.Clear;
+		Commands.Call("SEQ CommandsTestShared.Note a;CommandsTestShared.Note b;CommandsTestShared.Note c",
+			{}, res, msg);
+		ASSERT(res = Commands.Ok);
+		(*	SEQ means the caller waits for each, so the order is the string's order and there is
+			nothing left running when Call returns. *)
+		ASSERT(CommandsTestShared.log.text = "abc")
+	END Test.
+
+positive: a string of commands stops at the first that fails
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		CommandsTestShared.log.Clear;
+		Commands.Call("SEQ CommandsTestShared.Note a;CommandsTestShared.Fail b;CommandsTestShared.Note c",
+			{}, res, msg);
+		ASSERT(res # Commands.Ok);
+		(* the third never started *)
+		ASSERT(CommandsTestShared.log.text = "ab")
+	END Test.
+
+positive: PAR is a mode and not the name of a command
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		CommandsTestShared.log.Clear;
+		Commands.Call("PAR CommandsTestShared.Note a;CommandsTestShared.Note b", {Commands.Wait}, res, msg);
+		ASSERT(res = Commands.Ok);
+		(*	PAR takes the waiting away, so Call returns before the commands do and the order they
+			note themselves in is not ours to say. Both of them do run, and that is the whole
+			claim: the four characters in front were read as a mode. *)
+		CommandsTestShared.log.Await(2);
+		ASSERT(CommandsTestShared.log.count = 2)
+	END Test.
+
+positive: the argument of a command is what stands behind its name
+
+	MODULE Test;
+	IMPORT Commands, CommandsTestShared;
+
+	VAR res: INTEGER; msg: ARRAY 128 OF CHAR;
+
+	BEGIN
+		(*	Call cuts the string at the first space and hands the rest to the command as its
+			argument reader -- semicolons end it, spaces inside it do not. *)
+		CommandsTestShared.log.Clear;
+		Commands.Call("SEQ CommandsTestShared.Note x y z", {}, res, msg);
+		ASSERT(res = Commands.Ok);
+		ASSERT(CommandsTestShared.log.text = "x")
+	END Test.

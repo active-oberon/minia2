@@ -56,6 +56,7 @@ CONST
 	ErrPipeAtBeginning = 4;
 	ErrInvalidCommand = 5;
 	ErrEolnExpected = 6;
+	ErrNameTooLong = 7;
 
 TYPE
 	CommandsString = POINTER TO RECORD
@@ -312,14 +313,21 @@ TYPE
 			END Skip;
 
 			PROCEDURE Token(VAR s: ARRAY OF CHAR; cond: SET): BOOLEAN;
-			VAR i: SIZE; quote: BOOLEAN;
+			VAR i: SIZE; quote, full: BOOLEAN;
 			BEGIN
-				quote := FALSE;
-				WHILE (sym * cond = {}) OR (quote & (sym # eoln)) DO
-					s[i] := c; INC(i); IF (c = '"') OR (c = "'") THEN quote := ~quote END; Scan
+				(*	i was never set here. Its twin in Cmd below sets it, and this one counted from
+					whatever the frame happened to hold. *)
+				i := 0; quote := FALSE; full := FALSE;
+				WHILE ~full & ((sym * cond = {}) OR (quote & (sym # eoln))) DO
+					IF i < LEN(s)-1 THEN
+						s[i] := c; INC(i); IF (c = '"') OR (c = "'") THEN quote := ~quote END; Scan
+					ELSE full := TRUE
+					END
 				END;
 				s[i] := 0X;
-				RETURN ~quote
+				(*	A token wider than what it is read into is not a token: without the test above a
+					redirection to a name longer than a Files.FileName wrote past the end of one. *)
+				RETURN ~quote & ~full
 			END Token;
 
 			PROCEDURE Cmd(): Command;
@@ -328,7 +336,11 @@ TYPE
 				IF (sym = char) THEN
 					NEW(cmd);
 					i := 0;
-					WHILE (sym = char) DO cmd.command[i] := c; INC(i); Scan END; cmd.command[i] := 0X; Skip;
+					WHILE (sym = char) & (i < LEN(cmd.command)-1) DO cmd.command[i] := c; INC(i); Scan END;
+					cmd.command[i] := 0X;
+					(*	This loop had no end of its own: a name longer than a Command holds ran off it. *)
+					IF (sym = char) THEN res := ErrNameTooLong; RETURN NIL END;
+					Skip;
 					IF (cmd.command # "") THEN
 						IF (sym * EndOfParam = {}) THEN
 							IF ~Token(cmd.parameters, EndOfParam) THEN cmd := NIL END
@@ -385,7 +397,7 @@ TYPE
 							piped := TRUE
 						END;
 						prev := cmd
-					ELSE res := ErrInvalidCommand (* invalid command *)
+					ELSIF (res = 0) THEN res := ErrInvalidCommand (* Cmd may have named the trouble already *)
 					END
 				UNTIL (res # 0) OR (cmd = NIL) OR ~piped;
 				IF (res = 0) THEN
@@ -424,6 +436,7 @@ TYPE
 					| ErrPipeAtBeginning: COPY("syntax error.", s)
 					| ErrInvalidCommand: COPY("invalid command.", s)
 					| ErrEolnExpected: COPY("too many arguments.", s)
+					| ErrNameTooLong: COPY("command name too long.", s)
 					ELSE COPY("unknown error.", s)
 					END;
 					context.error.String(s); context.error.Ln; context.error.Update;
@@ -443,18 +456,30 @@ TYPE
 			IF (cmd.parameters # "") THEN
 				COPY(cmd.parameters, s);
 				NEW(alias);
+				(*	The three loops below stop where the field they write into stops. Each field is
+					narrower than the line they read from -- an alias and a command are a CmdLen -- so
+					without an end of their own they wrote past one. A record from NEW is zeroed, which
+					is where the 0X behind a stopped loop comes from. *)
 				i := 0; c := s[i];
-				WHILE (c # 0X) & (c # "=") DO alias.alias[i] := c; INC(i); c := s[i] END;
+				WHILE (c # 0X) & (c # "=") & (i < LEN(alias.alias)-1) DO alias.alias[i] := c; INC(i); c := s[i] END;
+				IF (c # 0X) & (c # "=") THEN
+					IF verbose THEN context.out.String("alias name too long"); context.out.Ln; context.out.Update END;
+					RETURN
+				END;
 				IF (c = "=") THEN
 					k := 0; INC(i); c := s[i];
-					WHILE (c # 0X) & (c # " ") & (c # TAB) DO alias.command[k] := c; INC(k); INC(i); c := s[i] END;
+					WHILE (c # 0X) & (c # " ") & (c # TAB) & (k < LEN(alias.command)-1) DO alias.command[k] := c; INC(k); INC(i); c := s[i] END;
+					IF (c # 0X) & (c # " ") & (c # TAB) THEN
+						IF verbose THEN context.out.String("alias command too long"); context.out.Ln; context.out.Update END;
+						RETURN
+					END
 				END;
 
 				IF verbose THEN context.out.String(alias.alias); END;
 				IF (alias.command # "") THEN (* add an alias *)
 					WHILE (c # 0X) & ((c = " ") OR (c = TAB)) DO INC(i); c := s[i] END;
 					k := 0;
-					WHILE (c # 0X) DO alias.parameters[k] := c; INC(k); INC(i); c := s[i] END;
+					WHILE (c # 0X) & (k < LEN(alias.parameters)-1) DO alias.parameters[k] := c; INC(k); INC(i); c := s[i] END;
 					p := aliases; q := NIL;
 					WHILE (p # NIL) & (p.alias < alias.alias) DO q := p; p := p.next END;
 					IF (q = NIL) THEN aliases := alias; aliases.next := p
@@ -487,7 +512,7 @@ TYPE
 		END ReadAlias;
 
 		PROCEDURE ReplaceAlias(cmd: Command): BOOLEAN;
-		VAR a: Alias; d, i: SIZE;
+		VAR a: Alias; joined: ARRAY ParamLen OF CHAR;
 		BEGIN
 			a := aliases;
 			WHILE (a # NIL) & (a.alias < cmd.command) DO a := a.next END;
@@ -496,12 +521,15 @@ TYPE
 				IF (a.parameters # "") THEN
 					IF (cmd.parameters = "") THEN COPY(a.parameters, cmd.parameters)
 					ELSE
-						d := Strings.Length(a.parameters) + 1;
-						FOR i := Strings.Length(cmd.parameters) TO 0 BY -1 DO
-							cmd.parameters[i+d] := cmd.parameters[i]
-						END;
-						FOR i := 0 TO d-2 DO cmd.parameters[i] := a.parameters[i] END;
-						cmd.parameters[d-1] := " "
+						(*	The alias brings its own arguments and they go in front of the line's, with a
+							space between. This used to be a shift of the line's arguments inside their own
+							array by the width of the alias's, and nothing said the two together still fit
+							in it. AppendX is the bounded twin of Append: what does not fit is dropped
+							rather than written past the end. *)
+						COPY(a.parameters, joined);
+						Strings.AppendX(joined, " ");
+						Strings.AppendX(joined, cmd.parameters);
+						COPY(joined, cmd.parameters)
 					END
 				END;
 				RETURN TRUE
