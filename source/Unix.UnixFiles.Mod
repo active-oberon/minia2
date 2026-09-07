@@ -1123,19 +1123,25 @@ TYPE
 	PROCEDURE Initialize;
 	VAR a: ADDRESS;  i: SIGNED16;  ch: CHAR;
 	BEGIN
-		(* get current working directory *)
-		a := Unix.getenv( ADDRESSOF( "PWD" ) );
-		IF a > 0 THEN
-			(* $PWD is as long as the person's directories are, and this runs before any program *)
-			i := 0;
-			REPEAT
-				S.GET( a, ch );  INC( a );
-				IF i = LEN( cwd ) - 1 THEN  ch := 0X  END;
-				cwd[i] := ch;  INC( i )
-			UNTIL ch = 0X;
-		ELSE
-			(* $PWD not set *)
-			a := Unix.getcwd( ADDRESSOF( cwd ), LEN( cwd ) )
+		(*	The kernel first, the environment only if the kernel refuses. $PWD is what a shell
+			left behind and it does not follow a chdir, so a process started somewhere else --
+			which is what the test harness does, and what qemu does with it on AArch64 -- got a
+			cwd that named a directory it was not in: `CreateDirectory` went to the real one
+			(it hands the relative name to the kernel) and `ChangeDirectory` to the remembered
+			one, so the two disagreed and the second failed. *)
+		a := Unix.getcwd( ADDRESSOF( cwd ), LEN( cwd ) );
+		IF a = 0 THEN	(* no answer from the kernel: what the shell said is better than nothing *)
+			a := Unix.getenv( ADDRESSOF( "PWD" ) );
+			IF a > 0 THEN
+				i := 0;
+				REPEAT
+					S.GET( a, ch );  INC( a );
+					IF i = LEN( cwd ) - 1 THEN  ch := 0X  END;
+					cwd[i] := ch;  INC( i )
+				UNTIL ch = 0X
+			ELSE
+				cwd := "/"
+			END
 		END;
 		i := 0;
 		WHILE cwd[i] # 0X DO  INC( i )  END;
