@@ -7,8 +7,10 @@
 # does -- talk to something already running, like mpv's control socket -- is the same calls in
 # the same order, minus the listening.
 #
-# The path is in /tmp and carries this process's number: two runs at once, which is what -j is,
-# must not take each other's socket.
+# The path is relative and carries this process's number: two runs at once, which is what -j is,
+# must not take each other's socket, and the case's own directory is the one place that exists on
+# every host these suites run on. It used to be /tmp, which Android has not got -- on a phone all
+# three cases that bind a socket failed, and said nothing about LocalSockets.
 #
 # Each case is positive: it must compile and run its module body without a failing ASSERT.
 
@@ -19,7 +21,7 @@ positive: two sides of a path talk to each other
 	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
 		path: ARRAY 64 OF CHAR; line: ARRAY 128 OF CHAR;
 	BEGIN
-		path := "/tmp/a2-localsockets-"; Strings.AppendInt(path, Unix.getpid()); Strings.Append(path, ".sock");
+		path := "a2-localsockets-"; Strings.AppendInt(path, Unix.getpid()); Strings.Append(path, ".sock");
 		l := LocalSockets.Listen(path);
 		ASSERT(l # NIL);
 		client := LocalSockets.Connect(path);      (* queued by the system: accept comes after *)
@@ -45,7 +47,7 @@ positive: a path with nothing listening is nothing to connect to
 	IMPORT LocalSockets, Unix, Strings;
 	VAR l: LocalSockets.Listener; path: ARRAY 64 OF CHAR;
 	BEGIN
-		path := "/tmp/a2-localsockets-gone-"; Strings.AppendInt(path, Unix.getpid());
+		path := "a2-localsockets-gone-"; Strings.AppendInt(path, Unix.getpid());
 		Strings.Append(path, ".sock");
 		ASSERT(LocalSockets.Connect(path) = NIL);  (* it was never there *)
 		l := LocalSockets.Listen(path);
@@ -61,7 +63,7 @@ positive: more than one line, in the order they were said
 	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
 		path: ARRAY 64 OF CHAR; line: ARRAY 64 OF CHAR; i: SIGNED32; expected: ARRAY 64 OF CHAR;
 	BEGIN
-		path := "/tmp/a2-localsockets-many-"; Strings.AppendInt(path, Unix.getpid());
+		path := "a2-localsockets-many-"; Strings.AppendInt(path, Unix.getpid());
 		Strings.Append(path, ".sock");
 		l := LocalSockets.Listen(path); ASSERT(l # NIL);
 		client := LocalSockets.Connect(path); ASSERT(client # NIL);
@@ -84,7 +86,7 @@ positive: when one side goes away the other is told, not left waiting
 	VAR l: LocalSockets.Listener; client, server: LocalSockets.Connection;
 		path: ARRAY 64 OF CHAR; line: ARRAY 64 OF CHAR;
 	BEGIN
-		path := "/tmp/a2-localsockets-end-"; Strings.AppendInt(path, Unix.getpid());
+		path := "a2-localsockets-end-"; Strings.AppendInt(path, Unix.getpid());
 		Strings.Append(path, ".sock");
 		l := LocalSockets.Listen(path); ASSERT(l # NIL);
 		client := LocalSockets.Connect(path); ASSERT(client # NIL);
