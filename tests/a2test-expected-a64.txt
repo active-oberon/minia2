@@ -57,15 +57,21 @@ Shortreal.Execution.Test	positive: test scalar SHORTREAL operators
 # implementation would hide it.
 MathFunctions.Test	positive: a logarithm and an exponent undo each other
 
-# --- atomics under an emulator ------------------------------------------------------
-# Two activities adding one to the same counter a thousand times each come to 2000 on
-# x86-64 and to about 1270 here: a third of the additions are lost. The AArch64 code is
-# a textbook ldaxr/stlxr retry loop and is atomic by construction on a processor, so the
-# likely answer is that qemu-user does not honour the exclusive monitor between threads
-# -- but "likely" is not "checked", and this entry says which of the two it is only when
-# somebody runs this case on the real machine. There is one: the suites have run on a
-# Snapdragon before (see the AArch64 notes), and this file should be revisited then.
-# Until then the case stays here rather than being weakened to pass: an atomic operation
-# that loses a third of its updates is either a defect or a broken measurement, and both
-# are worth keeping in front of us.
-MachineFunctions.Test	positive: two activities adding to one counter lose nothing
+# --- atomics under an emulator: settled 07.09.2026, and the entry is gone -----------
+# Two activities adding one to the same counter used to come to about 1270 here instead
+# of 2000, and this file said the question would be settled by running the case on a
+# processor rather than on an emulator. It was: on a Galaxy S24 (Snapdragon 8 Gen 3) the
+# case passes, and it passes under this machine's qemu now as well -- so the lost
+# additions were the emulator's exclusive monitor and not the ldaxr/stlxr loop. Nothing
+# to list; the case is expected to pass everywhere.
+
+# --- a report of forty thousand characters, under an emulator --------------------------
+# TrapWriters.Test's overflow case writes 40000 characters through a trap writer, and every
+# one of them also goes to Trace.Char by design. Native and on a phone it passes; under
+# qemu-user the image prints the head of the report and then stops without reaching the
+# "Test loaded." marker and without trapping, so the harness has nothing to call a pass.
+# What kills it has not been found -- it is not the case timeout (600s changes nothing) and
+# not the harness's error-line heuristic (removed 07.09). Listed rather than weakened: the
+# case is about a defect worth keeping in front of us (a report longer than the buffer is
+# silently cut), and it does that job on every other host.
+TrapWriters.Test	positive: a report too long for the buffer keeps its head and loses its tail, and says nothing about it
