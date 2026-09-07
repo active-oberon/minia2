@@ -57,3 +57,46 @@ MathArrays.Execution.Test	positive: correct use of ADDRESS OF and SYSTEM.VAL for
 # (When run with -r in isolation this case reports "could not import Driver" instead: the
 # helper module is built by the earlier "test driver" case, so filtering skips it.)
 MathArrays.Execution.Test	positive: driver tests (fill and compare arrays)
+#
+# --- the two Windows suites, read on the other host --------------------------------
+# tests/WinFS.Test and tests/WinTraps.Test were written on 2026-09-07 against the
+# Windows twins of Files and Traps, and they say Windows things: a drive letter in an
+# absolute name, two names that differ only in case being one name, a trap report whose
+# first line is `TRAP <n> [<level>] PL<n>` with no signal number before a dot. On Linux
+# the modules they are about are not in the build at all, so the cases cannot pass and
+# are not meant to. This is the mirror image of what tests/a2test-expected-win64.txt
+# does with the suites whose cases import Unix -- 21 of the 77 it lists.
+#
+# Eleven of the thirty-six cases in those two files DO pass here (the shared modules and
+# the parts that are not about the host), and they are deliberately not listed: a listed
+# case that passes is reported FIXED and fails the run, which is what keeps this file
+# from going stale.
+#
+# Measured 2026-09-08 against the whole Linux64 build, the run CI makes: 7583 cases,
+# 7553 passed, 26 failed -- these 25 and one WebSockets case that fails every other run
+# for reasons of its own (see the key-numbers table in the plan file).
+WinFS.Test	positive: a file that was never registered has no date to give, and says so
+WinFS.Test	positive: a name too long for what it is copied into is cut, not written past
+WinFS.Test	positive: a relative name with a directory in it is looked for along the search path
+WinFS.Test	positive: a rider that was never given a position reads from the beginning of the file
+WinFS.Test	positive: an absolute name goes in through the drive it names, and comes back the same file
+WinFS.Test	positive: and a name that fits comes back relative to where we stand
+WinFS.Test	positive: the attributes of a name, and of a name that is not there
+WinFS.Test	positive: the characters a file name may not contain
+WinFS.Test	positive: the two directories the process was given, and neither of them is empty
+WinFS.Test	positive: the working directory is where the harness put us, and can be moved and moved back
+WinFS.Test	positive: two names that differ only in case are one name here
+WinTraps.Test	positive: a HALT the program wrote itself is named a HALT, and an unknown number is not
+WinTraps.Test	positive: a processor fault is named by what the processor said, and carries no halt code
+WinTraps.Test	positive: a trap the debugger does not answer for is still asked about only once
+WinTraps.Test	positive: a trap under a FINALLY is reported, and the activity runs on past it
+WinTraps.Test	positive: an activity that traps is reported, and the case that started it lives on
+WinTraps.Test	positive: and about a fault, where there is no halt code to tell
+WinTraps.Test	positive: and so do the numbers the system raises on its own
+WinTraps.Test	positive: the account begins and ends with the markers that say where it begins and ends
+WinTraps.Test	positive: the level in the first line counts the traps that are still being reported
+WinTraps.Test	positive: the numbers the compiler plants have the words the compiler means by them
+WinTraps.Test	positive: the registers are there, and by the names this handler calls them
+WinTraps.Test	positive: the report says which system and when, before it says anything else
+WinTraps.Test	positive: two activities that trap one after the other get one report each
+WinTraps.Test	positive: what a debugger is told about a trap it did not plant

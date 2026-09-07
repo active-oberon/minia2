@@ -3112,7 +3112,7 @@ END TestVerb;
 	other verbs put what they write.
 *)
 PROCEDURE BindVerb;
-CONST Usage = "usage: ob bind <header.h> [-o <File.Mod>] [-m <Module>] [-l <lib,lib>] [-p <prefix>] [-I <dir>] [--cc <program>] [--records]";
+CONST Usage = "usage: ob bind <header.h> [-o <File.Mod>] [-m <Module>] [-l <lib,lib>] [-p <prefix>] [-I <dir>] [--cc <program>] [--records] [--varargs <n>]";
 VAR settings: H2ao.Settings; argument, value, absolute, output, module, line: Path;
 	handle: Files.File; writer: Files.Writer; produced: BOOLEAN;
 	procedures, types, constants, data, skipped: SIGNED32;
@@ -3120,6 +3120,7 @@ BEGIN
 	settings.module := ""; settings.header := ""; settings.libraries := "";
 	settings.prefixes := ""; settings.compiler := ""; settings.includes := "";
 	settings.records := FALSE;
+	settings.varargs := 3;			(* enough for a printf-shaped call; --varargs 0 turns them off *)
 	output := "";
 	WHILE NextArgument(argument) DO
 		IF (argument = "-o") OR (argument = "--output") THEN
@@ -3142,6 +3143,9 @@ BEGIN
 			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
 			COPY(value, settings.compiler)
 		ELSIF argument = "--records" THEN settings.records := TRUE
+		ELSIF argument = "--varargs" THEN
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			settings.varargs := ToInteger(value, 3)
 		ELSIF argument[0] = '-' THEN
 			DieOn("unknown option: ", argument); RETURN
 		ELSE COPY(argument, settings.header)
@@ -3252,7 +3256,8 @@ BEGIN
 	Say("  ob test [File.Test ...] [-v] [-j N] run test files (default: every *.Test here)");
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
-	Say("  ob bind <header.h> [-o F.Mod] [-m M] [-l lib] [-p prefix] [-I dir] [--records]");
+	Say("  ob bind <header.h> [-o F.Mod] [-m M] [-l lib] [-p prefix] [-I dir]");
+	Say("                     [--records] [--varargs <n>]");
 	Say("                                     C bindings out of a header, through clang");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
 	Say("  ob dap                             the debug adapter: run a program, read where it trapped");

@@ -108,8 +108,8 @@ recompiled (the language server takes `A2_SYMS` for that; the compiler does not)
 line per function by hand:
 
 ```sh
-ob bind /usr/include/sqlite3.h                      # writes Sqlite3.Mod
-ob bind /usr/include/zlib.h --records -l libz.so.1  # structs as RECORDs, and the library named
+ob bind /usr/include/sqlite3.h --records            # writes Sqlite3.Mod
+ob bind /usr/include/zlib.h --records -l libz.so.1  # structs laid out, and the library named
 ```
 
 It is not a translator of C: the bodies stay in C and are called where they are. What comes
@@ -118,8 +118,8 @@ the module is loaded — the shape `OpenAL.Mod` and `Unix.Sockets.Mod` already h
 tree, only complete and written by a machine. Nothing in it is compiled from C and no C
 compiler is needed to use it; one is needed to write it, because the header is read by
 `clang -Xclang -ast-dump=json` (`zig cc` is clang and will do). Measured on the two headers
-above: 283 functions, 472 constants and 8 refusals out of `sqlite3.h`, 81 functions out of
-`zlib.h`.
+above: **307 functions, 27 types, 472 constants and 2 refusals** out of `sqlite3.h`, and
+**84 functions, 12 types, 37 constants and none refused** out of `zlib.h`.
 
 | option | |
 | --- | --- |
@@ -128,7 +128,8 @@ above: 283 functions, 472 constants and 8 refusals out of `sqlite3.h`, 81 functi
 | `-l <lib,lib>` | the libraries to try, in order (default: guessed from the header's name, both platforms' spellings) |
 | `-p <prefix,prefix>` | C prefixes to drop from names — `-p sqlite3_,SQLITE_` makes `Sqlite3.open` of `sqlite3_open` |
 | `-I <dir>` | as a C compiler takes it; repeatable |
-| `--records` | translate complete structs as RECORDs. Off by default: a wrong layout is the one mistake here that is silent |
+| `--records` | lay out complete structs and unions, bit fields and all. Off by default: a wrong layout is the one mistake here that is silent |
+| `--varargs <n>` | how many fixed-arity wrappers to write for a variadic function (default 3; `0` refuses them instead) |
 | `--cc <program>` | the C compiler to ask, when the machine has more than one |
 
 How to read what comes out:
@@ -143,7 +144,31 @@ How to read what comes out:
   `Missing` counts the entries that build of it does not have — which is not an error: a
   header declares what the library *can* be built with. `libsqlite3-0.dll` on Windows is
   missing 11 of sqlite3.h's 283, and everything else works;
-- `Text(address, string)` copies a C string out of an address a function returned.
+- `Text(address, string)` copies a C string out of the address a function returned, and a library
+  that is not on the loader's own path is opened by name: `Load("/where/it/is")`.
+
+**Structs, unions and bit fields** (`--records`). A struct is a RECORD, member for member, and an
+array member is an array in place. A union has no Active Oberon spelling, so it becomes the room it
+takes — an array called `storage` of the type its alignment asks for, which is its size and its
+alignment in one — and each member becomes a procedure over that room (`U_member` and
+`U_member_set`, or `U_member` returning the address when the member is an array or a record). A run
+of bit fields becomes one word called `bits<n>` plus a procedure each, packing least significant bit
+first. None of that is assumed: `sizeof`, `offsetof` and a value written on one side and read on the
+other all agree with C on both platforms, and the check is a program (`z_stream` is 88 bytes with
+`zalloc` at 48 and `adler` at 76 on both).
+
+Two bit-field shapes are refused rather than guessed at, and the reason is the ABI: bit fields of
+two different types in a row (Windows starts a fresh word at the type change, Unix carries on
+packing) and a bit field that crosses a word (Unix lets it straddle, Windows does not). A layout
+that differs between the platforms cannot be one generated file.
+
+**Variadic functions** come out as fixed-arity wrappers — `sqlite3_mprintf1` takes one variable
+argument, `sqlite3_mprintf2` two, up to `--varargs n` — each resolved from the same C symbol. A C
+call may pass more arguments than the format asks for, so a wrapper wider than the call needs is
+still a correct call, and a fixed prototype for a variadic function is a legal one (measured on
+both ABIs). The extra parameters are `ADDRESS` on purpose: an integer or a pointer goes straight in
+and a `FLOAT64` cannot, because the C ABI carries a floating-point variable argument in a register
+this call does not announce — so the type system refuses exactly what the ABI would get wrong.
 
 **What does not carry over is named, not hidden.** Every declaration the generator refuses is
 listed in the generated module's own header comment with the reason — varargs, unions, bit

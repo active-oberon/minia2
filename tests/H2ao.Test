@@ -117,14 +117,16 @@ positive: the helpers these tests are written with
 
 			(**	A field with a bit width, which is the one field shape that has no honest layout
 				here. It is a member on the field and not a kind of its own. *)
-			PROCEDURE BitField* (CONST name, qual: ARRAY OF CHAR);
+			PROCEDURE BitField* (CONST name, qual: ARRAY OF CHAR; width: SIGNED32);
 			BEGIN
 				IF ~inInner THEN writer.String(',"inner":['); inInner := TRUE
 				ELSE writer.String(",")
 				END;
-				writer.String('{"kind":"FieldDecl","name":"'); writer.String(name);
-				writer.String('","isBitfield":true,"type":{"qualType":"'); writer.String(qual);
-				writer.String('"}}')
+				writer.String('{"kind":"FieldDecl"');
+				IF name # "" THEN Pair("name", name) END;
+				writer.String(',"isBitfield":true,"type":{"qualType":"'); writer.String(qual);
+				writer.String('"},"inner":[{"kind":"ConstantExpr","value":"');
+				writer.Int(width, 0); writer.String('"}]}')
 			END BitField;
 
 			(**	One name of an enumeration. `value` empty is a name with no `=` after it, which C
@@ -155,7 +157,7 @@ positive: the helpers these tests are written with
 		what says which macros are the header's; `preprocessed` is what `clang -E -dM` would have
 		printed for it. FALSE when nothing came out at all. *)
 	PROCEDURE Bound* (tree: Tree; CONST header, preprocessed, prefixes: ARRAY OF CHAR;
-		records: BOOLEAN; VAR text: Strings.String): BOOLEAN;
+		records: BOOLEAN; varargs: SIGNED32; VAR text: Strings.String): BOOLEAN;
 	VAR settings: H2ao.Settings; json: Strings.String; value: JSON.Value;
 		buffer: Streams.Buffer; writer: Streams.Writer; module: H2ao.Name; made: BOOLEAN;
 	BEGIN
@@ -167,6 +169,7 @@ positive: the helpers these tests are written with
 		COPY(prefixes, settings.prefixes);
 		settings.compiler := ""; settings.includes := "";
 		settings.records := records;
+		settings.varargs := varargs;
 		NEW(buffer, 8192); writer := buffer.GetWriter();
 		made := H2ao.Generate(settings, value, header, preprocessed, writer, module);
 		writer.Update; text := buffer.GetString();
@@ -175,8 +178,13 @@ positive: the helpers these tests are written with
 
 	(** The plainest case: one tree, no macros, no prefixes. *)
 	PROCEDURE Only* (tree: Tree; VAR text: Strings.String): BOOLEAN;
-	BEGIN RETURN Bound(tree, "", "", "", FALSE, text)
+	BEGIN RETURN Bound(tree, "", "", "", FALSE, 0, text)
 	END Only;
+
+	(** The same, with the structs and unions laid out. *)
+	PROCEDURE Laid* (tree: Tree; VAR text: Strings.String): BOOLEAN;
+	BEGIN RETURN Bound(tree, "", "", "", TRUE, 0, text)
+	END Laid;
 
 	(** One line of a header, or of what the preprocessor made of it. *)
 	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
@@ -378,7 +386,7 @@ positive: varargs is named as not translated instead of being got wrong
 		tree.Decl("FunctionDecl", "thing_ok", "int (void)", "", "");
 		ASSERT(T.Only(tree, text), 1);
 		ASSERT(~T.Has(text^, "thing_printf-"), 2);
-		ASSERT(T.Has(text^, "thing_printf -- varargs"), 3);
+		ASSERT(T.Has(text^, "thing_printf -- varargs, and no wrappers were asked for"), 3);
 		ASSERT(T.Has(text^, "Not translated -- 1 declarations"), 4);
 		(* the one that could be translated still is: a refusal is not a stop *)
 		ASSERT(T.Has(text^, "thing_ok-: PROCEDURE {PlatformCC} (): SIGNED32;"), 5);
@@ -410,7 +418,7 @@ positive: a prefix comes off a name only while what is left is still a name
 		NEW(tree);
 		tree.Decl("FunctionDecl", "thing_open", "int (void)", "", T.Header);
 		tree.Decl("FunctionDecl", "thing_2nd", "int (void)", "", "");
-		ASSERT(T.Bound(tree, "", "", "thing_", FALSE, text), 1);
+		ASSERT(T.Bound(tree, "", "", "thing_", FALSE, 0, text), 1);
 		ASSERT(T.Has(text^, "open-: PROCEDURE {PlatformCC} (): SIGNED32;"), 2);
 		(* the C name is still what the loader asks the library for *)
 		ASSERT(T.Has(text^, 'Resolve(handle, "thing_open", ADDRESSOF(open));'), 3);
@@ -472,7 +480,7 @@ positive: a complete struct is a RECORD when it is asked for, and only then
 		tree.Word("tagUsed", "struct");
 		tree.Child("FieldDecl", "next", "unsigned char *");
 		tree.Child("FieldDecl", "available", "unsigned int");
-		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 1);
+		ASSERT(T.Laid(tree, text), 1);
 		ASSERT(T.Has(text^, "thing_stream* = RECORD"), 2);
 		ASSERT(T.Has(text^, "next*: ADDRESS;"), 3);
 		ASSERT(T.Has(text^, "available*: UNSIGNED32;"), 4);
@@ -489,31 +497,55 @@ positive: a complete struct is a RECORD when it is asked for, and only then
 		ASSERT(~T.Has(text^, "thing_stream"), 6)
 	END Test.
 
-positive: a struct this cannot lay out honestly is refused whole, with the reason
+positive: a record this cannot lay out honestly is refused whole, with the reason
 
 	MODULE Test;
 	IMPORT T := H2aoTestShared, Strings;
 	VAR tree: T.Tree; text: Strings.String;
 	BEGIN
 		NEW(tree);
+		(*	Two bit fields of different types next to each other is the case the two ABIs disagree
+			about: Windows starts a fresh word where the type changes and Unix carries on packing.
+			There is no one layout, so there is no record. *)
 		tree.Decl("RecordDecl", "thing_flags", "", "", T.Header);
 		tree.Yes("completeDefinition");
 		tree.Word("tagUsed", "struct");
-		tree.Child("FieldDecl", "kind", "int");
-		tree.BitField("busy", "unsigned int");
+		tree.BitField("busy", "unsigned int", 1);
+		tree.BitField("level", "unsigned short", 3);
 		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
-		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 1);
+		ASSERT(T.Laid(tree, text), 1);
 		ASSERT(~T.Has(text^, "thing_flags* = RECORD"), 2);
-		ASSERT(T.Has(text^, "thing_flags -- a bit field"), 3);
-		(* a union is the other one: half a record is worse than none *)
+		ASSERT(T.Has(text^, "thing_flags -- bit fields of two different types in a row"), 3);
+
+		(* and a member whose type has no answer takes the record with it: half of one is worse than none *)
 		NEW(tree);
-		tree.Decl("RecordDecl", "thing_either", "", "", T.Header);
+		tree.Decl("RecordDecl", "thing_precise", "", "", T.Header);
 		tree.Yes("completeDefinition");
-		tree.Word("tagUsed", "union");
-		tree.Child("FieldDecl", "number", "int");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "kind", "int");
+		tree.Child("FieldDecl", "value", "long double");
 		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
-		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 4);
-		ASSERT(T.Has(text^, "thing_either -- a union"), 5)
+		ASSERT(T.Laid(tree, text), 4);
+		ASSERT(~T.Has(text^, "thing_precise* = RECORD"), 5);
+		ASSERT(T.Has(text^, "thing_precise -- no Active Oberon type for long double"), 6)
+	END Test.
+
+positive: a plain field before a run of bit fields is a field and a word, which both platforms agree on
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_mixed", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "kind", "int");
+		tree.BitField("busy", "unsigned int", 1);
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "kind*: SIGNED32;"), 2);
+		ASSERT(T.Has(text^, "bits0*: UNSIGNED32;	(* bit fields: busy:1 *)"), 3);
+		ASSERT(T.Has(text^, "PROCEDURE thing_mixed_busy*(CONST r: thing_mixed): UNSIGNED32;"), 4)
 	END Test.
 
 positive: extern data is a symbol too, and what the loader can hand over is where it is
@@ -562,7 +594,7 @@ positive: a macro that is a number comes out a constant, and one written over ot
 		T.Line(dm, "#define THING_SHIFT (1<<12)");
 		T.Line(dm, "#define __SIZEOF_INT__ 4");
 
-		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, 0, text), 1);
 		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
 		ASSERT(T.Has(text^, "THING_READ* = 1;"), 3);
 		(*	This is the reason the value is worked out and not copied: Active Oberon has no `|` for
@@ -591,7 +623,7 @@ positive: a macro that is not a constant is counted, because there are hundreds 
 		T.Line(dm, "#define THING_MIN(a,b) ((a)<(b)?(a):(b))");
 		T.Line(dm, "#define THING_API extern");
 		T.Line(dm, "#define THING_OK 0");
-		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, 0, text), 1);
 		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
 		ASSERT(~T.Has(text^, "THING_MIN"), 3);
 		ASSERT(~T.Has(text^, "THING_API"), 4);
@@ -614,7 +646,7 @@ positive: a macro the header defines but this platform does not is not a loss an
 		T.Line(header, "#define THING_VMS_ONLY 7");
 		dm := "";
 		T.Line(dm, "#define THING_OK 0");
-		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, 0, text), 1);
 		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
 		ASSERT(~T.Has(text^, "THING_VMS_ONLY"), 3);
 		ASSERT(~T.Has(text^, "more of the header's macros"), 4)
@@ -706,4 +738,223 @@ positive: the module name comes off the header's own file name
 		ASSERT(name = "C7zip", 3);
 		H2ao.ModuleName("/x/.h", name);
 		ASSERT(name = "Binding", 4)
+	END Test.
+
+positive: an array in a record is elements in place, as C puts them there
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_block", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "name", "char[16]");
+		tree.Child("FieldDecl", "grid", "int[2][3]");
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "name*: ARRAY 16 OF CHAR;"), 2);
+		(* the leftmost bracket is the outer dimension in C, and the outer one here *)
+		ASSERT(T.Has(text^, "grid*: ARRAY 2 OF ARRAY 3 OF SIGNED32;"), 3);
+		(* and a parameter of an array type is still what C decays it to *)
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_write", "int (char[16])", "", T.Header);
+		tree.Child("ParmVarDecl", "block", "char[16]");
+		ASSERT(T.Only(tree, text), 4);
+		ASSERT(T.Has(text^, "thing_write-: PROCEDURE {PlatformCC} (block: ADDRESS): SIGNED32;"), 5)
+	END Test.
+
+positive: an array with no size of its own is refused, because a record that claimed one would be the wrong length
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_packet", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "length", "int");
+		tree.Child("FieldDecl", "data", "char[]");
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(~T.Has(text^, "thing_packet* = RECORD"), 2);
+		ASSERT(T.Has(text^, "thing_packet -- an array with no size of its own"), 3)
+	END Test.
+
+positive: a union is the room it takes, and its members are procedures over that room
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	A union has no Active Oberon spelling. What it does have is a size and an alignment, and
+			an array of the type its alignment asks for gives both at once: three members of 4, 4
+			and 8 bytes, aligned as an int, is eight bytes as two words of four. *)
+		tree.Decl("RecordDecl", "thing_either", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "union");
+		tree.Child("FieldDecl", "number", "int");
+		tree.Child("FieldDecl", "real", "float");
+		tree.Child("FieldDecl", "bytes", "char[8]");
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_either* = RECORD	(* a C union: int number; float real; char[8] bytes *)"), 2);
+		ASSERT(T.Has(text^, "storage*: ARRAY 2 OF UNSIGNED32;"), 3);
+		(* a member that moves in one instruction is a pair of procedures *)
+		ASSERT(T.Has(text^, "PROCEDURE thing_either_number*(CONST u: thing_either): SIGNED32;"), 4);
+		ASSERT(T.Has(text^, "SYSTEM.GET(ADDRESSOF(u.storage[0]), value); RETURN value"), 5);
+		ASSERT(T.Has(text^, "PROCEDURE thing_either_number_set*(VAR u: thing_either; value: SIGNED32);"), 6);
+		ASSERT(T.Has(text^, "SYSTEM.PUT(ADDRESSOF(u.storage[0]), value)"), 7);
+		(* one that does not gets its address instead *)
+		ASSERT(T.Has(text^, "PROCEDURE thing_either_bytes*(VAR u: thing_either): ADDRESS;"), 8);
+		ASSERT(T.Has(text^, "RETURN ADDRESSOF(u.storage[0])"), 9);
+
+		(* a member that must be eight-aligned makes the room one word of eight *)
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_wide", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "union");
+		tree.Child("FieldDecl", "number", "int");
+		tree.Child("FieldDecl", "big", "double");
+		ASSERT(T.Laid(tree, text), 10);
+		ASSERT(T.Has(text^, "storage*: ARRAY 1 OF UNSIGNED64;"), 11)
+	END Test.
+
+positive: a struct that contains a union is usable, which is the whole reason a union is laid out at all
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_either", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "union");
+		tree.Child("FieldDecl", "number", "int");
+		tree.Child("FieldDecl", "bytes", "char[8]");
+		tree.Decl("RecordDecl", "thing_holder", "", "", "");
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "tag", "int");
+		tree.Child("FieldDecl", "value", "union thing_either");
+		tree.Child("FieldDecl", "name", "char[16]");
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_holder* = RECORD"), 2);
+		ASSERT(T.Has(text^, "tag*: SIGNED32;"), 3);
+		ASSERT(T.Has(text^, "value*: thing_either;"), 4);
+		ASSERT(T.Has(text^, "name*: ARRAY 16 OF CHAR;"), 5)
+	END Test.
+
+positive: a run of bit fields is one storage word, and each field is a pair of procedures over it
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	Packed least significant bit first, which is what both platforms do on a little-endian
+			machine: busy at bit 0, kind at 1, two bits of padding, level at 6. *)
+		tree.Decl("RecordDecl", "thing_flags", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.BitField("busy", "unsigned int", 1);
+		tree.BitField("kind", "unsigned int", 3);
+		tree.BitField("", "unsigned int", 2);
+		tree.BitField("level", "unsigned int", 4);
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "bits0*: UNSIGNED32;	(* bit fields: busy:1 kind:3 (padding):2 level:4 *)"), 2);
+		(* DIV and MOD rather than a shift and a mask: this language has no bitwise operators for integers *)
+		ASSERT(T.Has(text^, "PROCEDURE thing_flags_busy*(CONST r: thing_flags): UNSIGNED32;"), 3);
+		ASSERT(T.Has(text^, "RETURN (r.bits0) MOD 2"), 4);
+		ASSERT(T.Has(text^, "RETURN (r.bits0 DIV 2) MOD 8"), 5);
+		ASSERT(T.Has(text^, "RETURN (r.bits0 DIV 64) MOD 16"), 6);
+		ASSERT(T.Has(text^, "PROCEDURE thing_flags_level_set*(VAR r: thing_flags; value: UNSIGNED32);"), 7);
+		(* the padding has no name, so it gets no procedures *)
+		ASSERT(~T.Has(text^, "thing_flags__"), 8);
+		ASSERT(T.Times(text^, "PROCEDURE thing_flags_") = 6, 9)
+	END Test.
+
+positive: a bit field declared signed is read back signed, sign and all
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_level", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.BitField("depth", "int", 4);
+		ASSERT(T.Laid(tree, text), 1);
+		(* the word is read unsigned -- the arithmetic wants a top bit that means a bit *)
+		ASSERT(T.Has(text^, "bits0*: UNSIGNED32;"), 2);
+		(* and the sign is put back by hand *)
+		ASSERT(T.Has(text^, "PROCEDURE thing_level_depth*(CONST r: thing_level): SIGNED32;"), 3);
+		ASSERT(T.Has(text^, "IF value >= 8 THEN DEC(value, 16) END;"), 4)
+	END Test.
+
+positive: a bit field that crosses a storage word is refused, because the two platforms place it differently
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	Twenty bits and twenty bits: Unix lets the second one straddle the word at bit 20,
+			Windows starts a new word at bit 32. Neither is wrong and they are not the same, so
+			there is no single file to write. *)
+		tree.Decl("RecordDecl", "thing_wide", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.BitField("low", "unsigned int", 20);
+		tree.BitField("high", "unsigned int", 20);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(~T.Has(text^, "thing_wide* = RECORD"), 2);
+		ASSERT(T.Has(text^, "thing_wide -- a bit field that crosses a storage word"), 3)
+	END Test.
+
+positive: two runs of bit fields with a plain field between them are two words, which both platforms agree on
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_two", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.BitField("a", "unsigned int", 4);
+		tree.Child("FieldDecl", "between", "int");
+		tree.BitField("b", "unsigned int", 4);
+		ASSERT(T.Laid(tree, text), 1);
+		ASSERT(T.Has(text^, "bits0*: UNSIGNED32;"), 2);
+		ASSERT(T.Has(text^, "between*: SIGNED32;"), 3);
+		ASSERT(T.Has(text^, "bits1*: UNSIGNED32;"), 4);
+		ASSERT(T.Has(text^, "RETURN (r.bits1) MOD 16"), 5)
+	END Test.
+
+positive: a variadic function comes out as fixed-arity wrappers, one per number of arguments
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_printf", "int (const char *, ...)", "", T.Header);
+		tree.Child("ParmVarDecl", "format", "const char *");
+		ASSERT(T.Bound(tree, "", "", "", FALSE, 2, text), 1);
+		ASSERT(T.Has(text^, "thing_printf1-: PROCEDURE {PlatformCC} (CONST format: ARRAY OF CHAR; a1: ADDRESS): SIGNED32;"), 2);
+		ASSERT(T.Has(text^, "thing_printf2-: PROCEDURE {PlatformCC} (CONST format: ARRAY OF CHAR; a1, a2: ADDRESS): SIGNED32;"), 3);
+		(* every arity is the same C symbol, resolved once per wrapper *)
+		ASSERT(T.Times(text^, 'Resolve(handle, "thing_printf"') = 2, 4);
+		(* and it is not in the refusals any more: it is in a list of its own, with the condition *)
+		ASSERT(~T.Has(text^, "thing_printf -- varargs"), 5);
+		ASSERT(T.Has(text^, "Variadic functions are here as fixed-arity wrappers"), 6);
+		ASSERT(T.Has(text^, "thing_printf -- thing_printf1, thing_printf2"), 7);
+		(*	The extra parameters are ADDRESS on purpose: an integer or a pointer goes straight in,
+			and a FLOAT64 cannot, because the C ABI would carry it in a register this call does not
+			announce. The type system refuses what the ABI would get wrong. *)
+		ASSERT(T.Has(text^, "a FLOAT64 cannot"), 8)
 	END Test.

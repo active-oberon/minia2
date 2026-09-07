@@ -40,6 +40,7 @@ CONST
 	Parameter = 0; Field = 1; Result = 2;
 
 	Depth = 16;			(* how far a typedef chain is followed before it is called a cycle *)
+	MaxFields = 512;		(* members of one record; beyond that the record is refused, not cut *)
 
 TYPE
 	Name* = ARRAY MaxName OF CHAR;
@@ -51,7 +52,25 @@ TYPE
 		text: Spelling;			(* Alias: what it stands for. Text: the string, quoted *)
 		number: SIGNED64;			(* Number: the value *)
 		kind: SIGNED32;
+		(*	Emitted: what the type measures, in bytes, on each of the two platforms -- 0 when this
+			generator could not work it out. A union member and an array element have to be
+			measured, and C `long` makes that two answers rather than one. *)
+		sizeWin, sizeUnix, alignWin, alignUnix: SIZE;
 		next: Entry
+	END;
+
+	(*	One member of a record, after its type has been read. A bit field also carries where it
+		landed: which storage word, and which bit of that word is its least significant. *)
+	Slot = POINTER TO RECORD
+		name: Name;				(* "" for an unnamed bit field, which is padding and nothing else *)
+		c: Spelling;				(* the C type as clang spelled it: a run of bit fields must agree on it *)
+		ao: Spelling;
+		bits: SIGNED32;			(* 0 when it is not a bit field *)
+		signed: BOOLEAN;
+		unit, shift: SIGNED32;
+		storage: Name;			(* the name of the word it lives in *)
+		unitType: Name;			(* and that word's type: two runs in one record can differ *)
+		next: Slot
 	END;
 
 	(* a declaration that did not make it into the module, and the reason it did not *)
@@ -70,12 +89,14 @@ TYPE
 		prefixes*: Spelling;		(* C prefixes to drop from names, comma separated *)
 		compiler*: Path;			(* the C compiler to ask; "" means: find one *)
 		includes*: Spelling;		(* -I directories, comma separated *)
-		records*: BOOLEAN;		(* translate complete structs as RECORDs *)
+		records*: BOOLEAN;		(* translate complete structs and unions *)
+		varargs*: SIGNED32;		(* how many fixed-arity wrappers to write for a variadic function *)
 	END;
 
 VAR
 	aliases, emitted, macros: Entry;
 	notes, lastNote: Note;
+	wrapped, lastWrapped: Note;		(* the variadic functions, and what they came out as *)
 	functions, typeCount, constants, dataCount, skipped, macroCount, listed: SIGNED32;
 	longUsed, wideUsed: BOOLEAN;		(* whether the platform aliases are needed after all *)
 	cNames, aoNames: ARRAY 64 OF Name;	(* the builtin table, filled in the body *)
@@ -184,6 +205,31 @@ BEGIN
 	COPY(text, entry.text); entry.number := number; entry.kind := kind
 END Remember;
 
+(*	What an emitted type measures. Kept beside the name because the next union or array over it
+	cannot be laid out without these four numbers. *)
+PROCEDURE RememberExtent(CONST name: ARRAY OF CHAR; sizeWin, sizeUnix, alignWin, alignUnix: SIZE);
+VAR entry: Entry;
+BEGIN
+	entry := Find(emitted, name);
+	IF entry # NIL THEN
+		entry.sizeWin := sizeWin; entry.sizeUnix := sizeUnix;
+		entry.alignWin := alignWin; entry.alignUnix := alignUnix
+	END
+END RememberExtent;
+
+(*	The other way round: from the Active Oberon name back to the entry. The tables are keyed by the
+	C name, and a type inside a type is met under the name this module gave it. *)
+PROCEDURE FindEmitted(CONST ao: ARRAY OF CHAR): Entry;
+VAR entry: Entry;
+BEGIN
+	entry := emitted;
+	WHILE entry # NIL DO
+		IF (entry.kind = Emitted) & (entry.text = ao) THEN RETURN entry END;
+		entry := entry.next
+	END;
+	RETURN NIL
+END FindEmitted;
+
 (*	Something the module will not contain. Kept in the order it was found, because that is the
 	order of the header, and printed into the generated module's own comment. *)
 PROCEDURE Complain(CONST name, reason: ARRAY OF CHAR);
@@ -194,6 +240,17 @@ BEGIN
 	lastNote := note;
 	INC(skipped)
 END Complain;
+
+(*	A variadic function, and the wrappers it came out as. Kept apart from the refusals: this is
+	not a loss, it is a translation with a condition on it, and the two lists say different
+	things. *)
+PROCEDURE Wrap(CONST name, wrappers: ARRAY OF CHAR);
+VAR note: Note;
+BEGIN
+	NEW(note); COPY(name, note.name); COPY(wrappers, note.reason); note.next := NIL;
+	IF lastWrapped = NIL THEN wrapped := note ELSE lastWrapped.next := note END;
+	lastWrapped := note
+END Wrap;
 
 (* --- Active Oberon names ----------------------------------------------------------------- *)
 
@@ -239,6 +296,130 @@ BEGIN
 	END;
 	RETURN Spellable(result)
 END Exported;
+
+(* --- how much room a type takes ----------------------------------------------------------- *)
+
+(*
+	The size and the alignment of a type this module emits -- two of each, because C `long` is four
+	bytes on Windows and eight on Unix, and one generated file serves both. Only 64-bit targets are
+	described: this is where ADDRESS is eight bytes, and the SDK ships no 32-bit binding.
+
+	FALSE means "this generator cannot say", and the caller must then refuse whatever needed the
+	answer rather than guess it. Nothing here is assumed: the numbers were checked against C's own
+	`sizeof` and `offsetof` on both hosts.
+*)
+PROCEDURE Extent(CONST ao: ARRAY OF CHAR; VAR sizeWin, sizeUnix, alignWin, alignUnix: SIZE): BOOLEAN;
+VAR work, element: Spelling; count: SIGNED64; position: SIZE; entry: Entry; ok: BOOLEAN;
+BEGIN
+	IF depth > Depth THEN RETURN FALSE END;
+	COPY(ao, work); Trim(work);
+	IF (work = "ADDRESS") OR (work = "SIZE") OR (work = "SIGNED64") OR (work = "UNSIGNED64")
+		OR (work = "FLOAT64") OR Starts(work, "PROCEDURE") THEN
+		sizeWin := 8; sizeUnix := 8
+	ELSIF (work = "SIGNED32") OR (work = "UNSIGNED32") OR (work = "FLOAT32") THEN
+		sizeWin := 4; sizeUnix := 4
+	ELSIF (work = "SIGNED16") OR (work = "UNSIGNED16") THEN
+		sizeWin := 2; sizeUnix := 2
+	ELSIF (work = "CHAR") OR (work = "SIGNED8") OR (work = "UNSIGNED8") OR (work = "BOOLEAN") THEN
+		sizeWin := 1; sizeUnix := 1
+	ELSIF (work = "SignedLong") OR (work = "UnsignedLong") THEN
+		sizeWin := 4; sizeUnix := 8
+	ELSIF work = "WideChar" THEN
+		sizeWin := 2; sizeUnix := 4
+	ELSIF Starts(work, "ARRAY") THEN
+		(* `ARRAY n OF T`: n elements in place, aligned as one of them *)
+		Strings.Delete(work, 0, 5); Trim(work);
+		position := Strings.Pos(" OF ", work);
+		IF position = -1 THEN RETURN FALSE END;
+		Strings.Copy(work, 0, position, element); Trim(element);
+		IF ~Strings.TryParseInt64(element, count) OR (count <= 0) THEN RETURN FALSE END;
+		Strings.Delete(work, 0, position + 4); Trim(work);
+		INC(depth); ok := Extent(work, sizeWin, sizeUnix, alignWin, alignUnix); DEC(depth);
+		IF ~ok THEN RETURN FALSE END;
+		sizeWin := sizeWin * SIZE(count); sizeUnix := sizeUnix * SIZE(count);
+		RETURN TRUE			(* the alignment is the element's, and it is already set *)
+	ELSE
+		entry := FindEmitted(work);
+		IF (entry = NIL) OR (entry.sizeWin = 0) OR (entry.sizeUnix = 0) THEN RETURN FALSE END;
+		sizeWin := entry.sizeWin; sizeUnix := entry.sizeUnix;
+		alignWin := entry.alignWin; alignUnix := entry.alignUnix;
+		RETURN TRUE
+	END;
+	(* everything above but the two aggregates is aligned as wide as it is *)
+	alignWin := sizeWin; alignUnix := sizeUnix;
+	RETURN TRUE
+END Extent;
+
+(*	A value SYSTEM.GET and SYSTEM.PUT can move in one go. An array or a record cannot, and a
+	procedure variable is not worth the argument, so those are reached by address instead. *)
+PROCEDURE IsScalar(CONST ao: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	RETURN (ao = "ADDRESS") OR (ao = "SIZE") OR (ao = "CHAR") OR (ao = "BOOLEAN")
+		OR (ao = "SIGNED8") OR (ao = "SIGNED16") OR (ao = "SIGNED32") OR (ao = "SIGNED64")
+		OR (ao = "UNSIGNED8") OR (ao = "UNSIGNED16") OR (ao = "UNSIGNED32") OR (ao = "UNSIGNED64")
+		OR (ao = "FLOAT32") OR (ao = "FLOAT64")
+		OR (ao = "SignedLong") OR (ao = "UnsignedLong") OR (ao = "WideChar")
+END IsScalar;
+
+(* Two to the power of, for the shifts and masks a bit field is read with. *)
+PROCEDURE Power(exponent: SIGNED32): SIGNED64;
+VAR value: SIGNED64; index: SIGNED32;
+BEGIN
+	value := 1;
+	FOR index := 1 TO exponent DO value := value * 2 END;
+	RETURN value
+END Power;
+
+(*	The unsigned type of that many bytes. A bit field's storage word is a width and not a
+	signedness: the extraction below is arithmetic, and a top bit that means minus would break it.
+	The sign of the field itself is put back by its own reader. *)
+PROCEDURE Storage(size: SIZE; VAR ao: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF size = 1 THEN ao := "UNSIGNED8"
+	ELSIF size = 2 THEN ao := "UNSIGNED16"
+	ELSIF size = 4 THEN ao := "UNSIGNED32"
+	ELSIF size = 8 THEN ao := "UNSIGNED64"
+	ELSE RETURN FALSE
+	END;
+	RETURN TRUE
+END Storage;
+
+(* The signed type of that many bytes, for a bit field declared signed. *)
+PROCEDURE Signed(size: SIZE; VAR ao: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF size = 1 THEN ao := "SIGNED8"
+	ELSIF size = 2 THEN ao := "SIGNED16"
+	ELSIF size = 4 THEN ao := "SIGNED32"
+	ELSIF size = 8 THEN ao := "SIGNED64"
+	ELSE RETURN FALSE
+	END;
+	RETURN TRUE
+END Signed;
+
+(* The type of the array that gives a union its room and its alignment in one. *)
+PROCEDURE Alignment(align: SIZE; VAR ao: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	IF align = 1 THEN ao := "CHAR"
+	ELSIF align = 2 THEN ao := "UNSIGNED16"
+	ELSIF align = 4 THEN ao := "UNSIGNED32"
+	ELSIF align = 8 THEN ao := "UNSIGNED64"
+	ELSE RETURN FALSE
+	END;
+	RETURN TRUE
+END Alignment;
+
+(* Up to the next multiple of `to`, which is what C does to an offset before it puts a field there. *)
+PROCEDURE RoundUp(value, to: SIZE): SIZE;
+BEGIN
+	IF to <= 1 THEN RETURN value END;
+	IF value MOD to # 0 THEN INC(value, to - value MOD to) END;
+	RETURN value
+END RoundUp;
+
+PROCEDURE Bigger(one, other: SIZE): SIZE;
+BEGIN
+	IF one > other THEN RETURN one ELSE RETURN other END
+END Bigger;
 
 (* --- C types to Active Oberon types ------------------------------------------------------ *)
 
@@ -357,6 +538,45 @@ BEGIN
 	RETURN TRUE
 END MapProcedure;
 
+(*	`T[16]` and `T[2][3]` where they stand in a record: C puts the elements in place and so does
+	this. The leftmost bracket is the outer dimension in C, and the outer one here too, so the
+	groups are read left to right and printed in that order.
+
+	A flexible array member -- `T[]`, the last field of a struct with no size of its own -- is
+	refused: it has no size, and a record that claims one would be a record of the wrong length. *)
+PROCEDURE MapArray(CONST c: ARRAY OF CHAR; VAR ao: ARRAY OF CHAR; VAR reason: ARRAY OF CHAR): BOOLEAN;
+VAR work, element, count, mapped: Spelling; open, close, position, length: SIZE; number: SIGNED64;
+BEGIN
+	COPY(c, work); Trim(work);
+	length := Strings.Length(work);
+	open := Strings.Pos("[", work);
+	IF (open = -1) OR (work[length - 1] # ']') THEN
+		reason := "an array type this cannot read"; RETURN FALSE
+	END;
+	Strings.Copy(work, 0, open, element); Trim(element);
+	IF ~MapType(element, Field, mapped, reason) THEN RETURN FALSE END;
+
+	ao := "";
+	position := open;
+	WHILE position < length DO
+		IF work[position] # '[' THEN reason := "an array type this cannot read"; RETURN FALSE END;
+		close := Strings.Find(work, position, ']');
+		IF close = -1 THEN reason := "an array type this cannot read"; RETURN FALSE END;
+		Strings.Copy(work, position + 1, close - position - 1, count); Trim(count);
+		IF count = "" THEN
+			reason := "an array with no size of its own (a flexible array member)"; RETURN FALSE
+		END;
+		IF ~Strings.TryParseInt64(count, number) OR (number <= 0) THEN
+			reason := "an array whose size is not a plain number: "; Strings.AppendX(reason, count);
+			RETURN FALSE
+		END;
+		Strings.AppendX(ao, "ARRAY "); Strings.AppendX(ao, count); Strings.AppendX(ao, " OF ");
+		position := close + 1
+	END;
+	Strings.AppendX(ao, mapped);
+	RETURN TRUE
+END MapArray;
+
 (*	One C type spelling as clang wrote it, in Active Oberon. FALSE, with a reason, for the ones
 	that have no honest answer -- and a reason is what the generated module then prints instead of
 	the declaration.
@@ -386,10 +606,10 @@ BEGIN
 
 	length := Strings.Length(work);
 	IF work[length - 1] = ']' THEN
-		(*	`T[8]` and `T[]`: as a parameter C hands over the first element's address, and a field
-			of that type is that many elements in place -- which this does not describe. *)
-		IF place = Field THEN reason := "an array inside a record"; RETURN FALSE END;
-		ao := "ADDRESS"; RETURN TRUE
+		(*	`T[8]`: as a parameter C hands over the first element's address, and a field of that
+			type is that many elements in place. Both are said here in the language's own words. *)
+		IF place # Field THEN ao := "ADDRESS"; RETURN TRUE END;
+		INC(depth); ok := MapArray(work, ao, reason); DEC(depth); RETURN ok
 	END;
 
 	IF work[length - 1] = '*' THEN
@@ -706,8 +926,8 @@ END ReadWhole;
 
 VAR
 	taken: Entry;					(* every name the module will export, before anything is printed *)
-	constBuffer, typeBuffer, varBuffer, loadBuffer: Streams.Buffer;
-	constWriter, typeWriter, varWriter, loadWriter: Streams.Writer;
+	constBuffer, typeBuffer, varBuffer, loadBuffer, procBuffer: Streams.Buffer;
+	constWriter, typeWriter, varWriter, loadWriter, procWriter: Streams.Writer;
 	nameLibrary, nameAvailable, nameMissing, nameLoad, nameOpen, nameText, nameResolve: Name;
 
 (* A parameter, printed -- through the one place that knows where `CONST` goes. *)
@@ -804,6 +1024,26 @@ BEGIN
 	RETURN FALSE
 END SameFile;
 
+(*	How many bits a bit field was declared with. clang puts the width in the declaration's own
+	subtree, as a constant expression it has already folded. A width of zero is C's way of forcing
+	the next field to a fresh storage word, and it is refused rather than guessed at. *)
+PROCEDURE BitWidth(node: JSON.Object; VAR bits: SIGNED32): BOOLEAN;
+VAR items: JSON.Array; item: JSON.Item; child: JSON.Object; text: Spelling; value: SIGNED64;
+BEGIN
+	items := Inner(node);
+	IF items = NIL THEN RETURN FALSE END;
+	item := items.items;
+	WHILE item # NIL DO
+		child := JSON.AsObject(item.value);
+		IF (child # NIL) & Member(child, "value", text) & Strings.TryParseInt64(text, value)
+			& (value > 0) & (value <= 62) THEN
+			bits := SIGNED32(value); RETURN TRUE
+		END;
+		item := item.next
+	END;
+	RETURN FALSE
+END BitWidth;
+
 (* --- the declarations, one kind at a time ------------------------------------------------- *)
 
 (*	`typedef long long sqlite3_int64;` and its like. A typedef of an incomplete struct --
@@ -841,61 +1081,363 @@ BEGIN
 	INC(typeCount)
 END EmitTypedef;
 
-(*	`struct z_stream_s { ... }` as a RECORD. The layout has to be the C one, and it is: this
-	compiler lays a record out in order with natural alignment, which is what the platform ABI
-	says as well -- measured, not assumed (`SIZEOF` against C on both hosts).
+(*	A union member, as the pair of procedures that read and write the room the union is. The
+	address is the union's own: every member of a C union starts where the union starts. *)
+PROCEDURE WriteUnionMember(CONST record, accessor: ARRAY OF CHAR; slot: Slot);
+BEGIN
+	IF IsScalar(slot.ao) THEN
+		procWriter.String("(** `"); WriteSafe(procWriter, slot.c); procWriter.String(" ");
+		procWriter.String(slot.name); procWriter.String("` of the union *)"); procWriter.Ln;
+		procWriter.String("PROCEDURE "); procWriter.String(accessor);
+		procWriter.String("*(CONST u: "); procWriter.String(record);
+		procWriter.String("): "); procWriter.String(slot.ao); procWriter.String(";"); procWriter.Ln;
+		procWriter.String("VAR value: "); procWriter.String(slot.ao); procWriter.String(";"); procWriter.Ln;
+		procWriter.String("BEGIN"); procWriter.Ln;
+		procWriter.String("	SYSTEM.GET(ADDRESSOF(u.storage[0]), value); RETURN value"); procWriter.Ln;
+		procWriter.String("END "); procWriter.String(accessor); procWriter.String(";"); procWriter.Ln;
+		procWriter.Ln;
+		procWriter.String("PROCEDURE "); procWriter.String(accessor);
+		procWriter.String("_set*(VAR u: "); procWriter.String(record);
+		procWriter.String("; value: "); procWriter.String(slot.ao); procWriter.String(");"); procWriter.Ln;
+		procWriter.String("BEGIN"); procWriter.Ln;
+		procWriter.String("	SYSTEM.PUT(ADDRESSOF(u.storage[0]), value)"); procWriter.Ln;
+		procWriter.String("END "); procWriter.String(accessor); procWriter.String("_set;"); procWriter.Ln;
+		procWriter.Ln
+	ELSE
+		(*	An array, a record or a procedure variable does not move in one instruction, so what is
+			handed over is where it is. *)
+		procWriter.String("(** where `"); WriteSafe(procWriter, slot.c); procWriter.String(" ");
+		procWriter.String(slot.name); procWriter.String("` of the union is -- a `");
+		WriteSafe(procWriter, slot.ao); procWriter.String("` in place *)"); procWriter.Ln;
+		procWriter.String("PROCEDURE "); procWriter.String(accessor);
+		procWriter.String("*(VAR u: "); procWriter.String(record);
+		procWriter.String("): ADDRESS;"); procWriter.Ln;
+		procWriter.String("BEGIN"); procWriter.Ln;
+		procWriter.String("	RETURN ADDRESSOF(u.storage[0])"); procWriter.Ln;
+		procWriter.String("END "); procWriter.String(accessor); procWriter.String(";"); procWriter.Ln;
+		procWriter.Ln
+	END
+END WriteUnionMember;
 
-	A record that cannot be laid out honestly is refused whole, not half: a bit field, a union, an
-	array inside it, a field whose type is anonymous. *)
+(*	A bit field, as the pair of procedures that take it out of its storage word and put it back.
+	The arithmetic is DIV and MOD rather than a shift and a mask because this language has no
+	bitwise operators for integers -- and MOD here is Oberon's, which is never negative, so the
+	same expression masks a negative value into its two's complement bits. *)
+PROCEDURE WriteBitField(CONST record, accessor: ARRAY OF CHAR; slot: Slot; CONST unit: ARRAY OF CHAR);
+VAR outer: Name; whole, half, shift: SIGNED64;
+	sizeWin, sizeUnix, alignWin, alignUnix: SIZE;
+BEGIN
+	shift := Power(slot.shift); whole := Power(slot.bits); half := Power(slot.bits - 1);
+	(*	The word is read as unsigned, whatever the field was declared: the arithmetic below wants a
+		top bit that means a bit. A field declared signed gets its sign put back by hand, and its
+		procedures speak the signed type of the same width. *)
+	COPY(unit, outer);
+	IF slot.signed & Extent(unit, sizeWin, sizeUnix, alignWin, alignUnix) THEN
+		IF ~Signed(sizeWin, outer) THEN COPY(unit, outer) END
+	END;
+
+	procWriter.String("(** bit field `"); WriteSafe(procWriter, slot.c); procWriter.String(" ");
+	procWriter.String(slot.name); procWriter.String(" : "); procWriter.Int(slot.bits, 0);
+	procWriter.String("`, bit "); procWriter.Int(slot.shift, 0);
+	procWriter.String(" of "); procWriter.String(slot.storage); procWriter.String(" *)"); procWriter.Ln;
+	procWriter.String("PROCEDURE "); procWriter.String(accessor);
+	procWriter.String("*(CONST r: "); procWriter.String(record);
+	procWriter.String("): "); procWriter.String(outer); procWriter.String(";"); procWriter.Ln;
+	IF slot.signed THEN
+		procWriter.String("VAR value: "); procWriter.String(outer); procWriter.String(";"); procWriter.Ln;
+		procWriter.String("BEGIN"); procWriter.Ln;
+		procWriter.String("	value := "); procWriter.String(outer); procWriter.String("((r.");
+		procWriter.String(slot.storage);
+		IF slot.shift > 0 THEN procWriter.String(" DIV "); procWriter.Int(shift, 0) END;
+		procWriter.String(") MOD "); procWriter.Int(whole, 0); procWriter.String(");"); procWriter.Ln;
+		procWriter.String("	IF value >= "); procWriter.Int(half, 0);
+		procWriter.String(" THEN DEC(value, "); procWriter.Int(whole, 0); procWriter.String(") END;"); procWriter.Ln;
+		procWriter.String("	RETURN value"); procWriter.Ln
+	ELSE
+		procWriter.String("BEGIN"); procWriter.Ln;
+		procWriter.String("	RETURN (r."); procWriter.String(slot.storage);
+		IF slot.shift > 0 THEN procWriter.String(" DIV "); procWriter.Int(shift, 0) END;
+		procWriter.String(") MOD "); procWriter.Int(whole, 0); procWriter.Ln
+	END;
+	procWriter.String("END "); procWriter.String(accessor); procWriter.String(";"); procWriter.Ln;
+	procWriter.Ln;
+
+	procWriter.String("PROCEDURE "); procWriter.String(accessor);
+	procWriter.String("_set*(VAR r: "); procWriter.String(record);
+	procWriter.String("; value: "); procWriter.String(outer); procWriter.String(");"); procWriter.Ln;
+	procWriter.String("BEGIN"); procWriter.Ln;
+	procWriter.String("	r."); procWriter.String(slot.storage); procWriter.String(" := ");
+	procWriter.String(unit); procWriter.String("(r."); procWriter.String(slot.storage);
+	procWriter.String(" - ((r."); procWriter.String(slot.storage);
+	IF slot.shift > 0 THEN procWriter.String(" DIV "); procWriter.Int(shift, 0) END;
+	procWriter.String(") MOD "); procWriter.Int(whole, 0); procWriter.String(")");
+	IF slot.shift > 0 THEN procWriter.String(" * "); procWriter.Int(shift, 0) END;
+	procWriter.Ln;
+	procWriter.String("		+ (value MOD "); procWriter.Int(whole, 0); procWriter.String(")");
+	IF slot.shift > 0 THEN procWriter.String(" * "); procWriter.Int(shift, 0) END;
+	procWriter.String(")"); procWriter.Ln;
+	procWriter.String("END "); procWriter.String(accessor); procWriter.String("_set;"); procWriter.Ln;
+	procWriter.Ln
+END WriteBitField;
+
+(*
+	`struct z_stream_s { ... }` as a RECORD, `union either { ... }` as the room a union occupies,
+	and a run of bit fields as one storage word with a pair of procedures each.
+
+	The layout has to be the C one, and it is: this compiler lays a record out in order with
+	natural alignment, which is what both platform ABIs say. Measured, not assumed -- `z_stream` is
+	88 bytes with `zalloc` at 48 and `adler` at 76, the same three numbers C's `sizeof` and
+	`offsetof` give on the same machine.
+
+	A union has no Active Oberon spelling, so it becomes the room it takes: an array of the type its
+	alignment asks for, which gives it the right size and the right alignment in one, and members
+	that are procedures over that room. That is what a hand-written binding does with a union, and
+	it is what makes a struct that CONTAINS one usable at all -- which is the whole point, because
+	a struct with a union in it used to be refused entire.
+
+	Bit fields are packed here rather than declared, because the language cannot declare them.
+	Only a run whose fields all have one C type and none of which crosses a storage word is
+	translated: those are the two cases where the Windows and the Unix rule agree. Windows starts a
+	fresh word when the type changes and Unix does not; Unix lets a field straddle a word and
+	Windows does not. A layout that differs between the two cannot be one generated file, so it is
+	refused with that sentence rather than written down twice.
+
+	A record that cannot be laid out honestly is refused whole, not half.
+*)
 PROCEDURE EmitRecord(node: JSON.Object; CONST prefixes: ARRAY OF CHAR);
-VAR name, exported, field: Name; qual, desugared, mapped, reason: Spelling;
-	fields: JSON.Array; item: JSON.Item; child: JSON.Object; kind: Name;
-	body: Streams.Buffer; writer: Streams.Writer; text: Strings.String; count: SIGNED32;
+VAR name, exported, field, kind, unitType, valueType, accessor: Name;
+	c, desugared, mapped, reason, members: Spelling;
+	fields: JSON.Array; item: JSON.Item; child: JSON.Object;
+	list, last, slot, run, one: Slot;
+	body: Streams.Buffer; writer: Streams.Writer; text: Strings.String;
+	count, units, used, wide: SIGNED32;
+	sizeWin, sizeUnix, alignWin, alignUnix: SIZE;
+	partWin, partUnix, partAlignWin, partAlignUnix: SIZE;
+	union, measurable: BOOLEAN;
 BEGIN
 	IF ~Member(node, "name", name) THEN RETURN END;
 	IF ~Flag(node, "completeDefinition") THEN RETURN END;
-	IF Member(node, "tagUsed", kind) & (kind # "struct") THEN
-		Complain(name, "a union"); RETURN
-	END;
+	union := Member(node, "tagUsed", kind) & (kind = "union");
 	IF ~Fits(name, MaxName) OR ~Exported(name, prefixes, exported) THEN
 		Complain(name, "a name Active Oberon cannot spell"); RETURN
 	END;
 	IF Find(emitted, name) # NIL THEN RETURN END;
 
+	(* --- what the members are, and what their types come out as --------------------------- *)
 	fields := Inner(node);
-	IF fields = NIL THEN Complain(name, "a struct with no fields"); RETURN END;
-	NEW(body, 1024); writer := body.GetWriter();
-	count := 0; item := fields.items;
+	IF fields = NIL THEN Complain(name, "a record with no members"); RETURN END;
+	list := NIL; last := NIL; count := 0;
+	item := fields.items;
 	WHILE item # NIL DO
 		child := JSON.AsObject(item.value);
 		IF (child # NIL) & Member(child, "kind", kind) & (kind = "FieldDecl") THEN
-			IF Flag(child, "isBitfield") THEN
-				Complain(name, "a bit field"); RETURN
+			IF count >= MaxFields THEN
+				Complain(name, "more members than this generator lays out"); RETURN
 			END;
-			IF ~Member(child, "name", field) OR ~Spelled(child, qual, desugared) THEN
-				Complain(name, "a field with no name"); RETURN
+			IF ~Spelled(child, c, desugared) THEN Complain(name, "a member with no type"); RETURN END;
+			NEW(slot); slot.next := NIL; slot.bits := 0; slot.unit := 0; slot.shift := 0;
+			slot.signed := FALSE; slot.storage := ""; slot.name := "";
+			COPY(c, slot.c);
+			IF Member(child, "name", field) THEN
+				IF ~Fits(field, MaxName) OR ~Spellable(field) THEN
+					Complain(name, "a member name Active Oberon cannot spell"); RETURN
+				END;
+				COPY(field, slot.name)
 			END;
-			IF ~Fits(field, MaxName) OR ~Spellable(field) THEN
-				Complain(name, "a field name Active Oberon cannot spell"); RETURN
-			END;
-			IF ~MapType(qual, Field, mapped, reason) THEN
+			IF ~MapType(c, Field, mapped, reason) THEN
 				IF (desugared = "") OR ~MapType(desugared, Field, mapped, reason) THEN
 					Complain(name, reason); RETURN
 				END
 			END;
-			writer.String("		"); writer.String(field); writer.String("*: ");
-			writer.String(mapped); writer.String(";"); writer.Ln;
-			INC(count)
+			COPY(mapped, slot.ao);
+			IF Flag(child, "isBitfield") THEN
+				IF ~BitWidth(child, slot.bits) THEN
+					Complain(name, "a bit field whose width this could not read (a zero width forces a word boundary)");
+					RETURN
+				END;
+				IF (slot.ao = "SIGNED8") OR (slot.ao = "SIGNED16") OR (slot.ao = "SIGNED32")
+					OR (slot.ao = "SIGNED64") THEN
+					slot.signed := TRUE
+				ELSIF (slot.ao = "UNSIGNED8") OR (slot.ao = "UNSIGNED16") OR (slot.ao = "UNSIGNED32")
+					OR (slot.ao = "UNSIGNED64") OR (slot.ao = "BOOLEAN") THEN
+					slot.signed := FALSE
+				ELSE
+					reason := "a bit field of "; Strings.AppendX(reason, c);
+					Strings.AppendX(reason, ", which is not one width on both platforms");
+					Complain(name, reason); RETURN
+				END
+			ELSIF slot.name = "" THEN
+				Complain(name, "a member with no name"); RETURN
+			END;
+			IF last = NIL THEN list := slot ELSE last.next := slot END;
+			last := slot; INC(count)
 		END;
 		item := item.next
 	END;
-	IF count = 0 THEN Complain(name, "a struct with no fields"); RETURN END;
+	IF count = 0 THEN Complain(name, "a record with no members"); RETURN END;
+
+	NEW(body, 1024); writer := body.GetWriter();
+	sizeWin := 0; sizeUnix := 0; alignWin := 1; alignUnix := 1; measurable := TRUE;
+
+	IF union THEN
+		(* --- a union is the room its widest member needs, aligned as its strictest ---------- *)
+		members := "";
+		slot := list;
+		WHILE slot # NIL DO
+			IF slot.bits # 0 THEN Complain(name, "a bit field inside a union"); RETURN END;
+			IF ~Extent(slot.ao, partWin, partUnix, partAlignWin, partAlignUnix) THEN
+				reason := "a union member this cannot measure: "; Strings.AppendX(reason, slot.c);
+				Complain(name, reason); RETURN
+			END;
+			sizeWin := Bigger(sizeWin, partWin); sizeUnix := Bigger(sizeUnix, partUnix);
+			alignWin := Bigger(alignWin, partAlignWin);
+			alignUnix := Bigger(alignUnix, partAlignUnix);
+			IF members # "" THEN Strings.AppendX(members, "; ") END;
+			Strings.AppendX(members, slot.c); Strings.AppendX(members, " ");
+			Strings.AppendX(members, slot.name);
+			slot := slot.next
+		END;
+		sizeWin := RoundUp(sizeWin, alignWin); sizeUnix := RoundUp(sizeUnix, alignUnix);
+		IF ~Alignment(alignWin, unitType) OR ~Alignment(alignUnix, valueType) THEN
+			Complain(name, "a union whose alignment this cannot express"); RETURN
+		END;
+		IF (sizeWin = sizeUnix) & (alignWin = alignUnix) THEN
+			writer.String("		storage*: ARRAY "); writer.Int(sizeWin DIV alignWin, 0);
+			writer.String(" OF "); writer.String(unitType); writer.String(";"); writer.Ln
+		ELSE
+			(* a member of C `long`: the room differs, and the difference is a compile-time one *)
+			writer.String("#IF WIN THEN"); writer.Ln;
+			writer.String("		storage*: ARRAY "); writer.Int(sizeWin DIV alignWin, 0);
+			writer.String(" OF "); writer.String(unitType); writer.String(";"); writer.Ln;
+			writer.String("#ELSE"); writer.Ln;
+			writer.String("		storage*: ARRAY "); writer.Int(sizeUnix DIV alignUnix, 0);
+			writer.String(" OF "); writer.String(valueType); writer.String(";"); writer.Ln;
+			writer.String("#END"); writer.Ln
+		END
+	ELSE
+		(* --- a struct: its members in order, bit fields packed into words ------------------- *)
+		units := 0;
+		slot := list;
+		WHILE slot # NIL DO
+			IF slot.bits = 0 THEN
+				writer.String("		"); writer.String(slot.name); writer.String("*: ");
+				writer.String(slot.ao); writer.String(";"); writer.Ln;
+				IF measurable & Extent(slot.ao, partWin, partUnix, partAlignWin, partAlignUnix) THEN
+					sizeWin := RoundUp(sizeWin, partAlignWin) + partWin;
+					sizeUnix := RoundUp(sizeUnix, partAlignUnix) + partUnix;
+					alignWin := Bigger(alignWin, partAlignWin);
+					alignUnix := Bigger(alignUnix, partAlignUnix)
+				ELSE
+					measurable := FALSE
+				END;
+				slot := slot.next
+			ELSE
+				run := slot;
+				IF ~Extent(run.ao, partWin, partUnix, partAlignWin, partAlignUnix) THEN
+					Complain(name, "a bit field this cannot measure"); RETURN
+				END;
+				IF partWin # partUnix THEN
+					Complain(name, "a bit field of a type that is not one width on both platforms");
+					RETURN
+				END;
+				IF ~Storage(partWin, unitType) THEN
+					Complain(name, "a bit field this cannot place"); RETURN
+				END;
+				wide := SIGNED32(8 * partWin);
+				used := 0;
+				WHILE (slot # NIL) & (slot.bits > 0) & (slot.c = run.c) DO
+					IF used + slot.bits > wide THEN
+						IF used # wide THEN
+							Complain(name, "a bit field that crosses a storage word, which Windows and Unix place differently");
+							RETURN
+						END;
+						INC(units); used := 0
+					END;
+					slot.unit := units; slot.shift := used;
+					COPY(unitType, slot.unitType);
+					slot.storage := "bits"; Strings.AppendInt(slot.storage, units);
+					INC(used, slot.bits);
+					slot := slot.next
+				END;
+				(*	A bit field of another type right after this run is where the two ABIs part:
+					Windows starts a fresh word at the type change, Unix carries on packing. There
+					is no one layout to write down, so the record is refused. *)
+				IF (slot # NIL) & (slot.bits > 0) THEN
+					Complain(name, "bit fields of two different types in a row, which Windows and Unix pack differently");
+					RETURN
+				END;
+
+				(*	One word per unit, declared where its first field stands. A name of ours must
+					not take a name of the record's, so it steps aside if it has. *)
+				one := run;
+				WHILE one # slot DO
+					IF one.shift = 0 THEN
+						last := list;
+						WHILE last # NIL DO
+							IF (last.bits = 0) & (last.name = one.storage) THEN
+								Strings.AppendX(one.storage, "_"); last := list
+							ELSE
+								last := last.next
+							END
+						END;
+						writer.String("		"); writer.String(one.storage); writer.String("*: ");
+						writer.String(unitType); writer.String(";	(* bit fields:");
+						last := one;
+						WHILE last # slot DO
+							IF last.unit = one.unit THEN
+								writer.String(" ");
+								IF last.name = "" THEN writer.String("(padding)")
+								ELSE writer.String(last.name)
+								END;
+								writer.String(":"); writer.Int(last.bits, 0)
+							END;
+							last := last.next
+						END;
+						writer.String(" *)"); writer.Ln;
+						IF measurable THEN
+							sizeWin := RoundUp(sizeWin, partAlignWin) + partWin;
+							sizeUnix := RoundUp(sizeUnix, partAlignUnix) + partUnix;
+							alignWin := Bigger(alignWin, partAlignWin);
+							alignUnix := Bigger(alignUnix, partAlignUnix)
+						END
+					END;
+					one := one.next
+				END;
+				INC(units)
+			END
+		END
+	END;
+
 	writer.Update; text := body.GetString();
-	typeWriter.String("	"); typeWriter.String(exported); typeWriter.String("* = RECORD"); typeWriter.Ln;
+	typeWriter.String("	"); typeWriter.String(exported); typeWriter.String("* = RECORD");
+	IF union THEN
+		typeWriter.String("	(* a C union: "); WriteSafe(typeWriter, members); typeWriter.String(" *)")
+	ELSIF exported # name THEN
+		typeWriter.String("	(* "); typeWriter.String(name); typeWriter.String(" *)")
+	END;
+	typeWriter.Ln;
 	typeWriter.String(text^);
 	typeWriter.String("	END;"); typeWriter.Ln;
 	Remember(emitted, name, exported, 0, Emitted);
-	INC(typeCount)
+	IF measurable THEN
+		sizeWin := RoundUp(sizeWin, alignWin); sizeUnix := RoundUp(sizeUnix, alignUnix);
+		RememberExtent(name, sizeWin, sizeUnix, alignWin, alignUnix)
+	END;
+	INC(typeCount);
+
+	(* --- and the procedures its members are reached through ------------------------------- *)
+	slot := list;
+	WHILE slot # NIL DO
+		IF slot.name # "" THEN
+			COPY(exported, accessor); Strings.AppendX(accessor, "_");
+			Strings.AppendX(accessor, slot.name);
+			WHILE Find(taken, accessor) # NIL DO Strings.AppendX(accessor, "_") END;
+			IF union THEN WriteUnionMember(exported, accessor, slot)
+			ELSIF slot.bits > 0 THEN WriteBitField(exported, accessor, slot, slot.unitType)
+			END
+		END;
+		slot := slot.next
+	END
 END EmitRecord;
 
 (*	An enumeration, as constants. The type itself is an `int` and says nothing more; the names are
@@ -952,11 +1494,11 @@ END EmitEnum;
 (*	A function: one procedure variable, and one line in the loader that fills it. The parameter
 	names are the header's own where the header gave them, because they are what the library's
 	documentation calls them. *)
-PROCEDURE EmitFunction(node: JSON.Object; CONST prefixes: ARRAY OF CHAR);
-VAR name, exported, parameter: Name; qual, desugared, mapped, reason, returns: Spelling;
+PROCEDURE EmitFunction(node: JSON.Object; CONST prefixes: ARRAY OF CHAR; varargs: SIGNED32);
+VAR name, exported, parameter, wrapper: Name; qual, desugared, mapped, reason, returns: Spelling;
 	parameters: JSON.Array; item: JSON.Item; child: JSON.Object; kind: Name;
 	body: Streams.Buffer; writer: Streams.Writer; text: Strings.String;
-	first: SIZE; count: SIGNED32; ok: BOOLEAN;
+	first: SIZE; count, extra, index: SIGNED32; ok, variadic: BOOLEAN;
 BEGIN
 	IF ~Member(node, "name", name) THEN RETURN END;
 	IF ~Spelled(node, qual, desugared) THEN RETURN END;
@@ -966,7 +1508,10 @@ BEGIN
 	END;
 	IF Find(emitted, name) # NIL THEN RETURN END;
 
-	IF Strings.Pos("...", qual) # -1 THEN Complain(name, "varargs"); RETURN END;
+	(*	A variadic function is not refused any more, it is wrapped: see below. What it cannot be is
+		declared, because Active Oberon has no `...` and no `va_list`. *)
+	variadic := Strings.Pos("...", qual) # -1;
+	IF variadic & (varargs <= 0) THEN Complain(name, "varargs, and no wrappers were asked for"); RETURN END;
 
 	first := Strings.Pos("(", qual);
 	IF first = -1 THEN Complain(name, "a type this cannot read"); RETURN END;
@@ -1012,6 +1557,46 @@ BEGIN
 	mapped := "";
 	IF returns # "void" THEN
 		IF ~MapType(returns, Result, mapped, reason) THEN Complain(name, reason); RETURN END
+	END;
+
+	IF variadic THEN
+		(*	One entry per arity, each a procedure variable of its own resolved from the same C
+			symbol. That is the whole trick: C allows a call to pass more arguments than the format
+			asks for, so a fixed prototype of the right shape is a legal call to a variadic
+			function -- measured on both hosts, not assumed. The extra parameters are ADDRESS, and
+			that is deliberate: it is what stops a FLOAT64 from being passed where the ABI would
+			carry it in a register the callee does not look in. *)
+		reason := "";
+		FOR extra := 1 TO varargs DO
+			COPY(exported, wrapper); Strings.AppendInt(wrapper, extra);
+			WHILE Find(taken, wrapper) # NIL DO Strings.AppendX(wrapper, "_") END;
+			varWriter.String("	"); varWriter.String(wrapper);
+			varWriter.String("-: PROCEDURE {PlatformCC} (");
+			varWriter.String(text^);
+			IF count > 0 THEN varWriter.String("; ") END;
+			FOR index := 1 TO extra DO
+				IF index > 1 THEN varWriter.String(", ") END;
+				varWriter.String("a"); varWriter.Int(index, 0)
+			END;
+			varWriter.String(": ADDRESS)");
+			IF mapped # "" THEN varWriter.String(": "); varWriter.String(mapped) END;
+			varWriter.String(";	(* "); varWriter.String(name);
+			varWriter.String(" with "); varWriter.Int(extra, 0);
+			IF extra = 1 THEN varWriter.String(" variable argument *)")
+			ELSE varWriter.String(" variable arguments *)")
+			END;
+			varWriter.Ln;
+			loadWriter.String("	"); loadWriter.String(nameResolve); loadWriter.String("(handle, ");
+			loadWriter.Char('"'); loadWriter.String(name); loadWriter.Char('"');
+			loadWriter.String(", ADDRESSOF("); loadWriter.String(wrapper); loadWriter.String("));");
+			loadWriter.Ln;
+			IF reason # "" THEN Strings.AppendX(reason, ", ") END;
+			Strings.AppendX(reason, wrapper)
+		END;
+		Wrap(name, reason);
+		Remember(emitted, name, exported, 0, Emitted);
+		INC(functions, varargs);
+		RETURN
 	END;
 
 	varWriter.String("	"); varWriter.String(exported); varWriter.String("-: PROCEDURE {PlatformCC} (");
@@ -1312,6 +1897,22 @@ BEGIN
 		writer.String("	-  C `long` is 32 bits on Windows and 64 on Unix, so it is SignedLong below, and"); writer.Ln;
 		writer.String("	   that type is the one thing in this file that is decided at compile time."); writer.Ln
 	END;
+	IF wrapped # NIL THEN
+		writer.Ln;
+		writer.String("	Variadic functions are here as fixed-arity wrappers: `<name>1` takes one variable"); writer.Ln;
+		writer.String("	argument, `<name>2` two, and so on, each resolved from the same C symbol. A C call may"); writer.Ln;
+		writer.String("	pass more arguments than the format asks for, so a wrapper wider than the call needs is"); writer.Ln;
+		writer.String("	still a correct call. The extra parameters are ADDRESS on purpose: an integer or a"); writer.Ln;
+		writer.String("	pointer goes straight in, and a FLOAT64 cannot -- the C ABI carries a floating-point"); writer.Ln;
+		writer.String("	variable argument in a register this call does not announce, so the type system refuses"); writer.Ln;
+		writer.String("	what the ABI would get wrong. For those, write the entry again by hand."); writer.Ln;
+		note := wrapped;
+		WHILE note # NIL DO
+			writer.String("	   "); WriteSafe(writer, note.name);
+			writer.String(" -- "); WriteSafe(writer, note.reason); writer.Ln;
+			note := note.next
+		END
+	END;
 	IF listed > 0 THEN
 		writer.Ln;
 		writer.String("	"); writer.Int(listed, 0);
@@ -1375,6 +1976,11 @@ BEGIN
 	writer.String("	"); writer.String(nameMissing);
 	writer.String("-: SIGNED32;	(** entries this build of the library does not have *)"); writer.Ln;
 	writer.Ln;
+
+	(*	What a union member and a bit field are reached through: the language cannot declare either,
+		so each gets a pair of procedures instead of a field. *)
+	procWriter.Update; text := procBuffer.GetString();
+	IF (text # NIL) & (text[0] # 0X) THEN writer.String(text^); writer.Ln END;
 
 	writer.String("(** A C string, from where it is to an Active Oberon array. Stops at the array's end. *)"); writer.Ln;
 	writer.String("PROCEDURE "); writer.String(nameText);
@@ -1445,7 +2051,7 @@ END Assemble;
 PROCEDURE Reset;
 BEGIN
 	aliases := NIL; emitted := NIL; macros := NIL; taken := NIL; defines := NIL;
-	notes := NIL; lastNote := NIL;
+	notes := NIL; lastNote := NIL; wrapped := NIL; lastWrapped := NIL;
 	functions := 0; typeCount := 0; constants := 0; dataCount := 0; skipped := 0;
 	macroCount := 0; listed := 0;
 	longUsed := FALSE; wideUsed := FALSE; depth := 0;
@@ -1453,6 +2059,7 @@ BEGIN
 	NEW(typeBuffer, 4096); typeWriter := typeBuffer.GetWriter();
 	NEW(varBuffer, 16384); varWriter := varBuffer.GetWriter();
 	NEW(loadBuffer, 16384); loadWriter := loadBuffer.GetWriter();
+	NEW(procBuffer, 16384); procWriter := procBuffer.GetWriter();
 	nameLibrary := "Library"; nameAvailable := "Available"; nameMissing := "Missing";
 	nameLoad := "Load"; nameOpen := "Open"; nameText := "Text"; nameResolve := "Resolve"
 END Reset;
@@ -1524,7 +2131,8 @@ BEGIN
 				ELSIF kind = "RecordDecl" THEN
 					IF settings.records THEN EmitRecord(node, settings.prefixes) END
 				ELSIF kind = "EnumDecl" THEN EmitEnum(node, settings.prefixes)
-				ELSIF kind = "FunctionDecl" THEN EmitFunction(node, settings.prefixes)
+				ELSIF kind = "FunctionDecl" THEN
+					EmitFunction(node, settings.prefixes, settings.varargs)
 				ELSIF kind = "VarDecl" THEN EmitVariable(node, settings.prefixes)
 				END
 			END
