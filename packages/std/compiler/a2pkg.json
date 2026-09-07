@@ -56,6 +56,7 @@
     "FoxTestBackend",
     "FoxTextualSymbolFile",
     "FoxTranspilerBackend",
+    "H2ao",
     "I386Decoder",
     "LSP",
     "Linker",
@@ -79,9 +80,12 @@
     "lib/gui": "*",
     "lib/web": "*",
     "std/base": "*",
+    "std/encoding": "*",
+    "std/process": "*",
     "std/runtime": "*",
     "std/system": "*",
-    "std/text": "*"
+    "std/text": "*",
+    "std/time": "*"
   },
   "residual": [
     "Only Active Oberon since 2026-08-16. What used to sit here and does not: the Oberon-2 compiler (attic/oberon2, 26 modules), the ActiveCells# front end (attic/activecells-sharp), the TRM and interpreter back ends, and the 32-bit ARM back end. Fox is a framework with pluggable front ends and back ends, so being in the tree said nothing about being ours.",
@@ -90,6 +94,7 @@
     "Fifteen members are outside the import closure of the compiler itself and stay on purpose. The disassembler family (Decoder, AMD64Decoder, I386Decoder, FoxDisassembler) is what a differential test of the assemblers would be written against -- the same shape that found everything on AArch64 -- and I386Decoder stays with its family rather than being exiled for decoding a target this tree does not build. The textual intermediate code (assembler, parser, object file, linker) is our own IR in its readable form. FoxProgTools, FoxProfiler, FoxTestBackend and FoxA2Interface are ours and unused; being unused is a reason to test them, not to disown them.",
     "TestSuite (negelef) entered 2026-08-24 beside FoxTest, and marked graphical: it reads its cases through TextUtilities, which belongs to std/gui, so it cannot be in the payload until something gives it a plain-text path. ocp's ModuleTestingSym is the module that asked for it.",
     "UnixBinary (GF, 'build Unix programs') entered 2026-08-24: it writes the host executable, which puts it beside the linker rather than in the system package.",
-    "ModuleParser and Release entered 2026-08-24: reading a module's text and assembling a release are both compiler-side work. All of these turned out to reach the window system (the check named them), so they are marked graphical and stay out of the payload."
+    "ModuleParser and Release entered 2026-08-24: reading a module's text and assembling a release are both compiler-side work. All of these turned out to reach the window system (the check named them), so they are marked graphical and stay out of the payload.",
+    "H2ao came here on 2026-09-08: `ob bind` reads a C header through clang and writes the bindings, so it is compiler-side tooling and it sits with the other things ob links into itself. It brought three requires that the package had been using without declaring -- std/encoding for JSON, which LSP and DAP already imported, and std/process and std/time, which are new with it."
   ]
 }

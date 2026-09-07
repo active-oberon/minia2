@@ -102,6 +102,59 @@ Two shapes this does not cover: sources in subdirectories (only the top of the p
 read), and a project whose modules have their own build output you want reused rather than
 recompiled (the language server takes `A2_SYMS` for that; the compiler does not).
 
+## Bindings to a C library
+
+`ob bind` writes the binding to a C library out of the library's own header, instead of a
+line per function by hand:
+
+```sh
+ob bind /usr/include/sqlite3.h                      # writes Sqlite3.Mod
+ob bind /usr/include/zlib.h --records -l libz.so.1  # structs as RECORDs, and the library named
+```
+
+It is not a translator of C: the bodies stay in C and are called where they are. What comes
+out is a module of `PROCEDURE {PlatformCC}` variables resolved from the shared library when
+the module is loaded — the shape `OpenAL.Mod` and `Unix.Sockets.Mod` already have in this
+tree, only complete and written by a machine. Nothing in it is compiled from C and no C
+compiler is needed to use it; one is needed to write it, because the header is read by
+`clang -Xclang -ast-dump=json` (`zig cc` is clang and will do). Measured on the two headers
+above: 283 functions, 472 constants and 8 refusals out of `sqlite3.h`, 81 functions out of
+`zlib.h`.
+
+| option | |
+| --- | --- |
+| `-o <File.Mod>` | where to write it (default: the module name, in this directory) |
+| `-m <Module>` | the MODULE name (default: from the header's file name — `sqlite3.h` is `Sqlite3`) |
+| `-l <lib,lib>` | the libraries to try, in order (default: guessed from the header's name, both platforms' spellings) |
+| `-p <prefix,prefix>` | C prefixes to drop from names — `-p sqlite3_,SQLITE_` makes `Sqlite3.open` of `sqlite3_open` |
+| `-I <dir>` | as a C compiler takes it; repeatable |
+| `--records` | translate complete structs as RECORDs. Off by default: a wrong layout is the one mistake here that is silent |
+| `--cc <program>` | the C compiler to ask, when the machine has more than one |
+
+How to read what comes out:
+
+- a C pointer is an `ADDRESS`, so an out-parameter is passed as `ADDRESSOF(x)`;
+- `const char *` in a parameter is `CONST ARRAY OF CHAR`, so a literal goes straight in — a
+  C `NULL` cannot, and for that the entry is declared again by hand with `ADDRESS`;
+- C `long` is 32 bits on Windows and 64 on Unix, so it is a `SignedLong` the generated module
+  declares under `#IF WIN`; that is the one thing in the file decided at compile time, and it
+  is why one generated file works on both;
+- `Available` says the library was found, `Library` names the file that answered, and
+  `Missing` counts the entries that build of it does not have — which is not an error: a
+  header declares what the library *can* be built with. `libsqlite3-0.dll` on Windows is
+  missing 11 of sqlite3.h's 283, and everything else works;
+- `Text(address, string)` copies a C string out of an address a function returned.
+
+**What does not carry over is named, not hidden.** Every declaration the generator refuses is
+listed in the generated module's own header comment with the reason — varargs, unions, bit
+fields, `long double`, a name Active Oberon cannot spell — and counted, so `8 not translated`
+is a list you can read rather than a number to wonder about. Macros are the other half: they
+are gone before clang's parser runs, so they are read from the preprocessor's own list and
+matched against the header's text, and the ones that are integers become CONSTs — the value
+worked out by the generator, because a C flag is `(0x1|0x2)` and this language has no `|` for
+integers. The ones that take arguments or stand for something that is not a constant are
+counted in that same comment.
+
 ## Use it with Docker
 
 Mount your working directory at `/work` and call `ob`:

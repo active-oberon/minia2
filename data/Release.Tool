@@ -1058,6 +1058,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	WIN { Windows.Processes.Mod }
 	UNIX { Unix.LocalSockets.Mod } # sockets named by a path, for talking to a program on this machine
 	WIN { Windows.LocalSockets.Mod } # the same idea where it is a named pipe
+	H2ao.Mod # C headers to Active Oberon bindings: what `ob bind` is
 END
 
 PACKAGE GuiApplicationsMini ARCHIVE "GuiApplicationsMini.zip" SOURCE "GuiApplicationsMiniSrc.zip" DESCRIPTION "Minimal GUI applications set"

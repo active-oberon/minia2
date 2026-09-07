@@ -42,6 +42,18 @@ CONST
 	END LoadLibrary;
 
 	(**
+		Load a dynamic library that need not be there. Unlike LoadLibrary this says nothing when it
+		is missing -- for a caller working through a list of names the platform might use.
+	*)
+	PROCEDURE LoadLibraryOptional*(CONST fileName: ARRAY OF CHAR; VAR lib: LibHandle): BOOLEAN;
+	BEGIN
+		lib := Unix.DlopenOptional(fileName, 0x0001);
+		RETURN (lib # NilLibHandle);
+	FINALLY
+		RETURN FALSE;
+	END LoadLibraryOptional;
+
+	(**
 		Free a previously loaded dynamic library
 
 		lib: library handle
@@ -77,5 +89,21 @@ CONST
 	FINALLY
 		RETURN FALSE;
 	END GetProcedure;
+
+	(**
+		Get a procedure that need not be there. Unlike GetProcedure this says nothing when the name
+		is missing: a library built without a feature does not export its entry points, and that is
+		a fact about the build and not a fault. A binding to a whole header meets several of them.
+	*)
+	PROCEDURE GetProcedureOptional*(CONST lib: LibHandle; CONST name: ARRAY OF CHAR; CONST procAddr: ADDRESS): BOOLEAN;
+	VAR addr: ADDRESS;
+	BEGIN
+		ASSERT(procAddr # NIL);
+		IF ~Unix.DlsymOptional(lib,name,procAddr) THEN RETURN FALSE END;
+		SYSTEM.GET(procAddr,addr);
+		RETURN addr # NIL;
+	FINALLY
+		RETURN FALSE;
+	END GetProcedureOptional;
 
 END HostLibs.

@@ -1,0 +1,709 @@
+# Tests for source/H2ao.Mod -- `ob bind`, the C header turned into a binding.
+#
+# options --command="System.Free Test H2aoTestShared;System.Load Test"
+#
+# The tool has three parts and only the middle one is worth a test: running clang, turning its
+# answer into a module, and writing the file. So the cases hand `H2ao.Generate` an abstract syntax
+# tree built here by hand -- the same shape clang prints, node for node -- and read the module that
+# comes out. No compiler is started, nothing is on the disk, and a case says what it means in the
+# two lines that build the declaration it is about.
+#
+# What that buys is the ability to ask the questions a session with a real header cannot ask twice:
+# a header whose macro is defined over another macro, a name Active Oberon cannot spell, a function
+# whose parameter is a function, a struct with a bit field in it. Every one of those is a decision
+# the generator makes, and a decision nobody wrote down is a decision nobody can check.
+#
+# Two things the cases lean on and are worth knowing before reading them.
+#
+# -  clang leaves `loc.file` out of a declaration when it is the same file as the one before, so
+#    the file has to be carried forward as the list is walked. That carrying is the only thing that
+#    separates the header asked for from the eighty it includes, and it has a case of its own.
+# -  the macros are not in the AST at all -- they are gone before the parser runs -- so they come
+#    from the preprocessor's own list and are matched against the header's text. A case therefore
+#    passes both: what the header says, and what `-E -dM` would have said about it.
+
+positive: the helpers these tests are written with
+
+	MODULE H2aoTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A clang AST built by hand, and the module h2ao makes of it" *)
+
+	IMPORT Streams, Strings, JSON, H2ao;
+
+	CONST
+		(**	The header every case pretends to have read. Nothing opens it: it is the name clang
+			would have put in `loc.file`, and the generator compares names. *)
+		Header* = "/somewhere/thing.h";
+
+	TYPE
+		(*
+			A translation unit, written out as clang writes it. The object keeps two brackets in
+			mind -- the declaration it is inside and the `inner` list it has opened -- so that a
+			case can say `Decl` and then `Child` and not think about either.
+		*)
+		Tree* = OBJECT
+		VAR
+			buffer: Streams.Buffer;
+			writer: Streams.Writer;
+			inNode, inInner: BOOLEAN;
+			count: SIGNED32;
+
+			PROCEDURE &Init*;
+			BEGIN
+				NEW(buffer, 8192); writer := buffer.GetWriter();
+				writer.String('{"kind":"TranslationUnitDecl","inner":[');
+				inNode := FALSE; inInner := FALSE; count := 0
+			END Init;
+
+			PROCEDURE Shut;
+			BEGIN
+				IF inInner THEN writer.String("]"); inInner := FALSE END;
+				IF inNode THEN writer.String("}"); inNode := FALSE END
+			END Shut;
+
+			PROCEDURE Pair(CONST key, value: ARRAY OF CHAR);
+			BEGIN
+				writer.String(',"'); writer.String(key); writer.String('":"');
+				writer.String(value); writer.String('"')
+			END Pair;
+
+			(**	One declaration of the unit. `file` empty is clang leaving it out because it has
+				not changed; `desugared` empty is clang leaving it out because there is nothing to
+				desugar. *)
+			PROCEDURE Decl* (CONST kind, name, qual, desugared, file: ARRAY OF CHAR);
+			BEGIN
+				Shut;
+				IF count > 0 THEN writer.String(",") END;
+				writer.String('{"kind":"'); writer.String(kind); writer.String('"');
+				IF name # "" THEN Pair("name", name) END;
+				IF qual # "" THEN
+					writer.String(',"type":{"qualType":"'); writer.String(qual); writer.String('"');
+					IF desugared # "" THEN
+						writer.String(',"desugaredQualType":"'); writer.String(desugared);
+						writer.String('"')
+					END;
+					writer.String("}")
+				END;
+				IF file # "" THEN
+					writer.String(',"loc":{"file":"'); writer.String(file); writer.String('"}')
+				ELSE
+					writer.String(',"loc":{}')
+				END;
+				inNode := TRUE; INC(count)
+			END Decl;
+
+			(** A member clang writes as a JSON true -- `completeDefinition`, `isBitfield`. *)
+			PROCEDURE Yes* (CONST key: ARRAY OF CHAR);
+			BEGIN
+				writer.String(',"'); writer.String(key); writer.String('":true')
+			END Yes;
+
+			(** A member that is a word -- `tagUsed`, `storageClass`. *)
+			PROCEDURE Word* (CONST key, value: ARRAY OF CHAR);
+			BEGIN Pair(key, value)
+			END Word;
+
+			(** A node inside the declaration: a parameter, a field. *)
+			PROCEDURE Child* (CONST kind, name, qual: ARRAY OF CHAR);
+			BEGIN
+				IF ~inInner THEN writer.String(',"inner":['); inInner := TRUE
+				ELSE writer.String(",")
+				END;
+				writer.String('{"kind":"'); writer.String(kind); writer.String('"');
+				IF name # "" THEN Pair("name", name) END;
+				IF qual # "" THEN
+					writer.String(',"type":{"qualType":"'); writer.String(qual); writer.String('"}')
+				END;
+				writer.String("}")
+			END Child;
+
+			(**	A field with a bit width, which is the one field shape that has no honest layout
+				here. It is a member on the field and not a kind of its own. *)
+			PROCEDURE BitField* (CONST name, qual: ARRAY OF CHAR);
+			BEGIN
+				IF ~inInner THEN writer.String(',"inner":['); inInner := TRUE
+				ELSE writer.String(",")
+				END;
+				writer.String('{"kind":"FieldDecl","name":"'); writer.String(name);
+				writer.String('","isBitfield":true,"type":{"qualType":"'); writer.String(qual);
+				writer.String('"}}')
+			END BitField;
+
+			(**	One name of an enumeration. `value` empty is a name with no `=` after it, which C
+				numbers one past the one before. *)
+			PROCEDURE Item* (CONST name, value: ARRAY OF CHAR);
+			BEGIN
+				IF ~inInner THEN writer.String(',"inner":['); inInner := TRUE
+				ELSE writer.String(",")
+				END;
+				writer.String('{"kind":"EnumConstantDecl","name":"'); writer.String(name);
+				writer.String('"');
+				IF value # "" THEN
+					writer.String(',"inner":[{"kind":"ConstantExpr","value":"');
+					writer.String(value); writer.String('"}]')
+				END;
+				writer.String("}")
+			END Item;
+
+			PROCEDURE Text* (): Strings.String;
+			BEGIN
+				Shut; writer.String("]}"); writer.Update;
+				RETURN buffer.GetString()
+			END Text;
+
+		END Tree;
+
+	(**	The module the generator makes of that tree. `header` is the header's own text, which is
+		what says which macros are the header's; `preprocessed` is what `clang -E -dM` would have
+		printed for it. FALSE when nothing came out at all. *)
+	PROCEDURE Bound* (tree: Tree; CONST header, preprocessed, prefixes: ARRAY OF CHAR;
+		records: BOOLEAN; VAR text: Strings.String): BOOLEAN;
+	VAR settings: H2ao.Settings; json: Strings.String; value: JSON.Value;
+		buffer: Streams.Buffer; writer: Streams.Writer; module: H2ao.Name; made: BOOLEAN;
+	BEGIN
+		json := tree.Text();
+		IF ~JSON.Parse(json^, value) THEN RETURN FALSE END;
+		settings.module := "Bound";
+		COPY(Header, settings.header);
+		settings.libraries := "libthing.so";
+		COPY(prefixes, settings.prefixes);
+		settings.compiler := ""; settings.includes := "";
+		settings.records := records;
+		NEW(buffer, 8192); writer := buffer.GetWriter();
+		made := H2ao.Generate(settings, value, header, preprocessed, writer, module);
+		writer.Update; text := buffer.GetString();
+		RETURN made
+	END Bound;
+
+	(** The plainest case: one tree, no macros, no prefixes. *)
+	PROCEDURE Only* (tree: Tree; VAR text: Strings.String): BOOLEAN;
+	BEGIN RETURN Bound(tree, "", "", "", FALSE, text)
+	END Only;
+
+	(** One line of a header, or of what the preprocessor made of it. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN
+		Strings.AppendX(text, piece); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	PROCEDURE Has* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Has;
+
+	PROCEDURE Times* (CONST text, what: ARRAY OF CHAR): SIGNED32;
+	VAR at: SIZE; found: SIGNED32;
+	BEGIN
+		found := 0; at := 0;
+		LOOP
+			at := Strings.GenericPos(what, at, text, FALSE, FALSE);
+			IF at < 0 THEN EXIT END;
+			INC(found); at := at + 1
+		END;
+		RETURN found
+	END Times;
+
+	END H2aoTestShared.
+
+positive: a function becomes a procedure variable of the C calling convention, and a line in the loader
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_add", "int (int, int)", "", T.Header);
+		tree.Child("ParmVarDecl", "left", "int");
+		tree.Child("ParmVarDecl", "right", "int");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_add-: PROCEDURE {PlatformCC} (left: SIGNED32; right: SIGNED32): SIGNED32;"), 2);
+		ASSERT(T.Has(text^, 'Resolve(handle, "thing_add", ADDRESSOF(thing_add));'), 3);
+		(* the C name is the Active Oberon name: this compiler takes an underscore in an identifier *)
+		ASSERT(T.Times(text^, "thing_add") = 3, 4);
+		(* and the module is a module *)
+		ASSERT(T.Has(text^, "MODULE Bound;"), 5);
+		ASSERT(T.Has(text^, "END Bound."), 6);
+		ASSERT(T.Has(text^, "IMPORT SYSTEM, HostLibs;"), 7)
+	END Test.
+
+positive: a void result is no result, and a function of no arguments has none
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_reset", "void (void)", "", T.Header);
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_reset-: PROCEDURE {PlatformCC} ();"), 2)
+	END Test.
+
+positive: a pointer is an ADDRESS, and `const char *` in a parameter is an open array so a literal can be passed
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_open", "int (const char *, struct thing **)", "", T.Header);
+		tree.Child("ParmVarDecl", "name", "const char *");
+		tree.Child("ParmVarDecl", "out", "struct thing **");
+		ASSERT(T.Only(tree, text), 1);
+		(* CONST stands before the name in this language and after the colon in C *)
+		ASSERT(T.Has(text^, "thing_open-: PROCEDURE {PlatformCC} (CONST name: ARRAY OF CHAR; out: ADDRESS): SIGNED32;"), 2)
+	END Test.
+
+positive: a `const char *` result is an address, because a result cannot be an open array
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_name", "const char *(void)", "", T.Header);
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_name-: PROCEDURE {PlatformCC} (): ADDRESS;"), 2);
+		(* and the module carries the one procedure that makes such a result readable *)
+		ASSERT(T.Has(text^, "PROCEDURE Text*(address: ADDRESS; VAR text: ARRAY OF CHAR);"), 3)
+	END Test.
+
+positive: an array parameter decays the way C decays it
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_write", "int (char[16])", "", T.Header);
+		tree.Child("ParmVarDecl", "block", "char[16]");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_write-: PROCEDURE {PlatformCC} (block: ADDRESS): SIGNED32;"), 2)
+	END Test.
+
+positive: C `long` is the one type decided at compile time, and it is only declared when it is used
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_size", "unsigned long (long)", "", T.Header);
+		tree.Child("ParmVarDecl", "at", "long");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_size-: PROCEDURE {PlatformCC} (at: SignedLong): UnsignedLong;"), 2);
+		ASSERT(T.Has(text^, "#IF WIN THEN"), 3);
+		ASSERT(T.Has(text^, "SignedLong* = SIGNED32; UnsignedLong* = UNSIGNED32;"), 4);
+		ASSERT(T.Has(text^, "SignedLong* = SIGNED64; UnsignedLong* = UNSIGNED64;"), 5);
+
+		(* a header that never says `long` gets no such declaration *)
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_count", "int (void)", "", T.Header);
+		ASSERT(T.Only(tree, text), 6);
+		ASSERT(~T.Has(text^, "SignedLong* ="), 7);
+		ASSERT(~T.Has(text^, "#IF WIN"), 8)
+	END Test.
+
+positive: a scalar typedef is a type of its own, and what is written over it keeps its name
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("TypedefDecl", "thing_int64", "long long", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_at", "thing_int64 (thing_int64)", "", "");
+		tree.Child("ParmVarDecl", "where", "thing_int64");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_int64* = SIGNED64;"), 2);
+		ASSERT(T.Has(text^, "thing_at-: PROCEDURE {PlatformCC} (where: thing_int64): thing_int64;"), 3)
+	END Test.
+
+positive: a typedef of the machine's own headers is resolved without being declared
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	`off_t` belongs to the platform, not to this header, so it is a typedef of the unit and
+			not a declaration of ours. Its width is the platform's `long`, and that is the answer
+			that has to come out -- not a refusal, and not a guess of 64 bits. *)
+		tree.Decl("TypedefDecl", "off_t", "long", "", "/usr/include/sys/types.h");
+		tree.Decl("FunctionDecl", "thing_seek", "int (off_t)", "", T.Header);
+		tree.Child("ParmVarDecl", "to", "off_t");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_seek-: PROCEDURE {PlatformCC} (to: SignedLong): SIGNED32;"), 2);
+		ASSERT(~T.Has(text^, "off_t"), 3)
+	END Test.
+
+positive: a typedef of an incomplete struct is not declared and not complained about
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	`typedef struct thing thing;` -- the handle every such library hands out. There is
+			nothing to declare, because the name is only ever used behind a pointer and a pointer
+			is an ADDRESS; and there is nothing lost, so nothing is listed. *)
+		tree.Decl("TypedefDecl", "thing", "struct thing", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_close", "int (thing *)", "", "");
+		tree.Child("ParmVarDecl", "it", "thing *");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_close-: PROCEDURE {PlatformCC} (it: ADDRESS): SIGNED32;"), 2);
+		ASSERT(~T.Has(text^, "Not translated"), 3)
+	END Test.
+
+positive: a function pointer is a procedure type, whether it stands in a typedef or in a parameter
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("TypedefDecl", "thing_hook", "int (*)(void *, int)", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_watch", "void (void (*)(int))", "", "");
+		tree.Child("ParmVarDecl", "hook", "void (*)(int)");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_hook* = PROCEDURE {PlatformCC} (a: ADDRESS; b: SIGNED32): SIGNED32;"), 2);
+		ASSERT(T.Has(text^, "thing_watch-: PROCEDURE {PlatformCC} (hook: PROCEDURE {PlatformCC} (a: SIGNED32));"), 3)
+	END Test.
+
+positive: varargs is named as not translated instead of being got wrong
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_printf", "int (const char *, ...)", "", T.Header);
+		tree.Child("ParmVarDecl", "format", "const char *");
+		tree.Decl("FunctionDecl", "thing_ok", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(~T.Has(text^, "thing_printf-"), 2);
+		ASSERT(T.Has(text^, "thing_printf -- varargs"), 3);
+		ASSERT(T.Has(text^, "Not translated -- 1 declarations"), 4);
+		(* the one that could be translated still is: a refusal is not a stop *)
+		ASSERT(T.Has(text^, "thing_ok-: PROCEDURE {PlatformCC} (): SIGNED32;"), 5);
+		(* and this is what the case is for: nothing is left out quietly *)
+		ASSERT(T.Has(text^, "Nothing here was left out"), 6)
+	END Test.
+
+positive: a name Active Oberon cannot spell is listed, not renamed behind the reader's back
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "_thing_private", "int (void)", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_public", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(~T.Has(text^, "_thing_private-:"), 2);
+		ASSERT(T.Has(text^, "_thing_private -- a name Active Oberon cannot spell"), 3);
+		ASSERT(T.Has(text^, "thing_public-:"), 4)
+	END Test.
+
+positive: a prefix comes off a name only while what is left is still a name
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_open", "int (void)", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_2nd", "int (void)", "", "");
+		ASSERT(T.Bound(tree, "", "", "thing_", FALSE, text), 1);
+		ASSERT(T.Has(text^, "open-: PROCEDURE {PlatformCC} (): SIGNED32;"), 2);
+		(* the C name is still what the loader asks the library for *)
+		ASSERT(T.Has(text^, 'Resolve(handle, "thing_open", ADDRESSOF(open));'), 3);
+		(* and it is written beside the declaration, because that is what the documentation calls it *)
+		ASSERT(T.Has(text^, "(* thing_open *)"), 4);
+		(* `2nd` is not a name: the prefix is left on rather than making one *)
+		ASSERT(T.Has(text^, "thing_2nd-:"), 5)
+	END Test.
+
+positive: a declaration of another file is not this header's, and clang says so by saying nothing
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	The file is left out of a declaration when it has not changed, so the second of these
+			belongs to the header and the fourth belongs to stdio. A generator that read `loc.file`
+			without carrying it forward would take all four, or none. *)
+		tree.Decl("FunctionDecl", "thing_first", "int (void)", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_second", "int (void)", "", "");
+		tree.Decl("FunctionDecl", "fread", "int (void)", "", "/usr/include/stdio.h");
+		tree.Decl("FunctionDecl", "fwrite", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_first-:"), 2);
+		ASSERT(T.Has(text^, "thing_second-:"), 3);
+		ASSERT(~T.Has(text^, "fread"), 4);
+		ASSERT(~T.Has(text^, "fwrite"), 5)
+	END Test.
+
+positive: an enumeration is constants, and C numbers the ones with no value of their own
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("EnumDecl", "thing_kind", "", "", T.Header);
+		tree.Item("THING_A", "3");
+		tree.Item("THING_B", "");
+		tree.Item("THING_C", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "THING_A* = 3;"), 2);
+		ASSERT(T.Has(text^, "THING_B* = 4;"), 3);
+		ASSERT(T.Has(text^, "THING_C* = 5;"), 4);
+		(* the enumeration's own name is an int as far as a call is concerned *)
+		ASSERT(T.Has(text^, "thing_kind* = SIGNED32;"), 5)
+	END Test.
+
+positive: a complete struct is a RECORD when it is asked for, and only then
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_stream", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "next", "unsigned char *");
+		tree.Child("FieldDecl", "available", "unsigned int");
+		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 1);
+		ASSERT(T.Has(text^, "thing_stream* = RECORD"), 2);
+		ASSERT(T.Has(text^, "next*: ADDRESS;"), 3);
+		ASSERT(T.Has(text^, "available*: UNSIGNED32;"), 4);
+
+		(*	Without --records nothing is laid out: a struct is the one place where being wrong is
+			silent, so it is opt-in. *)
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_stream", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "next", "unsigned char *");
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 5);
+		ASSERT(~T.Has(text^, "thing_stream"), 6)
+	END Test.
+
+positive: a struct this cannot lay out honestly is refused whole, with the reason
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_flags", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "struct");
+		tree.Child("FieldDecl", "kind", "int");
+		tree.BitField("busy", "unsigned int");
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 1);
+		ASSERT(~T.Has(text^, "thing_flags* = RECORD"), 2);
+		ASSERT(T.Has(text^, "thing_flags -- a bit field"), 3);
+		(* a union is the other one: half a record is worse than none *)
+		NEW(tree);
+		tree.Decl("RecordDecl", "thing_either", "", "", T.Header);
+		tree.Yes("completeDefinition");
+		tree.Word("tagUsed", "union");
+		tree.Child("FieldDecl", "number", "int");
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Bound(tree, "", "", "", TRUE, text), 4);
+		ASSERT(T.Has(text^, "thing_either -- a union"), 5)
+	END Test.
+
+positive: extern data is a symbol too, and what the loader can hand over is where it is
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("VarDecl", "thing_version", "const char[]", "", T.Header);
+		tree.Word("storageClass", "extern");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "thing_version-: ADDRESS;"), 2);
+		ASSERT(T.Has(text^, "(* const char[] *)"), 3);
+		ASSERT(T.Has(text^, 'Resolve(handle, "thing_version", ADDRESSOF(thing_version));'), 4)
+	END Test.
+
+positive: a macro that is a number comes out a constant, and one written over others is worked out here
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String; header, dm: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", T.Header);
+
+		(*	The header says which macros are the header's; the preprocessor says what they stand
+			for. Both are needed: `-E -dM` prints the machine's thousands without saying where any
+			of them came from. *)
+		header := "";
+		T.Line(header, "#define THING_OK 0");
+		T.Line(header, "#define THING_READ 0x0001");
+		T.Line(header, "#define THING_WRITE 0x0002");
+		T.Line(header, "# define THING_BOTH (THING_READ|THING_WRITE)");
+		T.Line(header, '#define THING_NAME "thing"');
+		T.Line(header, "#define THING_LAST (-1)");
+		T.Line(header, "#define THING_SHIFT (1<<12)");
+
+		dm := "";
+		T.Line(dm, "#define THING_OK 0");
+		T.Line(dm, "#define THING_READ 0x0001");
+		T.Line(dm, "#define THING_WRITE 0x0002");
+		T.Line(dm, "#define THING_BOTH (THING_READ|THING_WRITE)");
+		T.Line(dm, '#define THING_NAME "thing"');
+		T.Line(dm, "#define THING_LAST (-1)");
+		T.Line(dm, "#define THING_SHIFT (1<<12)");
+		T.Line(dm, "#define __SIZEOF_INT__ 4");
+
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
+		ASSERT(T.Has(text^, "THING_READ* = 1;"), 3);
+		(*	This is the reason the value is worked out and not copied: Active Oberon has no `|` for
+			integers, so `(THING_READ|THING_WRITE)` cannot be written down as it stands. *)
+		ASSERT(T.Has(text^, "THING_BOTH* = 3;"), 4);
+		ASSERT(T.Has(text^, 'THING_NAME* = "thing";'), 5);
+		ASSERT(T.Has(text^, "THING_LAST* = -1;"), 6);
+		ASSERT(T.Has(text^, "THING_SHIFT* = 4096;"), 7);
+		(* the machine's own macros are the machine's, whatever the preprocessor lists *)
+		ASSERT(~T.Has(text^, "__SIZEOF_INT__"), 8)
+	END Test.
+
+positive: a macro that is not a constant is counted, because there are hundreds and they are not losses
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String; header, dm: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", T.Header);
+		header := "";
+		T.Line(header, "#define THING_MIN(a,b) ((a)<(b)?(a):(b))");
+		T.Line(header, "#define THING_API extern");
+		T.Line(header, "#define THING_OK 0");
+		dm := "";
+		T.Line(dm, "#define THING_MIN(a,b) ((a)<(b)?(a):(b))");
+		T.Line(dm, "#define THING_API extern");
+		T.Line(dm, "#define THING_OK 0");
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
+		ASSERT(~T.Has(text^, "THING_MIN"), 3);
+		ASSERT(~T.Has(text^, "THING_API"), 4);
+		ASSERT(T.Has(text^, "2 more of the header's macros are not here"), 5)
+	END Test.
+
+positive: a macro the header defines but this platform does not is not a loss and is not counted
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String; header, dm: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", T.Header);
+		(*	A header defines a macro inside an `#if` this machine does not take. It is in the text
+			and not in the preprocessor's list, and the answer is neither a constant nor a
+			complaint: on this platform there is no such macro. *)
+		header := "";
+		T.Line(header, "#define THING_OK 0");
+		T.Line(header, "#define THING_VMS_ONLY 7");
+		dm := "";
+		T.Line(dm, "#define THING_OK 0");
+		ASSERT(T.Bound(tree, header, dm, "", FALSE, text), 1);
+		ASSERT(T.Has(text^, "THING_OK* = 0;"), 2);
+		ASSERT(~T.Has(text^, "THING_VMS_ONLY"), 3);
+		ASSERT(~T.Has(text^, "more of the header's macros"), 4)
+	END Test.
+
+positive: the loader tries every name a platform might give the library, and says which one answered
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", T.Header);
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, 'Load("libthing.so")'), 2);
+		ASSERT(T.Has(text^, "Library-: ARRAY 256 OF CHAR;"), 3);
+		ASSERT(T.Has(text^, "Available-: BOOLEAN;"), 4);
+		ASSERT(T.Has(text^, "Missing-: SIGNED32;"), 5);
+		(*	Available is the library, Missing is this build of it. They were one answer and they are
+			two questions: a library built without a feature does not export its entry points, and
+			a binding to a whole header meets several of them. *)
+		ASSERT(T.Has(text^, "Available := TRUE;"), 6);
+		ASSERT(T.Has(text^, "GetProcedureOptional"), 7);
+		ASSERT(T.Has(text^, "LoadLibraryOptional"), 8)
+	END Test.
+
+positive: a library that has our own names for its own gets them, and we step aside
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	`Load`, `Open` and `Text` are this module's, and a library is entitled to all three.
+			The names of the library win and ours take an underscore, because the header is the
+			interface and the loader is plumbing. *)
+		tree.Decl("FunctionDecl", "Load", "int (void)", "", T.Header);
+		tree.Decl("FunctionDecl", "Open", "int (void)", "", "");
+		tree.Decl("FunctionDecl", "Text", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(T.Has(text^, "Load-: PROCEDURE {PlatformCC} (): SIGNED32;"), 2);
+		ASSERT(T.Has(text^, "PROCEDURE Load_*(CONST file: ARRAY OF CHAR): BOOLEAN;"), 3);
+		ASSERT(T.Has(text^, "PROCEDURE Open_*(): BOOLEAN;"), 4);
+		ASSERT(T.Has(text^, "PROCEDURE Text_*(address: ADDRESS; VAR text: ARRAY OF CHAR);"), 5);
+		ASSERT(T.Has(text^, "IF ~Open_() THEN"), 6)
+	END Test.
+
+positive: a type with no answer is named, and the module is still a module
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		(*	`long double` is 80 bits on one of these platforms and 64 on the other, and there is no
+			Active Oberon type that is both. A generator that answered FLOAT64 would be wrong on
+			Linux and nobody would find out until the numbers came back strange. *)
+		tree.Decl("FunctionDecl", "thing_precise", "long double (void)", "", T.Header);
+		tree.Decl("FunctionDecl", "thing_go", "int (void)", "", "");
+		ASSERT(T.Only(tree, text), 1);
+		ASSERT(~T.Has(text^, "thing_precise-"), 2);
+		ASSERT(T.Has(text^, "thing_precise -- no Active Oberon type for long double"), 3);
+		ASSERT(T.Has(text^, "END Bound."), 4)
+	END Test.
+
+positive: a header of nothing at all is not a module, and says so instead of writing an empty one
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, Strings;
+	VAR tree: T.Tree; text: Strings.String;
+	BEGIN
+		NEW(tree);
+		tree.Decl("FunctionDecl", "fread", "int (void)", "", "/usr/include/stdio.h");
+		ASSERT(~T.Only(tree, text), 1)
+	END Test.
+
+positive: the module name comes off the header's own file name
+
+	MODULE Test;
+	IMPORT T := H2aoTestShared, H2ao;
+	VAR name: H2ao.Name;
+	BEGIN
+		H2ao.ModuleName("/usr/include/sqlite3.h", name);
+		ASSERT(name = "Sqlite3", 1);
+		H2ao.ModuleName("C:\zlib.h", name);
+		ASSERT(name = "Zlib", 2);
+		(* a name that cannot start an identifier is made to *)
+		H2ao.ModuleName("/x/7zip.h", name);
+		ASSERT(name = "C7zip", 3);
+		H2ao.ModuleName("/x/.h", name);
+		ASSERT(name = "Binding", 4)
+	END Test.

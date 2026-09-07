@@ -29,15 +29,12 @@ CONST
 	LOAD_LIBRARY_SAFE_CURRENT_DIRS = 13;
 	LOAD_LIBRARY_SEARCH_SYSTEM32_NO_FORWARDER = 14;
 
-	(**
-		Load a dynamic library
-
-		fileName: library file name
-		lib: returned loaded library handle; NilLibHandle in case of an error
-
-		Return: TRUE in case of success
+	(*
+		The body of both loads. `report` is what separates them: a caller trying `sqlite3.dll` and
+		then `libsqlite3-0.dll` is not looking at a failure when the first one is not there, and a
+		procedure that answers with a BOOLEAN has already said everything it needs to.
 	*)
-	PROCEDURE LoadLibrary*(CONST fileName: ARRAY OF CHAR; VAR lib: LibHandle): BOOLEAN;
+	PROCEDURE Load(CONST fileName: ARRAY OF CHAR; VAR lib: LibHandle; report: BOOLEAN): BOOLEAN;
 	CONST
 		LoadLibraryExFlags = {LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS};
 	VAR
@@ -47,18 +44,19 @@ CONST
 		i: SIZE;
 	BEGIN
 		IF Files.Exists(fileName, fullName, flags) THEN
+			i := 0;    (* it was read before it was set, and a loop over a name has to start at it *)
 			WHILE fullName[i] # 0X DO
 				IF fullName[i] = "/" THEN fullName[i] := "\"; END;
 				INC(i);
 			END;
 			lib := Kernel32.LoadLibraryEx(fullName, NIL, LoadLibraryExFlags);
-			IF lib = NilLibHandle THEN
+			IF (lib = NilLibHandle) & report THEN
 				err := Kernel32.GetLastError();
 				TRACE(fullName, err);
 			END;
 		ELSE (*! can happen when the library path is not specified *)
 			lib := Kernel32.LoadLibrary(fileName);
-			IF lib = NilLibHandle THEN
+			IF (lib = NilLibHandle) & report THEN
 				err := Kernel32.GetLastError();
 				TRACE(fileName, err);
 			END;
@@ -66,7 +64,29 @@ CONST
 		RETURN lib # NilLibHandle;
 	FINALLY
 		RETURN FALSE;
+	END Load;
+
+	(**
+		Load a dynamic library
+
+		fileName: library file name
+		lib: returned loaded library handle; NilLibHandle in case of an error
+
+		Return: TRUE in case of success
+	*)
+	PROCEDURE LoadLibrary*(CONST fileName: ARRAY OF CHAR; VAR lib: LibHandle): BOOLEAN;
+	BEGIN
+		RETURN Load(fileName, lib, TRUE);
 	END LoadLibrary;
+
+	(**
+		Load a dynamic library that need not be there. Unlike LoadLibrary this says nothing when it
+		is missing -- for a caller working through a list of names the platform might use.
+	*)
+	PROCEDURE LoadLibraryOptional*(CONST fileName: ARRAY OF CHAR; VAR lib: LibHandle): BOOLEAN;
+	BEGIN
+		RETURN Load(fileName, lib, FALSE);
+	END LoadLibraryOptional;
 
 	(**
 		Free a previously loaded dynamic library
@@ -103,6 +123,17 @@ CONST
 	FINALLY
 		RETURN FALSE;
 	END GetProcedure;
+
+	(**
+		Get a procedure that need not be there. The same thing on this host, where nothing is said
+		about a name that is missing; the Unix twin does say something, and this is the interface
+		on which the two are quiet in the same way. A library built without a feature does not
+		export its entry points, and that is a fact about the build and not a fault.
+	*)
+	PROCEDURE GetProcedureOptional*(CONST lib: LibHandle; CONST name: ARRAY OF CHAR; CONST procAddr: ADDRESS): BOOLEAN;
+	BEGIN
+		RETURN GetProcedure(lib, name, procAddr);
+	END GetProcedureOptional;
 
 END HostLibs.
 

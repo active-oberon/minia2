@@ -28,6 +28,11 @@ CONST
 	NoWait = 0;
 
 TYPE
+	(*	A command line, as long as this host will take one: CreateProcess stops at 32767
+		characters, and a buffer shorter than that turned a long argument list into a write past
+		the end of it. *)
+	CommandText = POINTER TO ARRAY 32768 OF CHAR;
+
 	(**	A running program. Its standard output and standard error come back through `Output`, and
 		what is written to `Input` reaches its standard input. *)
 	Process* = OBJECT
@@ -176,20 +181,26 @@ TYPE
 (*	One command line out of an argument vector, which is what this host starts a program with.
 	An argument containing a space is quoted; one containing a quote is not escaped, because the
 	rules for that are the C runtime's rather than the system's and a caller who needs them should
-	build the line itself. *)
-PROCEDURE CommandLine (arguments: Strings.StringArray; VAR line: ARRAY OF CHAR);
+	build the line itself.
+
+	FALSE when the vector does not fit in the line. It used to be built with `Strings.Append`,
+	which does not look at the destination's length, so a long argument list wrote past the end of
+	a caller's array; and truncating instead would be worse, because a command line cut in half is
+	a different command. The caller refuses to start anything. *)
+PROCEDURE CommandLine (arguments: Strings.StringArray; VAR line: ARRAY OF CHAR): BOOLEAN;
 VAR i, count: SIZE; quoted: BOOLEAN;
 BEGIN
 	line := "";
 	count := 0;
 	IF arguments # NIL THEN count := LEN(arguments^) END;
 	FOR i := 0 TO count-1 DO
-		IF i > 0 THEN Strings.Append(line, " ") END;
+		IF i > 0 THEN Strings.AppendX(line, " ") END;
 		quoted := Strings.Pos(" ", arguments[i]^) >= 0;
-		IF quoted THEN Strings.Append(line, '"') END;
-		Strings.Append(line, arguments[i]^);
-		IF quoted THEN Strings.Append(line, '"') END
-	END
+		IF quoted THEN Strings.AppendX(line, '"') END;
+		Strings.AppendX(line, arguments[i]^);
+		IF quoted THEN Strings.AppendX(line, '"') END
+	END;
+	RETURN Strings.Length(line) + 1 < LEN(line)
 END CommandLine;
 
 PROCEDURE Inheritable (VAR sa: Kernel32.SecurityAttributes);
@@ -207,8 +218,10 @@ END Inheritable;
 PROCEDURE Start* (CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): Process;
 VAR sa: Kernel32.SecurityAttributes; info: Kernel32.StartupInfo; made: Kernel32.ProcessInformation;
 	childIn, childOut, ourIn, ourOut: Kernel32.HANDLE;
-	line: ARRAY 1024 OF CHAR; ok, ignore: Kernel32.BOOL; p: Process;
+	line: CommandText; ok, ignore: Kernel32.BOOL; p: Process;
 BEGIN
+	NEW(line);      (* on the heap: 32K is not a thing to put on a caller's stack *)
+	IF ~CommandLine(arguments, line^) THEN RETURN NIL END;
 	Inheritable(sa);
 	IF Kernel32.CreatePipe(childIn, ourOut, sa, 0) = 0 THEN RETURN NIL END;
 	IF Kernel32.CreatePipe(ourIn, childOut, sa, 0) = 0 THEN
@@ -220,8 +233,7 @@ BEGIN
 	ignore := Kernel32.SetHandleInformation(ourOut, HandleFlagInherit, 0);
 	ignore := Kernel32.SetHandleInformation(ourIn, HandleFlagInherit, 0);
 
-	CommandLine(arguments, line);
-	IF line = "" THEN COPY(program, line) END;
+	IF line^ = "" THEN COPY(program, line^) END;
 
 	info.cb := SIZEOF(Kernel32.StartupInfo);
 	info.lpReserved := NIL; info.lpDesktop := NIL; info.lpTitle := NIL;
@@ -231,7 +243,7 @@ BEGIN
 	info.wShowWindow := 0; info.cbReserved2 := 0; info.lpReserved2 := 0;
 	info.hStdInput := childIn; info.hStdOutput := childOut; info.hStdError := childOut;
 
-	ok := Kernel32.CreateProcessLine(NIL, line, NIL, NIL, 1, 0, NIL, NIL, info, made);
+	ok := Kernel32.CreateProcessLine(NIL, line^, NIL, NIL, 1, 0, NIL, NIL, info, made);
 
 	(* the child's ends are the child's now, whether or not it started *)
 	ignore := Kernel32.CloseHandle(childIn); ignore := Kernel32.CloseHandle(childOut);
@@ -250,10 +262,11 @@ END Start;
 	and take it again afterwards. *)
 PROCEDURE StartAttached* (CONST program: ARRAY OF CHAR; arguments: Strings.StringArray): Process;
 VAR info: Kernel32.StartupInfo; made: Kernel32.ProcessInformation;
-	line: ARRAY 1024 OF CHAR; ok, ignore: Kernel32.BOOL; p: Process;
+	line: CommandText; ok, ignore: Kernel32.BOOL; p: Process;
 BEGIN
-	CommandLine(arguments, line);
-	IF line = "" THEN COPY(program, line) END;
+	NEW(line);      (* on the heap: 32K is not a thing to put on a caller's stack *)
+	IF ~CommandLine(arguments, line^) THEN RETURN NIL END;
+	IF line^ = "" THEN COPY(program, line^) END;
 	info.cb := SIZEOF(Kernel32.StartupInfo);
 	info.lpReserved := NIL; info.lpDesktop := NIL; info.lpTitle := NIL;
 	info.dwX := 0; info.dwY := 0; info.dwXSize := 0; info.dwYSize := 0;
@@ -261,7 +274,7 @@ BEGIN
 	info.dwFlags := {};                               (* no handles named: it inherits ours *)
 	info.wShowWindow := 0; info.cbReserved2 := 0; info.lpReserved2 := 0;
 	info.hStdInput := 0; info.hStdOutput := 0; info.hStdError := 0;
-	ok := Kernel32.CreateProcessLine(NIL, line, NIL, NIL, 1, 0, NIL, NIL, info, made);
+	ok := Kernel32.CreateProcessLine(NIL, line^, NIL, NIL, 1, 0, NIL, NIL, info, made);
 	IF ok = 0 THEN RETURN NIL END;
 	ignore := Kernel32.CloseHandle(made.hThread);
 	NEW(p, made.hProcess, made.dwProcessId, 0, 0);    (* no pipes: it has the console, not us *)

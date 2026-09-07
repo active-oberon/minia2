@@ -18,7 +18,7 @@ MODULE Ob;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "The ob command line, in Acti
 *)
 
 IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
-	Shell, LSP, DAP, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
+	Shell, LSP, DAP, H2ao, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
 	ObHost;
 
 CONST
@@ -3105,6 +3105,86 @@ END TestVerb;
 	that imports whatever it imports; then the project's own build if it has one, then its sources,
 	which the server compiles on demand.
 *)
+(*
+	`ob bind <header.h>` -- the bindings to a C library, written out of its own header instead of
+	by hand. The work is H2ao's; this reads the command line, makes the paths absolute (the child
+	compiler does not share this process's idea of where it is), and puts the module where the
+	other verbs put what they write.
+*)
+PROCEDURE BindVerb;
+CONST Usage = "usage: ob bind <header.h> [-o <File.Mod>] [-m <Module>] [-l <lib,lib>] [-p <prefix>] [-I <dir>] [--cc <program>] [--records]";
+VAR settings: H2ao.Settings; argument, value, absolute, output, module, line: Path;
+	handle: Files.File; writer: Files.Writer; produced: BOOLEAN;
+	procedures, types, constants, data, skipped: SIGNED32;
+BEGIN
+	settings.module := ""; settings.header := ""; settings.libraries := "";
+	settings.prefixes := ""; settings.compiler := ""; settings.includes := "";
+	settings.records := FALSE;
+	output := "";
+	WHILE NextArgument(argument) DO
+		IF (argument = "-o") OR (argument = "--output") THEN
+			IF ~NextArgument(output) THEN Die(Usage); RETURN END
+		ELSIF (argument = "-m") OR (argument = "--module") THEN
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			COPY(value, settings.module)
+		ELSIF (argument = "-l") OR (argument = "--library") THEN
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			COPY(value, settings.libraries)
+		ELSIF (argument = "-p") OR (argument = "--prefix") THEN
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			COPY(value, settings.prefixes)
+		ELSIF (argument = "-I") OR (argument = "--include") THEN
+			(* one -I after another, which is how a C compiler is told about them *)
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			IF settings.includes # "" THEN Strings.AppendX(settings.includes, ",") END;
+			Strings.AppendX(settings.includes, value)
+		ELSIF argument = "--cc" THEN
+			IF ~NextArgument(value) THEN Die(Usage); RETURN END;
+			COPY(value, settings.compiler)
+		ELSIF argument = "--records" THEN settings.records := TRUE
+		ELSIF argument[0] = '-' THEN
+			DieOn("unknown option: ", argument); RETURN
+		ELSE COPY(argument, settings.header)
+		END
+	END;
+	IF settings.header = "" THEN Die(Usage); RETURN END;
+	IF ~ObHost.RealPath(settings.header, absolute) THEN
+		DieOn("no such file: ", settings.header); RETURN
+	END;
+	COPY(absolute, settings.header);
+
+	(*	Where it goes: the name given, or the module's own. Either way it is resolved against the
+		project, because this process's working directory is not the user's on Windows -- the A2
+		runtime sets it to the image's own directory -- so a relative name written as it stands
+		would land beside the SDK. *)
+	IF output = "" THEN
+		IF settings.module # "" THEN COPY(settings.module, value)
+		ELSE H2ao.ModuleName(settings.header, value)
+		END;
+		Strings.AppendX(value, ".Mod")
+	ELSE COPY(output, value)
+	END;
+	Absolute(project, value, output);
+	handle := Files.New(output);
+	IF handle = NIL THEN DieOn("cannot write ", output); RETURN END;
+	NEW(writer, handle, 0);
+	produced := H2ao.Bind(settings, writer, error, module);
+	writer.Update;
+	IF ~produced THEN failed := TRUE; RETURN END;
+	Files.Register(handle);
+
+	H2ao.Counts(procedures, types, constants, data, skipped);
+	line := "ob: wrote "; Strings.AppendX(line, output);
+	Strings.AppendX(line, " -- MODULE "); Strings.AppendX(line, module);
+	Strings.AppendX(line, ", "); Strings.AppendInt(line, procedures);
+	Strings.AppendX(line, " functions, "); Strings.AppendInt(line, types);
+	Strings.AppendX(line, " types, "); Strings.AppendInt(line, constants);
+	Strings.AppendX(line, " constants, "); Strings.AppendInt(line, data);
+	Strings.AppendX(line, " data, "); Strings.AppendInt(line, skipped);
+	Strings.AppendX(line, " not translated");
+	Say(line)
+END BindVerb;
+
 PROCEDURE LspVerb;
 VAR argument, scratch, symbols: Path; live: BOOLEAN; context: Commands.Context; ignore: BOOLEAN;
 	compilerPlatform, objectExtension, symbolExtension, linkOptions, suffix, boot: Path;
@@ -3172,6 +3252,8 @@ BEGIN
 	Say("  ob test [File.Test ...] [-v] [-j N] run test files (default: every *.Test here)");
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");
 	Say("  ob lint                            check every import points at its tier or lower");
+	Say("  ob bind <header.h> [-o F.Mod] [-m M] [-l lib] [-p prefix] [-I dir] [--records]");
+	Say("                                     C bindings out of a header, through clang");
 	Say("  ob lsp [--live]                    the Active Oberon language server, over stdio");
 	Say("  ob dap                             the debug adapter: run a program, read where it trapped");
 	Say("  ob repl                            the interactive A2 shell, in this directory");
@@ -3198,6 +3280,7 @@ BEGIN
 	ELSIF verb = "doc" THEN DocVerb
 	ELSIF verb = "doc-module" THEN DocModuleVerb
 	ELSIF verb = "lint" THEN LintVerb
+	ELSIF verb = "bind" THEN BindVerb
 	ELSIF verb = "lsp" THEN LspVerb
 	ELSIF verb = "dap" THEN DapVerb
 	ELSIF verb = "repl" THEN ReplVerb
