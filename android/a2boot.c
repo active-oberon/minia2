@@ -207,12 +207,13 @@ void EnterOnOwnThread(int passed, char **arguments, Elf64_Addr entry) {
  *	from ANativeActivity_onCreate, on a thread of its own, and has a window to attend to besides (see
  *	android/a2app.c). What differs is only what happens after this returns. */
 Elf64_Addr A2Load(const char *image) {
-	size_t size, span;
+	size_t size, span, page;
 	unsigned char *file;
 	Elf64_Ehdr *header;
-	Elf64_Phdr *segments, *load = NULL, *dynamicSegment = NULL;
+	Elf64_Phdr *segments, *dynamicSegment = NULL;
+	Elf64_Addr lowest = 0, highest = 0;
 	void *mapped;
-	int i;
+	int i, loadable = 0;
 
 	/*	Android hands out heap memory with a tag in the top byte of the pointer, and the A2 collector
 	 *	is not written for that: it takes the address of a block as a number, derives the bounds of
@@ -238,11 +239,18 @@ Elf64_Addr A2Load(const char *image) {
 	header = (Elf64_Ehdr *)file;
 	if (header->e_machine != A2_MACHINE) Refuse("not an " A2_MACHINE_NAME " image");
 	segments = (Elf64_Phdr *)(file + header->e_phoff);
+	page = (size_t)sysconf(_SC_PAGESIZE);
+	if (page == 0 || (page & (page - 1)) != 0) page = 0x1000;
 	for (i = 0; i < header->e_phnum; i++) {
-		if (segments[i].p_type == PT_LOAD && load == NULL) load = &segments[i];
+		if (segments[i].p_type == PT_LOAD) {
+			Elf64_Addr end = segments[i].p_vaddr + segments[i].p_memsz;
+			if (loadable == 0 || segments[i].p_vaddr < lowest) lowest = segments[i].p_vaddr;
+			if (loadable == 0 || end > highest) highest = end;
+			loadable++;
+		}
 		if (segments[i].p_type == PT_DYNAMIC) dynamicSegment = &segments[i];
 	}
-	if (load == NULL) Refuse("the image has no loadable segment");
+	if (loadable == 0) Refuse("the image has no loadable segment");
 
 	/*	Mapped anonymous and copied into rather than mapped from the file: the segment is writable
 	 *	and executable at once, which is what the image was linked as, and an anonymous mapping is
@@ -250,15 +258,20 @@ Elf64_Addr A2Load(const char *image) {
 	 *	own module loader needs, since that writes code into the heap and calls it. MAP_FIXED and not
 	 *	MAP_FIXED_NOREPLACE would be a way to lose whatever else lives there, so the address is asked
 	 *	for and then checked. */
-	span = (size_t)(load->p_vaddr + load->p_memsz);
-	span = (span + 0xFFF) & ~(size_t)0xFFF;
-	span -= (size_t)(load->p_vaddr & ~(Elf64_Addr)0xFFF);
-	mapped = mmap((void *)(load->p_vaddr & ~(Elf64_Addr)0xFFF), span,
+	lowest &= ~(Elf64_Addr)(page - 1);
+	span = (size_t)((highest + (page - 1)) & ~(Elf64_Addr)(page - 1)) - (size_t)lowest;
+	mapped = mmap((void *)lowest, span,
 		PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
 	if (mapped == MAP_FAILED) Fail("mapping the image where it was linked for");
-	if (mapped != (void *)(load->p_vaddr & ~(Elf64_Addr)0xFFF))
+	if (mapped != (void *)lowest)
 		Refuse("the address the image was linked for is taken");
-	memcpy((void *)load->p_vaddr, file + load->p_offset, (size_t)load->p_filesz);
+	/*	Every loadable segment, not the first one: since the image carries code and data in
+	 *	segments of their own, copying only the first left the data unmapped and the first write
+	 *	to a global faulted. */
+	for (i = 0; i < header->e_phnum; i++) {
+		if (segments[i].p_type != PT_LOAD) continue;
+		memcpy((void *)segments[i].p_vaddr, file + segments[i].p_offset, (size_t)segments[i].p_filesz);
+	}
 
 	/*	The relocations. An A2 image carries one -- `dlsym` -- but the loop is general, because a
 	 *	general loop is no longer than a special case and says what it does. */
