@@ -82,7 +82,6 @@ XML.Mod
 XMLScanner.Mod
 XMLParser.Mod
 Configuration.Mod
-FileHandlers.Mod
 Network.Mod
 ActiveTimers.Mod
 Unix.IP.Mod
@@ -168,11 +167,9 @@ Random.Mod
 Drand48.Mod
 SerialsVirtual.Mod
 Autostart.Mod
-FSTools.Mod
 UpTime.Mod
 CLUTs.Mod
 Raster.Mod
-RasterPixelFormats.Mod
 Localization.Mod
 Archives.Mod
 WMRectangles.Mod
@@ -266,6 +263,7 @@ DisplayGTF.Mod
 GZip.Mod
 ShellCommands.Mod
 Telnet.Mod
+Info.Mod
 TFClasses.Mod
 Mail.Mod
 SMTPClient.Mod
@@ -291,6 +289,9 @@ WebFTPServer.Mod
 XModem.Mod
 TaskScheduler.Mod
 DES.Mod
+IDCT.Mod
+MPEGTables.Mod
+DivXTypes.Mod
 HTTPSupport.Mod
 HTTPSession.Mod
 DynamicWebpage.Mod
@@ -329,6 +330,7 @@ Sage.UDPChatBase.Mod
 Sage.UDPChatServer.Mod
 SambaClient.Mod
 SambaServer.Mod
+RasterPixelFormats.Mod
 BitStreams.Mod
 NextPrime.Mod
 MoveToFront.Mod
