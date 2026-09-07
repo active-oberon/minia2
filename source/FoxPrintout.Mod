@@ -2,7 +2,7 @@ MODULE FoxPrintout; (** AUTHOR "fof & fn"; PURPOSE "Oberon Compiler Module Outpu
 (* (c) fof ETHZ 2009 *)
 
 IMPORT
-	Scanner := FoxScanner, SyntaxTree := FoxSyntaxTree, Global := FoxGlobal, Basic := FoxBasic, Fingerprinter := FoxFingerprinter, Streams, D:=Debugging, SYSTEM;
+	Scanner := FoxScanner, SyntaxTree := FoxSyntaxTree, Global := FoxGlobal, Basic := FoxBasic, Fingerprinter := FoxFingerprinter, Streams, RealConversions, D:=Debugging, SYSTEM;
 
 CONST
 	(* print modes *)
@@ -873,17 +873,31 @@ TYPE
 			VisitMathArrayExpression(x.array);
 		END VisitMathArrayValue;
 
+		(*	A real constant, written so that reading it back gives the same number.
+			`Streams.Float` stops at sixteen significant digits and a binary64 needs seventeen,
+			so a symbol file used to carry a constant a unit in the last place away from the one
+			the module declared -- which the interface comparison then reported as a redefinition
+			of a module nobody had changed. *)
 		PROCEDURE FormatedFloat(value: FLOAT64; subtype: SIGNED32);
-		VAR string: ARRAY 128 OF CHAR; i: SIGNED32;
+		CONST Digits = 17;
+		VAR string: ARRAY 128 OF CHAR; digits: ARRAY Digits + 1 OF CHAR; exponent, last, i: SIGNED32;
 		BEGIN
 			ASSERT((subtype = Scanner.Real) OR (subtype = Scanner.Longreal));
-			ws.SetPos(0); ws.Float(value,1); ws.Get(string);
-			i := 0;
-			WHILE(i<LEN(string)) & (string[i] # 0X) DO
-				IF string[i] = "D" THEN string[i] := "E" END;
-				INC(i);
+			IF (value # value) OR (value - value # 0) THEN	(* a NaN or an infinity: no digits to write *)
+				ws.SetPos(0); ws.Float(value,1); ws.Get(string);
+				w.String(string);
+				RETURN
 			END;
-			w.String(string);
+			IF value < 0 THEN w.Char("-"); value := -value END;
+			RealConversions.RealToDecimal(value, Digits, digits, exponent);
+			last := Digits - 1;
+			WHILE (last > 0) & (digits[last] = "0") DO DEC(last) END;
+			w.Char(digits[0]); w.Char(".");
+			IF last = 0 THEN w.Char("0") ELSE
+				FOR i := 1 TO last DO w.Char(digits[i]) END
+			END;
+			INC(exponent, Digits - 1);	(* the point moved to just after the first digit *)
+			IF exponent # 0 THEN w.Char("E"); w.Int(exponent, 1) END
 		END FormatedFloat;
 
 		PROCEDURE VisitRealValue*(x: SyntaxTree.RealValue);

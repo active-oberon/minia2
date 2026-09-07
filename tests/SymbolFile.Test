@@ -1,0 +1,278 @@
+# Tests for source/FoxTextualSymbolFile.Mod and source/FoxInterfaceComparison.Mod -- the file a
+# module leaves behind for whoever imports it, and what the compiler says when that file changes.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test SymbolFileTestShared;System.Load Test"
+#
+# Every IMPORT in this system is resolved through a symbol file: the compiler writes the interface
+# of a module out as Active Oberon text and reads that text back with its own parser when another
+# module imports it. Neither module had a test. They were covered in the sense that a build works --
+# which says nothing about whether what came back is what went in, and it was not: a real constant
+# went through sixteen significant digits, and the value the importer got was a unit in the last
+# place away from the one its author wrote. The comparison of the old interface against the new one
+# then reported the module as redefining itself, on the first compilation, with nothing changed.
+#
+# So the cases here are round trips. A module is compiled, and a second module that imports it
+# asserts that what it sees equals the literal in the first one -- which can only be answered by
+# the file between them. The rest ask what the comparison says when an interface really does
+# change, and what `--noRedefinition` and `--noModification` then do about it.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE SymbolFileTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Compile a module, and read what its symbol file says" *)
+
+	IMPORT Commands, Files, Machine, Streams, Strings;
+
+	VAR
+		(** The symbol file extension of this build, dot included. *)
+		extension-: ARRAY 32 OF CHAR;
+		at: SIZE;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 32 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content); writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(**	Write `name`.Mod with this content and compile it; the compiler's output comes back in
+		`text`, and the answer is its result. `options` goes in front of the file name. *)
+	PROCEDURE Compile* (CONST name, content, options: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR source, argument: ARRAY 256 OF CHAR;
+	BEGIN
+		COPY(name, source); Strings.Append(source, ".Mod");
+		Write(source, content);
+		COPY(options, argument);
+		IF argument # "" THEN Strings.Append(argument, " ") END;
+		Strings.Append(argument, source);
+		RETURN Run("Compiler.Compile", argument, text)
+	END Compile;
+
+	(** The whole symbol file of a module, as text; "" when there is none. *)
+	PROCEDURE SymbolFile* (CONST name: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+	VAR fileName: ARRAY 256 OF CHAR; file: Files.File; reader: Files.Reader; len: SIZE;
+	BEGIN
+		COPY(name, fileName); Strings.Append(fileName, extension);
+		file := Files.Old(fileName);
+		IF file = NIL THEN text := ""; RETURN FALSE END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(text, 0, LEN(text) - 1, len);
+		text[len] := 0X;
+		RETURN TRUE
+	END SymbolFile;
+
+	BEGIN
+		(*	The compiler names the symbol file after the platform it compiles for, and a case must
+			ask for the same one the build uses. `Machine` knows the object file extension of this
+			build; the symbol file is its sibling and is spelled the same way in Compiler.Mod's
+			platform table -- Gof/Sym, GofUu/SymUu, GofWw/SymWw -- so the object extension with
+			its Gof replaced by Sym is the symbol extension, whatever platform this is. *)
+		Machine.GetConfig("ObjectFileExtension", extension);
+		IF extension = "" THEN COPY(Machine.DefaultObjectFileExtension, extension) END;
+		at := Strings.Pos("Gof", extension);
+		ASSERT(at >= 0);
+		extension[at] := "S"; extension[at + 1] := "y"; extension[at + 2] := "m"
+	END SymbolFileTestShared.
+
+positive: a real constant survives the file the importer reads it from
+
+	MODULE Test;
+	IMPORT Strings, T := SymbolFileTestShared;
+
+	VAR provider, client: ARRAY 2048 OF CHAR; text: ARRAY 32 * 1024 OF CHAR; res: INTEGER;
+
+	PROCEDURE Add (VAR source: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN Strings.Append(source, piece); Strings.Append(source, " ")
+	END Add;
+
+	BEGIN
+		(*	Seventeen digit decimals, both ends of the range, and a value whose own decimal is
+			thirty digits long. Every one of them is a number a program may write and an importer
+			has to see unchanged. *)
+		provider := "MODULE SymbolFileTestNumbers; CONST ";
+		Add(provider, "Big* = 1.2345678901234567D-17;");
+		Add(provider, "Huge* = 1.7976931348623157D+308;");
+		Add(provider, "Tiny* = 5.0D-324;");
+		Add(provider, "Third* = 0.333333333333333314829616256247;");
+		Add(provider, "E300* = 1.0D+300;");
+		Add(provider, "END SymbolFileTestNumbers.");
+
+		res := T.Compile("SymbolFileTestNumbers", provider, "", text);
+		ASSERT(res = 0);
+
+		(*	Nothing changed between the file and the source, so the comparison has nothing to
+			report. It used to report these constants as redefined right here, on the first
+			compilation, because what it read back was not what it had written. *)
+		ASSERT(~T.Said(text, "redefined"));
+
+		(* the file is there, it is text, and it says which module it belongs to *)
+		ASSERT(T.SymbolFile("SymbolFileTestNumbers", text));
+		ASSERT(T.Said(text, "MODULE SymbolFileTestNumbers"));
+		ASSERT(T.Said(text, "1.2345678901234567E-17"));	(* all seventeen digits, not sixteen *)
+
+		client := "MODULE SymbolFileTestReader; IMPORT Commands, N := SymbolFileTestNumbers, SYSTEM; ";
+		Add(client, "PROCEDURE Bits (x: FLOAT64): SIGNED64; BEGIN RETURN SYSTEM.VAL(SIGNED64, x) END Bits;");
+		Add(client, "PROCEDURE Check* (context: Commands.Context);");
+		Add(client, "BEGIN");
+		Add(client, "IF (Bits(N.Big) = Bits(1.2345678901234567D-17))");
+		Add(client, "& (Bits(N.Huge) = Bits(1.7976931348623157D+308))");
+		Add(client, "& (Bits(N.Tiny) = Bits(5.0D-324))");
+		Add(client, "& (Bits(N.Third) = Bits(0.333333333333333314829616256247))");
+		Add(client, "& (Bits(N.E300) = Bits(1.0D+300))");
+		Add(client, "THEN context.out.String('same') ELSE context.out.String('changed') END;");
+		Add(client, "context.out.Update END Check;");
+		Add(client, "END SymbolFileTestReader.");
+
+		res := T.Compile("SymbolFileTestReader", client, "", text);
+		ASSERT(res = 0);
+
+		(*	And the numbers themselves: the importer never saw the module, only its symbol file,
+			so this compares what came through that file against the literals that went in. *)
+		res := T.Run("SymbolFileTestReader.Check", "", text);
+		ASSERT(T.Said(text, "same"));
+		ASSERT(~T.Said(text, "changed"))
+	END Test.
+
+positive: strings and characters come back the way they went in
+
+	MODULE Test;
+	IMPORT Strings, T := SymbolFileTestShared;
+
+	VAR provider, client: ARRAY 2048 OF CHAR; text: ARRAY 32 * 1024 OF CHAR; res: INTEGER;
+
+	(*	A string constant whose value holds a tab, a backslash, a quote and a control character
+		has to be written into the symbol file in a form the compiler's own scanner reads back as
+		those same characters -- and the file is read by that scanner. The source is assembled
+		here rather than written as one literal, because that is the only way to put a real tab
+		inside a string this suite hands to the compiler. *)
+	PROCEDURE Add (VAR source: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN Strings.Append(source, piece); Strings.Append(source, " ")
+	END Add;
+
+	PROCEDURE Quoted (VAR source: ARRAY OF CHAR; CONST name: ARRAY OF CHAR; ch: CHAR);
+	BEGIN
+		Strings.Append(source, name); Strings.Append(source, "* = ");
+		Strings.AppendChar(source, 22X);	(* the string opens *)
+		Strings.Append(source, "a");
+		Strings.AppendChar(source, ch);
+		Strings.Append(source, "b");
+		Strings.AppendChar(source, 22X);
+		Strings.Append(source, "; ")
+	END Quoted;
+
+	BEGIN
+		provider := "MODULE SymbolFileTestStrings; CONST ";
+		Quoted(provider, "Tab", 09X);
+		Quoted(provider, "Backslash", 5CX);
+		Quoted(provider, "Bell", 07X);
+		Add(provider, "Char* = 07X;");
+		Add(provider, "Bits* = {0, 3, 31};");
+		Add(provider, "END SymbolFileTestStrings.");
+
+		res := T.Compile("SymbolFileTestStrings", provider, "", text);
+		ASSERT(res = 0);
+		ASSERT(~T.Said(text, "redefined"));
+
+		client := "MODULE SymbolFileTestStringReader; IMPORT Commands, S := SymbolFileTestStrings; ";
+		Add(client, "PROCEDURE Check* (context: Commands.Context);");
+		Add(client, "BEGIN");
+		Add(client, "IF (S.Tab[1] = 09X) & (S.Backslash[1] = 5CX) & (S.Bell[1] = 07X)");
+		Add(client, "& (S.Tab[0] = 'a') & (S.Tab[2] = 'b')");
+		Add(client, "& (S.Char = 07X) & (S.Bits = {0, 3, 31})");
+		Add(client, "THEN context.out.String('same') ELSE context.out.String('changed') END;");
+		Add(client, "context.out.Update END Check;");
+		Add(client, "END SymbolFileTestStringReader.");
+
+		res := T.Compile("SymbolFileTestStringReader", client, "", text);
+		ASSERT(res = 0);
+
+		res := T.Run("SymbolFileTestStringReader.Check", "", text);
+		ASSERT(T.Said(text, "same"));
+		ASSERT(~T.Said(text, "changed"))
+	END Test.
+
+positive: what the comparison says when an interface really changes
+
+	MODULE Test;
+	IMPORT T := SymbolFileTestShared;
+
+	CONST
+		Name = "SymbolFileTestIface";
+		One = "MODULE SymbolFileTestIface; CONST A* = 1; PROCEDURE P*; BEGIN END P; END SymbolFileTestIface.";
+		ChangedConstant = "MODULE SymbolFileTestIface; CONST A* = 2; PROCEDURE P*; BEGIN END P; END SymbolFileTestIface.";
+		AddedProcedure = "MODULE SymbolFileTestIface; CONST A* = 2; PROCEDURE P*; BEGIN END P; PROCEDURE Q*; BEGIN END Q; END SymbolFileTestIface.";
+		RemovedProcedure = "MODULE SymbolFileTestIface; CONST A* = 2; END SymbolFileTestIface.";
+
+	VAR text: ARRAY 32 * 1024 OF CHAR; res: INTEGER;
+
+	BEGIN
+		ASSERT(T.Compile(Name, One, "", text) = 0);
+		ASSERT(~T.Said(text, "redefined"));
+
+		(* a constant with a new value is the same name meaning something else *)
+		ASSERT(T.Compile(Name, ChangedConstant, "", text) = 0);
+		ASSERT(T.Said(text, "A is redefined"));
+
+		(* a name that was not there before is an extension, not a redefinition *)
+		ASSERT(T.Compile(Name, AddedProcedure, "", text) = 0);
+		ASSERT(T.Said(text, "Q is new"));
+		ASSERT(~T.Said(text, "redefined"));
+
+		(* and a name that is gone is what breaks whoever imported it *)
+		ASSERT(T.Compile(Name, RemovedProcedure, "", text) = 0);
+		ASSERT(T.Said(text, "P is no longer visible"));
+		ASSERT(T.Said(text, "Q is no longer visible"))
+	END Test.
+
+positive: --noRedefinition and --noModification refuse to write the file
+
+	MODULE Test;
+	IMPORT T := SymbolFileTestShared;
+
+	CONST
+		Name = "SymbolFileTestGuarded";
+		One = "MODULE SymbolFileTestGuarded; CONST A* = 1; END SymbolFileTestGuarded.";
+		ChangedConstant = "MODULE SymbolFileTestGuarded; CONST A* = 2; END SymbolFileTestGuarded.";
+		AddedConstant = "MODULE SymbolFileTestGuarded; CONST A* = 1; B* = 2; END SymbolFileTestGuarded.";
+
+	VAR text: ARRAY 32 * 1024 OF CHAR;
+
+	BEGIN
+		ASSERT(T.Compile(Name, One, "", text) = 0);
+
+		(*	These two are what a released library is compiled with: an interface may grow but
+			not change under --noRedefinition, and may not even grow under --noModification. *)
+		ASSERT(T.Compile(Name, ChangedConstant, "--noRedefinition", text) # 0);
+		ASSERT(T.Said(text, "no redefinition of symbol file allowed"));
+
+		(* growing is allowed while only redefinition is forbidden *)
+		ASSERT(T.Compile(Name, AddedConstant, "--noRedefinition", text) = 0);
+
+		(* and forbidden when modification is *)
+		ASSERT(T.Compile(Name, One, "", text) = 0);	(* back to the smaller interface *)
+		ASSERT(T.Compile(Name, AddedConstant, "--noModification", text) # 0);
+		ASSERT(T.Said(text, "no extension of symbol file allowed"))
+	END Test.
