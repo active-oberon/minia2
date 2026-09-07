@@ -285,3 +285,83 @@ positive: an icon becomes one resource per image and a group that names them
 		resources.iconLength := 3;
 		ASSERT(Types() = 2)
 	END Test.
+
+positive: an object file is found before an executable of the same name
+
+	MODULE Test;
+	IMPORT Commands, Diagnostics, Files, GenericLinker, Linker, Machine, Streams;
+
+	CONST
+		Name = "LinkerTestObject";
+		SourceName = "LinkerTestObject.Mod";
+		Source = "MODULE LinkerTestObject; PROCEDURE P*; BEGIN END P; END LinkerTestObject.";
+
+	VAR
+		extension: ARRAY 32 OF CHAR;
+		linker: GenericLinker.Linker;
+		objectFile: ARRAY 64 OF CHAR;
+		res: INTEGER;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run (CONST command, argument: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		RETURN result
+	END Run;
+
+	PROCEDURE Write (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content); writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** A linker with a fresh image on both sides and no log. *)
+	PROCEDURE NewLinker (): GenericLinker.Linker;
+	VAR code, data: Linker.Arrangement; diagnostics: Diagnostics.DiagnosticsList;
+	BEGIN
+		NEW(code, 0); NEW(data, 0); NEW(diagnostics);
+		RETURN NEW GenericLinker.Linker(diagnostics, NIL, GenericLinker.UseAll, code, data)
+	END NewLinker;
+
+	BEGIN
+		Machine.GetConfig("ObjectFileExtension", extension);
+		IF extension = "" THEN COPY(Machine.DefaultObjectFileExtension, extension) END;
+
+		Write(SourceName, Source);
+		ASSERT(Run("Compiler.Compile", SourceName) = 0);
+		Files.JoinExtension(Name, extension, objectFile);
+		ASSERT(Files.Old(objectFile) # NIL);
+
+		(*	What a link leaves behind in the directory it ran in is an executable named after the
+			module, and the module name is what the linker is given. Reading that as an object file
+			is an ASSERT inside GenericLinker.ReadHeader, so a second link in the same directory
+			ended in a trap rather than in a binary. *)
+		Write(Name, "not an object file at all, but named like one");
+
+		linker := NewLinker();
+		Linker.ReadObjectFile(Name, "", extension, linker, NIL);
+		ASSERT(~linker.error);
+
+		(* without an object file beside it, a file that carries no extension is still read *)
+		Files.Delete(Name, res); ASSERT(res = Files.Ok);
+		Files.Rename(objectFile, Name, res); ASSERT(res = Files.Ok);
+		ASSERT(Files.Old(objectFile) = NIL);
+
+		linker := NewLinker();
+		Linker.ReadObjectFile(Name, "", extension, linker, NIL);
+		ASSERT(~linker.error);
+
+		(* and a name that is neither is a refusal, not a trap *)
+		linker := NewLinker();
+		Linker.ReadObjectFile("LinkerTestNoSuchModule", "", extension, linker, NIL);
+		ASSERT(linker.error)
+	END Test.

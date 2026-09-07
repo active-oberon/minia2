@@ -266,14 +266,14 @@ BEGIN
 		RETURN;
 	END;
 
+	(*	The extension comes first: a bare module name is also the name of the executable the
+		previous link left here, and reading that as an object file traps in ReadHeader. *)
 	IF path # "" THEN Files.JoinPath (path, moduleName, fileName); ELSE COPY(moduleName,fileName); END;
+	Files.JoinExtension (fileName, extension, fileName);
 	file := Files.Old (fileName);
-	IF file = NIL THEN (* try with extension *)
-		Files.JoinExtension (fileName, extension, fileName);
+	IF file = NIL THEN
+		IF path # "" THEN Files.JoinPath (path, moduleName, fileName); ELSE COPY(moduleName,fileName); END;
 		file := Files.Old (fileName);
-	END;
-	IF file = NIL THEN (* try without extension *)
-
 	END;
 	IF file = NIL THEN linker.Error (fileName, "failed to open file"); RETURN; END;
 	Files.OpenReader (reader, file, 0);
