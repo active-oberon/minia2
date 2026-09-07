@@ -62,6 +62,7 @@ TYPE
 			str : ARRAY 255 OF CHAR;
 			temp : ARRAY 10 OF CHAR;
 		BEGIN
+			str := "";
 			Strings.IntToStr(instr, temp);
 			Strings.Append(str, "Opcode: instr = "); Strings.Append(str, temp);
 			Strings.IntToHexStr(offset, 8, temp);
@@ -139,7 +140,12 @@ TYPE
 					currentOpcode := NewOpcode();
 					BEGIN {EXCLUSIVE}
 						DecodeThis(currentOpcode);
-						IF reader.res = Streams.Ok THEN
+						(*	A decoder that took no bytes cannot be asked again: the stream is where it
+							was, so the next round would read the same byte and the sweep would never
+							end. Nothing consumed is the end of what can be decoded. *)
+						IF currentBufferPos = 0 THEN
+							completed := TRUE
+						ELSIF reader.res = Streams.Ok THEN
 							IF lastOpcode = NIL THEN
 								lastOpcode := currentOpcode;
 								firstOpcode := currentOpcode;
@@ -152,7 +158,6 @@ TYPE
 							str := currentOpcode.ToString();
 							KernelLog.String(str^); KernelLog.Ln;
 							*)
-							INC(currentOpcode.length);
 							(* copy all buffered bytes to the opcode *)
 							CopyBufferToOpcode(currentOpcode);
 							INC(opcodes)
@@ -196,8 +201,16 @@ TYPE
 		BEGIN
 			reader.Char(ch);
 			IF reader.res = Streams.Ok THEN
-				codeBuffer[currentBufferPos] := ch;
-				INC(currentBufferPos);
+				(*	No instruction is longer than this buffer, so a byte that does not fit in it is not
+					part of one -- a run of prefix bytes, say, which is what arbitrary memory looks
+					like. It ends the sweep; it used to be written past the end of the buffer
+					(measured: thirty 66H bytes to either decoder, Trap 5.7). *)
+				IF currentBufferPos < LEN(codeBuffer) THEN
+					codeBuffer[currentBufferPos] := ch;
+					INC(currentBufferPos);
+				ELSE
+					completed := TRUE
+				END
 			END;
 			RETURN ch
 		END ReadChar;
@@ -1895,7 +1908,9 @@ TYPE
 		END Close;
 	END DecoderWindow;
 
-	Extension = ARRAY 10 OF CHAR;
+	(* Exported with GetDecoder and RegisterDecoder, which take it: a caller that picks the decoder at
+		run time has to be able to name the type of what it picks. *)
+	Extension* = ARRAY 10 OF CHAR;
 
 	DecoderType = OBJECT
 		VAR

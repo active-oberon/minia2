@@ -805,6 +805,24 @@ tasks:
           fi
         }
 
+  decoder:
+    desc: Read a corpus of AMD64 and IA-32 instructions back with our own disassemblers and compare with objdump (VERBOSE=1 to list it)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/decoder-check.sh {{.BUILD_DIR}}/{{.HOST}} {{if .VERBOSE}}--verbose{{end}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # AMD64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
+            # tools -- CI -- a silent skip is the check not running at all, which reads the same
+            # as it passing.
+            [ -z "$AMD64_REQUIRE" ] || { echo "[FAIL] the disassembler check needs llvm-mc and binutils, and AMD64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the disassembler check needs llvm-mc and binutils"
+          else
+            exit "$status"
+          fi
+        }
+
   a64-codegen:
     desc: Compile tests/A64Codegen.Mod for UnixA64 and decode what came out (VERBOSE=1 to list it)
     cmds:

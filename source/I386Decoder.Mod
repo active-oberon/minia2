@@ -9,6 +9,9 @@ CONST
 
 	(* prefix *)
 	pCS = 2EX; pDS = 3EX; pES = 26X; pFS = 64X; pGS = 65X; pSS = 36X; pREP = 0F3X;
+	(* F0H and F2H are prefixes like F3H is, and were read as instructions of their own: `lock inc`
+		came out as LOCK and then INC, and `repne scasb` as REPNE and then SCASB. *)
+	pLOCK = 0F0X; pREPNE = 0F2X;
 	AdrSize = 67X; OpSize = 66X; none = -1;
 
 	(* fp sizes *)
@@ -630,9 +633,14 @@ TYPE
 
 		PROCEDURE AddPrefixByte(b : CHAR);
 		BEGIN
-			ASSERT(prefixes < 4);
-			prefix[prefixes] := b;
-			INC(prefixes);
+			(*	Four is every prefix group an instruction can carry, and a longer run of them is
+				arbitrary memory rather than an instruction. The extra ones are dropped instead of
+				asserted: a decoder is handed bytes it did not choose, so this was a trap on garbage
+				(measured: five prefix bytes, Trap 5.8). *)
+			IF prefixes < LEN(prefix) THEN
+				prefix[prefixes] := b;
+				INC(prefixes)
+			END;
 			IF b = AdrSize THEN adrPrefix := TRUE
 			ELSIF b = OpSize THEN opPrefix := TRUE END
 		END AddPrefixByte;
@@ -663,6 +671,8 @@ TYPE
 			FOR i := 0 TO prefixes-1 DO
 				CASE prefix[i] OF
 					| pREP : w.String("REP ");
+					| pREPNE : w.String("REPNE ");
+					| pLOCK : w.String("LOCK ");
 				ELSE
 				END
 			END;
@@ -1428,7 +1438,7 @@ TYPE
 			WHILE inPrefixSequence DO
 				op := ReadChar();
 				IF (op = pCS) OR (op = pDS) OR (op = pES) OR (op = pFS) OR (op = pGS) OR (op = pSS)
-						OR (op = AdrSize) OR (op = OpSize) OR (op = pREP) THEN
+						OR (op = AdrSize) OR (op = OpSize) OR (op = pREP) OR (op = pREPNE) OR (op = pLOCK) THEN
 					opcode.AddPrefixByte(op);
 				ELSE
 					inPrefixSequence := FALSE;
@@ -1529,6 +1539,8 @@ TYPE
 		BEGIN
 			opcode.width:= 1;
 			IF opcode.op = 60H THEN
+				(* Its twin at 61H sets this; without it the printer answers "{argStructure not specified!}". *)
+				opcode.argStructure := ArgNone;
 				IF opcode.opPrefix THEN opcode.instr := opPUSHA ELSE opcode.instr := opPUSHAD END;
 			ELSIF opcode.op = 68H THEN
 				opcode.instr := opPUSH;
@@ -3240,12 +3252,6 @@ TYPE
 						Call(op)
 				  | 0E9H..0EBH:
 						Jmp(op)
-				  | 0F0H:
-						op.argStructure := ArgNone;
-						op.instr := opLOCK
-				  | 0F2H:
-						op.argStructure := ArgNone;
-						op.instr := opREPNE
 				  | 0F4H:
 						op.argStructure := ArgNone;
 						op.instr := opHLT

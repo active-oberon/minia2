@@ -221,7 +221,6 @@ CONST
 	opIRET = 184;
 	opIRETD = 185;
 	opIRETQ = 186;
-	opJA = 187;
 	opJB = 188;
 	opJBE = 189;
 	opJCXZ = 190;
@@ -237,6 +236,7 @@ CONST
 	opJNE = 200;
 	opJNO = 201;
 	opJNP = 202;
+	opJNS = 504;
 	opJO = 203;
 	opJP = 204;
 	opJRCXZ = 205;
@@ -276,44 +276,44 @@ CONST
 	opMINSD = 239;
 	opMINSS = 240;
 	opMOV = 241;
-	opMOVA = 242;
 	opMOVAPD = 243;
 	opMOVAPS = 244;
-	opMOVB = 245;
-	opMOVBE = 246;
+	opCMOVB = 245;
+	opCMOVBE = 246;
 	opMOVD = 247;
 	opMOVDDUP = 248;
 	opMOVDQ2Q = 249;
 	opMOVDQA = 250;
 	opMOVDQU = 251;
-	opMOVE = 252;
-	opMOVG = 253;
-	opMOVGE = 254;
+	opCMOVE = 252;
+	opCMOVG = 253;
+	opCMOVGE = 254;
 	opMOVHLPS = 255;
 	opMOVHPD = 256;
 	opMOVHPS = 257;
-	opMOVL = 258;
-	opMOVLE = 259;
+	opCMOVL = 258;
+	opCMOVLE = 259;
 	opMOVLHPS = 260;
 	opMOVLPD = 261;
 	opMOVLPS = 262;
 	opMOVMSKPD = 263;
 	opMOVMSKPS = 264;
-	opMOVNB = 265;
-	opMOVNBE = 266;
-	opMOVNE = 267;
-	opMOVNO = 268;
-	opMOVNP = 269;
+	opCMOVNB = 265;
+	opCMOVNBE = 266;
+	opCMOVNE = 267;
+	opCMOVNO = 268;
+	opCMOVNP = 269;
+	opCMOVNS = 506;
 	opMOVNTDQ = 270;
 	opMOVNTI = 271;
 	opMOVNTPD = 272;
 	opMOVNTPS = 273;
 	opMOVNTQ = 274;
-	opMOVO = 275;
-	opMOVP = 276;
+	opCMOVO = 275;
+	opCMOVP = 276;
 	opMOVQ = 277;
 	opMOVQ2DQ = 278;
-	opMOVS = 279;
+	opCMOVS = 279;
 	opMOVSB = 280;
 	opMOVSD = 281;
 	opMOVSHDUP = 282;
@@ -466,7 +466,6 @@ CONST
 	opSCASD = 429;
 	opSCASQ = 430;
 	opSCASW = 431;
-	opSETA = 432;
 	opSETB = 433;
 	opSETBE = 434;
 	opSETE = 435;
@@ -479,6 +478,7 @@ CONST
 	opSETNE = 442;
 	opSETNO = 443;
 	opSETNP = 444;
+	opSETNS = 505;
 	opSETO = 445;
 	opSETP = 446;
 	opSETS = 447;
@@ -1044,7 +1044,6 @@ TYPE
 			| opIRET: w.String ("IRET");
 			| opIRETD: w.String ("IRETD");
 			| opIRETQ: w.String ("IRETQ");
-			| opJA: w.String ("JA");
 			| opJB: w.String ("JB");
 			| opJBE: w.String ("JBE");
 			| opJCXZ: w.String ("JCXZ");
@@ -1060,6 +1059,7 @@ TYPE
 			| opJNE: w.String ("JNE");
 			| opJNO: w.String ("JNO");
 			| opJNP: w.String ("JNP");
+			| opJNS: w.String ("JNS");
 			| opJO: w.String ("JO");
 			| opJP: w.String ("JP");
 			| opJRCXZ: w.String ("JRCXZ");
@@ -1099,44 +1099,44 @@ TYPE
 			| opMINSD: w.String ("MINSD");
 			| opMINSS: w.String ("MINSS");
 			| opMOV: w.String ("MOV");
-			| opMOVA: w.String ("MOVA");
 			| opMOVAPD: w.String ("MOVAPD");
 			| opMOVAPS: w.String ("MOVAPS");
-			| opMOVB: w.String ("MOVB");
-			| opMOVBE: w.String ("MOVBE");
+			| opCMOVB: w.String ("CMOVB");
+			| opCMOVBE: w.String ("CMOVBE");
 			| opMOVD: w.String ("MOVD");
 			| opMOVDDUP: w.String ("MOVDDUP");
 			| opMOVDQ2Q: w.String ("MOVDQ2Q");
 			| opMOVDQA: w.String ("MOVDQA");
 			| opMOVDQU: w.String ("MOVDQU");
-			| opMOVE: w.String ("MOVE");
-			| opMOVG: w.String ("MOVG");
-			| opMOVGE: w.String ("MOVGE");
+			| opCMOVE: w.String ("CMOVE");
+			| opCMOVG: w.String ("CMOVG");
+			| opCMOVGE: w.String ("CMOVGE");
 			| opMOVHLPS: w.String ("MOVHLPS");
 			| opMOVHPD: w.String ("MOVHPD");
 			| opMOVHPS: w.String ("MOVHPS");
-			| opMOVL: w.String ("MOVL");
-			| opMOVLE: w.String ("MOVLE");
+			| opCMOVL: w.String ("CMOVL");
+			| opCMOVLE: w.String ("CMOVLE");
 			| opMOVLHPS: w.String ("MOVLHPS");
 			| opMOVLPD: w.String ("MOVLPD");
 			| opMOVLPS: w.String ("MOVLPS");
 			| opMOVMSKPD: w.String ("MOVMSKPD");
 			| opMOVMSKPS: w.String ("MOVMSKPS");
-			| opMOVNB: w.String ("MOVNB");
-			| opMOVNBE: w.String ("MOVNBE");
-			| opMOVNE: w.String ("MOVNE");
-			| opMOVNO: w.String ("MOVNO");
-			| opMOVNP: w.String ("MOVNP");
+			| opCMOVNB: w.String ("CMOVNB");
+			| opCMOVNBE: w.String ("CMOVNBE");
+			| opCMOVNE: w.String ("CMOVNE");
+			| opCMOVNO: w.String ("CMOVNO");
+			| opCMOVNP: w.String ("CMOVNP");
+			| opCMOVNS: w.String ("CMOVNS");
 			| opMOVNTDQ: w.String ("MOVNTDQ");
 			| opMOVNTI: w.String ("MOVNTI");
 			| opMOVNTPD: w.String ("MOVNTPD");
 			| opMOVNTPS: w.String ("MOVNTPS");
 			| opMOVNTQ: w.String ("MOVNTQ");
-			| opMOVO: w.String ("MOVO");
-			| opMOVP: w.String ("MOVP");
+			| opCMOVO: w.String ("CMOVO");
+			| opCMOVP: w.String ("CMOVP");
 			| opMOVQ: w.String ("MOVQ");
 			| opMOVQ2DQ: w.String ("MOVQ2DQ");
-			| opMOVS: w.String ("MOVS");
+			| opCMOVS: w.String ("CMOVS");
 			| opMOVSB: w.String ("MOVSB");
 			| opMOVSD: w.String ("MOVSD");
 			| opMOVSHDUP: w.String ("MOVSHDUP");
@@ -1289,7 +1289,6 @@ TYPE
 			| opSCASD: w.String ("SCASD");
 			| opSCASQ: w.String ("SCASQ");
 			| opSCASW: w.String ("SCASW");
-			| opSETA: w.String ("SETA");
 			| opSETB: w.String ("SETB");
 			| opSETBE: w.String ("SETBE");
 			| opSETE: w.String ("SETE");
@@ -1302,6 +1301,7 @@ TYPE
 			| opSETNE: w.String ("SETNE");
 			| opSETNO: w.String ("SETNO");
 			| opSETNP: w.String ("SETNP");
+			| opSETNS: w.String ("SETNS");
 			| opSETO: w.String ("SETO");
 			| opSETP: w.String ("SETP");
 			| opSETS: w.String ("SETS");
@@ -1424,14 +1424,25 @@ TYPE
 			byte, code, arg, mod, segment, reg, rm, scale, index, base, disp: SIGNED32;
 			modRM : BOOLEAN;
 
+			(*	Signed, like ReadOffset8 beside it: an immediate byte is sign-extended by the processor
+				wherever it stands for a whole operand, and coming back unsigned it went through
+				PrintImm's SIGNED8 -- so a wide immediate that happened to fall in 80H..0FFH was
+				printed negative (128 as -128, 255 as -1) while the byte forms were right by accident. *)
 			PROCEDURE ReadImm8 (): SIGNED32;
+			VAR
+				value: SIGNED32;
 			BEGIN
-				RETURN ORD (ReadChar ());
+				value := ORD (ReadChar ());
+				IF value >= 080H THEN DEC (value, 100H) END;
+				RETURN value;
 			END ReadImm8;
 
+			(*	Unsigned: a 16-bit immediate stands for a whole 16-bit operand and is not sign-extended
+				by the processor, but Decoder.ReadInt hands it back as a SIGNED16 -- so `and ax, 8000H`
+				was printed as `FFFF8000H`, the same value in twice the width the operand has. *)
 			PROCEDURE ReadImm16 (): SIGNED32;
 			BEGIN
-				RETURN ReadInt ();
+				RETURN ReadInt () MOD 10000H;
 			END ReadImm16;
 
 			PROCEDURE ReadImm32 (): SIGNED32;
@@ -1481,10 +1492,14 @@ TYPE
 				RETURN value;
 			END ReadHInt;
 
+			(*	An opcode this decoder does not know is one instruction printed as Invalid, and not the
+				end of the listing. It used to call Bug, which stops the sweep, so a single byte from
+				anything newer than SSE3 -- POPCNT, CRC32, anything with a 0F38H or 0F3AH escape, any
+				VEX prefix -- ended the disassembly there, and what followed was not shown and not
+				said to be missing. *)
 			PROCEDURE Invalid;
 			BEGIN
 				Instr (opInvalid);
-				Bug (code, 0);
 			END Invalid;
 
 			PROCEDURE Reserved;
@@ -1721,6 +1736,9 @@ TYPE
 			PROCEDURE Ed; BEGIN AddModRM (regEAX) END Ed;
 			PROCEDURE Edq; BEGIN IF GetOperandSize () = 64 THEN AddModRM (regRAX) ELSE AddModRM (regEAX) END END Edq;
 			PROCEDURE Ev; BEGIN AddModRM (regrAX) END Ev;
+			(*	The near call, the near jump and the push take a 64-bit operand in long mode whether or
+				not a REX.W is there, so their operand is not Ev: `call rax` was printed as `call EAX`. *)
+			PROCEDURE Eq; BEGIN AddModRM (regRAX) END Eq;
 			PROCEDURE Ew; BEGIN AddModRM (regAX) END Ew;
 			PROCEDURE FS; BEGIN AddReg (regFS) END FS;
 			PROCEDURE Fv; END Fv;
@@ -1740,7 +1758,7 @@ TYPE
 				END;
 			END Iv;
 
-			PROCEDURE Iw; BEGIN AddImm (ReadInt ()) END Iw;
+			PROCEDURE Iw; BEGIN AddImm (ReadImm16 ()) END Iw;
 			PROCEDURE Iz; BEGIN IF GetOperandSize () = 16 THEN AddImm (ReadImm16 ()) ELSE AddImm (ReadImm32 ()) END END Iz;
 			PROCEDURE Jb; BEGIN AddImm (ReadOffset8 ()) END Jb;
 			PROCEDURE Jz; BEGIN IF GetOperandSize () = 16 THEN AddImm (ReadOffset16 ()) ELSE AddImm (ReadOffset32 ()) END END Jz;
@@ -1877,7 +1895,7 @@ TYPE
 				| 4: Instr (opSHL);
 				| 5: Instr (opSHR);
 				| 6: Instr (opSHL);
-				| 7: Instr (opSHR);
+				| 7: Instr (opSAR);
 				END;
 
 				CASE code OF
@@ -1934,11 +1952,11 @@ TYPE
 				CASE reg OF
 				| 0: Instr (opINC); Ev;
 				| 1: Instr (opDEC); Ev;
-				| 2: Instr (opCALL); Ev;
+				| 2: Instr (opCALL); Eq;
 				| 3: Instr (opCALL); Mp;
-				| 4: Instr (opJMP); Ev;
+				| 4: Instr (opJMP); Eq;
 				| 5: Instr (opJMP); Mp;
-				| 6: Instr (opPUSH); Ev;
+				| 6: Instr (opPUSH); Eq;
 				ELSE
 					Invalid;
 				END;
@@ -2451,8 +2469,8 @@ TYPE
 			| 075H: Instr (opJNE); Jb;
 			| 076H: Instr (opJBE); Jb;
 			| 077H: Instr (opJNBE); Jb;
-			| 078H: Instr (opJA); Jb;
-			| 079H: Instr (opJS); Jb;
+			| 078H: Instr (opJS); Jb;
+			| 079H: Instr (opJNS); Jb;
 			| 07AH: Instr (opJP); Jb;
 			| 07BH: Instr (opJNP); Jb;
 			| 07CH: Instr (opJL); Jb;
@@ -2472,7 +2490,7 @@ TYPE
 			| 08DH: Instr (opLEA); Gv; M;
 			| 08EH: Instr (opMOV); Sw; Ev;
 			| 08FH: Group1a;
-			| 090H: IF Prefix (prF3) THEN Instr (opPAUSE) ELSE Instr (opNOP) END;
+			| 090H: IF Prefix (prF3) THEN Instr (opPAUSE); opc.hidePrefixes := TRUE ELSE Instr (opNOP) END;
 			| 091H..097H: Instr (opXCHG); AddReg (GetReg (regrAX, (code - 090H) MOD 8, Prefix (prREXB))); rAX;
 			| 098H: InstrOp (opCBW, opCWDE, opCDQE);
 			| 099H: InstrOp (opCWD, opCDQ, opCQO);
@@ -2516,7 +2534,7 @@ TYPE
 			| 0E0H: Instr (opLOOPNE); Jb;
 			| 0E1H: Instr (opLOOPE); Jb;
 			| 0E2H: Instr (opLOOP); Jb;
-			| 0E3H: InstrOp (opJCXZ, opJECXZ, opJRCXZ); Jb;
+			| 0E3H: IF Prefix (prAddress) THEN Instr (opJECXZ) ELSE Instr (opJRCXZ) END; Jb;
 			| 0E4H: Instr (opIN); AL; Ib;
 			| 0E5H: Instr (opIN); eAX; Ib;
 			| 0E6H: Instr (opOUT); Ib; AL;
@@ -2651,22 +2669,22 @@ TYPE
 			| 00F31H: Instr (opRDTSC);
 			| 00F32H: Instr (opRDMSR);
 			| 00F33H: Instr (opRDPMC);
-			| 00F40H: Instr (opMOVO); Gv; Ev;
-			| 00F41H: Instr (opMOVNO); Gv; Ev;
-			| 00F42H: Instr (opMOVB); Gv; Ev;
-			| 00F43H: Instr (opMOVNB); Gv; Ev;
-			| 00F44H: Instr (opMOVE); Gv; Ev;
-			| 00F45H: Instr (opMOVNE); Gv; Ev;
-			| 00F46H: Instr (opMOVBE); Gv; Ev;
-			| 00F47H: Instr (opMOVNBE); Gv; Ev;
-			| 00F48H: Instr (opMOVA); Gv; Ev;
-			| 00F49H: Instr (opMOVS); Gv; Ev;
-			| 00F4AH: Instr (opMOVP); Gv; Ev;
-			| 00F4BH: Instr (opMOVNP); Gv; Ev;
-			| 00F4CH: Instr (opMOVL); Gv; Ev;
-			| 00F4DH: Instr (opMOVGE); Gv; Ev;
-			| 00F4EH: Instr (opMOVLE); Gv; Ev;
-			| 00F4FH: Instr (opMOVG); Gv; Ev;
+			| 00F40H: Instr (opCMOVO); Gv; Ev;
+			| 00F41H: Instr (opCMOVNO); Gv; Ev;
+			| 00F42H: Instr (opCMOVB); Gv; Ev;
+			| 00F43H: Instr (opCMOVNB); Gv; Ev;
+			| 00F44H: Instr (opCMOVE); Gv; Ev;
+			| 00F45H: Instr (opCMOVNE); Gv; Ev;
+			| 00F46H: Instr (opCMOVBE); Gv; Ev;
+			| 00F47H: Instr (opCMOVNBE); Gv; Ev;
+			| 00F48H: Instr (opCMOVS); Gv; Ev;
+			| 00F49H: Instr (opCMOVNS); Gv; Ev;
+			| 00F4AH: Instr (opCMOVP); Gv; Ev;
+			| 00F4BH: Instr (opCMOVNP); Gv; Ev;
+			| 00F4CH: Instr (opCMOVL); Gv; Ev;
+			| 00F4DH: Instr (opCMOVGE); Gv; Ev;
+			| 00F4EH: Instr (opCMOVLE); Gv; Ev;
+			| 00F4FH: Instr (opCMOVG); Gv; Ev;
 			| 00F50H:
 				IF Prefix (prF3) THEN Invalid;
 				ELSIF Prefix (pr66) THEN Instr (opMOVMSKPD); Gd; VRpd;
@@ -2689,24 +2707,24 @@ TYPE
 				ELSE Instr (opRCPPS); Vps; Wps; END;
 			| 00F54H:
 				IF Prefix (prF3) THEN Invalid;
-				ELSIF Prefix (pr66) THEN Instr (opANDPS); Vps; Wps;
+				ELSIF Prefix (pr66) THEN Instr (opANDPD); Vpd; Wpd;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opANDPD); Vpd; Wpd; END;
+				ELSE Instr (opANDPS); Vps; Wps; END;
 			| 00F55H:
 				IF Prefix (prF3) THEN Invalid;
-				ELSIF Prefix (pr66) THEN Instr (opANDNPS); Vps; Wps;
+				ELSIF Prefix (pr66) THEN Instr (opANDNPD); Vpd; Wpd;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opANDNPD); Vpd; Wpd; END;
+				ELSE Instr (opANDNPS); Vps; Wps; END;
 			| 00F56H:
 				IF Prefix (prF3) THEN Invalid;
-				ELSIF Prefix (pr66) THEN Instr (opORPS); Vps; Wps;
+				ELSIF Prefix (pr66) THEN Instr (opORPD); Vpd; Wpd;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opORPD); Vpd; Wpd; END;
+				ELSE Instr (opORPS); Vps; Wps; END;
 			| 00F57H:
 				IF Prefix (prF3) THEN Invalid;
-				ELSIF Prefix (pr66) THEN Instr (opXORPS); Vps; Wps;
+				ELSIF Prefix (pr66) THEN Instr (opXORPD); Vpd; Wpd;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opXORPD); Vpd; Wpd; END;
+				ELSE Instr (opXORPS); Vps; Wps; END;
 			| 00F58H:
 				IF Prefix (prF3) THEN Instr (opADDSS); Vss; Wss;
 				ELSIF Prefix (pr66) THEN Instr (opADDPD); Vpd; Wpd;
@@ -2815,9 +2833,9 @@ TYPE
 				ELSE Invalid; END;
 			| 00F6EH:
 				IF Prefix (prF3) THEN Invalid;
-				ELSIF Prefix (pr66) THEN Instr (opMOVD); Vdq; Edq;
+				ELSIF Prefix (pr66) THEN InstrOp (opMOVD, opMOVD, opMOVQ); Vdq; Edq;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opMOVD); Pq; Edq; END;
+				ELSE InstrOp (opMOVD, opMOVD, opMOVQ); Pq; Edq; END;
 			| 00F6FH:
 				IF Prefix (prF3) THEN Instr (opMOVDQU); Vdq; Wdq;
 				ELSIF Prefix (pr66) THEN Instr (opMOVDQA); Vdq; Edq;
@@ -2875,9 +2893,9 @@ TYPE
 				ELSE Invalid; END;
 			| 00F7EH:
 				IF Prefix (prF3) THEN Instr (opMOVQ); Vq; Wq;
-				ELSIF Prefix (pr66) THEN Instr (opMOVD); Edq; Vdq;
+				ELSIF Prefix (pr66) THEN InstrOp (opMOVD, opMOVD, opMOVQ); Edq; Vdq;
 				ELSIF Prefix (prF2) THEN Invalid;
-				ELSE Instr (opMOVD); Edq; Pdq; END;
+				ELSE InstrOp (opMOVD, opMOVD, opMOVQ); Edq; Pdq; END;
 			| 00F7FH:
 				IF Prefix (prF3) THEN Instr (opMOVDQU); Wdq; Vdq;
 				ELSIF Prefix (pr66) THEN Instr (opMOVDQA); Wdq; Vdq;
@@ -2891,8 +2909,8 @@ TYPE
 			| 00F85H: Instr (opJNE); Jz;
 			| 00F86H: Instr (opJBE); Jz;
 			| 00F87H: Instr (opJNBE); Jz;
-			| 00F88H: Instr (opJA); Jz;
-			| 00F89H: Instr (opJS); Jz;
+			| 00F88H: Instr (opJS); Jz;
+			| 00F89H: Instr (opJNS); Jz;
 			| 00F8AH: Instr (opJP); Jz;
 			| 00F8BH: Instr (opJNP); Jz;
 			| 00F8CH: Instr (opJL); Jz;
@@ -2907,8 +2925,8 @@ TYPE
 			| 00F95H: Instr (opSETNE); Eb;
 			| 00F96H: Instr (opSETBE); Eb;
 			| 00F97H: Instr (opSETNBE); Eb;
-			| 00F98H: Instr (opSETA); Eb;
-			| 00F99H: Instr (opSETS); Eb;
+			| 00F98H: Instr (opSETS); Eb;
+			| 00F99H: Instr (opSETNS); Eb;
 			| 00F9AH: Instr (opSETP); Eb;
 			| 00F9BH: Instr (opSETNP); Eb;
 			| 00F9CH: Instr (opSETL); Eb;
@@ -2972,7 +2990,7 @@ TYPE
 				ELSIF Prefix (prF2) THEN Invalid;
 				ELSE Instr (opSHUFPS); Vps; Wps; Ib; END;
 			| 00FC7H: Group9;
-			| 00FC8H..00FCFH: Instr (opBSWAP); AddReg (GetReg (regEAX, (code - 00FC8H) MOD 8, prREXB IN opc.prefixes)); Iv;
+			| 00FC8H..00FCFH: Instr (opBSWAP); AddReg (GetReg (regrAX, (code - 00FC8H) MOD 8, Prefix (prREXB)));
 			| 00FD0H:
 				IF Prefix (prF3) THEN Invalid;
 				ELSIF Prefix (pr66) THEN Instr (opADDSUBPD); Vpd; Wpd;
@@ -3215,16 +3233,19 @@ BEGIN
 	END
 END PrintReg;
 
+(*	The immediate, as hexadecimal, in as few digits as its own width needs. It used to be printed as
+	two halves read out of the value by SYSTEM.GET, and the low half went through Streams.Writer.Hex
+	as a SIGNED32 -- which widens with its sign, so every immediate whose bit 31 was set came out
+	with sixteen digits of F in front of it (0FFFFFFFFH printed as FFFFFFFFFFFFFFFFH) and a wide one
+	came out with them in the middle. Streams says so above its own Hex: do not use it on a value
+	whose sign matters. A negative immediate is printed in the two's complement of the narrowest
+	width that holds it, which is what a disassembly is read against. *)
 PROCEDURE PrintImm (n: SIGNED64; w : Streams.Writer);
-VAR high, low: SIGNED32;
 BEGIN
-	IF (n >= -80H) & (n < 100H) THEN
-		w.Int (SIGNED8(n), 0);
-	ELSE
-		SYSTEM.GET (ADDRESSOF (n), low);
-		SYSTEM.GET (ADDRESSOF (n) + 4, high);
-		IF high # 0 THEN w.Hex (high, 0) END;
-		w.Hex (low, 0); w.Char ('H');
+	IF (n >= -80H) & (n < 100H) THEN w.Int (n, 0);
+	ELSIF n >= 0 THEN w.Hex (n, 0); w.Char ('H');
+	ELSIF n >= MIN(SIGNED32) THEN w.Hex (n MOD 100000000H, -8); w.Char ('H');
+	ELSE w.Hex (n, -16); w.Char ('H');
 	END;
 END PrintImm;
 

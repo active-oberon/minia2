@@ -47,6 +47,16 @@ jobs:
         env:
           AMD64_REQUIRE: "1"
         run: task amd64-codegen
+      - name: The disassemblers, against objdump
+        # The other half of the same question: the assembler writes the bytes and the disassembler
+        # reads them back, and until this ran nothing had ever read what ours produce. The first run
+        # found a BSWAP that swallowed the eight bytes after it, SAR decoded as SHR, the conditional
+        # moves printed as plain MOVs, three tables of condition codes with S standing where NS
+        # belongs -- so JNS, SETNS and CMOVNS could not be printed at all -- and, on the IA-32 side,
+        # LOCK and REPNE read as instructions of their own.
+        env:
+          AMD64_REQUIRE: "1"
+        run: task decoder
       - name: C transpiler backend
         # The C the backend writes silently regressed for years because nobody read it, and until
         # 04.09 nobody could compile it either -- there was no oberon.h. This transpiles a module of

@@ -344,16 +344,36 @@ BEGIN
 	END
 END Placement;
 
-(**	Bring the window manager up over a display that is nothing but memory, open the window in it, and
-	print what landed in the frame buffer. No screen, no window, no device. *)
-PROCEDURE Check*;
-VAR memory: Memory;  res: INTEGER;  tries, inside, insideOf, outside, outsideOf: SIGNED32;
+(*	The display, registered and nothing more. Its own command below is for what needs a display to
+	exist rather than to be looked at: several modules of the component framework wait during their
+	own initialisation for a display and a window manager, and block for ever on a machine that has
+	neither -- tests/amd64-decoder-check.sh loads the disassembler over this and WindowManager.Install. *)
+PROCEDURE Register(): Memory;
+VAR memory: Memory;  res: INTEGER;
 BEGIN
 	NEW(memory, CheckWidth, CheckHeight);
 	memory.SetName("WMDemoMemory");
 	memory.desc := "A display that is nothing but memory, for checking the window manager";
 	Displays.registry.Add(memory, res);
 	ASSERT(res = Plugins.Ok);
+	RETURN memory
+END Register;
+
+(** Register the memory display, so that what needs one can be brought up over it. *)
+PROCEDURE Screen*;
+VAR memory: Memory;
+BEGIN
+	memory := Register();
+	Trace.String("WMDemo: a display of nothing but memory, ");  Trace.Int(memory.width, 0);
+	Trace.String(" x ");  Trace.Int(memory.height, 0);  Trace.StringLn(", registered")
+END Screen;
+
+(**	Bring the window manager up over a display that is nothing but memory, open the window in it, and
+	print what landed in the frame buffer. No screen, no window, no device. *)
+PROCEDURE Check*;
+VAR memory: Memory;  tries, inside, insideOf, outside, outsideOf: SIGNED32;
+BEGIN
+	memory := Register();
 
 	(*	No pointer: the sprite is drawn wherever the pointer happens to be, and on a machine with no
 		mouse that is a pixel nobody chose. Everything else is the default the phone gets. *)
