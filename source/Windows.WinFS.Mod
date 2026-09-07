@@ -504,7 +504,7 @@ TYPE
 		END SetFilePointer;
 
 		PROCEDURE WriteBuffer;
-		VAR pos: Files.Position; n: SIGNED32;  res: Kernel32.BOOL;
+		VAR pos: Files.Position; n, done: SIGNED32;  res: Kernel32.BOOL;
 		BEGIN
 			ASSERT( buffer.dirty );  ASSERT( buffer.len > 0 );  pos := buffer.apos * BufferSize;
 			IF hfile = Kernel32.InvalidHandleValue THEN
@@ -513,6 +513,7 @@ TYPE
 				ASSERT( hfile # Kernel32.InvalidHandleValue );  fpos := 0
 			END;
 			IF fpos # pos THEN fpos := SetFilePointer(pos);  ASSERT( fpos = pos ) END;
+			n := 0;
 			res := Kernel32.WriteFile( hfile, buffer.data, buffer.len, n, NIL );
 			IF (res = 0) & ~(ReadOnly IN flags) THEN
 				res := Kernel32.CloseHandle( hfile );
@@ -520,9 +521,23 @@ TYPE
 				hfile :=
 					Kernel32.CreateFile( fname, {Kernel32.GenericRead, Kernel32.GenericWrite}, {Kernel32.FileShareRead, Kernel32.FileShareWrite}, NIL , Kernel32.OpenExisting, {Kernel32.FileAttributeNormal}, 0 );
 				ASSERT( hfile # Kernel32.InvalidHandleValue );  fpos := SetFilePointer(pos);  ASSERT( fpos = pos );
+				n := 0;
 				res := Kernel32.WriteFile( hfile, buffer.data, buffer.len, n, NIL )
 			END;
-			ASSERT( (res # 0) & (n = buffer.len) );  INC( fpos, n );  buffer.dirty := FALSE
+			(*	A short write is a write, not a failure: `WriteFile` may hand back fewer bytes than
+				it was given, and the buffer used to be marked clean over whatever arrived -- the
+				tail was simply lost. It is written to completion now, the same way `UnixWrite` is
+				on the other host, and a call that moves nothing ends it rather than spinning. *)
+			done := 0;
+			IF res # 0 THEN
+				done := n;
+				WHILE (res # 0) & (done < buffer.len) DO
+					n := 0;
+					res := Kernel32.WriteFileBuffer( hfile, ADDRESSOF( buffer.data[done] ), buffer.len - done, n, NIL );
+					IF n <= 0 THEN  res := 0  ELSE  INC( done, n )  END
+				END
+			END;
+			ASSERT( (res # 0) & (done = buffer.len) );  INC( fpos, done );  buffer.dirty := FALSE
 		END WriteBuffer;
 
 		PROCEDURE ReadBuffer( apos: Files.Position );
@@ -611,9 +626,10 @@ TYPE
 		VAR ft, lft: Kernel32.FileTime;  st: Kernel32.SystemTime;  res: Kernel32.BOOL;
 		BEGIN {EXCLUSIVE}
 			res := Kernel32.GetFileTime( hfile, NIL , NIL , ft );
-			(*
-			ASSERT ( res # 0 );   (* <- only if file is not temporary ! *)
-			*)
+			(*	The ASSERT under this was commented out because a temporary file has no time to
+				give -- and then `ft` was read anyway, a local record nothing had written. Nothing
+				is what is answered now. *)
+			IF res = 0 THEN  t := 0;  d := 0;  RETURN  END;
 			res := Kernel32.FileTimeToLocalFileTime( ft, lft );  res := Kernel32.FileTimeToSystemTime( lft, st );  d := LONG( st.wYear - 1900 ) * 200H + LONG( st.wMonth ) * 20H + LONG( st.wDay );
 			t := LONG( st.wHour ) * 1000H + LONG( st.wMinute ) * 40H + LONG( st.wSecond )
 		END GetDate;
@@ -621,7 +637,14 @@ TYPE
 		PROCEDURE SetDate*( t, d: SIGNED32 );
 		VAR ft, lft: Kernel32.FileTime;  st: Kernel32.SystemTime;  res: Kernel32.BOOL; err: SIGNED32;
 		BEGIN {EXCLUSIVE}
-			st.wDay := SHORT( d MOD 20H );  d := ASH( d, -5 );  st.wMonth := SHORT( d MOD 10H );  d := ASH( d, -4 );  st.wYear := SHORT( d MOD 80H ) + 1900;  st.wMilliseconds := 0;
+			(*	The year is what is left after the day and the month are shifted out, and it is
+				not seven bits wide: `MOD 80H` here turned every year from 2028 on into 1900 plus
+				its remainder, so a file stamped 2030 came back as 1902 -- measured 07.09.2026 by
+				`Runtime.Test`, "a file remembers the date it was given", which is the same case
+				that found the eight-byte `utimbuf` in the Unix twin. `wYear` is a 16-bit field
+				and takes the whole of it; a value it cannot take is refused by
+				`SystemTimeToFileTime` and caught by the ASSERT below. *)
+			st.wDay := SHORT( d MOD 20H );  d := ASH( d, -5 );  st.wMonth := SHORT( d MOD 10H );  d := ASH( d, -4 );  st.wYear := SHORT( d ) + 1900;  st.wMilliseconds := 0;
 			st.wSecond := SHORT( t MOD 40H );  t := ASH( t, -6 );  st.wMinute := SHORT( t MOD 40H );  t := ASH( t, -6 );  st.wHour := SHORT( t MOD 20H );  res := Kernel32.SystemTimeToFileTime( st, lft );
 			res := Kernel32.LocalFileTimeToFileTime( lft, ft );  res := Kernel32.SetFileTime( hfile, NIL , NIL , ft );
 			IF res = 0 THEN err := Kernel32.GetLastError(); DebugFile(SELF) END;
@@ -794,10 +817,11 @@ VAR
 	END MoveFile;
 
 	PROCEDURE UpperCase( VAR src, dst: ARRAY OF CHAR );
-	VAR i: SIGNED32;  ch: CHAR;
+	VAR i: SIZE;  ch: CHAR;
 	BEGIN
 		i := 0;  ch := src[0];
-		WHILE ch # 0X DO
+		(* as far as the source goes, but no further than the answer holds *)
+		WHILE (ch # 0X) & (i < LEN( dst ) - 1) DO
 			IF (ch >= "a") & (ch <= "z") THEN ch := CAP( ch ) END;
 			dst[i] := ch;  INC( i );  ch := src[i]
 		END;
@@ -813,9 +837,9 @@ VAR
 	END TempName;
 
 	PROCEDURE FullPathName( name: ARRAY OF CHAR;  VAR fname: ARRAY OF CHAR ): BOOLEAN;
-	VAR i, fp: SIGNED32;
+	VAR i: SIGNED32;
 	BEGIN
-		i := Kernel32.GetFullPathName( name, Kernel32.MaxPath, fname, fp );
+		i := Kernel32.GetFullPathName( name, Kernel32.MaxPath, fname, NIL );
 		FixDriveLetter (fname); RETURN i > 0
 	END FullPathName;
 
@@ -860,15 +884,26 @@ VAR
 		 END;
 	END NewFS;
 
+	(*	Two things this had wrong, and every name that carries a drive prefix goes through it --
+		`AliasFileSystem.Prefix` builds "C" + ":" + the name here, and every logical drive is
+		mounted as one of those. `j`, the position written to, was never set: this compiler does
+		not zero a local, so where the three pieces landed was whatever the frame held, and the
+		frame being zero is the only reason it worked. And each of the three loops stopped at the
+		terminator of its own piece and not at the end of the answer, so three names that fit
+		one at a time could still be written past its end. *)
 	PROCEDURE Join( a1, a2, a3: ARRAY OF CHAR;  VAR res: ARRAY OF CHAR );
-	VAR i, j: SIGNED32;
+	VAR j, max: SIZE;
+
+		PROCEDURE Append( CONST this: ARRAY OF CHAR );
+		VAR i: SIZE;
+		BEGIN
+			i := 0;
+			WHILE (j < max) & (this[i] # 0X) DO res[j] := this[i];  INC( i );  INC( j ) END
+		END Append;
+
 	BEGIN
-		i := 0;
-		WHILE (a1[i] # 0X) DO res[j] := a1[i];  INC( i );  INC( j ) END;
-		i := 0;
-		WHILE (a2[i] # 0X) DO res[j] := a2[i];  INC( i );  INC( j ) END;
-		i := 0;
-		WHILE (a3[i] # 0X) DO res[j] := a3[i];  INC( i );  INC( j ) END;
+		j := 0;  max := LEN( res ) - 1;
+		Append( a1 );  Append( a2 );  Append( a3 );
 		res[j] := 0X
 	END Join;
 
@@ -967,11 +1002,66 @@ VAR
 		winFS.Finalize;
 	END Finalization;
 
+	(*	Windows' own `SearchPath` will not combine a name that carries a directory of its own with
+		the directories it is given: `x.Mod` is looked for in every one of them, `sub/x.Mod` and
+		`./x.Mod` only where the process stands. The Unix twin has no such rule -- `UnixFiles.Old0`
+		joins each search path entry with whatever name it was given -- so a relative name with a
+		separator in it resolved on one host and not on the other, and a recipe written on Linux
+		("Files.AddSearchPath <dir>" and then "./M.Mod") answered "failed to open" here. The walk
+		below is that join, done by hand and only after Windows has said no. *)
 	PROCEDURE FindFile*( name: ARRAY OF CHAR;  VAR fullname: ARRAY OF CHAR ): BOOLEAN;
 	VAR ret: SIGNED32;  fileName: Kernel32.LPSTR;
+
+		(* Is it a name Windows resolves on its own -- absolute, or on a named drive? *)
+		PROCEDURE Rooted( CONST n: ARRAY OF CHAR ): BOOLEAN;
+		BEGIN
+			RETURN (n[0] = PathDelimiter) OR (n[0] = "/") OR ((n[0] # 0X) & (n[1] = ":"))
+		END Rooted;
+
+		PROCEDURE HasDirectory( CONST n: ARRAY OF CHAR ): BOOLEAN;
+		VAR i: SIZE;
+		BEGIN
+			i := 0;
+			WHILE n[i] # 0X DO
+				IF (n[i] = PathDelimiter) OR (n[i] = "/") THEN  RETURN TRUE  END;
+				INC( i )
+			END;
+			RETURN FALSE
+		END HasDirectory;
+
+		(* Every ";"-separated entry of the search path, joined with the name and asked about. *)
+		PROCEDURE AlongSearchPath( ): BOOLEAN;
+		VAR dir, candidate: FileName;  separator: ARRAY 2 OF CHAR;  i, k: SIZE;  attributes: INTEGERSET;
+		BEGIN
+			separator[0] := PathDelimiter;  separator[1] := 0X;
+			i := 0;
+			WHILE searchPath[i] # 0X DO
+				k := 0;
+				WHILE (searchPath[i] # 0X) & (searchPath[i] # ";") DO
+					IF k < LEN( dir ) - 1 THEN  dir[k] := searchPath[i];  INC( k )  END;
+					INC( i )
+				END;
+				dir[k] := 0X;
+				IF searchPath[i] = ";" THEN  INC( i )  END;
+				IF dir # "" THEN
+					IF (k > 0) & (dir[k - 1] # PathDelimiter) THEN  Join( dir, separator, name, candidate )
+					ELSE  Join( dir, "", name, candidate )
+					END;
+					attributes := Kernel32.GetFileAttributes( candidate );
+					IF (attributes # {0..31}) & ~(Kernel32.FileAttributeDirectory IN attributes) THEN
+						RETURN FullPathName( candidate, fullname )
+					END
+				END
+			END;
+			RETURN FALSE
+		END AlongSearchPath;
+
 	BEGIN
 		ret := Kernel32.SearchPath( workPath, name, NIL , LEN( fullname )(Kernel32.DWORD), fullname, fileName );
 		IF (ret <= 0) THEN ret := Kernel32.SearchPath( searchPath, name, NIL , LEN( fullname )(Kernel32.DWORD), fullname, fileName ) END;
+		IF (ret <= 0) & ~Rooted( name ) & HasDirectory( name ) THEN
+			IF AlongSearchPath() THEN  RETURN TRUE  END
+		END;
 		FixDriveLetter (fullname);
 		RETURN ret > 0;
 	END FindFile;
@@ -1013,8 +1103,13 @@ VAR
 				ConvertChar( dir, Files.PathDelimiter, PathDelimiter );
 				SetSysPath(dir);
 				IF Kernel32.SetCurrentDirectory( dir ) # Kernel32.False THEN
-					IGNORE Kernel32.GetCurrentDirectory( LEN( dir ), dir );  searchPath[i] := ";";  INC( i );  k := 0;
-					WHILE dir[k] # 0X DO searchPath[i] := dir[k];  INC( i );  INC( k ) END
+					IGNORE Kernel32.GetCurrentDirectory( LEN( dir ), dir );
+					(*	`Paths.Search` is a configuration line, so its length is not ours to
+						assume: bounded here for the reason AddSearchPath is bounded. *)
+					IF i < LEN( searchPath ) - 2 THEN
+						searchPath[i] := ";";  INC( i );  k := 0;
+						WHILE (i < LEN( searchPath ) - 1) & (dir[k] # 0X) DO searchPath[i] := dir[k];  INC( i );  INC( k ) END
+					END
 				END;
 				k := 0
 			END
@@ -1092,9 +1187,16 @@ VAR
 		END;
 	END CheckPath;
 
+	(*	This answered FALSE for every name there is, an ordinary one included -- measured
+		07.09.2026 by `WinFS.Test`. Two reasons, one under the other: `GetFullPathName` was
+		declared with the file-name part as a value parameter, so the part never came back and
+		`fileNamePart # NULL` was never true; and `ok`, the answer, is assigned only inside that
+		IF, so what a caller got was whatever the frame held. Both are fixed; the second is fixed
+		here. *)
 	PROCEDURE CheckName*( name: ARRAY OF CHAR ): BOOLEAN;
 	VAR fullName: FileName;  fileNamePart: Kernel32.LPSTR;  ret, i: SIZE;  ch: CHAR;  stream, ok: BOOLEAN;
 	BEGIN
+		ok := FALSE;  fileNamePart := Kernel32.NULL;
 		ConvertChar( name, Files.PathDelimiter, PathDelimiter );  ret := Kernel32.GetFullPathName( name, Kernel32.MaxPath, fullName, fileNamePart );
 		IF (ret > 0) & CheckPath( fullName ) & (fileNamePart # Kernel32.NULL) THEN
 			ok := TRUE;  stream := FALSE;  i := fileNamePart - ADDRESSOF( fullName );  fullName[i - 1] := 0X;  ch := fullName[i];
@@ -1149,11 +1251,28 @@ VAR
 	END GetTempDirectory;
 
 (** Compute the relative filename (relative to the working directory). *)
+	(*	Every branch below used to write into the answer with a loop that stopped at the terminator
+		of the full name and nowhere else, and the answer is an open array whose width is the
+		caller's: `Files.RelFileName` hands it a `Files.FileName` of 256 while a full Windows path
+		is up to `MaxPath`. `Put` is the whole difference -- what does not fit is dropped rather
+		than written past the end. *)
 	PROCEDURE RelFileName*( fileName: ARRAY OF CHAR;  VAR relFileName: ARRAY OF CHAR );
-	VAR i, j, k, p: SIGNED32;  fullName: FileName;  fileNamePart: Kernel32.LPSTR;
+	VAR i, j, k, p: SIGNED32;  fullName: FileName;
+
+		PROCEDURE Put( ch: CHAR );
+		BEGIN
+			IF p < LEN( relFileName ) - 1 THEN  relFileName[p] := ch;  INC( p )  END
+		END Put;
+
+		(* one step up, which is how a relative name says the directory above *)
+		PROCEDURE PutUp;
+		BEGIN
+			Put( "." );  Put( "." );  Put( PathDelimiter )
+		END PutUp;
+
 	BEGIN
 		IF ~FindFile( fileName, fullName ) THEN  (* file does not exist -> would be created in the current dir *)
-			ConvertChar( fileName, Files.PathDelimiter, PathDelimiter ); IGNORE Kernel32.GetFullPathName( fileName, Kernel32.MaxPath, fullName, fileNamePart ); FixDriveLetter (fullName);
+			ConvertChar( fileName, Files.PathDelimiter, PathDelimiter ); IGNORE Kernel32.GetFullPathName( fileName, Kernel32.MaxPath, fullName, NIL ); FixDriveLetter (fullName);
 		ELSE ConvertChar( fullName, Files.PathDelimiter, PathDelimiter )
 		END;   (* from here on all with PathDelimiter and drive letter *)
 		IF CAP( workPath[0] ) # CAP( fullName[0] ) THEN  (* different drive letters -> nothing to be done *)
@@ -1166,22 +1285,26 @@ VAR
 			END;
 			IF workPath[i] = 0X THEN
 				IF fullName[i] # PathDelimiter THEN  (* first part of directories do match *)
-					relFileName[p] := ".";  relFileName[p + 1] := ".";  relFileName[p + 2] := PathDelimiter;  INC( p, 3 );  INC( j );
-					WHILE fullName[j] # 0X DO relFileName[p] := fullName[j];  INC( j );  INC( p ) END
+					PutUp;  INC( j );
+					WHILE fullName[j] # 0X DO Put( fullName[j] );  INC( j ) END
 				ELSE  (* file is in a subdirectory of the current dir *)
 					INC( i );
-					WHILE fullName[i] # 0X DO relFileName[p] := fullName[i];  INC( i );  INC( p ) END
+					WHILE fullName[i] # 0X DO Put( fullName[i] );  INC( i ) END
 				END
 			ELSIF j > 2 THEN  (* first part of directories do match *)
 				k := j;  i := j + 1;
 				WHILE workPath[k] # 0X DO
-					IF workPath[k] = PathDelimiter THEN relFileName[p] := ".";  relFileName[p + 1] := ".";  relFileName[p + 2] := PathDelimiter;  INC( p, 3 ) END;
+					IF workPath[k] = PathDelimiter THEN PutUp END;
 					INC( k )
 				END;
-				WHILE fullName[i] # 0X DO relFileName[p] := fullName[i];  INC( i );  INC( p ) END
+				WHILE fullName[i] # 0X DO Put( fullName[i] );  INC( i ) END
 			ELSE  (* only drive letters match *)
-				i := j;
-				WHILE fullName[i] # 0X DO relFileName[p] := fullName[i];  INC( i );  INC( p ) END
+				(*	`j` is still -1 when the two names differ before the first delimiter, and
+					`fullName[-1]` is an index out of range. `GetFullPathName` answers an absolute
+					name, so the third character is always the delimiter and this cannot be
+					reached today -- but the branch reads as if it could. *)
+				IF j >= 0 THEN  i := j  ELSE  i := 0  END;
+				WHILE fullName[i] # 0X DO Put( fullName[i] );  INC( i ) END
 			END;
 			relFileName[p] := 0X
 		END;
@@ -1244,23 +1367,31 @@ VAR
 	END Init;
 
 	PROCEDURE AddSearchPath*(context: Commands.Context);
-	VAR name,fullName: FileName; i,j: SIGNED32; ch : CHAR; ret: SIGNED32; fileNamePart: Kernel32.LPSTR;
+	VAR name,fullName: FileName; i,j: SIGNED32; ch : CHAR; ret: SIGNED32;
 	BEGIN
 		IF context.arg.GetString(name) THEN
 			i := 0; j := 0;
 			ConvertChar( name, Files.PathDelimiter, PathDelimiter );
-			ret := Kernel32.GetFullPathName( name, Kernel32.MaxPath, fullName, fileNamePart );
+			ret := Kernel32.GetFullPathName( name, Kernel32.MaxPath, fullName, NIL );
 
 			WHILE(searchPath[i] # 0X) DO
 				INC(i);
 			END;
 
-			searchPath[i] := ";";INC(i);
-			REPEAT
-				ch := fullName[j];
-				searchPath[i] := ch;
-				INC(j);INC(i);
-			UNTIL ch = 0X;
+			(*	A command anybody can type, appending to a global array with a loop that stopped
+				only at the terminator of what was typed -- the same defect the Unix twin had, and
+				the same answer: say the path is full rather than write past the end of it. *)
+			IF i < LEN( searchPath ) - 2 THEN
+				searchPath[i] := ";";INC(i);
+				REPEAT
+					ch := fullName[j];
+					IF i = LEN( searchPath ) - 1 THEN  ch := 0X  END;
+					searchPath[i] := ch;
+					INC(j);INC(i);
+				UNTIL ch = 0X;
+			ELSE
+				context.error.String( "WinFS.AddSearchPath: the search path is full" );  context.error.Ln
+			END;
 		END;
 	END AddSearchPath;
 

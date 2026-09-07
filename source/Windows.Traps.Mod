@@ -100,12 +100,23 @@ VAR
 				ELSIF code = 8 THEN StrAppend( desc, "ASSERT failed" )
 				ELSIF code = 9 THEN StrAppend( desc, "Array dimension error" )
 				ELSIF code=10 THEN StrAppend(desc, "Array allocation error" ); (* fof *)
+				(*	11, 12, 17 and 18 are numbers this compiler emits (FoxIntermediateBackend
+					names them SetElementTrap, NegativeDivisorTrap, NilPointerTrap and
+					RethrowTrap) and this handler had no words for any of them: every one read
+					"HALT statement", which is what the ELSE says and which is a different
+					accusation. The Unix twin was the mirror image of this -- it named 12 and 18
+					and not these two -- and both halves now name all four. *)
+				ELSIF code = 11 THEN StrAppend( desc, "Set element out of range" )
+				ELSIF code = 12 THEN StrAppend( desc, "Division error" )
 				ELSIF code = 13 THEN StrAppend( desc, "Keyboard interrupt" )
 				ELSIF code = 14 THEN StrAppend( desc, "Out of memory" )
 				ELSIF code = 15 THEN StrAppend( desc, "Deadlock (active objects)" );
 				ELSIF code = 16 THEN StrAppend( desc, "Procedure returned" );
+				ELSIF code = 17 THEN StrAppend( desc, "NIL pointer dereferenced" )
+				ELSIF code = 18 THEN StrAppend( desc, "Exception rethrown after unlock" )
 				ELSIF code = 23 THEN StrAppend( desc, "Exceptions.Raise" )
-				ELSE StrAppend( desc, "HALT statement" )
+				ELSIF code >= 30 THEN StrAppend( desc, "HALT statement" )
+				ELSE StrAppend( desc, "unknown exception" )
 				END
 			ELSIF exc.ExceptionCode = Kernel32.ExceptionSingleStep THEN COPY( "single step", desc )
 			ELSIF exc.ExceptionCode = Kernel32.ExceptionAccessViolation THEN COPY( "access violation", desc )
@@ -137,8 +148,13 @@ VAR
 		IF trapState > RecursiveLimit THEN w.String( " [Recursive TRAP]" );
 			trapState := 0;
 		ELSE
-			(* output first line *)
-			SYSTEM.GET( int.SP, code );
+			(*	The number on the first line is the halt code, and there is one only when the
+				exception IS a halt: `SYSTEM.GET( int.SP, code )` on an access violation reads
+				whatever the stack held under the fault and printed it as the trap number of the
+				report. Zero says there is no number, and the words below say what happened. *)
+			IF exc.ExceptionCode = Kernel32.ExceptionBreakPoint THEN SYSTEM.GET( int.SP, code )
+			ELSE code := 0
+			END;
 
 			w.String( "TRAP " );  w.Int( code, 1 ); w.String( " [" );  w.Int( trapState, 1 );  w.String( "]" );   w.String( " PL" );
 			w.Int( int.CS MOD 4, 2 );  w.Char( " " );  GetDescription();
@@ -233,6 +249,12 @@ VAR
 											 VAR handled: BOOLEAN );
 	VAR ebp, ebpSave, pc, handler, ebpBottom: ADDRESS; checkedBP: ADDRESS;  hasFinally: BOOLEAN;
 	BEGIN
+		(*	Zero, and read as "no last PAF was found": `ebpBottom` is assigned only inside the
+			`IF (pc = 0)` below, so a stack whose frames never say they are the last one -- or no
+			frame at all, when int.BP is already 0 -- left it holding whatever the stack did, and
+			the two `SYSTEM.GET`s at the end then read a return address through that and jumped
+			to it. *)
+		ebpBottom := 0;
 		ebp := int.BP;  pc := int.PC;  hasFinally := FALSE;
 
 		handler := Modules.GetExceptionHandler( pc );
@@ -277,6 +299,11 @@ VAR
 		END;
 
 		(* Now ebp =  0, bottom of the stack, so link the last known return PC to the Termination *)
+		IF ebpBottom = 0 THEN
+			(*	There is no Terminate to link to. Refusing here leaves the context as the fault
+				left it, and the caller's own recovery -- back to `t.restartPC` -- is what runs. *)
+			handled := FALSE;  RETURN
+		END;
 		IF ~hasFinally THEN
 			SYSTEM.GET( ebpBottom + SIZEOF(ADDRESS), pc );   (* PC of the Terminate *)
 			int.PC := pc;  int.BP := ebpBottom;
@@ -294,7 +321,15 @@ VAR
 		t := Objects.CurrentProcess();
 		check := t;
 		handled := FALSE;
-		user := (int.CS MOD 4 > 0 (* Machine.KernelLevel*) );  SYSTEM.GET( int.SP, exchalt );
+		user := (int.CS MOD 4 > 0 (* Machine.KernelLevel*) );
+		(*	Read only where it means something -- see `Show`. It decides two things: what a
+			debugger is told the trap number was, and whether this is the unbreakable halt, and
+			neither may be settled by the stack under a processor fault. The Unix twin had the
+			mirror image of this defect, fixed 07.09.2026: there `trapno` was left unassigned
+			where here it was read unconditionally. *)
+		IF exc.ExceptionCode = Kernel32.ExceptionBreakPoint THEN SYSTEM.GET( int.SP, exchalt )
+		ELSE exchalt := 0
+		END;
 
 		traceTrap := FALSE;
 
@@ -350,12 +385,15 @@ VAR
 	VAR
 		s: ARRAY 8 OF CHAR;
 	BEGIN
+		(*	Both tests inside the one IF: `s` is filled by `GetConfig` under `IF TestTrap`, and
+			the second test used to read it from outside, so turning that constant off would have
+			read an uninitialised array. *)
 		IF TestTrap THEN
 			Machine.GetConfig( "TestTrap", s );
-			IF s[0] = "1" THEN HALT( 98 ) END
+			IF s[0] = "1" THEN HALT( 98 )
+			ELSIF s[0] = "2" THEN HALT( 99 )
+			END
 		END;
-
-		IF TestTrap & (s[0] = "2") THEN HALT( 99 ) END;
 		Objects.InstallExceptionHandler( Exception );
 	END Init;
 

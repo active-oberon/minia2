@@ -1,0 +1,132 @@
+# Cases known to fail when the suites are run on Windows: `ob.exe test` from a Win64 SDK.
+# Format: <TestFile><TAB><kind>: <case name>.  A listed case that PASSES is reported
+# as FIXED and fails the run, so this file cannot silently go stale.
+#
+# First measured 07.09.2026 on a real Windows machine -- not under wine -- against a Win64
+# SDK built there by tests/win-bundle.sh's recipe from a native `task Win64`: 7510 cases,
+# 7433 passed, and the 77 below. The eleven defects the same run found are fixed rather
+# than listed; the whole of it is written up in Ideas.md 7.21.
+#
+# --- the suite is the Unix twin's, and its cases import Unix ------------------------
+# `UnixFiles.Test` says so in its own header ("Tests for source/Unix.UnixFiles.Mod") and
+# every case imports `Unix`, which no Windows build has; the two cases of `Clock.Test` and
+# the four of `LocalSockets.Test` do the same. What answers for the Windows side of these
+# is `Windows.WinFS.Mod`, `Windows.Clock.Mod` and `Windows.LocalSockets.Mod`; the first of
+# them now has `tests/WinFS.Test`, and the other two have nothing yet.
+UnixFiles.Test	positive: the helpers these tests are written with
+UnixFiles.Test	positive: what is written to a file is what comes back out of it
+UnixFiles.Test	positive: a rider that was never given a position is refused, not followed
+UnixFiles.Test	positive: reading nothing leaves the array alone
+UnixFiles.Test	positive: a name too long for what it is copied into is cut, not written past
+UnixFiles.Test	positive: and a name that fits is copied whole
+UnixFiles.Test	positive: the numbers in the name of a temporary file read the way they are written
+UnixFiles.Test	positive: the working directory is where the harness put us, and can be moved and moved back
+UnixFiles.Test	positive: registering puts the temporary file where it was asked to go
+UnixFiles.Test	positive: deleting what is not there says what went wrong
+UnixFiles.Test	positive: enumerating names what was made and does not name what was removed
+UnixFiles.Test	positive: one file opened twice is one object
+UnixFiles.Test	positive: reading past the end is the end, not an error
+UnixFiles.Test	positive: setting the attributes of a file here changes nothing, and says nothing
+UnixFiles.Test	positive: a path is cleaned the way the comment above the procedure says
+Clock.Test	positive: the three readings of the clock agree with each other
+Clock.Test	positive: the offset the machine really has, against the two places that claim it
+LocalSockets.Test	positive: two sides of a path talk to each other
+LocalSockets.Test	positive: a path with nothing listening is nothing to connect to
+LocalSockets.Test	positive: more than one line, in the order they were said
+LocalSockets.Test	positive: when one side goes away the other is told, not left waiting
+#
+# --- the report is this host's own, and the suite is written against the other one ---
+# `tests/Traps.Test` asks for `Trap 5.<n>`, lower-case words, `SP = ` with spaces around the
+# sign, a signal number where Windows has none, and the "program continues with exception
+# handler" line, which this handler does not write. None of that is a defect of either
+# module: the two handlers really do report differently, and `tests/WinTraps.Test` is the
+# suite that answers for this one -- sixteen cases against the report it actually writes.
+# Three of the thirteen pass here by accident (the marker, the process name, the breakpoint
+# hook) and are not listed.
+Traps.Test	positive: an activity that traps is reported, and the case that started it lives on
+Traps.Test	positive: the account begins and ends with the markers that say where it begins and ends
+Traps.Test	positive: the report says which system and when, before it says anything else
+Traps.Test	positive: the numbers the compiler plants have the words the compiler means by them
+Traps.Test	positive: and so do the numbers the system raises on its own
+Traps.Test	positive: a HALT the program wrote itself is named a HALT
+Traps.Test	positive: a signal that is not a trap instruction is named by the signal
+Traps.Test	positive: the registers are there, and by the names this machine calls them
+Traps.Test	positive: an exception handler is reported inside the account, not after it
+Traps.Test	positive: what a debugger is told about a trap it did not plant
+Traps.Test	positive: and about a signal, where there is no trap number to tell
+Traps.Test	positive: a trap the debugger does not answer for is still asked about only once
+Traps.Test	positive: two activities that trap one after the other get one report each
+#
+# --- not in this SDK's library ------------------------------------------------------
+# The Windows SDK ships the headless core (configs/headless-core-win64.txt), which carries
+# no `Raster`, `Codecs`, `TextUtilities` or `WMGraphics`, so every case that imports one
+# says "could not import" and fails. This is the scope of the library, not a property of
+# the target: the same 33 cases fail on Linux against the payload SDK, where they are
+# deliberately NOT listed in a2test-expected.txt because CI there runs against the full
+# build. A Windows run against a full Win64 library will report these as FIXED, and that
+# is the right answer -- take them out of this file when that is what CI does here.
+Raster.Test	positive: a pixel keeps the colour that was put in it
+Raster.Test	positive: a created image has the size, the stride and the empty pixels it was asked for
+Raster.Test	positive: what Put wrote into an image is what Get reads out of it
+Raster.Test	positive: a fill covers its rectangle and stops at the edge of it
+Raster.Test	positive: a fill in the 16-bit format takes the same road as the general one
+Raster.Test	positive: a copy moves the rectangle it was given, and an overlapping one does not eat itself
+Raster.Test	positive: pixels handed out and taken back in another format keep what that format can hold
+Raster.Test	positive: the compositing operations do what their names say
+Raster.Test	positive: darkening, fading and making opaque move the components they are named for
+Raster.Test	positive: adding two images adds their components and stops at the top
+Raster.Test	positive: an image written to a file is the image that is read back
+Raster.Test	positive: a sub-image shares the pixels of the image it was cut from
+Raster.Test	positive: an indexed image gives back the colours its palette holds
+Raster.Test	positive: dithering into the same format is the picture itself
+Raster.Test	positive: a pattern is tiled over the rectangle it was given
+Raster.Test	positive: the formats know each other, and an index survives the trip through a colour
+Raster.Test	positive: a palette computed for a picture holds the colours the picture is made of
+Raster.Test	positive: an indexed image written to a file brings its palette back with it
+Raster.Test	positive: the colour conversion no longer multiplies in sixteen bits
+WMGraphics.Test	positive: a canvas over an image can be made where no font was ever installed
+WMGraphics.Test	positive: a colour packs and unpacks, and goes round the hue circle
+WMGraphics.Test	positive: the rectangles the canvas is cut into
+WMGraphics.Test	positive: what the canvas draws lands where it was told, and nowhere else
+WMGraphics.Test	positive: polygons, an image drawn, and an image scaled by a whole number
+Texts.Test	positive: a text counts characters, not bytes
+Texts.Test	positive: inserting and deleting in the middle of a text
+Texts.Test	positive: searching a text for a pattern
+ImageCodecs.Test	positive: a true-colour picture survives BMP, GIF and Pict
+ImageCodecs.Test	positive: an indexed picture survives a BMP at every depth it has
+ImageCodecs.Test	positive: an indexed picture survives a Pict, whose palette is shorter than the format
+ImageCodecs.Test	positive: a GIF holds a picture of one pixel, of one colour, and of more codes than nine bits
+ImageCodecs.Test	positive: what the codecs cannot do they refuse, and refusing is not trapping
+JPEG.Execution.Test	positive: test RGB to I420 2x2x8x8 block conversion used for encoding
+#
+# --- also failing on x86-64 Linux, see tests/a2test-expected.txt --------------------
+# The same four defects for the same reasons -- no procedure overloading, value parameters
+# of non-static math arrays forbidden on purpose, a case with stale 32-bit assumptions, and
+# the math array literal pooling bug -- and the reasoning for each is written out there.
+MathArrays.Compilation.Test	positive: variables and parameters of math array type
+MathArrays.Compilation.Test	positive: use of COMPLEX32 and COMPLEX64
+MathArrays.Execution.Test	positive: driver tests (fill and compare arrays)
+MathArrays.Execution.Test	positive: correct use of ADDRESS OF and SYSTEM.VAL for tensors and open math arrays
+#
+# --- the debugger does not work on this host, and this is the open defect -----------
+# Measured 07.09.2026: the five cases that need a breakpoint or the holding of a trapped
+# activity fail, and they fail inside the case's own body (`Implicit type guard failed`,
+# `CASE invalid`) because the session never produces the events the case then reads. The
+# four cases that need neither pass. `Windows.Traps.Mod` says of its own `Trapped` hook
+# that "this path is untested on Windows", and it was right. Checked against the previous
+# version of that module built back into the bundle: the same five, so it is not the work
+# of 07.09. (The "(did not come back)" a run prints after this one is the harness saying the
+# case timed out; the key is the case's name, so it does not belong in this file.)
+DAP.Test	positive: a program that traps stops the session on the frame that trapped
+DAP.Test	positive: a breakpoint stops the program on the line the client asked for, and continuing runs it out
+DAP.Test	positive: a step from a breakpoint stops on the next statement
+DAP.Test	positive: the core alone, driven the way PET drives it
+DAP.Test	positive: a step out of the outermost procedure plants nothing in the machinery that started it
+#
+# --- the case names a Unix program and a Unix convention ----------------------------
+# `Processes.Test` runs the programs "every Unix has and nobody has ever changed the
+# behaviour of" (its own header). Its `sleep` case asks for exit code 128+9, which is how
+# a shell reports a killed process on Unix; `TerminateProcess` on Windows leaves the code
+# the killer passed. The other eight cases pass here, `cat` and `echo` included -- they
+# are on the PATH of any machine with Git for Windows.
+Processes.Test	positive: a program that will not finish can be stopped

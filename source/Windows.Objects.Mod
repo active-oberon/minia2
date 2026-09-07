@@ -767,7 +767,12 @@ BEGIN
 	Machine.Release( Machine.Objects );
 	Machine.Release( Machine.GC );
 	IF shutdown THEN
-		Trace.StringLn ( " Objects: shutdown" ); Modules.Shutdown( -1 );
+		(*	`Reboot`, which is exit code 0, and not because anything restarts: this is the end of
+			the last activity of a program that never asked to be shut down, and the `ExitProcess( 0 )`
+			written under it -- dead code, since `Modules.Shutdown` does not return -- says what it
+			has always meant by that. Any other code here would turn the honest exit code of
+			`Machine.Shutdown` into a failure reported by every program that ends this way. *)
+		Trace.StringLn ( " Objects: shutdown" ); Modules.Shutdown( Modules.Reboot );
 		Kernel32.ExitProcess( 0 )
 	END
 END terminate;

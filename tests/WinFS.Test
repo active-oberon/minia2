@@ -1,0 +1,544 @@
+# Tests for source/Windows.WinFS.Mod -- the file system every other module in this tree reaches
+# through Files, on the other host.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test WinFSTestShared;System.Load Test"
+#
+# The twin of tests/UnixFiles.Test, and it exists for the reason that suite's own header gives:
+# `Files` is the interface, this is the implementation under it, and `Files.Test` drives it only
+# along the paths a working program takes. The cases here take the others -- a name too long for
+# what it is copied into, a date past the year the field could hold, a relative name with a
+# directory in it, a file that was never registered -- because that is where a file system keeps
+# its defects, and on this host they were never looked for at all: `UnixFiles.Test` imports `Unix`
+# and cannot run here, so until 07.09.2026 nothing measured this module.
+#
+# It is NOT a translation of the Unix suite. Where the two file systems really differ the case
+# says which behaviour is this one's:
+#
+# - the buffer belongs to the FILE here, not to the rider, so a rider that was never given a
+#   position reads from the beginning of the file instead of being refused. The Unix twin answers
+#   `r.res` and reads nothing.
+# - `Files.New` here is a name and no handle at all until something is written, so a file that was
+#   never registered has no date to give.
+# - every logical drive is mounted as a file system of its own (`AliasFileSystem`, prefix "C"),
+#   which is why an absolute Windows name goes through a different road into the same module.
+#
+# Found while writing these and NOT changed:
+#
+# - `WinFS.AddSearchPath` is bounded now, but the case that would prove it red has to fill a global
+#   array the rest of the process shares -- the same reason the Unix twin leaves it uncovered.
+# - `RelFileName`'s last branch reads `fullName[j]` with `j` still -1 when two names differ before
+#   the first delimiter. `GetFullPathName` always answers an absolute name, so the third character
+#   is always the delimiter and the branch cannot be reached; it is guarded rather than left.
+# - `File.Write` past the end of the file inside one 4K block leaves the gap holding whatever the
+#   block held, where a file system is expected to zero it. Reaching it needs a rider set past the
+#   end, which `Set` clamps.
+# - `ToTemp` answers a failed rename with `HALT(1241)`, and `Register0` answers one with `res := 1`;
+#   the same failure is fatal on one path and a refusal on the other.
+# - `SetAttributes` on a file is an empty body here too, as on Unix.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE WinFSTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A scratch file and the questions a test asks about one, on Windows" *)
+
+	IMPORT Files, Strings;
+
+	TYPE
+		Line* = ARRAY 512 OF CHAR;
+
+	VAR
+		serial: SIGNED32;
+
+	(**	A name nothing else in the run will use. The tag comes from the case, because the cases of
+		one file share a working directory and the shared module is freed between them. *)
+	PROCEDURE Scratch* (CONST tag: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
+	VAR number: ARRAY 16 OF CHAR;
+	BEGIN
+		INC(serial);
+		Strings.IntToStr(serial, number);
+		COPY("scratch-", name); Strings.Append(name, tag); Strings.Append(name, "-");
+		Strings.Append(name, number); Strings.Append(name, ".txt")
+	END Scratch;
+
+	(** Write a string to a named file and register it, which is what makes the name real. *)
+	PROCEDURE Put* (CONST name, content: ARRAY OF CHAR): BOOLEAN;
+	VAR f: Files.File; w: Files.Writer;
+	BEGIN
+		f := Files.New(name);
+		IF f = NIL THEN RETURN FALSE END;
+		Files.OpenWriter(w, f, 0);
+		w.String(content); w.Update;
+		Files.Register(f);
+		RETURN TRUE
+	END Put;
+
+	(** And read it back the way anybody else would. *)
+	PROCEDURE Get* (CONST name: ARRAY OF CHAR; VAR content: ARRAY OF CHAR): BOOLEAN;
+	VAR f: Files.File; r: Files.Reader;
+	BEGIN
+		content[0] := 0X;
+		f := Files.Old(name);
+		IF f = NIL THEN RETURN FALSE END;
+		Files.OpenReader(r, f, 0);
+		r.Ln(content);
+		RETURN TRUE
+	END Get;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(**	A2 packs a date as mday + mon*32 + (year-1900)*512 and a time as sec + min*64 + hour*4096.
+		Written out here because a case that says `130 * 512 + 3 * 32 + 17` says nothing about
+		which field is which. *)
+	PROCEDURE Date* (year, month, day: SIGNED32): SIGNED32;
+	BEGIN
+		RETURN (year - 1900) * 512 + month * 32 + day
+	END Date;
+
+	PROCEDURE Time* (hour, minute, second: SIGNED32): SIGNED32;
+	BEGIN
+		RETURN hour * 4096 + minute * 64 + second
+	END Time;
+
+	END WinFSTestShared.
+
+positive: what is written to a file is what comes back out of it
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; back: T.Line; f: Files.File;
+
+	BEGIN
+		T.Scratch("roundtrip", name);
+		ASSERT(T.Put(name, "the whole point of a file system"));
+		ASSERT(T.Get(name, back));
+		ASSERT(back = "the whole point of a file system");
+
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		ASSERT(f.Length() = 32)
+	END Test.
+
+positive: a file remembers the date it was given, and the year is not seven bits wide
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; f: Files.File; time, date: SIGNED32;
+
+	BEGIN
+		T.Scratch("date", name);
+		ASSERT(T.Put(name, "stamped"));
+
+		(*	A year the field this used to have could not hold: `st.wYear` was filled from
+			`d MOD 80H`, so everything from 2028 on came back as 1900 plus its remainder -- 2030
+			as 1902. This is the case `Runtime.Test` makes of the same procedure, put here as
+			well because the year is this module's own arithmetic and not `Files`'. *)
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		f.SetDate(T.Time(12, 34, 56), T.Date(2030, 3, 17));
+
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		f.GetDate(time, date);
+		ASSERT(date = T.Date(2030, 3, 17));
+		ASSERT(time = T.Time(12, 34, 56));
+
+		(* and a year that fits either way, so the case is not only about the boundary *)
+		f.SetDate(T.Time(1, 2, 3), T.Date(2020, 12, 31));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		f.GetDate(time, date);
+		ASSERT(date = T.Date(2020, 12, 31));
+		ASSERT(time = T.Time(1, 2, 3))
+	END Test.
+
+positive: a file that was never registered has no date to give, and says so
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR f: Files.File; time, date: SIGNED32; name: Files.FileName;
+
+	BEGIN
+		T.Scratch("nodate", name);
+
+		(*	`Files.New` here is a name and no handle at all -- the handle appears when the first
+			buffer is written -- so `GetFileTime` has nothing to answer about. Its `ASSERT` was
+			commented out for exactly this case and the record was then read anyway: whatever the
+			frame held became the date of the file. Nothing is the answer now. *)
+		f := Files.New(name);
+		ASSERT(f # NIL);
+		time := 1; date := 1;
+		f.GetDate(time, date);
+		ASSERT(time = 0);
+		ASSERT(date = 0)
+	END Test.
+
+positive: an absolute name goes in through the drive it names, and comes back the same file
+
+	MODULE Test;
+	IMPORT Files, Strings, WinFS, T := WinFSTestShared;
+
+	VAR name, here, absolute: Files.FileName; direct, byDrive: Files.File;
+
+	BEGIN
+		T.Scratch("drive", name);
+		ASSERT(T.Put(name, "through the alias"));
+
+		(*	Every logical drive is mounted as an `AliasFileSystem` whose prefix is its letter, so
+			an absolute name is split at the colon and put back together by `WinFS.Join` -- the
+			procedure whose destination index was never initialised. A drive-prefixed name and a
+			plain one must answer with the same file. *)
+		WinFS.GetWorkingDirectory(here);
+		ASSERT(here # "");
+		ASSERT(here[1] = ":");
+		COPY(here, absolute);
+		Strings.Append(absolute, "/");
+		Strings.Append(absolute, name);
+
+		direct := Files.Old(name);
+		byDrive := Files.Old(absolute);
+		ASSERT(direct # NIL);
+		ASSERT(byDrive # NIL);
+		ASSERT(byDrive.Length() = direct.Length())
+	END Test.
+
+positive: a relative name with a directory in it is looked for along the search path
+
+	MODULE Test;
+	IMPORT Files, WinFS, T := WinFSTestShared;
+
+	VAR here, full: Files.FileName; res: INTEGER; done, found: BOOLEAN;
+
+	BEGIN
+		WinFS.GetWorkingDirectory(here);
+		Files.CreateDirectory("beside", res);
+		ASSERT(res = Files.Ok);
+		ASSERT(T.Put("beside/inside.txt", "found me"));
+
+		(*	Windows' own `SearchPath` will not combine a name that carries a directory with the
+			directories it is given, so `beside/inside.txt` used to be looked for only where the
+			process stands. Standing somewhere else is what shows it: the scratch directory is
+			still on the search path (`ob test` puts it there), and the Unix twin joins every
+			entry with whatever name it was given. *)
+		WinFS.ChangeDirectory("beside", done);
+		ASSERT(done);
+
+		found := WinFS.FindFile("beside/inside.txt", full);
+
+		WinFS.ChangeDirectory(here, done);
+		ASSERT(done);
+
+		ASSERT(found);
+		ASSERT(T.Said(full, "inside.txt"))
+	END Test.
+
+positive: a name too long for what it is copied into is cut, not written past
+
+	MODULE Test;
+	IMPORT Files, Strings, WinFS, T := WinFSTestShared;
+
+	VAR name, here, absolute: Files.FileName; short: ARRAY 16 OF CHAR;
+
+	BEGIN
+		T.Scratch("relname", name);
+		ASSERT(T.Put(name, "long enough"));
+		WinFS.GetWorkingDirectory(here);
+		COPY(here, absolute);
+		Strings.Append(absolute, "/");
+		Strings.Append(absolute, name);
+
+		(*	`RelFileName` answers into an open array, so its width is the caller's -- and every
+			branch of it used to copy until the source ran out. Sixteen characters is smaller than
+			any scratch directory this runs in, which is the whole test: what does not fit is
+			dropped, and the answer is still a string. *)
+		WinFS.RelFileName(absolute, short);
+		ASSERT(short[LEN(short) - 1] = 0X);
+		ASSERT(T.Said(short, "scratch"))
+	END Test.
+
+positive: and a name that fits comes back relative to where we stand
+
+	MODULE Test;
+	IMPORT Files, Strings, WinFS, T := WinFSTestShared;
+
+	VAR name, here, absolute, relative: Files.FileName;
+
+	BEGIN
+		T.Scratch("relfit", name);
+		ASSERT(T.Put(name, "here"));
+		WinFS.GetWorkingDirectory(here);
+		COPY(here, absolute);
+		Strings.Append(absolute, "/");
+		Strings.Append(absolute, name);
+
+		WinFS.RelFileName(absolute, relative);
+		ASSERT(relative # "");
+		ASSERT(T.Said(relative, name));
+		(* it is the name in the directory we are in, so nothing of the directory is left in it *)
+		ASSERT(~T.Said(relative, here))
+	END Test.
+
+positive: the characters a file name may not contain
+
+	MODULE Test;
+	IMPORT WinFS;
+
+	VAR name: ARRAY 64 OF CHAR;
+
+	BEGIN
+		name := "ordinary.txt";
+		ASSERT(WinFS.CheckName(name));
+
+		(*	The list Windows keeps: \ / : * ? " < > | -- and a name is checked after
+			`GetFullPathName`, so the directory part of it is not what is being judged. *)
+		name := "question?.txt";
+		ASSERT(~WinFS.CheckName(name));
+		name := "pipe|.txt";
+		ASSERT(~WinFS.CheckName(name));
+		name := "star*.txt";
+		ASSERT(~WinFS.CheckName(name))
+	END Test.
+
+positive: two names that differ only in case are one name here
+
+	MODULE Test;
+	IMPORT WinFS;
+
+	VAR a, b: ARRAY 64 OF CHAR;
+
+	BEGIN
+		a := "Report.Txt"; b := "report.txt";
+		ASSERT(WinFS.SameName(a, b));
+
+		a := "report.txt"; b := "report.txt.bak";
+		ASSERT(~WinFS.SameName(a, b));
+
+		a := ""; b := "";
+		ASSERT(WinFS.SameName(a, b))
+	END Test.
+
+positive: the working directory is where the harness put us, and can be moved and moved back
+
+	MODULE Test;
+	IMPORT Files, WinFS, T := WinFSTestShared;
+
+	VAR here, there: Files.FileName; done: BOOLEAN; res: INTEGER;
+
+	BEGIN
+		WinFS.GetWorkingDirectory(here);
+		ASSERT(here # "");
+		ASSERT(here[1] = ":");   (* a Windows working directory is on a named drive *)
+
+		Files.CreateDirectory("below", res);
+		ASSERT(res = Files.Ok);
+
+		WinFS.ChangeDirectory("below", done);
+		ASSERT(done);
+		WinFS.GetWorkingDirectory(there);
+		ASSERT(there # here);
+		ASSERT(T.Said(there, "below"));
+
+		WinFS.ChangeDirectory(here, done);
+		ASSERT(done);
+		WinFS.GetWorkingDirectory(there);
+		ASSERT(there = here);
+
+		(* A directory that is not there is a refusal, not a move. *)
+		WinFS.ChangeDirectory("nowhere-at-all", done);
+		ASSERT(~done);
+		WinFS.GetWorkingDirectory(there);
+		ASSERT(there = here)
+	END Test.
+
+positive: one file opened twice is one object
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; one, other: Files.File;
+
+	BEGIN
+		T.Scratch("twice", name);
+		ASSERT(T.Put(name, "shared"));
+
+		(*	The collection is searched by full name before a second File is made, so the same name
+			twice answers with the same object -- and the one 4K buffer behind it is one buffer,
+			which is what makes an unpositioned rider read from the beginning here rather than
+			from nowhere. *)
+		one := Files.Old(name);
+		other := Files.Old(name);
+		ASSERT(one # NIL);
+		ASSERT(one = other);
+		ASSERT(one.Length() = 6)
+	END Test.
+
+positive: reading past the end is the end, not an error
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; ch: CHAR; i: SIGNED32;
+
+	BEGIN
+		T.Scratch("pastend", name);
+		ASSERT(T.Put(name, "abc"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		ASSERT(f.Length() = 3);
+
+		f.Set(r, 0);
+		FOR i := 1 TO 3 DO f.Read(r, ch); ASSERT(~r.eof) END;
+
+		f.Read(r, ch);
+		ASSERT(r.eof);
+		ASSERT(ch = 0X);
+
+		(* And a position past the end is the end, because Set clamps it there. *)
+		f.Set(r, 1000);
+		ASSERT(f.Pos(r) = 3)
+	END Test.
+
+positive: reading nothing leaves the array alone
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; buffer: ARRAY 4 OF CHAR;
+
+	BEGIN
+		T.Scratch("readnone", name);
+		ASSERT(T.Put(name, "abc"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+		f.Set(r, 0);
+
+		buffer[0] := "z"; buffer[1] := "z"; buffer[2] := "z"; buffer[3] := "z";
+		f.ReadBytes(r, buffer, 0, 0);
+
+		(*	Asking for no bytes is not asking for one: the Unix twin used to open with
+			`x[ofs] := 0X` and wrote a terminator into an array it had been told not to touch --
+			and past the end of it, when the offset was the last position. This one does not. *)
+		ASSERT(buffer[0] = "z");
+		ASSERT(r.res = 0);
+
+		(* and asking for none at the very end of an array is still nothing written *)
+		f.ReadBytes(r, buffer, 4, 0);
+		ASSERT(buffer[3] = "z")
+	END Test.
+
+positive: a rider that was never given a position reads from the beginning of the file
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; f: Files.File; r: Files.Rider; ch: CHAR;
+
+	BEGIN
+		T.Scratch("norider", name);
+		ASSERT(T.Put(name, "abc"));
+		f := Files.Old(name);
+		ASSERT(f # NIL);
+
+		(*	This is where the two file systems really differ, and it is written down rather than
+			made the same: the 4K buffer belongs to the File here, and `Read` takes its position
+			out of the rider's own `apos`/`bpos`, which a rider nobody positioned has as zero. So
+			an unpositioned rider is a rider on the first byte. On Unix the buffer belongs to the
+			rider, there is none, and the read is refused in `r.res`. *)
+		f.Read(r, ch);
+		ASSERT(ch = "a")
+	END Test.
+
+positive: enumerating names what was made and does not name what was removed
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR first, second: Files.FileName; enum: Files.Enumerator;
+		name: Files.FileName; flags: SET; time, date: SIGNED32; size: Files.Size;
+		sawFirst, sawSecond: BOOLEAN; res: INTEGER;
+
+	BEGIN
+		T.Scratch("enum-a", first); T.Scratch("enum-b", second);
+		ASSERT(T.Put(first, "one"));
+		ASSERT(T.Put(second, "two"));
+		Files.Delete(second, res);
+		ASSERT(res = Files.Ok);
+
+		NEW(enum);
+		enum.Open("scratch*.txt", {});
+		sawFirst := FALSE; sawSecond := FALSE;
+		WHILE enum.HasMoreEntries() DO
+			IF enum.GetEntry(name, flags, time, date, size) THEN
+				IF T.Said(name, first) THEN sawFirst := TRUE END;
+				IF T.Said(name, second) THEN sawSecond := TRUE END
+			END
+		END;
+		enum.Close;
+
+		ASSERT(sawFirst);
+		ASSERT(~sawSecond)
+	END Test.
+
+positive: deleting what is not there says what went wrong
+
+	MODULE Test;
+	IMPORT Files, T := WinFSTestShared;
+
+	VAR name: Files.FileName; res: INTEGER;
+
+	BEGIN
+		T.Scratch("delete", name);
+		ASSERT(T.Put(name, "here for now"));
+		ASSERT(Files.Old(name) # NIL);
+
+		Files.Delete(name, res);
+		ASSERT(res = Files.Ok);
+		ASSERT(Files.Old(name) = NIL);
+
+		(* And the second time it is an error with a number, not a silent success. *)
+		Files.Delete(name, res);
+		ASSERT(res # Files.Ok)
+	END Test.
+
+positive: the attributes of a name, and of a name that is not there
+
+	MODULE Test;
+	IMPORT WinFS, T := WinFSTestShared;
+
+	VAR name: ARRAY 64 OF CHAR;
+
+	BEGIN
+		T.Scratch("attrs", name);
+		ASSERT(T.Put(name, "attributes"));
+
+		(*	`GetAttributes` answers `{}` for a name Windows knows nothing about, because the API's
+			own answer for that is every bit set and this module turns it into nothing. *)
+		ASSERT(WinFS.GetAttributes(name) # {});
+		ASSERT(WinFS.GetAttributes("nothing-is-called-this.txt") = {})
+	END Test.
+
+positive: the two directories the process was given, and neither of them is empty
+
+	MODULE Test;
+	IMPORT Files, WinFS;
+
+	VAR temp, start: Files.FileName;
+
+	BEGIN
+		WinFS.GetTempDirectory(temp);
+		ASSERT(temp # "");
+		ASSERT(temp[1] = ":");
+
+		(*	`StartPath` is the directory the process was started in, kept because the work path
+			becomes the current directory on this host and Windows is then no longer able to say
+			where the user stood. A command-line tool resolves what the user typed against it. *)
+		WinFS.StartPath(start);
+		ASSERT(start # "");
+		ASSERT(start[1] = ":")
+	END Test.

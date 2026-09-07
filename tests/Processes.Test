@@ -152,7 +152,10 @@ positive: what the environment says, as the program was started with it
 
 	MODULE Test;
 	IMPORT Processes;
-	VAR value: ARRAY 256 OF CHAR;
+	(*	32K, because that is what an environment variable can be: `PATH` on a Windows machine
+		is thousands of characters long, and a value that does not fit is deliberately not a
+		yes -- so a 256-character buffer here measured the buffer and not the module. *)
+	VAR value: ARRAY 32 * 1024 OF CHAR;
 	BEGIN
 		(* PATH is how a program is found at all, so it is there wherever this runs *)
 		ASSERT(Processes.Environment("PATH", value));

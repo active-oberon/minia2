@@ -663,11 +663,17 @@ VAR
 	(** The GetFileTime function retrieves the date and time that a file was created, last accessed, and last modified. *)
 	GetFileTime-: PROCEDURE {WINAPI} ( hFile: HANDLE;
 																	VAR lpCreationTime, lpLastAccessTime, lpLastWriteTime: FileTime ): BOOL;
-	(** The GetFullPathName function retrieves the full path and filename of a specified file. *)
+	(**	The GetFullPathName function retrieves the full path and filename of a specified file.
+		`lpFilePart` is an out-parameter -- Windows writes the address of the file-name part of
+		the answer into it (`LPSTR *`), and it was declared here as a plain `LPSTR`, so the
+		address went in and nothing came back. Every caller in this tree passed a nought or an
+		uninitialised local, which is the documented way of saying "do not want it", and the one
+		caller that did want it (`WinFS.CheckName`) therefore never got it. Pass NIL where the
+		part is not wanted. *)
 	GetFullPathName-: PROCEDURE {WINAPI} ( CONST lpFileName: ARRAY   OF CHAR;
 																			  nBufferLength: SIGNED32;
 																			  VAR lpBuffer: ARRAY   OF CHAR;
-																			  lpFilePart: LPSTR ): SIGNED32;
+																			  VAR lpFilePart: LPSTR ): SIGNED32;
 	(** The GetEnvironmentVariable function retrieves the value of a variable from the calling
 			process's environment; 0 means it is not set. *)
 	GetEnvironmentVariable-: PROCEDURE {WINAPI} ( CONST lpName: ARRAY   OF CHAR;

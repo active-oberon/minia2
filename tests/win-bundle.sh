@@ -13,13 +13,16 @@
 #   -  run.sh, the in-bundle self-check, which is bash. What answers for this SDK is
 #      `tests/ob-check.sh` in the source tree, which builds ob.exe and drives it under wine.
 #
-# Built on Linux by cross-compilation, which is why it is a script here rather than there.
+# Built on Linux by cross-compilation -- which is why it is a script here rather than in the
+# bundle -- and, since 07.09.2026, on Windows itself with the Win64 runtime as the driver: that is
+# the only way to measure the Windows side of anything, and Git's bash is enough to run this.
 #
 # Usage: tests/win-bundle.sh [build directory] [-o out] [--no-tar]
 
 set -eo pipefail
 
-absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;; esac }
+# A drive letter is absolute too, which matters when this runs in Git's bash on Windows.
+absolute() { case "$1" in /*|[A-Za-z]:*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;; esac }
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out=""; tar=1; args=()
@@ -40,13 +43,39 @@ version="${A2_SDK_VERSION:-$(git -C "$root" describe --tags --always --dirty 2>/
 out="$(absolute "$out")"
 name="minia2-sdk-$version-windows-amd64"
 
-oberon="$build/oberon"
-[ -x "$oberon" ] || { echo "no built runtime in $build; run 'task Linux64' first" >&2; exit 2; }
+# The driver: the Linux runtime when there is one, and the Win64 one when this is running ON
+# Windows -- which is the only way to measure the Windows side of anything (Git's bash is enough
+# for the script itself; there is no WSL in it). The two differ in one thing that matters, and it
+# is not the compiler: an A2 process on Windows moves to its own image's directory before anything
+# runs (WinFS.Init ends in SetCurrentDirectory), so a relative output name lands beside the runtime
+# rather than in the shell's directory, and the outputs are collected from there. An absolute
+# --destPath is no way round it either: with one given, the compiler looks for the imports' symbol
+# files in that directory and nowhere else.
+# Which host this is, asked of the shell and not of the file system: a `test -x` for the Linux
+# runtime answers TRUE under Git's bash whenever the Windows one is beside it, because MSYS adds
+# the .exe itself.
+case "$(uname -s)" in
+	MINGW*|MSYS*|CYGWIN*)
+		native=1; oberon="$targets/Win64/oberon.exe"
+		# Every path handed to the A2 runtime has to be a Windows path: the shell's own are
+		# /i/Projects/..., which nothing inside the image can resolve.
+		winpath() { cygpath -m "$1"; }
+		# GNU tar's --transform is not in every tar a Windows machine has; there the tarball is
+		# made only when it is asked for.
+		[ -z "$A2_WIN_TAR" ] && tar=0
+		;;
+	*)
+		native=0; oberon="$build/oberon"
+		winpath() { printf '%s
+' "$1"; }
+		;;
+esac
+[ -x "$oberon" ] || { echo "no built runtime in $build; run 'task Linux64' -- or 'task Win64' on Windows -- first" >&2; exit 2; }
 [ -d "$winbin" ] || { echo "no Win64 build in $winbin; run 'task Win64' first" >&2; exit 2; }
 
 # A Win64 build that is older than the sources ships whatever was fixed since as it was; this
 # says so, and compiles the modules the SDK ships that the build has no object for.
-"$root/tests/win-stdlib.sh" "$build" >/dev/null
+if [ "$native" = 0 ]; then "$root/tests/win-stdlib.sh" "$build" >/dev/null; fi
 
 rm -rf "$out"
 mkdir -p "$out/lib" "$out/examples" "$out/tests"
@@ -81,26 +110,42 @@ trap 'rm -rf "$work"' EXIT
 cp "$root/sdk/Windows.ObHost.Mod" "$work/ObHost.Mod"
 cp "$root/sdk/Ob.Mod" "$work/"
 winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
+if [ "$native" = 1 ]; then
+	made="$targets/Win64"
+	obsources="$(winpath "$work")/ObHost.Mod $(winpath "$work")/Ob.Mod"
+else
+	made="$work"
+	obsources="./ObHost.Mod ./Ob.Mod"
+fi
+rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw
 ( cd "$work" && "$oberon" do "
-	Files.AddSearchPath $work~
-	Files.AddSearchPath $build/bin~
-	Files.AddSearchPath $winbin~
-	Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./ObHost.Mod ./Ob.Mod ~
+	Files.AddSearchPath $(winpath "$work")~
+	Files.AddSearchPath $(winpath "$build")/bin~
+	Files.AddSearchPath $(winpath "$winbin")~
+	Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw $obsources ~
 	Linker.Link --fileFormat=PE64CUI --extension=GofWw --displacement=401000H --fileName='ob.exe'
 	$winboot Ob
 	~
 " ) > "$work/link.log" 2>&1 || { sed 's/^/    /' "$work/link.log" >&2; echo "ob.exe did not link" >&2; exit 1; }
-[ -f "$work/ob.exe" ] || { sed 's/^/    /' "$work/link.log" >&2; echo "ob.exe did not link" >&2; exit 1; }
-install -m 755 "$work/ob.exe" "$out/ob.exe"
+[ -f "$made/ob.exe" ] || { sed 's/^/    /' "$work/link.log" >&2; echo "ob.exe did not link" >&2; exit 1; }
+# A linked ob.exe over a module that did not compile is the shape that cost a cycle in `task Win64`
+# once, and the log is where it says so on both hosts.
+grep -qE 'error:' "$work/link.log" && { sed 's/^/    /' "$work/link.log" >&2; echo "the compiler reported errors" >&2; exit 1; }
+install -m 755 "$made/ob.exe" "$out/ob.exe"
 # Ob and ObHost belong in lib/ too: a project that imports them, and the language server, resolve
 # them from there like any other module.
-install -m 644 "$work"/Ob.SymWw "$work"/ObHost.SymWw "$out/lib/"
+install -m 644 "$made"/Ob.SymWw "$made"/ObHost.SymWw "$out/lib/"
+if [ "$native" = 1 ]; then
+	rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw
+fi
 
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
 cp -r "$root/packages" "$out/packages"
 install -m 644 "$root"/examples/*.Mod "$out/examples/"
 install -m 644 "$root"/tests/*.Test "$out/tests/"
-install -m 644 "$root/tests/a2test-expected.txt" "$out/tests/"
+# Both baselines: `ob test` on this SDK looks for the one named after its own target
+# (a2test-expected-win64.txt), and the plain one is what a run with -t linux64 would want.
+install -m 644 "$root/tests/a2test-expected.txt" "$root/tests/a2test-expected-win64.txt" "$out/tests/"
 printf '%s\n' "$version" > "$out/VERSION"
 
 cat > "$out/README.txt" <<'EOF'

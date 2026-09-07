@@ -97,11 +97,13 @@ TYPE
 		BEGIN RETURN SIGNED32(Output.Available())
 		END Waiting;
 
-		(**	A line, ended the way a program on this host expects one. Streams.Writer.Ln writes a
-			carriage return and a newline, which is what Windows wants -- and it is written out
-			here rather than called so that the two twins say the same thing about themselves. *)
+		(**	A line, ended with one newline and written out here rather than through
+			`Streams.Writer.Ln`, which would add a carriage return. This is a pipe to another
+			program and not a console: it used to write CR LF, so a child that gives its input
+			back -- `cat` -- answered two characters more than it was given, on the one interface
+			in this tree whose whole purpose is to behave the same on both hosts. *)
 		PROCEDURE WriteLine* (CONST s: ARRAY OF CHAR);
-		BEGIN Input.String(s); Input.Char(0DX); Input.Char(0AX)
+		BEGIN Input.String(s); Input.Char(0AX)
 		END WriteLine;
 
 		(** Nothing more will be written to it. A child reading its input to the end sees that. *)

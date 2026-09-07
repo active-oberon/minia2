@@ -434,17 +434,46 @@ VAR
 		END;
 	END GetConfig;
 
+	(*	The parameter says restart-or-stop, and it is also this process's exit code: 0 for a
+		restart, 1 for a stop -- the convention `a2.bat` and `a2.sh` write down and the one the
+		Unix twin has always kept. It used to hand `ExitProcess` a hard 0, so every A2 process on
+		Windows exited 0 whatever happened: `if errorlevel 1 goto done` in `a2.bat` never fired
+		and the image restarted for ever, and every `negative:` case of every suite was reported
+		as passing, because the harness reads the exit code of the child to see that the
+		compilation it provoked did fail. *)
 	PROCEDURE Shutdown*( restart: BOOLEAN );
+	VAR code: SIGNED32;
 	BEGIN
 		RemoveTraceFile;
-		Kernel32.Shutdown( 0 );   (* calls the finalizer of Heaps *)
+		IF restart THEN code := 0 ELSE code := 1 END;
+		Kernel32.Shutdown( code );   (* calls the finalizer of Heaps *)
 	END Shutdown;
 
 (* Dan: from new Machine *)
+#IF I386 THEN
 PROCEDURE -GetTimer*(): SIGNED64;
 CODE {SYSTEM.Pentium}
 	RDTSC	; set EDX:EAX
 END GetTimer;
+#ELSIF AMD64 THEN
+(*	`RDTSC` puts the counter in EDX:EAX -- two halves -- and a 64-bit result comes back in RAX
+	alone, so the halves have to be joined. This had the I386 body on both targets, which on
+	AMD64 returned the low 32 bits and nothing else: the timer wrapped about once a second, the
+	difference between two readings was as often negative as positive, and `Uptime` in every trap
+	report read FFFFFFFF.... What it cost, measured 07.09.2026 on real Windows:
+	`Info.ShowRecentAllocators` works out its scale as the difference of two readings 100 ms
+	apart, and `DIV` by the negative number that came out is `Trap 12`, so the command killed the
+	activity that called it. The Unix twin has had the two-instruction join all along. *)
+PROCEDURE -GetTimer*(): SIGNED64;
+CODE
+	XOR RAX, RAX
+	RDTSC	; set EDX:EAX
+	SHL RDX, 32
+	OR RAX, RDX
+END GetTimer;
+#ELSE
+	UNIMPLEMENTED
+#END
 
 (* Dan:  mono CPU PCs *)
 PROCEDURE ID*(): SIGNED32;
@@ -781,7 +810,7 @@ BEGIN
 	(*
 	(* ever used ? *)
 	ParseLine(commandLine, userConfigFile);
-	userConfigFile[Kernel32.GetFullPathName (userConfigFile, Kernel32.MaxPath, userConfigFile, 0)] := 0X;
+	userConfigFile[Kernel32.GetFullPathName (userConfigFile, Kernel32.MaxPath, userConfigFile, NIL)] := 0X;
 
 	traceName[0] := 0X;
 	GetConfig("Trace",traceName);

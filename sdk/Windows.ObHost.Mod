@@ -187,7 +187,7 @@ BEGIN
 		INC(index)
 	END;
 	IF ~Exists(native) THEN resolved := ""; RETURN FALSE END;
-	IF Kernel32.GetFullPathName(native, LEN(buffer), buffer, 0) = 0 THEN resolved := ""; RETURN FALSE END;
+	IF Kernel32.GetFullPathName(native, LEN(buffer), buffer, NIL) = 0 THEN resolved := ""; RETURN FALSE END;
 	COPY(buffer, resolved); RETURN TRUE
 END RealPath;
 
@@ -313,7 +313,7 @@ END CloseDirectory;
 	holds its handle until the collector finalises it, and `ob test` writes one file per case.
 *)
 PROCEDURE WriteFile*(CONST path, contents: ARRAY OF CHAR): BOOLEAN;
-VAR file: Kernel32.HANDLE; length, written: SIGNED32; overlapped: Kernel32.Overlapped;
+VAR file: Kernel32.HANDLE; length, written: SIGNED32;
 	ignore: Kernel32.BOOL;
 BEGIN
 	file := Kernel32.CreateFile(path, {Kernel32.GenericWrite}, {}, NIL,
@@ -322,7 +322,11 @@ BEGIN
 	length := 0;
 	WHILE contents[length] # 0X DO INC(length) END;
 	written := 0;
-	IF length > 0 THEN ignore := Kernel32.WriteFile(file, contents, length, written, overlapped) END;
+	(*	NIL, and not an OVERLAPPED of our own: a handle opened without FILE_FLAG_OVERLAPPED still
+		takes the Offset out of the structure it is given, and a local record is whatever the stack
+		held. This used to pass one, uninitialised, and every write went to a position nobody
+		chose -- `ob test` on Windows could not write a single case and reported "0 cases". *)
+	IF length > 0 THEN ignore := Kernel32.WriteFile(file, contents, length, written, NIL) END;
 	ignore := Kernel32.CloseHandle(file);
 	RETURN written = length
 END WriteFile;
