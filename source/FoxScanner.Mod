@@ -1,7 +1,8 @@
 MODULE FoxScanner;   (**  AUTHOR "fof & fn"; PURPOSE "Oberon Compiler: Scanner";  **)
 (* (c) fof ETH Zürich, 2009 *)
 
-IMPORT Streams, Strings, Diagnostics, Basic := FoxBasic, D := Debugging, Commands, StringPool;
+IMPORT Streams, Strings, Diagnostics, Basic := FoxBasic, D := Debugging, Commands, StringPool,
+	RealConversions;
 
 CONST
 	Trace = FALSE;   (* debugging output *)
@@ -14,8 +15,6 @@ CONST
 	MaxHugeHexDigits* = 16;   (* maximal hexadecimal hugeint length *)
 	MaxRealExponent* = 38;   (* maximal real exponent *)
 	MaxLongrealExponent* = 308;   (* maximal longreal exponent *)
-	MaxExactTen = 22;   (* 10^22 is the largest power of ten exactly representable in FLOAT64 *)
-	MaxExactMantissa = 9007199254740992;   (* 2^53: largest integer exactly representable in FLOAT64 *)
 
 	(* scanner constants *)
 	EOT* = 0X; LF* = 0AX; CR* = 0DX; TAB* = 09X; ESC* = 1BX;
@@ -598,26 +597,20 @@ TYPE
 		Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' .
 		**)
 		PROCEDURE GetNumber(VAR token: Token): Symbol;
-		VAR i, m, n, d, e, si: SIGNED32;
-			dig: ARRAY 24 OF CHAR;
-			f: FLOAT64;  expCh: CHAR;  neg, long: BOOLEAN;
+		VAR i, m, n, d, e, si, edig: SIGNED32;
+			dig: ARRAY RealConversions.BigDigits + 1 OF CHAR;
+			expCh: CHAR;  neg, long, rest: BOOLEAN;
 			result: Symbol;
 			hugeint, number, nextInt: SIGNED64;
 			digits: SIGNED32;
-			mantissaInt: SIGNED64;  mantissaDigits, mi, mdig: SIGNED32;  exactMantissa: BOOLEAN;
 
-			(** 10^e **)
-			PROCEDURE Ten( e: SIGNED32 ): FLOAT64;
-			VAR x, p: FLOAT64;
+			(*	The text of the number, for the parser to quote back. It goes into the array
+				identifiers go into, so a literal longer than that array is kept short here
+				rather than written past its end -- which is what two hundred digits did. *)
+			PROCEDURE Keep( ch: CHAR );
 			BEGIN
-				x := 1;  p := 10;
-				WHILE e > 0 DO
-					IF ODD( e ) THEN x := x * p END;
-					e := e DIV 2;
-					IF e > 0 THEN p := p * p END  (* prevent overflow *)
-				END;
-				RETURN x
-			END Ten;
+				IF si < MaxIdentifierLength THEN  token.identifierString[si] := ch;  INC( si )  END
+			END Keep;
 
 			(** return decimal number associated to character ch , error if none **)
 			PROCEDURE Decimal( ch: CHAR ): SIGNED32;
@@ -653,7 +646,7 @@ TYPE
 
 		BEGIN  (* ("0" <= ch) & (ch <= "9") *)
 			result := Number;
-			i := 0;  m := 0;  n := 0;  d := 0;  si := 0;  long := FALSE;
+			i := 0;  m := 0;  n := 0;  d := 0;  si := 0;  long := FALSE;  rest := FALSE;
 
 			IF (ch = "0") THEN
 				IF (reader.Peek() = "x") THEN (* hex number *)
@@ -698,12 +691,14 @@ TYPE
 				IF (ch = "'") & (d = 0) & IsHexDigit(reader.Peek()) THEN GetNextCharacter END;
 				IF IsDecimalDigit(ch) OR (d = 0) & IsHexDigit(ch) THEN
 					IF (m > 0) OR (ch # "0") THEN  (* ignore leading zeros *)
-						IF n < LEN( dig ) THEN dig[n] := ch;  INC( n ) END;
+						IF n < RealConversions.BigDigits THEN dig[n] := ch;  INC( n )
+						ELSIF ch # "0" THEN rest := TRUE	(* too far down to change the value, but not nothing *)
+						END;
 						INC( m )
 					END;
-					token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  INC( i )
+					Keep( ch );  GetNextCharacter;  INC( i )
 				ELSIF ch = "." THEN
-					token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
+					Keep( ch );  GetNextCharacter;
 					IF ch = "." THEN ch := Ellipsis;  EXIT
 					ELSIF d = 0 THEN  (* i > 0 *) d := i
 					ELSE Error( Basic.NumberIllegalCharacter )
@@ -715,14 +710,14 @@ TYPE
 				IF n = m THEN
 					token.integer := 0;  i := 0;
 					IF ch = "X" THEN  (* character *)
-						token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  result := Character;
+						Keep( ch );  GetNextCharacter;  result := Character;
 						IF  (n <= 2) THEN
 							WHILE i < n DO token.integer := token.integer * 10H + Hexadecimal( dig[i] );  INC( i ) END;
 							token.character := CHR(token.integer);
 						ELSE Error( Basic.NumberTooLarge )
 						END
 					ELSIF ch = "H" THEN  (* hexadecimal *)
-						token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
+						Keep( ch );  GetNextCharacter;
 						IF (n < MaxHexDigits) OR (n=MaxHexDigits) & (dig[0] <= "7")  THEN (* otherwise the positive (!) number is not in the range of longints *)
 							token.numberType := Integer;
 							(* IF (n = MaxHexDigits) & (dig[0] > "7") THEN  (* prevent overflow *) token.integer := -1 END;  *)
@@ -761,42 +756,37 @@ TYPE
 					Error( Basic.NumberTooLarge )
 				END
 			ELSE  (* fraction *)
-				f := 0;  e := 0;  expCh := "E";
-				(* the digit string read as an integer, as long as it stays exact in FLOAT64, so that
-					ScaleTen below can round the literal exactly. f, built up by repeated division,
-					is only kept as a fallback for literals out of that range. *)
-				mantissaDigits := n;  mantissaInt := 0;  exactMantissa := TRUE;
-				FOR mi := 0 TO n-1 DO
-					mdig := Decimal( dig[mi] );
-					IF exactMantissa & (mantissaInt <= (MaxExactMantissa - mdig) DIV 10) THEN
-						mantissaInt := mantissaInt * 10 + mdig
-					ELSE exactMantissa := FALSE
-					END
-				END;
-				WHILE n > 0 DO  (* 0 <= f < 1 *) DEC( n );  f := (Decimal( dig[n] ) + f) / 10 END;
+				e := 0;  expCh := "E";
 				IF (ch = "E") OR (ch = "D") THEN
-					expCh := ch;  token.identifierString[si] := ch;  INC( si );  GetNextCharacter;  neg := FALSE;
-					IF ch = "-" THEN neg := TRUE;  token.identifierString[si] := ch;  INC( si );  GetNextCharacter
-					ELSIF ch = "+" THEN token.identifierString[si] := ch;  INC( si );  GetNextCharacter
+					expCh := ch;  Keep( ch );  GetNextCharacter;  neg := FALSE;
+					IF ch = "-" THEN neg := TRUE;  Keep( ch );  GetNextCharacter
+					ELSIF ch = "+" THEN Keep( ch );  GetNextCharacter
 					END;
 					IF ("0" <= ch) & (ch <= "9") THEN
 						REPEAT
-							n := Decimal( ch );  token.identifierString[si] := ch;  INC( si );  GetNextCharacter;
-							IF e <= (MAX( SIGNED16 ) - n) DIV 10 THEN e := e * 10 + n ELSE Error( Basic.NumberTooLarge ) END
+							(*	Its own variable: n still counts the digits of the mantissa, and
+								the exponent used to overwrite it because the old code had
+								consumed n by then. *)
+							edig := Decimal( ch );  Keep( ch );  GetNextCharacter;
+							IF e <= (MAX( SIGNED16 ) - edig) DIV 10 THEN e := e * 10 + edig ELSE Error( Basic.NumberTooLarge ) END
 						UNTIL (ch < "0") OR ("9" < ch);
 						IF neg THEN e := -e END
 					ELSE Error( Basic.NumberIllegalCharacter )
 					END
 				END;
-				DEC( e, i - d - m );   (* decimal point shift *)
+				(*	The power of ten the digits are to be multiplied by: the point shift, plus
+					what a digit string longer than dig had to leave out. *)
+				DEC( e, i - d );  INC( e, m - n );
 				token.numberType := Real;
-				IF e > MaxRealExponent THEN
+				IF e + n > MaxRealExponent THEN
 					token.numberType := Longreal;
 				END;
-				IF (1 - MaxLongrealExponent < e) & (e <= MaxLongrealExponent) THEN
-					IF e < 0 THEN token.real := f / Ten( -e ) ELSE token.real := f * Ten( e ) END;
-					token.real := ScaleTen( mantissaInt, exactMantissa, e - mantissaDigits, token.real )
-				ELSE Error( Basic.NumberTooLarge )
+				dig[n] := 0X;
+				(*	One conversion, correctly rounded, and the range is whatever binary64 has
+					rather than a decimal exponent counted by hand -- MAX(FLOAT64) and every
+					subnormal used to be refused as "too large" by the count alone. *)
+				IF ~RealConversions.DecimalToReal( dig, e, rest, token.real ) THEN
+					Error( Basic.NumberTooLarge )
 				END
 			END;
 			token.identifierString[si] := 0X;
@@ -1175,35 +1165,6 @@ TYPE
 		reservedCharacter: ARRAY 256 OF BOOLEAN;
 		symbols-: ARRAY EndOfText+1 OF Keyword;
 		keywordsLower, keywordsUpper: KeywordTable;
-		exactTen: ARRAY MaxExactTen+1 OF FLOAT64; (* 10^0 .. 10^22, all exact *)
-
-	PROCEDURE InitExactTen;
-	VAR i: SIGNED32;
-	BEGIN
-		exactTen[0] := 1;
-		FOR i := 1 TO MaxExactTen DO exactTen[i] := exactTen[i-1] * 10 END
-	END InitExactTen;
-
-	(** mantissa * 10^q, correctly rounded whenever mantissa and 10^q are both exactly representable
-		(single IEEE operation on exact operands), otherwise the inexact value computed by the caller.
-		exact tells whether mantissa still is the full digit string of the literal.
-	**)
-	PROCEDURE ScaleTen( mantissa: FLOAT64; exact: BOOLEAN; q: SIGNED32; inexact: FLOAT64 ): FLOAT64;
-	BEGIN
-		IF exact THEN
-			IF (q >= 0) & (q <= MaxExactTen) THEN
-				RETURN mantissa * exactTen[q]
-			ELSIF (q < 0) & (-q <= MaxExactTen) THEN
-				RETURN mantissa / exactTen[-q]
-			ELSIF (q > MaxExactTen) & (q - MaxExactTen <= MaxExactTen)
-				& (mantissa * exactTen[q-MaxExactTen] <= MaxExactMantissa) THEN
-				(* mantissa * 10^(q-22) is still exact, so a single rounding remains *)
-				RETURN mantissa * exactTen[q-MaxExactTen] * exactTen[MaxExactTen]
-			END
-		END;
-		RETURN inexact
-	END ScaleTen;
-
 	(** return a new scanner on a stream, error output via diagnostics  **)
 	PROCEDURE NewScanner*( CONST source: ARRAY OF CHAR; reader: Streams.Reader; position: Streams.Position; diagnostics: Diagnostics.Diagnostics ): Scanner;
 	VAR s: Scanner; pos: Position;
@@ -1599,7 +1560,7 @@ TYPE
 	*)
 
 BEGIN
-	InitReservedCharacters; InitSymbols; InitKeywords; InitExactTen
+	InitReservedCharacters; InitSymbols; InitKeywords
 END FoxScanner.
 
 FoxScanner.ReportKeywords

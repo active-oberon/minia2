@@ -1,0 +1,161 @@
+# Tests for source/FoxScanner.Mod -- the first thing that reads a program: what a literal means.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The scanner is under every case in every other suite, and it had no suite of its own. It was
+# covered in the sense that a scanner that cannot read `BEGIN` gets noticed on the first build --
+# which says nothing about what it does with the literals a build happens not to contain. A number
+# read as the wrong number does not stop anything: the program compiles, runs, and computes with a
+# constant its author did not write.
+#
+# Every expected value here is decided by IEEE 754 rather than by taste, so it can be asserted
+# exactly: a decimal literal denotes one real number, and binary64 has one nearest representable
+# value to it. The bit patterns are what any correctly rounding reference gives (Python's `repr`,
+# `strtod`, the C compiler on this machine agree on all of them).
+#
+# `SYSTEM.VAL(SIGNED64, x)` is how a case reads the bits: the parameter is a variable, so the
+# conversion happens at run time on the value the scanner produced.
+#
+# Each case is positive unless it says otherwise: it must compile and run its module body without
+# a failing ASSERT.
+
+positive: a decimal real literal is the number that was written
+
+	MODULE Test;
+	IMPORT SYSTEM;
+
+	(** The bits of the value the scanner made of a literal. *)
+	PROCEDURE Bits (x: FLOAT64): SIGNED64;
+	BEGIN RETURN SYSTEM.VAL(SIGNED64, x)
+	END Bits;
+
+	PROCEDURE Exactly (x: FLOAT64; expected: SIGNED64);
+	BEGIN ASSERT(Bits(x) = expected)
+	END Exactly;
+
+	BEGIN
+		(* the short ones, where any method agrees *)
+		Exactly(0.1D0, 3FB999999999999AH);
+		Exactly(0.5D0, 3FE0000000000000H);
+		Exactly(1.5D0, 3FF8000000000000H);
+		Exactly(3.141592653589793D0, 400921FB54442D18H);
+		Exactly(2.718281828459045D0, 4005BF0A8B145769H);
+
+		(*	And the ones where repeated multiplication by ten is not the nearest value: an
+			exponent far from zero, seventeen significant digits, or a digit string that is
+			itself the exact value of a binary64 and must come back as that one. *)
+		Exactly(1.0D+300, 7E37E43C8800759CH);
+		Exactly(1.0D-300, 01A56E1FC2F8F359H);
+		Exactly(9.999999999999999D+22, 44B52D02C7E14AF6H);
+		Exactly(1.0D+23, 44B52D02C7E14AF6H);	(* the two nearest the same value *)
+		Exactly(148714663.78840446D0, 41A1BA694F93A9C0H);
+		Exactly(1.2345678901234567D-17, 3C6C779A3F7FFDF9H);
+		Exactly(7.8459735791271921D+65, 4D9DCD0089C1314EH);
+		Exactly(2860337681611341.0D0, 432452EC86E6749AH);
+		Exactly(0.3000000000000000444089209850062616169452667236328125D0, 3FD3333333333334H)
+	END Test.
+
+positive: the ends of the range a binary64 has
+
+	MODULE Test;
+	IMPORT SYSTEM;
+
+	PROCEDURE Exactly (x: FLOAT64; expected: SIGNED64);
+	BEGIN ASSERT(SYSTEM.VAL(SIGNED64, x) = expected)
+	END Exactly;
+
+	BEGIN
+		(*	MAX and the smallest normal number cannot be written as literals at all while the
+			scanner decides by the decimal exponent alone: the decimal point shift pushes 308
+			to 309 and the number is refused as too large. Subnormals are refused for the same
+			reason at the other end, which leaves the bottom of the type unreachable. *)
+		Exactly(1.7976931348623157D+308, 7FEFFFFFFFFFFFFFH);
+		Exactly(2.2250738585072014D-308, 0010000000000000H);
+		Exactly(2.2250738585072011D-308, 000FFFFFFFFFFFFFH);	(* the largest subnormal *)
+		Exactly(5.0D-324, 0000000000000001H);	(* the smallest one there is *)
+		Exactly(1.0D-320, 00000000000007E8H)
+	END Test.
+
+positive: a literal longer than the scanner's own identifier buffer
+
+	MODULE Test;
+	IMPORT SYSTEM;
+
+	BEGIN
+		(*	The scanner keeps the text of a number in the same fixed array it keeps identifiers
+			in, and wrote into it without checking the bound -- two hundred digits ended the
+			compiler with an index out of range. Digits beyond the seventeenth cannot change the
+			value, but they must not change the compiler's mind about running either. *)
+		ASSERT(SYSTEM.VAL(SIGNED64,
+			1.12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890D0)
+			= 3FF1F9ADD3746F66H)
+	END Test.
+
+positive: SYSTEM.VAL of a real constant is its bits, not a trap
+
+	MODULE Test;
+	IMPORT SYSTEM;
+
+	BEGIN
+		(*	Folding this in the checker asserted that the value and the target were the same
+			width, and a real literal is typed by its magnitude rather than by its D, so the
+			assertion failed and took the compiler with it. Sizes that do not match are a
+			diagnosis; sizes that do are these numbers. *)
+		ASSERT(SYSTEM.VAL(SIGNED64, 0.1D0) = 3FB999999999999AH);
+		ASSERT(SYSTEM.VAL(SIGNED64, 1.5D0) = 3FF8000000000000H)
+	END Test.
+
+negative: a literal past the top of the range is refused
+
+	MODULE Test;
+
+	VAR x: FLOAT64;
+
+	BEGIN
+		x := 1.0D+400
+	END Test.
+
+positive: integers, hexadecimals and the separators between their digits
+
+	MODULE Test;
+
+	VAR a, b, c, d: SIGNED64; i: SIGNED32;
+
+	BEGIN
+		(* sixteen hexadecimal digits with the top bit set is a negative SIGNED64, bit for bit *)
+		a := 0FFFFFFFFFFFFFFFFH; ASSERT(a = -1);
+		b := 08000000000000000H; ASSERT(b = MIN(SIGNED64));
+		c := 07FFFFFFFFFFFFFFFH; ASSERT(c = MAX(SIGNED64));
+		d := 0AA1724B5796B3144H; ASSERT(d # 0); ASSERT(d < 0);
+
+		(* the other two bases, and the quote that groups digits in all of them *)
+		ASSERT(0x1F = 31); ASSERT(0x1'F = 31);
+		ASSERT(0b1010 = 10); ASSERT(0b1010'1010 = 170);
+		ASSERT(0FFH = 255);
+
+		(* a character is a number with an X after it, and at most two digits *)
+		ASSERT(ORD(41X) = 65);
+		ASSERT(ORD(0AX) = 10);
+
+		i := MAX(SIGNED32); ASSERT(i = 2147483647);
+		ASSERT(2147483648 > MAX(SIGNED32))	(* one past it is wider, not wrapped *)
+	END Test.
+
+positive: what the control character in a string means
+
+	MODULE Test;
+
+	VAR s: ARRAY 8 OF CHAR;
+
+	BEGIN
+		(*	Inside the \"...\"\ form the backslash is a control character: \\ is one backslash,
+			\" one quote, \t a tab, and \n the two characters CR and LF -- the pair, not one of
+			them. In a plain "..." string there is no control character at all, so what looks
+			like an escape there is two characters. *)
+		s := \"a\tb"\; ASSERT(s[1] = 09X); ASSERT(s[2] = "b");
+		s := \"a\nb"\; ASSERT(s[1] = 0DX); ASSERT(s[2] = 0AX); ASSERT(s[3] = "b");
+		s := \"a\\b"\; ASSERT(s[1] = "\"); ASSERT(s[2] = "b");
+		s := \"a"b"\; ASSERT(s[1] = 22X); ASSERT(s[2] = "b");
+
+		s := "a\tb"; ASSERT(s[1] = "\"); ASSERT(s[2] = "t"); ASSERT(s[3] = "b")
+	END Test.

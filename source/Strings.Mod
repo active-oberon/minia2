@@ -92,7 +92,10 @@ END Count;
 (** truncates string to length *)
 PROCEDURE Truncate* (VAR string: ARRAY OF CHAR; length: SIZE);
 BEGIN
-	IF LEN(string) > length THEN string[length] := 0X END;
+	(*	A length that does not fit truncates to what does: leaving the array untouched left it
+		with no terminator at all, and the next Length ran off its end. *)
+	IF length >= LEN(string) THEN length := LEN(string) - 1 END;
+	IF length >= 0 THEN string[length] := 0X END;
 END Truncate;
 
 (**

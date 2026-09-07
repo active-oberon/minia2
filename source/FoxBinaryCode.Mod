@@ -1,6 +1,6 @@
 MODULE FoxBinaryCode; (** AUTHOR ""; PURPOSE ""; *)
 
-IMPORT Basic := FoxBasic, Sections := FoxSections, Streams, ObjectFile, BitSets, Reals, SYSTEM;
+IMPORT Basic := FoxBasic, Sections := FoxSections, Streams, ObjectFile, BitSets, SYSTEM;
 
 CONST
 	Absolute*=ObjectFile.Absolute;
@@ -478,7 +478,7 @@ TYPE
 
 		PROCEDURE GetLongreal*(pc: Unit): FLOAT64;
 		BEGIN
-			RETURN ConvertToLongreal(GetDWord(pc))
+			RETURN ConvertToLongreal(GetQWord(pc))	(* eight bytes went in, and only four came back out *)
 		END GetLongreal;
 
 		PROCEDURE GetBits*(pc: Unit; size: Bits): INTEGER;
@@ -619,98 +619,30 @@ TYPE
 
 	END Section;
 
+	(*	The bits of a float, and the float of those bits. This used to be done by hand, with a
+		loop that normalised the value and another that shifted the significand out one bit at a
+		time -- which has no answer for a subnormal (the exponent field came out negative and ran
+		into the sign) and none for an infinity either. Every target this compiler has is IEEE 754
+		and so is the host, so the bits are already there to be taken. *)
+
 	PROCEDURE ConvertReal* (value: FLOAT32): SIGNED32;
-	CONST Exponent = 8; Significant = 23;
-	VAR result: SIGNED32; VAR exponent, i: INTEGER;
 	BEGIN
-		IF Reals.IsNaN(value) THEN RETURN SYSTEM.VAL(SIGNED32, value) END;
-		(*! NaN code missing, we need an extra - machine specific - functionality for that  / cf. Streams.NaNCode *)
-		IF value = 0 THEN RETURN 0 END;
-		result := 0; exponent := 0;
-		IF value < 0 THEN value := -value; result := ASH (1, Exponent) END;
-		WHILE value < 1 DO value := value * 2; DEC (exponent) END;
-		WHILE value >= 2 DO value := value / 2; INC (exponent) END;
-		value := value - 1; INC (result, ASH (1, Exponent - 1) - 1 + exponent);
-		FOR i := 0 TO Significant - 1 DO
-			value := value * 2; INC (result, result);
-			IF value >= 1 THEN value := value - 1; INC (result) END;
-		END;
-		RETURN result;
+		RETURN SYSTEM.VAL(SIGNED32, value)
 	END ConvertReal;
 
 	PROCEDURE ConvertLongreal*(value: FLOAT64): SIGNED64;
-	CONST Exponent = 11; Significant = 52;
-	VAR result: SIGNED64; VAR exponent, i: INTEGER;
 	BEGIN
-		IF Reals.IsNaNL(value) THEN RETURN SYSTEM.VAL(SIGNED64, value) END;
-		(*! NaN code missing, we need an extra - machine specific - functionality for that  / cf. Streams.NaNCode *)
-		IF value = 0 THEN RETURN 0 END;
-		result := 0; exponent := 0;
-		IF value < 0 THEN value := -value; result := ASH (1, Exponent) END;
-		WHILE value < 1 DO value := value * 2; DEC (exponent) END;
-		WHILE value >= 2 DO value := value / 2; INC (exponent) END;
-		value := value - 1; INC (result, ASH (1, Exponent - 1) - 1 + exponent);
-		FOR i := 0 TO Significant - 1 DO
-			value := value * 2; INC (result, result);
-			IF value >= 1 THEN value := value - 1; INC (result) END;
-		END;
-		RETURN result;
+		RETURN SYSTEM.VAL(SIGNED64, value)
 	END ConvertLongreal;
 
 	PROCEDURE ConvertToReal*(x: SIGNED32): FLOAT32;
-	VAR result: FLOAT32; e,i: SIGNED32;
-
-		PROCEDURE Bit(bit: SIGNED32): BOOLEAN;
-		BEGIN
-			RETURN ODD(ASH(x,-bit))
-		END Bit;
 	BEGIN
-		result := 0; e := 0;
-		FOR i := 0 TO 22 DO
-			IF Bit(i) THEN result := result + 1 END; result := result / 2;
-		END;
-		FOR i :=  30 TO 23 BY -1 DO
-			e := e*2; IF Bit(i) THEN e := e+1 END;
-		END;
-		IF e = 0FFH THEN (* NaN or Inf *)
-			HALT(200);
-			(*! NaN code missing, we need an extra - machine specific - functionality for that  / cf. Streams.NaNCode *)
-		ELSIF (result # 0) OR (e#0) THEN
-			result := result + 1;
-			DEC(e,127);
-			WHILE e > 0 DO result := result *2; DEC(e) END;
-			WHILE e < 0 DO result := result / 2; INC(e) END;
-			IF Bit(31) THEN result := -result END;
-		END;
-		RETURN result
+		RETURN SYSTEM.VAL(FLOAT32, x)
 	END ConvertToReal;
 
 	PROCEDURE ConvertToLongreal*(x: SIGNED64): FLOAT64;
-	VAR result: FLOAT64; e,i: SIGNED32;
-
-		PROCEDURE Bit(bit: SIGNED32): BOOLEAN;
-		BEGIN
-			RETURN ODD(ASH(x,-bit))
-		END Bit;
 	BEGIN
-		result := 0; e:= 0;
-		FOR i := 0 TO 51 DO
-			IF Bit(i) THEN result := result + 1 END; result := result / 2;
-		END;
-		result := result + 1;
-		FOR i :=  62 TO 52 BY -1 DO
-			e := e*2; IF Bit(i) THEN e := e+1 END;
-		END;
-		IF e = 7FFH THEN (* NaN or Inf *)
-			HALT(200)
-			(*! NaN code missing, we need an extra - machine specific - functionality for that  / cf. Streams.NaNCode *)
-		ELSIF (result # 0) OR (e#0) THEN
-			DEC(e,1023);
-			WHILE e > 0 DO result := result *2; DEC(e) END;
-			WHILE e < 0 DO result := result / 2; INC(e) END;
-			IF Bit(63) THEN result := -result END;
-		END;
-		RETURN result
+		RETURN SYSTEM.VAL(FLOAT64, x)
 	END ConvertToLongreal;
 
 	PROCEDURE NewFixup*(mode: INTEGER; fixupOffset: Unit; symbol: ObjectFile.Identifier; symbolOffset: SIZE; displacement: Unit; scale: Bits; fixupPattern: ObjectFile.FixupPatterns): Fixup;

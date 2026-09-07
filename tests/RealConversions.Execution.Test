@@ -423,3 +423,84 @@ positive: test RealConversions.StringToReal
 		END Test;
 	END Test.
 
+
+positive: the digits of a real, and the real of those digits
+
+	MODULE Test;
+	IMPORT
+		RC := RealConversions, SYSTEM;
+	VAR
+		digits: ARRAY 32 OF CHAR;
+
+		PROCEDURE Bits(x: FLOAT64): SIGNED64;
+		BEGIN RETURN SYSTEM.VAL(SIGNED64, x)
+		END Bits;
+
+		(* the string reads as exactly this binary64, and no neighbour of it *)
+		PROCEDURE Exactly(CONST s: ARRAY OF CHAR; expected: SIGNED64);
+		VAR v: FLOAT64;
+		BEGIN
+			ASSERT(RC.StringToReal(s, v));
+			ASSERT(Bits(v) = expected)
+		END Exactly;
+
+		(* seventeen digits are enough to name a binary64: written out and read back is itself *)
+		PROCEDURE RoundTrip(x: FLOAT64);
+		VAR back: FLOAT64; exponent: SIGNED32;
+		BEGIN
+			RC.RealToDecimal(x, 17, digits, exponent);
+			ASSERT(RC.DecimalToReal(digits, exponent, FALSE, back));
+			ASSERT(Bits(back) = Bits(x))
+		END RoundTrip;
+
+		PROCEDURE Test*;
+		VAR v: FLOAT64; exponent: SIGNED32;
+		BEGIN
+			(*	A decimal denotes one real number and binary64 has one nearest value to it, so
+				these are facts and not preferences. Repeated multiplication by ten -- which is
+				what this module did -- rounds once per step and lands a unit or four in the last
+				place away from each of them. *)
+			Exactly("0.1", 3FB999999999999AH);
+			Exactly("3.141592653589793", 400921FB54442D18H);
+			Exactly("1.0E+300", 7E37E43C8800759CH);
+			Exactly("1.0E-300", 01A56E1FC2F8F359H);
+			Exactly("9.999999999999999E+22", 44B52D02C7E14AF6H);
+			Exactly("1.0E+23", 44B52D02C7E14AF6H);	(* both nearest the same value *)
+			Exactly("148714663.78840446", 41A1BA694F93A9C0H);
+			Exactly("1.2345678901234567E-17", 3C6C779A3F7FFDF9H);
+			Exactly("2860337681611341.0", 432452EC86E6749AH);
+
+			(* the ends of the range, subnormals included *)
+			Exactly("1.7976931348623157E+308", 7FEFFFFFFFFFFFFFH);
+			Exactly("2.2250738585072014E-308", 0010000000000000H);
+			Exactly("2.2250738585072011E-308", 000FFFFFFFFFFFFFH);	(* the largest subnormal *)
+			Exactly("5.0E-324", 1H);	(* and the smallest *)
+
+			(* past the top there is no value to give, and past the bottom the value is zero *)
+			ASSERT(~RC.StringToReal("1.0E+400", v));
+			ASSERT(RC.StringToReal("1.0E-400", v));
+			ASSERT(v = 0.0D0);
+
+			(* digits beyond what a binary64 can hold decide only the rounding, and are not an error *)
+			Exactly("0.3000000000000000444089209850062616169452667236328125", 3FD3333333333334H);
+
+			(* and the way back *)
+			RC.RealToDecimal(0.5D0, 17, digits, exponent);
+			ASSERT(digits = "50000000000000000");
+			RC.RealToDecimal(0.0D0, 17, digits, exponent);
+			ASSERT(digits = "00000000000000000");
+			ASSERT(exponent = 0);
+
+			RoundTrip(0.1D0);
+			RoundTrip(1.0D0);
+			RoundTrip(3.141592653589793D0);
+			RoundTrip(1.0D+300);
+			RoundTrip(1.0D-300);
+			RoundTrip(1.7976931348623157D+308);
+			RoundTrip(5.0D-324);
+			RoundTrip(2.2250738585072011D-308);
+			RoundTrip(1.2345678901234567D-17);
+
+			TRACE("Test passed");
+		END Test;
+	END Test.

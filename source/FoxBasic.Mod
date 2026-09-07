@@ -936,6 +936,7 @@ VAR
 	PROCEDURE AppendDetailedErrorMessage*(VAR message: ARRAY OF CHAR; pos: Position; reader: Streams.Reader);
     VAR err: ARRAY 512 OF CHAR; ch: CHAR; oldpos: Streams.Position;
     BEGIN
+        err := "";	(* Strings.AppendChar looks for the end of what is here, and a local starts as whatever the stack held *)
         IF (reader # NIL) & (reader.CanSetPos()) THEN
             oldpos := reader.Pos();
             reader.SetPos(pos.linepos);

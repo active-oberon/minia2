@@ -1865,17 +1865,17 @@ TYPE
 				END;
 			ELSIF IsRealValue(expression,real) THEN
 				IF (type IS SyntaxTree.IntegerType) & (type.sizeInBits < 64) THEN
-					IF systemVal THEN
-						ASSERT((expression.type.sizeInBits = 32) & (type.sizeInBits = 32));
-						r32.f := FLOAT32(real);
+					(*	SYSTEM.VAL reinterprets, so the width that decides is the target's: a
+						real literal is typed by its magnitude and not by its D, and asserting
+						that the value already had the target's width ended the compiler on
+						`SYSTEM.VAL(SIGNED64, 0.1D0)`. *)
+					IF systemVal THEN  r32.f := FLOAT32(real);
 					ELSE r32.i := ENTIER(real); END;
 					int := Global.ConvertSigned(r32.i,system.SizeOf(type));
 					result := SyntaxTree.NewIntegerValue(expression.position,int);
 					result.SetType(type);
 				ELSIF (type IS SyntaxTree.IntegerType) OR (type IS SyntaxTree.SizeType) THEN
-					IF systemVal THEN
-						ASSERT((expression.type.sizeInBits = 64) & (type.sizeInBits = 64));
-						r64.f := FLOAT64(real);
+					IF systemVal THEN  r64.f := real;
 					ELSE r64.i := ENTIERH(real); END;
 					int := Global.ConvertSigned(r64.i,system.SizeOf(type));
 					result := SyntaxTree.NewIntegerValue(expression.position,int);

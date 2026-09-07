@@ -179,13 +179,12 @@ positive: what Reals can produce and the scanner will not accept
 	IMPORT Reals;
 	VAR x: FLOAT64;
 	BEGIN
-		(* FoxScanner rejects a real literal from 1E308 upward -- "number too large" -- although
-			binary64 reaches 1.797E308. So the top decade of the type has no literal at all:
-			`1.0D308` and `1.79D308` do not compile, while `1.0D307` does. MaxLongrealExponent is
-			308 and the guard is `e <= 308`, but it is applied before the decimal point is folded in,
-			so one fractional digit costs one decade.
-			The reason this belongs in Reals.Test: Reals.Ten(308) computes the very value the scanner
-			refuses to read, so the two can be compared without writing the literal down. *)
+		(*	This case was written when the top decade of the type had no literal at all: the
+			scanner refused everything from 1E308 upward as "number too large", because it
+			checked the decimal exponent before folding the point into it, and Reals.Ten(308)
+			was the only way to name the value at all. The scanner now accepts whatever binary64
+			holds -- tests/Scanner.Test asserts the ends of the range as literals -- and this
+			case stays for what it says about Reals itself. *)
 		x := Reals.Ten(308);
 		ASSERT(x > 0.0D0);
 		ASSERT(~Reals.IsNaNL(x));
