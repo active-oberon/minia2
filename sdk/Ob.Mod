@@ -2880,7 +2880,11 @@ BEGIN
 	WHILE reader.res = Streams.Ok DO
 		reader.Ln(line); Strings.Trim(line, 0DX);
 		error.String(line); error.Char(0AX);		(* into the case log, for the parent to show *)
-		IF (Strings.Pos("error:", line) >= 0) OR (Strings.Pos("Could not load module", line) >= 0)
+		(*	Not "error:": a case is free to provoke one and check what was said about it --
+			three cases in Loader.Test hand the loader a broken object file on purpose, and the
+			refusal they are checking is printed with that word in it. What decides is whether
+			the module loaded and what the process exited with. *)
+		IF (Strings.Pos("Could not load module", line) >= 0)
 				OR (Strings.Pos("not successful", line) >= 0) THEN
 			bad := TRUE
 		END;
