@@ -48,6 +48,13 @@ TYPE
 		BEGIN
 			SELF.reader := reader;
 			SELF.diagnostics := diagnostics;
+			(*	A text begins at the start of a line. prevToken was left unset, which is the first
+				member of the enumeration -- EndOfText -- so `firstInLine` was FALSE on the first
+				line and every construction that is only a construction there was something else:
+				`= Title` was the literal `=`, `* item` was a closing bold, `----` was four dashes,
+				`Note:` was a word with a colon. The first line of a doc comment is exactly where a
+				heading goes. *)
+			prevToken := Token.NewLine;
 			ch := " ";
 			IF reader = NIL THEN ch := EOT ELSE GetNextCharacter END;
 			SELF.position := position;
@@ -65,11 +72,14 @@ TYPE
 			RETURN reader.Peek()
 		END Peek;
 
+		(*	Whether the character under the cursor ends the word being read. The end of the text
+			ends it too: a comment whose last word is `*bold*` had its closing star read into the
+			word, because IsWhitespace says no to EOT and nothing else asked. *)
 		PROCEDURE BreaksLiteral(): BOOLEAN;
 		BEGIN
 			CASE ch OF
 				"*", "_", "/","#":
-					IF IsWhitespace(Peek(),TRUE) THEN RETURN TRUE END; (* right of bold, underline, italics and description *)
+					IF IsWhitespace(Peek(),TRUE) OR (Peek() = EOT) THEN RETURN TRUE END; (* right of bold, underline, italics and description *)
 				|"]",">","\":
 					IF ch = Peek() THEN RETURN TRUE END; (* right of link or label *)
 				|"|": RETURN TRUE (* pipe in link or table *)
@@ -127,15 +137,30 @@ TYPE
 			UNTIL (ch <= " ");
 		END ReadLiteralWS;
 
+		(*	A run of the same character, and how many of them the construction needs. The two
+			bounds were joined with OR, and one of them always holds -- a level below the minimum
+			is below the maximum too -- so every run was accepted whatever its length and the
+			branch below was unreachable. That is why a single `<` was a label, a single `[` a
+			link, a single `{` a code block and one dash a horizontal rule. *)
 		PROCEDURE ReadCharacters(this: CHAR; min,max: SIGNED32; VAR symbol: Symbol; token: Token);
 		BEGIN
 			symbol.level := 0;
 			WHILE (ch = this) DO INC(symbol.level); GetNextCharacter END;
-			IF (symbol.level >= min) OR (symbol.level <= max) THEN
+			IF (symbol.level >= min) & (symbol.level <= max) THEN
 				symbol.token := token;
 			ELSE
+				(*	Not a construction after all, so the characters are text. `ch` already stands
+					past the run, and ReadLiteral consumes at least one character whatever it is --
+					which would eat the line ending after `---` into the word. So it is only asked
+					for a character that can be part of a word. The level belonged to the
+					construction that this turned out not to be. *)
 				AppendCharacters(symbol, this, symbol.level);
-				ReadLiteral(symbol, Token.String);
+				symbol.level := 0;
+				IF (ch > " ") & ~BreaksLiteral() THEN
+					ReadLiteral(symbol, Token.String)
+				ELSE
+					symbol.token := Token.String
+				END
 			END;
 		END ReadCharacters;
 
@@ -156,25 +181,27 @@ TYPE
 				END;
 			END SkipBlanks;
 
+			(*	Everything up to the three braces that close the block. The decision used to be
+				made on the character AFTER them -- which read that character into the string and
+				then took four off the length to lose it again -- so a block that ended the text
+				had no character after it, fell out of the loop as end of text, and took the code
+				with it. A doc comment very often ends with its example. *)
 			PROCEDURE ReadCode;
-			VAR ending: SIGNED32; end:BOOLEAN;
+			VAR ending: SIGNED32; end: BOOLEAN;
 			BEGIN
 				ending := 0; end := FALSE;
-				REPEAT
+				LOOP
+					IF ch = EOT THEN EXIT END;
 					AppendCharacter(symbol, ch);
-					IF ch = "}" THEN
-						INC(ending);
-						GetNextCharacter
-					ELSIF (ending = 3) & (ch # "'") & (ch # '"')  (* to allow for referencing '}}}' in descriptions of the documentation *)& (ending = 3) THEN
-						end := TRUE
-					ELSE
-						ending := 0;
-						GetNextCharacter
-					END;
-				UNTIL (ch = EOT) OR end;
+					IF ch = "}" THEN INC(ending) ELSE ending := 0 END;
+					GetNextCharacter;
+					(*	`'}}}'` and `"}}}"` are how the documentation of this markup refers to the
+						braces themselves, so they do not close a block. *)
+					IF (ending = 3) & (ch # "'") & (ch # '"') THEN end := TRUE; EXIT END
+				END;
 				IF end THEN
 					symbol.token := Token.CodeEnd;
-					DEC(symbol.stringLength,4);
+					DEC(symbol.stringLength,3);
 					symbol.string[symbol.stringLength] := 0X
 				ELSE
 					symbol.token := Token.EndOfText
@@ -187,10 +214,13 @@ TYPE
 				RETURN IsWhitespace(prev,FALSE) & ~IsWhitespace(Peek(),FALSE)
 			END IsLeft;
 
-			(* return if the current character is preceded by a non-whitespace and next character is a whitespace, such as at the end of *b o l d*  *)
+			(*	return if the current character is preceded by a non-whitespace and next character is
+				a whitespace, such as at the end of *b o l d*. The end of the text closes as well:
+				IsWhitespace says no to EOT on purpose, and without this a comment ending in
+				`*bold*` kept the last star as a letter. *)
 			PROCEDURE IsRight(): BOOLEAN;
 			BEGIN
-				RETURN ~IsWhitespace(prev,TRUE) & IsWhitespace(Peek(),TRUE)
+				RETURN ~IsWhitespace(prev,TRUE) & (IsWhitespace(Peek(),TRUE) OR (Peek() = EOT))
 			END IsRight;
 
 		BEGIN

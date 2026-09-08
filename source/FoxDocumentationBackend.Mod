@@ -1507,6 +1507,12 @@ TYPE
 		text.WriteLabel(label);
 	END WriteSymbolLabel;
 
+(*	The qualified name of a symbol, built up scope by scope. It is put together with the bounded
+	append: `name` is a Basic.SectionName, 256 characters, and every level of the chain adds an
+	identifier of up to 128 plus a dot -- so three levels overflow it whatever the names are, and
+	two long ones are enough. It used to be the unbounded append, which writes past the end. A name
+	cut short here is a link that does not resolve; a name written past the end is somebody else's
+	memory. *)
 	PROCEDURE WriteReferenceInScope*(text: DocumentationTree.Text; symbol: SyntaxTree.Symbol; inScope: SyntaxTree.Scope);
 	VAR n: SyntaxTree.IdentifierString; td: SyntaxTree.TypeDeclaration; name: Basic.SectionName; write: BOOLEAN;
 		PROCEDURE Scope(scope: SyntaxTree.Scope);
@@ -1517,7 +1523,7 @@ TYPE
 				Scope(NIL);
 				Global.GetModuleName(scope.ownerModule, name);
 				IF write THEN text.WriteWeakLink(name, name); text.WriteString(".") END;
-				Strings.Append(name,".");
+				Strings.AppendX(name,".");
 			ELSIF scope IS SyntaxTree.RecordScope THEN
 				Scope(scope.outerScope);
 				td := scope(SyntaxTree.RecordScope).ownerRecord.typeDeclaration;
@@ -1525,22 +1531,22 @@ TYPE
 					td := scope(SyntaxTree.RecordScope).ownerRecord.pointerType.typeDeclaration;
 				END;
 				td.GetName(n);
-				Strings.Append(name,n);
+				Strings.AppendX(name,n);
 				IF write THEN text.WriteWeakLink(name, n); text.WriteString(".") END;
-				Strings.Append(name,".")
+				Strings.AppendX(name,".")
 			ELSIF scope IS SyntaxTree.ProcedureScope THEN
 				Scope(scope.outerScope);
 				scope(SyntaxTree.ProcedureScope).ownerProcedure.GetName(n);
-				Strings.Append(name,n);
+				Strings.AppendX(name,n);
 				IF write THEN text.WriteWeakLink(name, n); text.WriteString(".") END;
-				Strings.Append(name,".")
+				Strings.AppendX(name,".")
 			ELSIF scope IS SyntaxTree.CellScope THEN
 				Scope(scope.outerScope);
 				td := scope(SyntaxTree.CellScope).ownerCell.typeDeclaration;
 				td.GetName(n);
-				Strings.Append(name,n);
+				Strings.AppendX(name,n);
 				IF write THEN text.WriteWeakLink(name, n); text.WriteString(".") END;
-				Strings.Append(name,".")
+				Strings.AppendX(name,".")
 			ELSE Scope(scope.outerScope)
 			END;
 			IF (scope = inScope) THEN write := TRUE END;
@@ -1553,7 +1559,7 @@ TYPE
 		symbol.GetName(n);
 		IF symbol IS SyntaxTree.Operator THEN (*! append some more bits to make discrimintation possible *)
 		END;
-		Strings.Append(name,n);
+		Strings.AppendX(name,n);
 		text.WriteWeakLink(name, n);
 	END WriteReferenceInScope;
 

@@ -11,14 +11,18 @@ TYPE
 	VAR writer: Streams.Writer;
 		chars: ARRAY MaxLevel OF CHAR; listLevel: SIGNED32;
 		currentLevel: SIGNED32; printLabels: BOOLEAN;
+		preformatted: BOOLEAN;   (* inside <pre>, where a line ending is a line ending *)
 
 		PROCEDURE &InitPrinter*(writer: Streams.Writer);
 		BEGIN SELF.writer := writer; listLevel := 0; currentLevel := 0; printLabels := FALSE;
+			preformatted := FALSE;
 		END InitPrinter;
 
+		(*	The value of an `id` attribute, which is a name and not a reference: the hash belongs to
+			the `href` that points at it, and every heading in the document used to carry one. *)
 		PROCEDURE PrintLabel(section: Tree.Section);
 		BEGIN
-			writer.String('"#'); IF section.label = NIL THEN writer.String("_"); writer.Hex(SYSTEM.VAL(ADDRESS,section),-8); ELSE WriteString(writer,section.label); END; writer.String('"')
+			writer.String('"'); IF section.label = NIL THEN writer.String("_"); writer.Hex(SYSTEM.VAL(ADDRESS,section),-8); ELSE WriteString(writer,section.label); END; writer.String('"')
 		END PrintLabel;
 
 		PROCEDURE Section*(section: Tree.Section);
@@ -69,7 +73,6 @@ TYPE
 		END BeginItem;
 
 		PROCEDURE Paragraph*(paragraph: Tree.Paragraph);
-		VAR element: Tree.TextElement;
 		BEGIN
 			writer.Ln;
 			CASE paragraph.type OF
@@ -99,8 +102,14 @@ TYPE
 				Text(paragraph.text);
 				writer.String("</li>");
 			|ParagraphType.Code:
+				(*	`<pre>` keeps the line endings it is given, so they are not turned into breaks
+					here -- doing both put an empty line between every two lines of an example.
+					(An element was fetched here and never used; it would have halted on a code
+					block with nothing in it.) *)
 				EndItem(0);
-				writer.String("<pre>"); element := paragraph.text.GetElement(0); Text(paragraph.text); writer.String("</pre>");
+				writer.String("<pre>"); preformatted := TRUE;
+				Text(paragraph.text);
+				preformatted := FALSE; writer.String("</pre>");
 			|ParagraphType.Table:
 				EndItem(0);
 				writer.String('<table>'); Text(paragraph.text); writer.String("</table>");
@@ -121,6 +130,12 @@ TYPE
 			EndItem(0);
 		END ParagraphList;
 
+		(*	Text into the document, with the characters that mean something in it escaped. The
+			document declares itself XHTML 1.0 Strict and opens with an XML declaration, and in XML
+			an entity without its semicolon is not something to recover from -- it is a fatal
+			error. `&lt` and `&gt` were written without one, an ampersand was not escaped at all,
+			and this procedure also writes attribute values, where a quotation mark ends the
+			attribute. So: five characters, and a line break that closes itself. *)
 		PROCEDURE WriteString(writer: Streams.Writer; string: Strings.String);
 		VAR i: SIGNED32; c: CHAR;
 		BEGIN
@@ -128,9 +143,12 @@ TYPE
 			i := 0;
 			WHILE string[i] # 0X DO
 				c := string[i];
-				IF c = '<' THEN writer.String("&lt")
-				ELSIF c = '>' THEN writer.String("&gt")
-				ELSIF c = Scanner.LF THEN writer.String("<BR>")
+				IF c = '&' THEN writer.String("&amp;")
+				ELSIF c = '<' THEN writer.String("&lt;")
+				ELSIF c = '>' THEN writer.String("&gt;")
+				ELSIF c = '"' THEN writer.String("&quot;")
+				ELSIF c = "'" THEN writer.String("&apos;")
+				ELSIF (c = Scanner.LF) & ~preformatted THEN writer.String("<br />")
 				ELSE
 					writer.Char(c);
 				END;

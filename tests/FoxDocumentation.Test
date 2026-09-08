@@ -1,0 +1,507 @@
+# Tests for the documentation backend of the compiler -- source/FoxDocumentationScanner.Mod,
+# FoxDocumentationParser.Mod, FoxDocumentationTree.Mod, FoxDocumentationPrinter.Mod and
+# FoxDocumentationHtml.Mod, about 3200 lines with no test of their own until now.
+#
+# options --command="System.Free Test FoxDocTestShared;System.Load Test"
+#
+# This is what `ob doc` is made of: the text of a doc comment goes in, a document comes out, and
+# the document is printed as plain text or as XHTML. Nothing here needs a display, a runtime or a
+# file -- a case is a string in and a string out -- which is why it is the cheapest thing left in
+# std/compiler and why it went so long without being read.
+#
+# The markup is a language nobody wrote down: it is in the scanner's CASE statement. So the first
+# half of the cases is that language, token by token -- what makes a heading, when a `*` is a
+# bullet and when it is bold, what ends a code block -- and the second half is the two printers
+# over the same document.
+#
+# Two things worth knowing before reading the cases.
+#
+# -  `*bold*`, `/italic/` and `_underline_` are decided by the blanks around them, not by pairing:
+#    the character opens if a blank comes before it and no blank after, and closes the other way
+#    round. So `a*b*c` is three literals and `a *b* c` is a bold `b`. The same characters at the
+#    start of a line are a bullet instead, and `#` there is a numbered item.
+# -  the scanner takes a Diagnostics and never writes to it, and the parser reports what it cannot
+#    parse to Debugging.Log. A case therefore cannot ask "what was the error"; it can only ask what
+#    came out. That is recorded here as a finding, not worked around.
+#
+# WHAT THESE CASES FOUND AND WHAT WAS FIXED
+#
+# Eight defects, and the first one is why the rest went unseen: the scanner never set the token it
+# compares against to decide whether it stands at the start of a line, so on the FIRST line -- which
+# is where a heading goes -- `= Title` was the literal `=`, `* item` was a closing bold, `----` was
+# four dashes and `Note:` was a word with a colon. Then: a run of characters had its length checked
+# with an OR of the two bounds, one of which always holds, so every run was accepted and a single
+# `<` was a label, one `[` a link, one `{` a code block that ate the rest of the comment; the
+# fall-back for a rejected run swallowed the line ending into the word; a code block that ended the
+# text was reported as the end of the text with the code thrown away; a closing `*` at the very end
+# of the text stayed a letter; and the XHTML writer wrote `&lt` and `&gt` without their semicolons,
+# left an ampersand as it stood and a quotation mark inside an attribute as it stood, in a document
+# that declares itself XHTML 1.0 Strict and opens with an XML declaration -- where an entity without
+# its semicolon is a fatal error rather than something to recover from. Also: every heading's `id`
+# began with a hash, and a line ending inside `<pre>` was turned into a break as well as being kept,
+# so every two lines of an example had an empty line between them.
+#
+# FOUND AND NOT FIXED -- all three are bigger than this pass
+#
+# -  Nothing tells the caller that a document did not parse. The scanner is given a Diagnostics and
+#    never writes to it; the parser's `Expect` prints "error in parsing" to Debugging.Log, with no
+#    position and no way for `ob doc` to know. Giving it real diagnostics is its own piece of work.
+# -  A description under a bullet comes out as a `<dl>` directly inside the `<ul>`, and the `</ul>`
+#    closes after the `</dl>`. Measured on a real module through `ob doc`. The nesting is decided by
+#    BeginItem/EndItem in FoxDocumentationHtml and needs reading as a whole.
+# -  The summary table that FoxDocumentationBackend writes opens a `<tr>` inside a `<td>` and closes
+#    the two in the wrong order. Same shape of problem, in the other module.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxDocTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "Drive the documentation backend on a string" *)
+
+	IMPORT Streams, Strings, Diagnostics, Scanner := FoxDocumentationScanner,
+		Parser := FoxDocumentationParser, Tree := FoxDocumentationTree,
+		Plain := FoxDocumentationPrinter, Web := FoxDocumentationHtml;
+
+	TYPE
+		Text* = ARRAY 8192 OF CHAR;
+
+	(** The name of a token, so that a case can say what it expects in words. *)
+	PROCEDURE Name* (token: Scanner.Token; VAR name: ARRAY OF CHAR);
+	BEGIN
+		IF token = Scanner.Token.EndOfText THEN name := "end"
+		ELSIF token = Scanner.Token.NewLine THEN name := "nl"
+		ELSIF token = Scanner.Token.Header THEN name := "header"
+		ELSIF token = Scanner.Token.Pipe THEN name := "pipe"
+		ELSIF token = Scanner.Token.LeftItalic THEN name := "i<"
+		ELSIF token = Scanner.Token.RightItalic THEN name := "i>"
+		ELSIF token = Scanner.Token.LeftBold THEN name := "b<"
+		ELSIF token = Scanner.Token.RightBold THEN name := "b>"
+		ELSIF token = Scanner.Token.LeftUnderline THEN name := "u<"
+		ELSIF token = Scanner.Token.RightUnderline THEN name := "u>"
+		ELSIF token = Scanner.Token.LinkBegin THEN name := "link<"
+		ELSIF token = Scanner.Token.LinkEnd THEN name := "link>"
+		ELSIF token = Scanner.Token.Heading THEN name := "heading"
+		ELSIF token = Scanner.Token.Number THEN name := "number"
+		ELSIF token = Scanner.Token.LeftDescription THEN name := "desc<"
+		ELSIF token = Scanner.Token.RightDescription THEN name := "desc>"
+		ELSIF token = Scanner.Token.Description THEN name := "desc"
+		ELSIF token = Scanner.Token.Bullet THEN name := "bullet"
+		ELSIF token = Scanner.Token.Line THEN name := "line"
+		ELSIF token = Scanner.Token.CodeBegin THEN name := "code<"
+		ELSIF token = Scanner.Token.CodeEnd THEN name := "code>"
+		ELSIF token = Scanner.Token.LabelBegin THEN name := "label<"
+		ELSIF token = Scanner.Token.LabelEnd THEN name := "label>"
+		ELSIF token = Scanner.Token.LineBreak THEN name := "break"
+		ELSIF token = Scanner.Token.Section THEN name := "section"
+		ELSIF token = Scanner.Token.String THEN name := "str"
+		ELSE name := "?"
+		END
+	END Name;
+
+	(**
+		The token stream of a documentation text, written out as
+		`<name>[level][:string]` a token, space separated. That is the whole first half of these
+		cases: the markup is a language, and this is how a case says what the language made of a
+		string.
+	*)
+	PROCEDURE Tokens* (CONST source: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR reader: Streams.StringReader; diagnostics: Diagnostics.DiagnosticsList;
+		scanner: Scanner.Scanner; symbol: Scanner.Symbol; name: ARRAY 16 OF CHAR;
+		guard: SIGNED32;
+	BEGIN
+		out := "";
+		NEW(reader, LEN(source)); reader.Set(source);
+		NEW(diagnostics);
+		NEW(scanner, reader, 0, diagnostics);
+		guard := 0;
+		REPEAT
+			scanner.GetNextSymbol(symbol);
+			Name(symbol.token, name);
+			IF out # "" THEN Strings.AppendX(out, " ") END;
+			Strings.AppendX(out, name);
+			IF symbol.level > 0 THEN Strings.AppendInt(out, symbol.level) END;
+			IF (symbol.string # NIL) & (symbol.string[0] # 0X) THEN
+				Strings.AppendX(out, ":"); Strings.AppendX(out, symbol.string^)
+			END;
+			INC(guard)
+		UNTIL (symbol.token = Scanner.Token.EndOfText) OR (guard > 512)
+	END Tokens;
+
+	(* Text in, document out -- the two printers below start here. *)
+	PROCEDURE Read (CONST source: ARRAY OF CHAR): Tree.Document;
+	VAR reader: Streams.StringReader; diagnostics: Diagnostics.DiagnosticsList;
+		scanner: Scanner.Scanner; parser: Parser.Parser; document: Tree.Document;
+	BEGIN
+		NEW(reader, LEN(source)); reader.Set(source);
+		NEW(diagnostics);
+		NEW(scanner, reader, 0, diagnostics);
+		NEW(parser, scanner);
+		NEW(document);
+		parser.ParseDocument(document);
+		RETURN document
+	END Read;
+
+	(** The same text, printed back as plain text. *)
+	PROCEDURE Printed* (CONST source: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR buffer: Streams.Buffer; writer: Streams.Writer; printer: Plain.Printer;
+		text: Strings.String;
+	BEGIN
+		NEW(buffer, 4096); writer := buffer.GetWriter();
+		NEW(printer, writer);
+		printer.Document(Read(source));
+		writer.Update; text := buffer.GetString();
+		IF text = NIL THEN out := "" ELSE COPY(text^, out) END
+	END Printed;
+
+	(** And as the XHTML `ob doc` writes into a file. *)
+	PROCEDURE Html* (CONST source: ARRAY OF CHAR; VAR out: ARRAY OF CHAR);
+	VAR buffer: Streams.Buffer; writer: Streams.Writer; printer: Web.Printer;
+		text: Strings.String;
+	BEGIN
+		NEW(buffer, 8192); writer := buffer.GetWriter();
+		NEW(printer, writer);
+		printer.Document(Read(source));
+		writer.Update; text := buffer.GetString();
+		IF text = NIL THEN out := "" ELSE COPY(text^, out) END
+	END Html;
+
+	(** One line of a documentation text. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN
+		Strings.AppendX(text, piece); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	PROCEDURE Has* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Has;
+
+	PROCEDURE Times* (CONST text, what: ARRAY OF CHAR): SIGNED32;
+	VAR at: SIZE; found: SIGNED32;
+	BEGIN
+		found := 0; at := 0;
+		LOOP
+			at := Strings.GenericPos(what, at, text, FALSE, FALSE);
+			IF at < 0 THEN EXIT END;
+			INC(found); at := at + 1
+		END;
+		RETURN found
+	END Times;
+
+	END FoxDocTestShared.
+
+positive: words are words, and the blanks between them are a token of their own
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared, Strings;
+	VAR out, source: T.Text;
+	BEGIN
+		T.Tokens("one two", out);
+		ASSERT(out = "str:one str:two end", 1);
+		(* a line ending is a token, and CR LF is one of them and not two *)
+		source := "one"; Strings.AppendChar(source, 0DX); Strings.AppendChar(source, 0AX);
+		Strings.AppendX(source, "two");
+		T.Tokens(source, out);
+		ASSERT(out = "str:one nl str:two end", 2);
+		T.Tokens("", out);
+		ASSERT(out = "end", 3)
+	END Test.
+
+positive: a heading is one to three equals signs at the start of a line, and may carry a label
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "= one"); T.Line(source, "== two"); T.Line(source, "=== three");
+		T.Tokens(source, out);
+		ASSERT(out = "heading1 str:one nl heading2 str:two nl heading3 str:three nl end", 1);
+		(*	The first line is where a heading goes, and it was the one place a heading could not be:
+			the scanner asked whether the previous token was a line ending and there was no previous
+			token, so `= one` came out the literal `=`. *)
+		ASSERT(T.Has(out, "heading1 str:one"), 2)
+	END Test.
+
+positive: a bullet and a numbered item are decided by the start of the line
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "* one"); T.Line(source, "** two"); T.Line(source, "# three");
+		T.Tokens(source, out);
+		ASSERT(out = "bullet1 str:one nl bullet2 str:two nl number1 str:three nl end", 1);
+		(* on the first line a bullet used to come out a closing bold, which is not even a paragraph *)
+		ASSERT(T.Has(out, "bullet1 str:one"), 2)
+	END Test.
+
+positive: bold, italic and underline are decided by the blanks around them, not by pairing
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		(* a blank before and none after opens; none before and a blank after closes *)
+		T.Tokens("a *b* c", out);
+		ASSERT(out = "str:a b< str:b b> str:c end", 1);
+		T.Tokens("a /b/ c", out);
+		ASSERT(out = "str:a i< str:b i> str:c end", 2);
+		T.Tokens("a _b_ c", out);
+		ASSERT(out = "str:a u< str:b u> str:c end", 3);
+		(* and with no blanks around them they are letters, which is what keeps a*b out of trouble *)
+		T.Tokens("a*b*c", out);
+		ASSERT(out = "str:a*b*c end", 4)
+	END Test.
+
+positive: a link, a label and a line break
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Tokens("see [[Files]] there", out);
+		ASSERT(out = "str:see link<2 str:Files link>2 str:there end", 1);
+		T.Tokens("<<here>>", out);
+		ASSERT(out = "label<2 str:here label>2 end", 2);
+		T.Tokens("one \\ two", out);
+		ASSERT(T.Has(out, "break"), 3)
+	END Test.
+
+positive: four dashes at the start of a line are a rule, and three are not
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "----");
+		T.Tokens(source, out);
+		ASSERT(out = "line4 nl end", 1);
+		source := ""; T.Line(source, "---");
+		T.Tokens(source, out);
+		ASSERT(out = "str:--- nl end", 2)
+	END Test.
+
+positive: a word with a colon after it at the start of a line is a description
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "Note: the rest of it");
+		T.Tokens(source, out);
+		ASSERT(out = "desc:Note str:the str:rest str:of str:it nl end", 1)
+	END Test.
+
+positive: a section is an at sign and a name
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "@section Interface"); T.Line(source, "text");
+		T.Tokens(source, out);
+		ASSERT(T.Has(out, "section1:section"), 1)
+	END Test.
+
+positive: a table is a row of pipes, and a header row says so with an equals sign
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := ""; T.Line(source, "|= one |= two"); T.Line(source, "| three | four");
+		T.Tokens(source, out);
+		ASSERT(T.Times(out, "header") = 2, 1);
+		ASSERT(T.Times(out, "pipe") = 2, 2)
+	END Test.
+
+positive: a code block is what stands between three braces
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Tokens("{{{ CODE }}} after", out);
+		ASSERT(T.Has(out, "code<3"), 1);
+		(* the blanks after the braces are skipped, the ones before them are the code's own *)
+		ASSERT(T.Has(out, "code>:CODE "), 2);
+		ASSERT(T.Has(out, "str:after"), 3);
+		(* and a brace inside a quotation is the markup being written about, not a closing brace *)
+		T.Tokens("{{{ a '}}}' b }}} after", out);
+		ASSERT(T.Has(out, "code>:a '}}}' b "), 4)
+	END Test.
+
+positive: a document of words is a paragraph, printed back as its words
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Printed("the shortest document there is", out);
+		ASSERT(T.Has(out, "the shortest document there is"), 1)
+	END Test.
+
+positive: what a heading and a bullet come out as in plain text
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		source := "";
+		T.Line(source, "= Heading");
+		T.Line(source, "");
+		T.Line(source, "* first");
+		T.Line(source, "* second");
+		T.Printed(source, out);
+		ASSERT(T.Has(out, "Heading"), 1);
+		ASSERT(T.Has(out, "first"), 2);
+		ASSERT(T.Has(out, "second"), 3)
+	END Test.
+
+positive: the XHTML has the shape it declares, and the marked-up words are the tags they mean
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Html("a *bold* and an /italic/ word", out);
+		ASSERT(T.Has(out, "<html"), 1);
+		ASSERT(T.Has(out, "</html>"), 2);
+		ASSERT(T.Has(out, "<strong>bold</strong>"), 3);
+		ASSERT(T.Has(out, "<em>italic</em>"), 4)
+	END Test.
+
+positive: a link in the text is an anchor in the XHTML
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Html("see [[Files]]", out);
+		ASSERT(T.Has(out, '<a href="#Files">'), 1);
+		ASSERT(T.Has(out, "Files</a>"), 2)
+	END Test.
+
+positive: the characters that mean something in XHTML are escaped in the XHTML
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		(*	The document declares itself XHTML 1.0 Strict and begins with an XML declaration, and
+			in XML an entity without its semicolon is not a recovery -- it is a fatal error. So
+			`&lt` is not an escape of `<`, and an ampersand left as it stands is not an escape of
+			anything. *)
+		T.Html("a < b and c > d and e & f", out);
+		ASSERT(T.Has(out, "&lt;"), 1);
+		ASSERT(T.Has(out, "&gt;"), 2);
+		ASSERT(T.Has(out, "&amp;"), 3);
+		(* and nothing may be left of the raw characters in the body *)
+		ASSERT(T.Times(out, "&lt") = T.Times(out, "&lt;"), 4);
+		ASSERT(T.Times(out, "&gt") = T.Times(out, "&gt;"), 5)
+	END Test.
+
+positive: a code block that ends the text is still a code block
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		(*	A doc comment very often ends with its example, so the three closing braces are the
+			last thing in the text. The scanner looks at the character after them to decide it has
+			reached the end -- and when there is none, it used to report end of text and drop the
+			code it had read. *)
+		T.Tokens("{{{ CODE }}}", out);
+		ASSERT(T.Has(out, "code<3"), 1);
+		ASSERT(T.Has(out, "code>:CODE "), 2);
+		(* and it is not reported as the end of the text with the code thrown away *)
+		ASSERT(~T.Has(out, "code<3 end"), 3)
+	END Test.
+
+positive: a run too short for the construction it looks like is text, and the line after it is still a line
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		(*	`[[`, `<<`, `{{{` and four dashes are runs of a required length, and the length was
+			checked with an OR of the two bounds -- one of which always holds. So every run was
+			accepted whatever its length: one `<` was a label, one `[` a link, one `{` a code
+			block that swallowed the rest of the comment, one dash a horizontal rule. *)
+		T.Tokens("a < b", out);
+		ASSERT(out = "str:a str:< str:b end", 1);
+		T.Tokens("a [ b", out);
+		ASSERT(out = "str:a str:[ str:b end", 2);
+		T.Tokens("a { b", out);
+		ASSERT(out = "str:a str:{ str:b end", 3);
+		(*	And the fall-back has to leave the line ending alone: reading a literal consumes at
+			least one character whatever it is, and after a rejected run that character can be the
+			line ending, which then disappeared into the word. *)
+		source := ""; T.Line(source, "---"); T.Line(source, "text");
+		T.Tokens(source, out);
+		ASSERT(out = "str:--- nl str:text nl end", 4)
+	END Test.
+
+positive: a marked-up word at the very end of the text is closed by the end of the text
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		(*	The closing star is the one before a blank, and the end of the text is not a blank --
+			IsWhitespace says no to it on purpose. So a comment ending in `*bold*` kept its last
+			star as a letter. *)
+		T.Tokens("a *bold*", out);
+		ASSERT(out = "str:a b< str:bold b> end", 1)
+	END Test.
+
+positive: the XHTML of a code example is escaped, which is what a code example needs most
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		(*	A code block in a doc comment is the place where `<` and `&` actually turn up -- and it
+			is written into the document through the same escaping as everything else. *)
+		T.Html("{{{ IF a < b THEN c := d & e END }}} after", out);
+		ASSERT(T.Has(out, "<pre>"), 1);
+		ASSERT(T.Has(out, "a &lt; b"), 2);
+		ASSERT(T.Has(out, "d &amp; e"), 3);
+		ASSERT(~T.Has(out, "a < b"), 4)
+	END Test.
+
+positive: a label and an anchor carry a name through the XHTML, quoted
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared;
+	VAR out: T.Text;
+	BEGIN
+		T.Html("<<here>> and [[There]]", out);
+		ASSERT(T.Has(out, '<a name="here">'), 1);
+		ASSERT(T.Has(out, '<a href="#There">'), 2)
+	END Test.
+
+positive: a code example keeps its own line endings, and a heading's id is a name
+
+	MODULE Test;
+	IMPORT T := FoxDocTestShared, Strings;
+	VAR out: T.Text; source: T.Text;
+	BEGIN
+		(*	`<pre>` keeps the line endings it is given. They were also turned into breaks, so every
+			two lines of an example had an empty line between them. *)
+		source := "";
+		T.Line(source, "{{{");
+		T.Line(source, "one");
+		T.Line(source, "two");
+		T.Line(source, "}}}");
+		T.Line(source, "after");
+		T.Html(source, out);
+		ASSERT(T.Has(out, "<pre>"), 1);
+		ASSERT(T.Times(out, "<br />") = 0, 2);
+		ASSERT(T.Has(out, "one"), 3);
+		ASSERT(T.Has(out, "two"), 4);
+
+		(*	And an id is the name itself: the hash belongs to the href that points at it. Every
+			heading in the document carried one. *)
+		source := ""; T.Line(source, "@section Interface"); T.Line(source, "text");
+		T.Html(source, out);
+		ASSERT(T.Times(out, 'id="#') = 0, 5);
+		ASSERT(T.Has(out, "id="), 6)
+	END Test.

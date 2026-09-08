@@ -359,8 +359,10 @@ for page in "$docs"/pages/*.html; do
 	[ "$name" = index.html ] && continue
 	if [ ! -f "$docs/pages-shell/$name" ]; then echo "FAIL  doc wrote $name, the shell version did not"; docfail=1; continue; fi
 	# The anchor ids are derived from addresses and differ between any two runs of either version.
-	if diff -q <(sed -E 's/#_[0-9A-F]+/#_X/g; s/\r$//' "$page") \
-	           <(sed -E 's/#_[0-9A-F]+/#_X/g; s/\r$//' "$docs/pages-shell/$name") >/dev/null; then :
+	# They are spelled two ways: `href="#_01E11F80"` points at `id="_01E11F80"`, and only the
+	# reference carries the hash -- which it did not until 2026-09-08, when every id began with one.
+	if diff -q <(sed -E 's/#_[0-9A-F]+/#_X/g; s/"_[0-9A-F]+"/"_X"/g; s/\r$//' "$page") \
+	           <(sed -E 's/#_[0-9A-F]+/#_X/g; s/"_[0-9A-F]+"/"_X"/g; s/\r$//' "$docs/pages-shell/$name") >/dev/null; then :
 	else echo "FAIL  doc page $name differs from the shell version's"; docfail=1; fi
 done
 [ -f "$docs/pages/index.html" ] || { echo "FAIL  doc wrote no index.html"; docfail=1; }
