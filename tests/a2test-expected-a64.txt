@@ -75,3 +75,38 @@ MathFunctions.Test	positive: a logarithm and an exponent undo each other
 # case is about a defect worth keeping in front of us (a report longer than the buffer is
 # silently cut), and it does that job on every other host.
 TrapWriters.Test	positive: a report too long for the buffer keeps its head and loses its tail, and says nothing about it
+
+# --- the two Windows suites, on this host too ------------------------------------------
+# tests/WinFS.Test and tests/WinTraps.Test are about the Windows twins of Files and Traps,
+# and the modules they name are not in an AArch64 build at all -- the same reason they are
+# listed in tests/a2test-expected.txt, where it is written out. Eleven of the thirty-six
+# cases in those two files pass here as they do on Linux (the shared modules, and what is
+# not about the host) and are deliberately not listed.
+#
+# Measured 2026-09-08 on a Galaxy S24, natively: 7615 cases, 7580 passed, 25 failed --
+# these -- 9 known and 1 FIXED, the TrapWriters case below, which is listed for qemu.
+WinFS.Test	positive: a file that was never registered has no date to give, and says so
+WinFS.Test	positive: a name too long for what it is copied into is cut, not written past
+WinFS.Test	positive: a relative name with a directory in it is looked for along the search path
+WinFS.Test	positive: a rider that was never given a position reads from the beginning of the file
+WinFS.Test	positive: an absolute name goes in through the drive it names, and comes back the same file
+WinFS.Test	positive: and a name that fits comes back relative to where we stand
+WinFS.Test	positive: the attributes of a name, and of a name that is not there
+WinFS.Test	positive: the characters a file name may not contain
+WinFS.Test	positive: the two directories the process was given, and neither of them is empty
+WinFS.Test	positive: the working directory is where the harness put us, and can be moved and moved back
+WinFS.Test	positive: two names that differ only in case are one name here
+WinTraps.Test	positive: a HALT the program wrote itself is named a HALT, and an unknown number is not
+WinTraps.Test	positive: a processor fault is named by what the processor said, and carries no halt code
+WinTraps.Test	positive: a trap the debugger does not answer for is still asked about only once
+WinTraps.Test	positive: a trap under a FINALLY is reported, and the activity runs on past it
+WinTraps.Test	positive: an activity that traps is reported, and the case that started it lives on
+WinTraps.Test	positive: and about a fault, where there is no halt code to tell
+WinTraps.Test	positive: and so do the numbers the system raises on its own
+WinTraps.Test	positive: the account begins and ends with the markers that say where it begins and ends
+WinTraps.Test	positive: the level in the first line counts the traps that are still being reported
+WinTraps.Test	positive: the numbers the compiler plants have the words the compiler means by them
+WinTraps.Test	positive: the registers are there, and by the names this handler calls them
+WinTraps.Test	positive: the report says which system and when, before it says anything else
+WinTraps.Test	positive: two activities that trap one after the other get one report each
+WinTraps.Test	positive: what a debugger is told about a trap it did not plant

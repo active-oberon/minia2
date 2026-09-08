@@ -314,6 +314,7 @@ Unix.Terminal.Mod
 Frames.Mod
 Unix.Processes.Mod
 Unix.LocalSockets.Mod
+H2ao.Mod
 Attributes.Mod
 FNHistories.Mod
 MemoryReader.Mod

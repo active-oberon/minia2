@@ -605,6 +605,7 @@ tasks:
       - task: a64-gc
       - task: sigchain
       - task: hostlibs
+      - task: bind
       - task: display
       - task: wm
       - task: terminal
@@ -766,6 +767,20 @@ tasks:
             # as it passing.
             [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the signal chaining check needs a C compiler on x86-64 or AArch64, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the signal chaining check needs a C compiler on x86-64 or AArch64"
+          else
+            exit "$status"
+          fi
+        }
+
+  bind:
+    desc: "`ob bind` against a real C library -- C and the generated module say the same things about the same types"
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/bind-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] the binding check needs the bundled SDK, a C compiler, and clang or zig"
           else
             exit "$status"
           fi
