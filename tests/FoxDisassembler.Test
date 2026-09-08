@@ -1,0 +1,207 @@
+# Tests for source/FoxDisassembler.Mod -- the last member of the disassembler family, and the one
+# that answers "which procedure is this program counter in".
+#
+# options --command="System.Free Test FoxDisassemblerTestShared;System.Load Test"
+#
+# The other three (Decoder, AMD64Decoder, I386Decoder) were covered on 07.09 against objdump, 23
+# defects; this one was left, and reading it had already turned up a NIL dereference in FindPC. It
+# is a different kind of module: not "what do these bytes mean" but "what does the compiler's own
+# log say about where the sections went", which is what turns the address in a trap report into a
+# name and an offset.
+#
+# The log is the compiler's, and its language is four lines:
+#
+#     <from>: code <SectionName> to <to>
+#     <from>: data <SectionName> to <to>
+#     code displacement <n>
+#     data displacement <n>
+#
+# and anything else is skipped to the end of the line. A case therefore writes a log by hand and
+# asks FindPC about an address in it -- which drives ParseLogFile and the whole block list on the
+# way. Numbers in the log are read by the assembler's own scanner, so `1000H` is how a hexadecimal
+# number is written here.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxDisassemblerTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A compiler log written by hand, and what FindPC says about it" *)
+
+	IMPORT Commands, Streams, Strings, Files;
+
+	TYPE
+		Text* = ARRAY 4096 OF CHAR;
+
+	(** One line of a compiler log. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN
+		Strings.AppendX(text, piece); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	(** A log file of our own, in the directory the harness gave the case. *)
+	PROCEDURE WriteLog* (CONST name: ARRAY OF CHAR; CONST text: ARRAY OF CHAR): BOOLEAN;
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(name);
+		IF file = NIL THEN RETURN FALSE END;
+		NEW(writer, file, 0);
+		writer.String(text); writer.Update;
+		Files.Register(file);
+		RETURN TRUE
+	END WriteLog;
+
+	(**	Run FindPC with these arguments and hand back everything it wrote -- what it said and what
+		it complained about, because a case about a refusal is a case about the words of it. *)
+	PROCEDURE Find* (CONST argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR arg: Streams.StringReader; out: Streams.StringWriter; context: Commands.Context;
+		result: INTEGER; message: ARRAY 128 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate("FoxDisassembler.FindPC", context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Find;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	END FoxDisassemblerTestShared.
+
+positive: an address inside a section is that section and the offset into it
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		log := "";
+		T.Line(log, "1000H: code Alpha to 1100H");
+		T.Line(log, "1100H: code Beta to 1200H");
+		ASSERT(T.WriteLog("inside.log", log), 1);
+		result := T.Find("inside.log 1180H", out);
+		ASSERT(result = 0, 2);
+		ASSERT(T.Said(out, "Beta:128"), 3)
+	END Test.
+
+positive: an address exactly where a section begins is that section, not the one before it
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		(*	The nearest section below the address was found with a strict comparison, so an address
+			exactly at a section's start belonged to the section before it -- and the first
+			instruction of a procedure is the address one looks up most, because it is where a call
+			into the wrong place lands. *)
+		log := "";
+		T.Line(log, "1000H: code Alpha to 1100H");
+		T.Line(log, "1100H: code Beta to 1200H");
+		ASSERT(T.WriteLog("start.log", log), 1);
+		result := T.Find("start.log 1100H", out);
+		ASSERT(result = 0, 2);
+		ASSERT(T.Said(out, "Beta:0"), 3);
+		ASSERT(~T.Said(out, "Alpha"), 4)
+	END Test.
+
+positive: an address below every code section is refused in words, not with a trap
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		(*	`found` was assigned only inside the loop and dereferenced whatever happened, so an
+			address below every code section was an access violation -- in a command whose whole
+			job is to make sense of an address somebody read off a trap report. *)
+		log := "";
+		T.Line(log, "1000H: code Alpha to 1100H");
+		ASSERT(T.WriteLog("below.log", log), 1);
+		result := T.Find("below.log 100H", out);
+		ASSERT(T.Said(out, "no code section"), 2);
+		ASSERT(~T.Said(out, "Alpha"), 3)
+	END Test.
+
+positive: a log with no code in it at all is refused the same way
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		log := "";
+		T.Line(log, "1000H: data Numbers to 1100H");
+		ASSERT(T.WriteLog("dataonly.log", log), 1);
+		result := T.Find("dataonly.log 1080H", out);
+		ASSERT(T.Said(out, "no code section"), 2);
+		(* a data section is in the list, and it is not an answer to this question *)
+		ASSERT(~T.Said(out, "Numbers:"), 3)
+	END Test.
+
+positive: a log that is not there is named as the caller named it
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR out: T.Text; result: INTEGER;
+	BEGIN
+		(*	The extension is added to a name that has none, and the refusal used to report the name
+			after that had happened -- `nosuch.log.log` for a caller who asked about `nosuch.log`. *)
+		result := T.Find("nosuch.log 100H", out);
+		ASSERT(T.Said(out, "nosuch.log"), 1);
+		ASSERT(~T.Said(out, "nosuch.log.log"), 2)
+	END Test.
+
+positive: a command that cannot read its arguments says so instead of doing nothing
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR out: T.Text; result: INTEGER;
+	BEGIN
+		(* it used to return in silence, which reads exactly like an answer of nothing *)
+		result := T.Find("", out);
+		ASSERT(T.Said(out, "usage"), 1);
+		result := T.Find("onlyaname.log", out);
+		ASSERT(T.Said(out, "usage"), 2)
+	END Test.
+
+positive: a line the log's language does not cover is skipped, and the sections around it are read
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		log := "";
+		T.Line(log, "-------- code Alpha @00001000 ---");
+		T.Line(log, "1000H: code Alpha to 1100H");
+		T.Line(log, "some words the parser has no rule for");
+		T.Line(log, "1100H: code Beta to 1200H");
+		ASSERT(T.WriteLog("noise.log", log), 1);
+		result := T.Find("noise.log 1180H", out);
+		ASSERT(T.Said(out, "Beta:128"), 2)
+	END Test.
+
+positive: a displacement line is part of the language and does not stop the parse
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		log := "";
+		T.Line(log, "code displacement 1000H");
+		T.Line(log, "data displacement 2000H");
+		T.Line(log, "1000H: code Alpha to 1100H");
+		ASSERT(T.WriteLog("displaced.log", log), 1);
+		result := T.Find("displaced.log 1040H", out);
+		ASSERT(T.Said(out, "Alpha:64"), 2)
+	END Test.
+
+positive: a name with no extension is looked for with the log extension added
+
+	MODULE Test;
+	IMPORT T := FoxDisassemblerTestShared;
+	VAR log: T.Text; out: T.Text; result: INTEGER;
+	BEGIN
+		log := "";
+		T.Line(log, "1000H: code Alpha to 1100H");
+		ASSERT(T.WriteLog("bare.log", log), 1);
+		(* the caller says `bare`, the file is `bare.log` *)
+		result := T.Find("bare 1040H", out);
+		ASSERT(T.Said(out, "Alpha:64"), 2)
+	END Test.

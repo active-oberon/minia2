@@ -231,30 +231,55 @@ TYPE
 
 	END Disassembler;
 
-	PROCEDURE FindPC*(context: Commands.Context);
-	VAR file: Files.File; logFile: Files.FileName; adr,maxadr: Unit; disassembler: Disassembler; block, found: Block; name: ObjectFile.SectionName;
-	BEGIN
-		IF context.arg.GetString(logFile) & context.arg.GetSize(adr, TRUE) THEN
-			file := Files.Old(logFile);
-			IF file = NIL THEN Files.JoinExtension(logFile,".log",logFile); file := Files.Old(logFile) END;
-			IF file = NIL THEN
-				context.error.String("file not found "); context.error.String(logFile); context.error.Ln
-			ELSE
-				NEW(disassembler, context.out);
-				maxadr := 0;
-				block := disassembler.ParseLogFile(file);
-				WHILE (block # NIL ) DO
-					IF (block.alignment < adr) & (block.alignment > maxadr) & ObjectFile.IsCode(block.type) THEN
-						found := block;
-						maxadr := block.alignment
-					END;
-					block := block.next
+(**
+	Which code section an address is in, and how far into it -- what turns the number in a trap
+	report into a name and an offset. `FoxDisassembler.FindPC <log> <address>`.
+
+	Four things were wrong with twenty lines:
+
+	-  `found` was assigned only inside the loop and dereferenced whatever happened, so an address
+	   below every code section was an access violation. In a command whose whole subject is an
+	   address somebody read off a trap report.
+	-  the nearest section below the address was found with a strict comparison, so an address
+	   exactly at a section's start belonged to the section before it -- and the first instruction
+	   of a procedure is the address one looks up most.
+	-  the refusal named the file after the extension had been added to it: a caller who asked
+	   about `nosuch.log` was told about `nosuch.log.log`.
+	-  a command line it could not read was answered with silence, which reads like an answer.
+*)
+PROCEDURE FindPC*(context: Commands.Context);
+VAR file: Files.File; logFile, asGiven: Files.FileName; adr,maxadr: Unit; disassembler: Disassembler;
+	block, found: Block; name: ObjectFile.SectionName;
+BEGIN
+	IF context.arg.GetString(logFile) & context.arg.GetSize(adr, TRUE) THEN
+		COPY(logFile, asGiven);
+		file := Files.Old(logFile);
+		IF file = NIL THEN Files.JoinExtension(logFile,".log",logFile); file := Files.Old(logFile) END;
+		IF file = NIL THEN
+			context.error.String("file not found "); context.error.String(asGiven); context.error.Ln
+		ELSE
+			NEW(disassembler, context.out);
+			maxadr := 0; found := NIL;
+			block := disassembler.ParseLogFile(file);
+			WHILE (block # NIL ) DO
+				IF (block.alignment <= adr) & ((found = NIL) OR (block.alignment > maxadr)) & ObjectFile.IsCode(block.type) THEN
+					found := block;
+					maxadr := block.alignment
 				END;
+				block := block.next
+			END;
+			IF found = NIL THEN
+				context.error.String("no code section at or below "); context.error.Hex(adr,-8);
+				context.error.String(" in "); context.error.String(asGiven); context.error.Ln
+			ELSE
 				Basic.SegmentedNameToString(found.identifier.name, name);
 				context.out.String(name); context.out.String(":"); context.out.Int(adr-found.alignment,1); context.out.Ln;
-			END;
+			END
 		END;
-	END FindPC;
+	ELSE
+		context.error.String("usage: FoxDisassembler.FindPC <log file> <address>"); context.error.Ln
+	END;
+END FindPC;
 
 	(*
 	PROCEDURE Test*(context: Commands.Context);
