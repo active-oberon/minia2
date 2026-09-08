@@ -84,7 +84,8 @@ TrapWriters.Test	positive: a report too long for the buffer keeps its head and l
 # not about the host) and are deliberately not listed.
 #
 # Measured 2026-09-08 on a Galaxy S24, natively: 7615 cases, 7580 passed, 25 failed --
-# these -- 9 known and 1 FIXED, the TrapWriters case below, which is listed for qemu.
+# these -- and 9 known. The TrapWriters entry below is listed for qemu only, so the
+# on-device script filters that section out before it runs (tests/a64-device-suite.sh).
 WinFS.Test	positive: a file that was never registered has no date to give, and says so
 WinFS.Test	positive: a name too long for what it is copied into is cut, not written past
 WinFS.Test	positive: a relative name with a directory in it is looked for along the search path

@@ -275,12 +275,22 @@ if [ "$quick" = 1 ]; then
 else
 	echo "  ..    language suites            running; this is the long one"
 	s=0; started=$SECONDS
+	#    The baseline minus what is listed for the emulator only. tests/a2test-expected-a64.txt
+	#    carries one such case (a 40000-character trap report, which only qemu-user cannot get
+	#    through) and a listed case that passes is reported FIXED and fails the run -- so on a
+	#    real processor that entry would make this check permanently red. The heading is the
+	#    contract, as in docker/hub-description.sh: rename it and nothing is dropped, which the
+	#    run then says out loud rather than hiding.
+	awk '/^# --- .*under an emulator/ { drop = 1; next }
+	     /^# --- / { drop = 0 }
+	     !drop' "$root/tests/a2test-expected-a64.txt" > "$root/tests/a2test-expected-a64-device.txt"
 	#    -j: a case is a process, and a phone has cores. Four rather than all of them because
 	#    this has not been run on a device yet and a compiler per core is the memory-hungry
 	#    shape; A64_SUITES_JOBS overrides, and 1 is the old behaviour.
 	( cd "$root/tests" && A2SDK="$root" \
 		timeout "${A64_SUITES_TIMEOUT:-10800}" "$root/ob" test -t a64 \
 			-j "${A64_SUITES_JOBS:-4}" \
+			--expect a2test-expected-a64-device.txt \
 			--report "$results/suites.json" > "$results/suites.log" 2>&1 ) || s=$?
 	_ELAPSED=$((SECONDS - started))
 	line="$(grep -a '^ob test: .* case(s)' "$results/suites.log" | tail -1 | tr -d '\r')"
