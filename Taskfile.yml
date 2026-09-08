@@ -604,6 +604,7 @@ tasks:
       - task: a64-loader
       - task: a64-gc
       - task: sigchain
+      - task: hostlibs
       - task: display
       - task: wm
       - task: terminal
@@ -765,6 +766,20 @@ tasks:
             # as it passing.
             [ -z "$A64_REQUIRE" ] || { echo "[FAIL] the signal chaining check needs a C compiler on x86-64 or AArch64, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] the signal chaining check needs a C compiler on x86-64 or AArch64"
+          else
+            exit "$status"
+          fi
+        }
+
+  hostlibs:
+    desc: A shared library next to the program can be opened -- and a bare name still is not
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/hostlibs-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] the loader check needs the bundled SDK and a shared library on this system"
           else
             exit "$status"
           fi

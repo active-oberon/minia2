@@ -1252,19 +1252,28 @@ VAR
 		RETURN val # 0
 	END DlsymOptional;
 
+	(* DlopenReporting hands the name to dlopen as it stands -- a relative path, and what ld.so finds itself, were unreachable while only '/' did. *)
 	PROCEDURE DlopenReporting( CONST libname: ARRAY OF CHAR;  mode: SIGNED32;  report: BOOLEAN ): ADDRESS;
-	VAR h: ADDRESS;  i, j, k: SIGNED16;
+	VAR h: ADDRESS;  i, j, k, n: SIGNED16;  slash: BOOLEAN;
 		p: ARRAY 256 OF CHAR;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
-		IF libname[0] = '/' THEN  h := Glue.dlopen( ADDRESSOF( libname ), mode );
-		ELSE
-			i := 0;  h := 0;
+		n := 0;  slash := FALSE;
+		WHILE libname[n] # 0X DO
+			IF libname[n] = '/' THEN  slash := TRUE  END;
+			INC( n )
+		END;
+		h := Glue.dlopen( ADDRESSOF( libname ), mode );
+		IF (h = 0) & ~slash THEN
+			i := 0;
 			WHILE (h = 0) & (i < noPaths) DO
 				COPY( libraryPaths[i], p );  j := 0;
 				WHILE p[j] # 0X DO  INC( j )  END;
-				p[j] := '/';  k := 0;
-				REPEAT  INC( j );  p[j] := libname[k];  INC( k )  UNTIL p[j] = 0X;
-				h := Glue.dlopen( ADDRESSOF( p ), mode );  INC( i );
+				IF j + n + 1 < LEN( p ) THEN	(* a name that does not fit is not tried as a shorter one *)
+					p[j] := '/';  k := 0;
+					REPEAT  INC( j );  p[j] := libname[k];  INC( k )  UNTIL p[j] = 0X;
+					h := Glue.dlopen( ADDRESSOF( p ), mode )
+				END;
+				INC( i );
 			END
 		END;
 		IF (h = 0) & report THEN
