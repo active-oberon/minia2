@@ -107,26 +107,25 @@ TYPE
 		INC( pos, len );
 	END Append;
 
+	(* ToString writes a duration, so the hours do not wrap at a day and the sign is kept. *)
 	PROCEDURE ToString*( aTicks: Counter; VAR date: ARRAY OF CHAR );
-	VAR i: SIZE;
+	VAR i, len: SIZE; hours: Counter;
 	BEGIN
 		i := 0;
-		Append( SIGNED32( aTicks DIV TicksPerHour MOD 24 ), 2, date, i ); date[ i ] := ":"; INC( i );
+		IF aTicks < 0 THEN date[ i ] := "-"; INC( i ); aTicks := -aTicks; END;
+		hours := aTicks DIV TicksPerHour; len := 2;
+		WHILE hours DIV 10 >= 10 DO INC( len ); hours := hours DIV 10; END;
+		Append( SIGNED32( aTicks DIV TicksPerHour ), len, date, i ); date[ i ] := ":"; INC( i );
 		Append( SIGNED32( aTicks DIV TicksPerMinute MOD 60 ), 2, date, i ); date[ i ] := ":"; INC( i );
-		Append( SIGNED32( aTicks DIV TicksPerSecond MOD 60 ), 2, date, i ); date[ i ] := ":"; INC( i );
-		Append( SIGNED32( aTicks DIV TicksPerMillisecond MOD 1000 ), 3, date, i ); date[ i ] := "."; INC( i );
-		Append( SIGNED32( aTicks MOD 10000 ), 4, date, i ); date[ i ] := 0X;
+		Append( SIGNED32( aTicks DIV TicksPerSecond MOD 60 ), 2, date, i ); date[ i ] := "."; INC( i );
+		Append( SIGNED32( aTicks MOD TicksPerSecond ), 7, date, i ); date[ i ] := 0X;
 	END ToString;
 
+	(* ToStringReal rounds once and defers -- rounding each field on its own made it disagree with ToString by a whole unit. *)
 	PROCEDURE ToStringReal*( aTicks: FLOAT64; VAR date: ARRAY OF CHAR );
-	VAR i: SIZE;
 	BEGIN
-		i := 0;
-		Append( SIGNED32( ENTIERH( aTicks / TicksPerHour + 0.5 ) MOD 24 ), 2, date, i ); date[ i ] := ":"; INC( i );
-		Append( SIGNED32( ENTIERH( aTicks / TicksPerMinute + 0.5 ) MOD 60 ), 2, date, i ); date[ i ] := ":"; INC( i );
-		Append( SIGNED32( ENTIERH( aTicks / TicksPerSecond + 0.5 ) MOD 60 ), 2, date, i ); date[ i ] := ":"; INC( i );
-		Append( SIGNED32( ENTIERH( aTicks / TicksPerMillisecond + 0.5 ) MOD 1000 ), 3, date, i ); date[ i ] := "."; INC( i );
-		Append( SIGNED32( ENTIERH( aTicks + 0.5 ) MOD 10000 ), 4, date, i ); date[ i ] := 0X;
+		(* ENTIERH floors, so a negative count is rounded by its magnitude and ToString puts the sign back. *)
+		IF aTicks < 0 THEN ToString( -ENTIERH( -aTicks + 0.5 ), date ); ELSE ToString( ENTIERH( aTicks + 0.5 ), date ); END;
 	END ToStringReal;
 END Stopwatch.
 

@@ -33,13 +33,11 @@ TYPE
 
 VAR
 	clock_gettime: PROCEDURE{C}(clk_id: SIGNED32; CONST tp: Timespec): SIGNED32;
-	clock_getres: PROCEDURE{C}(clk_id: SIGNED32; CONST res: Timespec): SIGNED32;
 
 	(*! It is preferable to use CLOCK_MONOTONIC_RAW (not influenced by system time adjustments),
 		but for some reason CLOCK_MONOTONIC is ~3 times faster
 	*)
 	clockType := CLOCK_MONOTONIC: SIGNED32; (* timer clock type *)
-	frequency: Counter; (* timer frequency in Hz *)
 
 	(**
 		Query timer counter in ticks
@@ -57,15 +55,10 @@ VAR
 	(**
 		Query timer tick frequency in Hz
 	*)
+	(* GetCounter counts nanoseconds by construction, so the frequency is the unit, not the clock's resolution. *)
 	PROCEDURE GetFrequency*(): Counter;
-	VAR t: Timespec;
 	BEGIN
-		IF clock_getres(clockType, t) = 0 THEN
-			(*! a workaround for not known actual clock frequency *)
-			RETURN ENTIERH(1.0D9 / t.nsec + 0.5D0);
-		ELSE
-			RETURN 0;
-		END;
+		RETURN 1000000000;
 	END GetFrequency;
 
 	(*	Resolves one of the POSIX clock functions. Before glibc 2.17 they are not in libc but in
@@ -80,10 +73,8 @@ VAR
 	END Resolve;
 
 	PROCEDURE InitMod;
-	VAR frequency: Counter;
 	BEGIN
 		ASSERT(Resolve("clock_gettime", ADDRESSOF(clock_gettime)));
-		ASSERT(Resolve("clock_getres", ADDRESSOF(clock_getres)));
 
 		KernelLog.String("PrecisionTimer: timer tick frequency is "); KernelLog.Int(GetFrequency(),0); KernelLog.String(" Hz"); KernelLog.Ln;
 	END InitMod;

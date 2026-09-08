@@ -1,0 +1,271 @@
+# Tests for the rest of std/time: the precision counter, the stopwatch, the up-time monitor and
+# the active timer (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# Time.Test measures the monotonic clock through Time; Dates.Test measures the calendar. These
+# four modules are the rest of the package and had no case of their own: PrecisionTimer is the
+# counter both hosts answer differently, Stopwatch is the only thing in the tree that writes a
+# duration out, UpTime is the only caller of Dates.TimeDifference, and ActiveTimers is the timer
+# every window in A2 hangs its repaint on.
+#
+# The timing cases assert bounds, never speeds: an emulated AArch64 host is two orders of
+# magnitude slower than this one, and a case that assumes how fast anything runs is a case that
+# fails on the machine it was meant to protect.
+#
+# Recorded and not changed: Stopwatch.Append writes into its output array without asking how long
+# it is, so ToString into a buffer shorter than the answer traps on the index rather than
+# truncating. Every caller in the tree passes ARRAY 32 OF CHAR, which is long enough.
+
+positive: the counter and the number that says what it counts
+
+	MODULE Test;
+	IMPORT PrecisionTimer, Objects;
+	VAR a, b, f: PrecisionTimer.Counter; i: SIGNED32;
+	BEGIN
+		(*	The two procedures are one contract -- GetCounter returns ticks and GetFrequency says
+			how many of them make a second -- and the two hosts satisfy it differently: nanoseconds
+			from clock_gettime on Unix, QueryPerformanceCounter ticks on Windows. So the case
+			measures the pair against each other rather than either against a number. Unix used to
+			answer with the clock's *resolution* here, which is not the unit the counter counts in. *)
+		f := PrecisionTimer.GetFrequency();
+		ASSERT(f > 0);                                  (* every caller divides by it *)
+
+		a := PrecisionTimer.GetCounter();
+		ASSERT(a > 0);
+		FOR i := 1 TO 100 DO
+			ASSERT(PrecisionTimer.GetCounter() >= a)     (* monotonic, never backwards *)
+		END;
+		Objects.Sleep(200);
+		b := PrecisionTimer.GetCounter();
+		ASSERT(b > a);
+
+		(*	A fifth of a second passed. The window below is a bound and not a speed: an emulator
+			may take far longer, but no correct pair can make it look shorter than a twentieth of
+			a second or longer than an hour. A frequency in the wrong unit fails one side or the
+			other by six orders of magnitude. *)
+		ASSERT(b - a >= f DIV 20);
+		ASSERT(b - a < f * 3600)
+	END Test.
+
+positive: the stopwatch counts, and stops counting
+
+	MODULE Test;
+	IMPORT Stopwatch, Objects;
+	VAR sw, n: Stopwatch.T; a, b: Stopwatch.Counter; r: Stopwatch.Ref;
+	BEGIN
+		sw.Reset;
+		ASSERT(~sw.isAlive);
+		ASSERT(sw.Elapsed() = 0);
+		ASSERT(sw.ElapsedTicks() = 0);
+		ASSERT(sw.ElapsedMilliseconds() = 0);
+
+		sw.Start;
+		ASSERT(sw.isAlive);
+		Objects.Sleep(30);
+		a := sw.ElapsedTicks();
+		ASSERT(a > 0);                          (* it moved *)
+		sw.Stop;
+		ASSERT(~sw.isAlive);
+		b := sw.ElapsedTicks();
+		ASSERT(b >= a);
+		ASSERT(sw.ElapsedTicks() = b);          (* and a stopped watch stays where it stopped *)
+		ASSERT(sw.ElapsedMilliseconds() >= 20);
+		ASSERT(sw.ElapsedMilliseconds() < 60 * 60 * 1000);
+		ASSERT(sw.ElapsedReal() > 0.0);
+
+		(* Start on a stopped watch resumes rather than restarting *)
+		sw.Start;
+		Objects.Sleep(20);
+		sw.Stop;
+		ASSERT(sw.ElapsedTicks() > b);
+
+		(* Restart throws the accumulated time away *)
+		b := sw.ElapsedTicks();
+		sw.Restart;
+		ASSERT(sw.isAlive);
+		ASSERT(sw.ElapsedTicks() < b);
+		sw.Stop;
+
+		(* Start on a running watch is not a restart either *)
+		sw.Restart;
+		Objects.Sleep(20);
+		a := sw.ElapsedTicks();
+		sw.Start;
+		ASSERT(sw.ElapsedTicks() >= a);
+		sw.Stop;
+
+		(* the two ways of getting a watch that is already running, neither disturbing this one *)
+		sw.Reset;
+		n := sw.StartNew();
+		ASSERT(n.isAlive);
+		ASSERT(~sw.isAlive);
+		Objects.Sleep(20);
+		ASSERT(n.ElapsedTicks() > 0);
+		ASSERT(sw.ElapsedTicks() = 0);
+		n.Stop;
+
+		r := sw.StartNewRef();
+		ASSERT(r # NIL);
+		ASSERT(r.isAlive);
+		Objects.Sleep(20);
+		ASSERT(r.ElapsedTicks() > 0);
+		r.Stop;
+		ASSERT(~r.isAlive);
+
+		(* the frequency the module divides by is the one the timer reports *)
+		ASSERT(Stopwatch.Frequency > 0)
+	END Test.
+
+positive: what a duration looks like written out
+
+	MODULE Test;
+	IMPORT Stopwatch;
+	VAR s: ARRAY 32 OF CHAR;
+
+		PROCEDURE Is(t: Stopwatch.Counter; CONST expected: ARRAY OF CHAR);
+		BEGIN
+			Stopwatch.ToString(t, s);
+			ASSERT(s = expected)
+		END Is;
+
+		PROCEDURE IsReal(t: FLOAT64; CONST expected: ARRAY OF CHAR);
+		BEGIN
+			Stopwatch.ToStringReal(t, s);
+			ASSERT(s = expected)
+		END IsReal;
+
+	BEGIN
+		(*	A tick is 100 ns and there are ten million in a second, so the fraction is seven
+			digits wide and the separator before it is a point. *)
+		Is(0, "00:00:00.0000000");
+		Is(1, "00:00:00.0000001");
+		Is(10000, "00:00:00.0010000");                  (* one millisecond *)
+		Is(15000000, "00:00:01.5000000");
+		Is(600000000, "00:01:00.0000000");
+		Is(36000000000, "01:00:00.0000000");
+		Is(36000000000 + 600000000 + 15000000, "01:01:01.5000000");
+
+		(*	A stopwatch measures a duration, and a duration has no next day to carry into -- the
+			hours used to be taken MOD 24, so a run of a day and an hour read as one hour. *)
+		Is(25 * 36000000000, "25:00:00.0000000");
+		Is(100 * 36000000000, "100:00:00.0000000");
+		Is(1000 * 36000000000, "1000:00:00.0000000");
+
+		(*	ToString is exported and takes any count, and a floored MOD on a negative one used to
+			answer with a time near the end of a day. *)
+		Is(-10000, "-00:00:00.0010000");
+		Is(-15000000, "-00:00:01.5000000");
+
+		(*	The same duration, given as a real. Rounding each field on its own and upwards made
+			this disagree with the line above it by a whole second. *)
+		IsReal(0.0, "00:00:00.0000000");
+		IsReal(15000000.0, "00:00:01.5000000");
+		IsReal(19000000.0, "00:00:01.9000000");
+		IsReal(36000000000.0, "01:00:00.0000000");
+		IsReal(25.0 * 36000000000.0, "25:00:00.0000000");
+		IsReal(-15000000.0, "-00:00:01.5000000");
+
+		(* and it is still a rounding, not a truncation *)
+		IsReal(0.4, "00:00:00.0000000");
+		IsReal(0.6, "00:00:00.0000001")
+	END Test.
+
+positive: the up-time monitor
+
+	MODULE Test;
+	IMPORT UpTime, Dates, Streams, Commands, Strings, Objects;
+	VAR d, h, m, s: SIGNED32; start: Dates.DateTime; w: Streams.StringWriter;
+		r: Streams.StringReader; ctx: Commands.Context; text: ARRAY 256 OF CHAR;
+	BEGIN
+		(*	UpTime is the one caller of Dates.TimeDifference in the tree, and its reference point
+			is the moment its own module body ran -- which is a moment ago, so the answer has a
+			floor of zero and a ceiling of a few seconds. *)
+		start := UpTime.GetStartTime();
+		ASSERT(Dates.ValidDateTime(start));
+
+		UpTime.Get(d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 0);
+		ASSERT(m >= 0); ASSERT(m < 60);
+		ASSERT(s >= 0); ASSERT(s < 60);
+
+		Objects.Sleep(1100);
+		UpTime.Get(d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 0);
+		ASSERT(m * 60 + s >= 1);                (* a second has passed and it noticed *)
+
+		(* the written form pads every field to two digits and names the days *)
+		Streams.OpenStringWriter(w, 256);
+		UpTime.ToStream(w);
+		w.Update; w.Get(text);
+		ASSERT(Strings.Pos("0 days 00:00:0", text) = 0);
+
+		(* and the command says the same thing behind a label *)
+		Streams.OpenStringReader(r, "");
+		Streams.OpenStringWriter(w, 256);
+		NEW(ctx, NIL, r, w, w, NIL);
+		UpTime.Show(ctx);
+		w.Update; w.Get(text);
+		ASSERT(Strings.Pos("Uptime: 0 days 00:00:0", text) = 0);
+
+		UpTime.Install                          (* writes to the kernel log and nothing else *)
+	END Test.
+
+positive: a timer that fires, and one that is cancelled
+
+	MODULE Test;
+	IMPORT ActiveTimers, Objects;
+
+	TYPE
+		Sink = OBJECT
+			VAR fired: SIGNED32;
+
+			PROCEDURE Fire;
+			BEGIN {EXCLUSIVE}
+				INC(fired)
+			END Fire;
+
+			PROCEDURE Count(): SIGNED32;
+			BEGIN {EXCLUSIVE}
+				RETURN fired
+			END Count;
+
+		END Sink;
+
+	VAR sink: Sink; timer: ActiveTimers.Timer; i: SIGNED32;
+
+		(*	Five seconds of ten-millisecond looks. Not a guess at how fast the machine is -- a
+			bound, so a timer that never fires fails the case instead of hanging the suite. *)
+		PROCEDURE AwaitFired(n: SIGNED32): BOOLEAN;
+		VAR k: SIGNED32;
+		BEGIN
+			k := 0;
+			WHILE (sink.Count() < n) & (k < 500) DO Objects.Sleep(10); INC(k) END;
+			RETURN sink.Count() >= n
+		END AwaitFired;
+
+	BEGIN
+		NEW(sink); NEW(timer);
+
+		timer.SetTimeout(sink.Fire, 20);
+		ASSERT(AwaitFired(1));
+
+		(*	The handler runs on the timer's own activity, so the timer is free to take another
+			timeout from inside it -- which is how a window keeps repainting. *)
+		FOR i := 2 TO 5 DO
+			timer.SetTimeout(sink.Fire, 10);
+			ASSERT(AwaitFired(i))
+		END;
+
+		(* a timeout that is cancelled before it comes due does not arrive *)
+		i := sink.Count();
+		timer.SetTimeout(sink.Fire, 3000);
+		timer.CancelTimeout;
+		Objects.Sleep(200);
+		ASSERT(sink.Count() = i);
+
+		(* and cancelling one that was never set is not an error *)
+		timer.CancelTimeout;
+
+		timer.Finalize                          (* the active body ends here, and nothing hangs *)
+	END Test.

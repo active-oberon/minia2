@@ -1,0 +1,434 @@
+# Tests for Dates: the calendar itself -- leap years, the ISO week, the arithmetic and the two
+# string halves (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test DatesTestShared;System.Load Test"
+#
+# Dates is 458 lines and the oldest module in std/time: everything that prints a timestamp in this
+# tree goes through FormatDateTime, and nothing in the tree ever called StrToDate or StrToTime.
+# Time.Test covers the Unix epoch conversion on top of Dates; the calendar underneath it -- the
+# leap-year rule, the ISO week number, the eight Add procedures and the format string -- had no
+# case of its own.
+#
+# The dates are the awkward ones on purpose: the century year that is a leap year and the one that
+# is not, the 29th of February landing in a year that has no such day, the last day of a month
+# shorter than the one before it, and the four year-boundary weeks where the ISO week belongs to
+# the neighbouring year.
+
+positive: the shared module
+
+	MODULE DatesTestShared;
+	IMPORT Dates;
+
+		(* A date written the way a case reads, so no case spends six lines filling a record. *)
+		PROCEDURE At*(y, m, d, h, min, s: SIGNED32): Dates.DateTime;
+		VAR t: Dates.DateTime;
+		BEGIN
+			t.year := y; t.month := m; t.day := d;
+			t.hour := h; t.minute := min; t.second := s;
+			RETURN t
+		END At;
+
+		PROCEDURE Day*(y, m, d: SIGNED32): Dates.DateTime;
+		BEGIN RETURN At(y, m, d, 0, 0, 0)
+		END Day;
+
+	END DatesTestShared.
+
+positive: the leap-year rule, and the length of every month
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR m: SIGNED32;
+	BEGIN
+		(* the 4/100/400 rule, and the two century years it exists for *)
+		ASSERT(Dates.LeapYear(2024)); ASSERT(~Dates.LeapYear(2023));
+		ASSERT(Dates.LeapYear(2000)); ASSERT(~Dates.LeapYear(1900));
+		ASSERT(~Dates.LeapYear(2100)); ASSERT(Dates.LeapYear(2400));
+
+		(*	Documented, not accidental: the rule is guarded by year > 0, so year zero and the
+			years before it are not leap years here whatever the proleptic calendar says. Nothing
+			can reach them anyway -- ValidDateTime refuses year <= 0. *)
+		ASSERT(~Dates.LeapYear(0)); ASSERT(~Dates.LeapYear(-4));
+
+		ASSERT(Dates.NofDays(2026, 1) = 31); ASSERT(Dates.NofDays(2026, 2) = 28);
+		ASSERT(Dates.NofDays(2026, 3) = 31); ASSERT(Dates.NofDays(2026, 4) = 30);
+		ASSERT(Dates.NofDays(2026, 5) = 31); ASSERT(Dates.NofDays(2026, 6) = 30);
+		ASSERT(Dates.NofDays(2026, 7) = 31); ASSERT(Dates.NofDays(2026, 8) = 31);
+		ASSERT(Dates.NofDays(2026, 9) = 30); ASSERT(Dates.NofDays(2026, 10) = 31);
+		ASSERT(Dates.NofDays(2026, 11) = 30); ASSERT(Dates.NofDays(2026, 12) = 31);
+		ASSERT(Dates.NofDays(2024, 2) = 29);
+		ASSERT(Dates.NofDays(2000, 2) = 29);
+		ASSERT(Dates.NofDays(1900, 2) = 28);
+
+		(* the year is 365 or 366 days and never anything else *)
+		m := 0;
+		FOR m := 1 TO 12 DO ASSERT(Dates.NofDays(2023, m) + Dates.NofDays(2024, m) > 0) END;
+
+		ASSERT(Dates.ValidDateTime(T.At(2024, 2, 29, 23, 59, 59)));
+		ASSERT(~Dates.ValidDateTime(T.At(2023, 2, 29, 0, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 13, 1, 0, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 0, 1, 0, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 9, 0, 0, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 9, 31, 0, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 9, 8, 24, 0, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 9, 8, 0, 60, 0)));
+		ASSERT(~Dates.ValidDateTime(T.At(2026, 9, 8, 0, 0, 60)));
+		ASSERT(~Dates.ValidDateTime(T.At(0, 1, 1, 0, 0, 0)));
+
+		(* the names the module hands out, and the three origins *)
+		ASSERT(Dates.Months[0] = "January"); ASSERT(Dates.Months[8] = "September");
+		ASSERT(Dates.Months[11] = "December");
+		ASSERT(Dates.Days[0] = "Monday"); ASSERT(Dates.Days[6] = "Sunday");
+		ASSERT(Dates.ZeroDateUnix.year = 1970); ASSERT(Dates.ZeroDateUnix.month = 1);
+		ASSERT(Dates.ZeroDateUnix.day = 1);
+		ASSERT(Dates.ZeroDateRFC868.year = 1900);
+		ASSERT(Dates.Equal(Dates.ZeroDateNTP, Dates.ZeroDateRFC868))
+	END Test.
+
+positive: the Oberon date word round trips
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR dt, back: Dates.DateTime; d, t: SIGNED32; i: SIGNED32;
+	BEGIN
+		(*	The packed pair is what every file system in this tree stores, so a bit that moved
+			would silently redate every file. The layout is documented at the top of Dates:
+			date = (year-1900)*512 + month*32 + day, time = hour*4096 + minute*64 + second. *)
+		Dates.DateTimeToOberon(T.At(1900, 1, 1, 0, 0, 0), d, t);
+		ASSERT(d = 1*32 + 1); ASSERT(t = 0);
+
+		Dates.DateTimeToOberon(T.At(2026, 9, 8, 14, 5, 3), d, t);
+		ASSERT(d = 126*512 + 9*32 + 8);
+		ASSERT(t = 14*4096 + 5*64 + 3);
+
+		(* every day and one awkward time of two years, both ways *)
+		dt := T.At(2023, 1, 1, 23, 59, 59);
+		FOR i := 1 TO 730 DO
+			Dates.DateTimeToOberon(dt, d, t);
+			back := Dates.OberonToDateTime(d, t);
+			ASSERT(Dates.Equal(back, dt));
+			Dates.AddDays(dt, 1)
+		END;
+		ASSERT(Dates.Equal(dt, T.At(2024, 12, 31, 23, 59, 59)));
+
+		(* and the whole day of one date, second by minute *)
+		FOR i := 0 TO 1439 DO
+			dt := T.At(2024, 2, 29, i DIV 60, i MOD 60, 59);
+			Dates.DateTimeToOberon(dt, d, t);
+			ASSERT(Dates.Equal(Dates.OberonToDateTime(d, t), dt))
+		END
+	END Test.
+
+positive: the ISO week number, including the four weeks that belong to the neighbouring year
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR y, w, wd: SIGNED32; dt: Dates.DateTime; i, seen: SIGNED32;
+	BEGIN
+		(*	ISO 8601 numbers a week by the year its Thursday falls in, so the first days of
+			January can belong to the previous year and the last days of December to the next
+			one. Those four shapes are the whole reason this algorithm is not a division. *)
+		Dates.WeekDate(T.Day(2026, 9, 8), y, w, wd);
+		ASSERT(y = 2026); ASSERT(w = 37); ASSERT(wd = 2);           (* a Tuesday *)
+
+		Dates.WeekDate(T.Day(2000, 1, 1), y, w, wd);
+		ASSERT(y = 1999); ASSERT(w = 52); ASSERT(wd = 6);           (* Saturday, last week of 1999 *)
+
+		Dates.WeekDate(T.Day(2021, 1, 1), y, w, wd);
+		ASSERT(y = 2020); ASSERT(w = 53); ASSERT(wd = 5);           (* 2020 had 53 weeks *)
+
+		Dates.WeekDate(T.Day(2019, 12, 30), y, w, wd);
+		ASSERT(y = 2020); ASSERT(w = 1); ASSERT(wd = 1);            (* Monday of 2020's week 1 *)
+
+		Dates.WeekDate(T.Day(2004, 12, 31), y, w, wd);
+		ASSERT(y = 2004); ASSERT(w = 53); ASSERT(wd = 5);           (* and so did 2004 *)
+
+		Dates.WeekDate(T.Day(2001, 9, 11), y, w, wd);
+		ASSERT(wd = 2);                                             (* the doc comment's own example *)
+
+		(* an invalid date is answered, not halted *)
+		Dates.WeekDate(T.Day(2023, 2, 29), y, w, wd);
+		ASSERT(y = -1); ASSERT(w = -1); ASSERT(wd = -1);
+
+		(*	Across four years the week day advances by exactly one a day and wraps at seven,
+			and the week number never leaves 1..53. *)
+		dt := T.Day(2023, 1, 1);
+		Dates.WeekDate(dt, y, w, wd); seen := wd;
+		FOR i := 1 TO 1460 DO
+			Dates.AddDays(dt, 1);
+			Dates.WeekDate(dt, y, w, wd);
+			ASSERT(wd = seen MOD 7 + 1);
+			ASSERT(w >= 1); ASSERT(w <= 53);
+			ASSERT(y >= dt.year - 1); ASSERT(y <= dt.year + 1);
+			seen := wd
+		END
+	END Test.
+
+positive: comparing two moments, and the difference between them
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR d, h, m, s: SIGNED32; a: Dates.DateTime;
+	BEGIN
+		a := T.At(2026, 9, 8, 14, 5, 3);
+		ASSERT(Dates.Equal(a, a));
+		ASSERT(Dates.CompareDateTime(a, a) = 0);
+		ASSERT(~Dates.Equal(a, T.At(2026, 9, 8, 14, 5, 4)));
+
+		(* every field in turn, so a forgotten one cannot hide behind the year *)
+		ASSERT(Dates.CompareDateTime(T.At(2025, 9, 8, 14, 5, 3), a) = -1);
+		ASSERT(Dates.CompareDateTime(T.At(2026, 8, 8, 14, 5, 3), a) = -1);
+		ASSERT(Dates.CompareDateTime(T.At(2026, 9, 7, 14, 5, 3), a) = -1);
+		ASSERT(Dates.CompareDateTime(T.At(2026, 9, 8, 13, 5, 3), a) = -1);
+		ASSERT(Dates.CompareDateTime(T.At(2026, 9, 8, 14, 4, 3), a) = -1);
+		ASSERT(Dates.CompareDateTime(T.At(2026, 9, 8, 14, 5, 2), a) = -1);
+		ASSERT(Dates.CompareDateTime(a, T.At(2025, 9, 8, 14, 5, 3)) = 1);
+		ASSERT(Dates.CompareDateTime(a, T.At(2026, 9, 8, 14, 5, 4)) = -1);
+
+		Dates.TimeDifference(a, a, d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 0); ASSERT(m = 0); ASSERT(s = 0);
+
+		(* within one day *)
+		Dates.TimeDifference(T.At(2026, 9, 8, 1, 2, 3), T.At(2026, 9, 8, 4, 7, 13), d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 3); ASSERT(m = 5); ASSERT(s = 10);
+
+		(* it is a distance, so the order of the arguments must not matter *)
+		Dates.TimeDifference(T.At(2026, 9, 8, 4, 7, 13), T.At(2026, 9, 8, 1, 2, 3), d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 3); ASSERT(m = 5); ASSERT(s = 10);
+
+		(* over midnight, over a month end, over a year end *)
+		Dates.TimeDifference(T.At(2026, 9, 8, 23, 0, 0), T.At(2026, 9, 9, 1, 0, 0), d, h, m, s);
+		ASSERT(d = 0); ASSERT(h = 2); ASSERT(m = 0); ASSERT(s = 0);
+		Dates.TimeDifference(T.Day(2026, 8, 31), T.Day(2026, 9, 1), d, h, m, s);
+		ASSERT(d = 1); ASSERT(h = 0);
+		Dates.TimeDifference(T.At(2025, 12, 31, 12, 0, 0), T.At(2026, 1, 1, 12, 0, 0), d, h, m, s);
+		ASSERT(d = 1); ASSERT(h = 0);
+
+		(* the leap day is a day, and in a non-leap year it is not there to count *)
+		Dates.TimeDifference(T.Day(2024, 2, 28), T.Day(2024, 3, 1), d, h, m, s);
+		ASSERT(d = 2);
+		Dates.TimeDifference(T.Day(2023, 2, 28), T.Day(2023, 3, 1), d, h, m, s);
+		ASSERT(d = 1);
+
+		(* a whole year, and a whole century with its twenty-four leap days *)
+		Dates.TimeDifference(T.Day(2026, 1, 1), T.Day(2027, 1, 1), d, h, m, s);
+		ASSERT(d = 365);
+		Dates.TimeDifference(T.Day(2024, 1, 1), T.Day(2025, 1, 1), d, h, m, s);
+		ASSERT(d = 366);
+		Dates.TimeDifference(T.Day(1900, 1, 1), T.Day(2000, 1, 1), d, h, m, s);
+		ASSERT(d = 36524);
+
+		(* and a difference that is not a whole number of days *)
+		Dates.TimeDifference(T.At(2026, 9, 8, 23, 59, 59), T.At(2026, 9, 10, 0, 0, 1), d, h, m, s);
+		ASSERT(d = 1); ASSERT(h = 0); ASSERT(m = 0); ASSERT(s = 2)
+	END Test.
+
+positive: adding a unit, and the day that does not exist in the month it lands in
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR dt: Dates.DateTime; i: SIGNED32;
+	BEGIN
+		(* the carry, in both directions, at every boundary *)
+		dt := T.At(2026, 9, 8, 23, 59, 59); Dates.AddSeconds(dt, 1);
+		ASSERT(Dates.Equal(dt, T.At(2026, 9, 9, 0, 0, 0)));
+		dt := T.At(2026, 1, 1, 0, 0, 0); Dates.AddSeconds(dt, -1);
+		ASSERT(Dates.Equal(dt, T.At(2025, 12, 31, 23, 59, 59)));
+		dt := T.At(2026, 9, 8, 0, 0, 0); Dates.AddHours(dt, -1);
+		ASSERT(Dates.Equal(dt, T.At(2026, 9, 7, 23, 0, 0)));
+		dt := T.At(2026, 9, 8, 12, 30, 0); Dates.AddMinutes(dt, 90);
+		ASSERT(Dates.Equal(dt, T.At(2026, 9, 8, 14, 0, 0)));
+		dt := T.At(2026, 9, 8, 12, 0, 0); Dates.AddSeconds(dt, 3600 * 24);
+		ASSERT(Dates.Equal(dt, T.At(2026, 9, 9, 12, 0, 0)));
+
+		(* days across the two Februaries *)
+		dt := T.Day(2024, 2, 28); Dates.AddDays(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2024, 2, 29)));
+		Dates.AddDays(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2024, 3, 1)));
+		dt := T.Day(2023, 2, 28); Dates.AddDays(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2023, 3, 1)));
+
+		dt := T.Day(2026, 1, 1); Dates.AddDays(dt, 365);
+		ASSERT(Dates.Equal(dt, T.Day(2027, 1, 1)));
+		dt := T.Day(2026, 9, 8); Dates.AddDays(dt, -8);
+		ASSERT(Dates.Equal(dt, T.Day(2026, 8, 31)));
+		dt := T.Day(2026, 9, 8); Dates.AddDays(dt, -251);
+		ASSERT(Dates.Equal(dt, T.Day(2025, 12, 31)));
+
+		(*	The 31st of a month, plus one month. There is no 31st of February, and the answer the
+			rest of the world gives is the last day of the month reached -- this used to fail an
+			assertion inside AddMonths and halt the caller. *)
+		dt := T.Day(2026, 1, 31); Dates.AddMonths(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2026, 2, 28)));
+		dt := T.Day(2024, 1, 31); Dates.AddMonths(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2024, 2, 29)));
+		dt := T.Day(2026, 3, 31); Dates.AddMonths(dt, -1);
+		ASSERT(Dates.Equal(dt, T.Day(2026, 2, 28)));
+		dt := T.Day(2024, 2, 29); Dates.AddYears(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2025, 2, 28)));
+
+		(* the month carry, in both directions and past a year *)
+		dt := T.Day(2026, 1, 15); Dates.AddMonths(dt, -1);
+		ASSERT(Dates.Equal(dt, T.Day(2025, 12, 15)));
+		dt := T.Day(2026, 12, 15); Dates.AddMonths(dt, 1);
+		ASSERT(Dates.Equal(dt, T.Day(2027, 1, 15)));
+		dt := T.Day(2026, 9, 8); Dates.AddMonths(dt, 12);
+		ASSERT(Dates.Equal(dt, T.Day(2027, 9, 8)));
+		dt := T.Day(2026, 9, 8); Dates.AddMonths(dt, -12);
+		ASSERT(Dates.Equal(dt, T.Day(2025, 9, 8)));
+		dt := T.Day(2026, 9, 8); Dates.AddMonths(dt, 30);
+		ASSERT(Dates.Equal(dt, T.Day(2029, 3, 8)));
+		dt := T.Day(2026, 9, 8); Dates.AddMonths(dt, -30);
+		ASSERT(Dates.Equal(dt, T.Day(2024, 3, 8)));
+
+		(*	Twelve single months is one year, which is the invariant a per-month carry breaks
+			first, and a hundred days forward and back is the identity. *)
+		dt := T.Day(2026, 5, 15);
+		FOR i := 1 TO 12 DO Dates.AddMonths(dt, 1) END;
+		ASSERT(Dates.Equal(dt, T.Day(2027, 5, 15)));
+		FOR i := 1 TO 100 DO Dates.AddDays(dt, 1) END;
+		FOR i := 1 TO 100 DO Dates.AddDays(dt, -1) END;
+		ASSERT(Dates.Equal(dt, T.Day(2027, 5, 15)));
+		Dates.AddDays(dt, 100); Dates.AddDays(dt, -100);
+		ASSERT(Dates.Equal(dt, T.Day(2027, 5, 15)))
+	END Test.
+
+positive: what the format string writes
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR s: ARRAY 64 OF CHAR; dt: Dates.DateTime;
+	BEGIN
+		dt := T.At(2026, 9, 8, 14, 5, 3);                    (* a Tuesday *)
+		Dates.FormatDateTime("yyyy-mm-dd", dt, s); ASSERT(s = "2026-09-08");
+		Dates.FormatDateTime("yy", dt, s); ASSERT(s = "26");
+		Dates.FormatDateTime("d.m.yyyy", dt, s); ASSERT(s = "8.9.2026");
+		Dates.FormatDateTime("dd.mmm.yyyy", dt, s); ASSERT(s = "08.Sep.2026");
+		Dates.FormatDateTime("mmmm", dt, s); ASSERT(s = "September");
+		Dates.FormatDateTime("wwww", dt, s); ASSERT(s = "Tuesday");
+		Dates.FormatDateTime("www", dt, s); ASSERT(s = "Tue");
+		Dates.FormatDateTime("hh:nn:ss", dt, s); ASSERT(s = "14:05:03");
+		Dates.FormatDateTime("h:n:s", dt, s); ASSERT(s = "14:5:3");
+		Dates.FormatDateTime("", dt, s); ASSERT(s = "");
+
+		(* anything that is not a specifier is copied through *)
+		Dates.FormatDateTime("[hh] (d) mmm!", dt, s); ASSERT(s = "[14] (8) Sep!");
+
+		(* the two examples the doc comment promises *)
+		Dates.FormatDateTime("wwww, mmmm d, yyyy", T.Day(2001, 9, 11), s);
+		ASSERT(s = "Tuesday, September 11, 2001");
+		Dates.FormatDateTime("yyyyyy.m.ddd", T.Day(2002, 1, 1), s);
+		ASSERT(s = "002002.1.001");
+		Dates.FormatDateTime("yyyy.mm.dd hh:nn:ss", T.At(2002, 1, 1, 17, 8, 0), s);
+		ASSERT(s = "2002.01.01 17:08:00");
+
+		(* an invalid date writes an empty string rather than a wrong one *)
+		Dates.FormatDateTime("yyyy-mm-dd", T.Day(2023, 2, 29), s);
+		ASSERT(s = "");
+
+		(* and the module's own two defaults *)
+		Dates.DateToStr(dt, s); ASSERT(s = "08.Sep.2026");
+		Dates.TimeToStr(dt, s); ASSERT(s = "14:05:03")
+	END Test.
+
+positive: a written date and a written time, read back
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR s: ARRAY 64 OF CHAR; dt, back: Dates.DateTime; i: SIGNED32;
+	BEGIN
+		(*	StrToDate and StrToTime are the only two procedures in Dates that nothing in the tree
+			calls, and they are the inverse of DateToStr and TimeToStr -- so the pair has to close
+			over what its own default format writes. The month written as a name is the shape
+			DateFormat produces. *)
+		dt := T.At(2026, 9, 8, 14, 5, 3);
+
+		Dates.DateToStr(dt, s);
+		back := dt;
+		Dates.StrToDate(s, back);
+		ASSERT(back.year = 2026); ASSERT(back.month = 9); ASSERT(back.day = 8);
+
+		Dates.TimeToStr(dt, s);
+		back := dt;
+		Dates.StrToTime(s, back);
+		ASSERT(back.hour = 14); ASSERT(back.minute = 5); ASSERT(back.second = 3);
+
+		(* the numeric shapes, with any separator and leading blanks *)
+		back := dt;
+		Dates.StrToDate("31.12.2026", back);
+		ASSERT(back.year = 2026); ASSERT(back.month = 12); ASSERT(back.day = 31);
+		back := dt;
+		Dates.StrToDate("  1/2/2024", back);
+		ASSERT(back.year = 2024); ASSERT(back.month = 2); ASSERT(back.day = 1);
+		back := dt;
+		Dates.StrToDate("on the 29 2 2024", back);
+		ASSERT(back.year = 2024); ASSERT(back.month = 2); ASSERT(back.day = 29);
+		back := dt;
+		Dates.StrToDate("8 September 2026", back);
+		ASSERT(back.year = 2026); ASSERT(back.month = 9); ASSERT(back.day = 8);
+		back := dt;
+		Dates.StrToDate("8-sep-2026", back);                (* the case of the name does not matter *)
+		ASSERT(back.month = 9);
+		back := dt;
+		Dates.StrToDate("1.MARCH.2026", back);
+		ASSERT(back.month = 3);
+		back := dt;
+		Dates.StrToDate("1.5.2026", back);                  (* a number still wins where there is one *)
+		ASSERT(back.month = 5);
+		back := dt;
+		Dates.StrToTime("23:59:59", back);
+		ASSERT(back.hour = 23); ASSERT(back.minute = 59); ASSERT(back.second = 59);
+
+		(* the full round trip, every hour of a leap day *)
+		FOR i := 0 TO 23 DO
+			dt := T.At(2024, 2, 29, i, 30, 30);
+			Dates.FormatDateTime("dd.mm.yyyy hh:nn:ss", dt, s);
+			back := dt;
+			Dates.StrToDate(s, back);
+			ASSERT(Dates.Equal(back, dt))
+		END
+	END Test.
+
+negative: a month past December is refused
+
+	MODULE Test;
+	IMPORT Dates;
+	VAR n: SIGNED32;
+	BEGIN
+		n := Dates.NofDays(2026, 13);
+		ASSERT(n = 0)
+	END Test.
+
+negative: the packed pair cannot be made from a date that is not one
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR d, t: SIGNED32;
+	BEGIN
+		Dates.DateTimeToOberon(T.Day(2023, 2, 29), d, t)
+	END Test.
+
+negative: two moments cannot be compared when one of them is not a moment
+
+	MODULE Test;
+	IMPORT Dates, T := DatesTestShared;
+	VAR r: SIGNED32;
+	BEGIN
+		r := Dates.CompareDateTime(T.Day(2026, 9, 8), T.Day(2026, 2, 30));
+		ASSERT(r = 0)
+	END Test.
+
+positive: a time on its own, with no date to lend it
+
+	MODULE Test;
+	IMPORT Dates;
+	VAR dt: Dates.DateTime;
+	BEGIN
+		(*	Nothing about naming an hour needs a calendar day, and a caller holding a clock
+			reading has no date to put beside it -- so reading a time into a record that carries
+			no date must answer rather than halt. This is the pair TimeToStr belongs to and the
+			only way to use it. *)
+		Dates.StrToTime("07:08:09", dt);
+		ASSERT(dt.hour = 7); ASSERT(dt.minute = 8); ASSERT(dt.second = 9)
+	END Test.

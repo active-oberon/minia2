@@ -51,11 +51,17 @@ BEGIN
 	END
 END NofDays;
 
+(* ValidTime is the clock half of ValidDateTime -- a time on its own has no calendar day to check. *)
+PROCEDURE ValidTime(dt: DateTime): BOOLEAN;
+BEGIN
+	RETURN (dt.hour >= 0) & (dt.hour < 24) & (dt.minute >= 0) & (dt.minute < 60) & (dt.second >= 0) & (dt.second < 60)
+END ValidTime;
+
 (** checks if the values of a DateTime structure are valid *)
 PROCEDURE ValidDateTime*(dt: DateTime): BOOLEAN;
 BEGIN
 	RETURN (dt.year > 0) & (dt.month > 0) & (dt.month <= 12) & (dt.day > 0) & (dt.day <= NofDays(dt.year, dt.month)) &
-		(dt.hour >= 0) & (dt.hour < 24) & (dt.minute >= 0) & (dt.minute < 60) & (dt.second >= 0) & (dt.second < 60)
+		ValidTime(dt)
 END ValidDateTime;
 
 (** convert an Oberon date/time to a DateTime structure *)
@@ -347,7 +353,7 @@ BEGIN
 	Strings.StrToIntPos(str, dt.minute, i);
 	WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
 	Strings.StrToIntPos(str, dt.second, i);
-	ASSERT(ValidDateTime(dt));
+	ASSERT(ValidTime(dt));
 END StrToTime;
 
 (** converts a date to a string, using the 'DateFormat' format. C.f. FormatDateTime *)
@@ -355,15 +361,43 @@ PROCEDURE DateToStr*(date: DateTime; VAR s: ARRAY OF CHAR);
 BEGIN FormatDateTime(DateFormat, date, s)
 END DateToStr;
 
-(** Convert a string of the form 'day month year' into an date value. Leading whitespace is ignored. *)
+(* MonthByName reads the month DateFormat writes -- without it StrToDate cannot read back DateToStr. *)
+PROCEDURE MonthByName(CONST str: ARRAY OF CHAR; VAR i: SIZE; VAR month: SIGNED32): BOOLEAN;
+VAR m: SIGNED32; j: SIZE;
+
+	PROCEDURE Alpha(ch: CHAR): BOOLEAN;
+	BEGIN RETURN (CAP(ch) >= "A") & (CAP(ch) <= "Z")
+	END Alpha;
+
+BEGIN
+	j := i;
+	WHILE (str[j] # 0X) & ~Alpha(str[j]) & ((str[j] < "0") OR (str[j] > "9")) DO INC(j) END;
+	(* Three letters name a month uniquely, and a short string stops the OR at its terminator. *)
+	IF ~Alpha(str[j]) OR ~Alpha(str[j+1]) OR ~Alpha(str[j+2]) THEN RETURN FALSE END;
+	FOR m := 0 TO 11 DO
+		IF (CAP(str[j]) = CAP(Months[m, 0])) & (CAP(str[j+1]) = CAP(Months[m, 1])) &
+				(CAP(str[j+2]) = CAP(Months[m, 2])) THEN
+			month := m + 1;
+			WHILE Alpha(str[j]) DO INC(j) END;
+			i := j;
+			RETURN TRUE
+		END
+	END;
+	RETURN FALSE
+END MonthByName;
+
+(** Convert a string of the form 'day month year' into an date value. The month may be a number or
+	its name, abbreviated or in full. Leading whitespace is ignored. *)
 PROCEDURE StrToDate*(CONST str: ARRAY OF CHAR; VAR dt: DateTime);
 VAR i: SIZE;
 BEGIN
 	i := 0;
 	WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
 	Strings.StrToIntPos(str, dt.day, i);
-	WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
-	Strings.StrToIntPos(str, dt.month, i);
+	IF ~MonthByName(str, i, dt.month) THEN
+		WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
+		Strings.StrToIntPos(str, dt.month, i)
+	END;
 	WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
 	Strings.StrToIntPos(str, dt.year, i);
 	ASSERT(ValidDateTime(dt));
