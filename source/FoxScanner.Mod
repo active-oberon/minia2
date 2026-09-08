@@ -777,16 +777,22 @@ TYPE
 				(*	The power of ten the digits are to be multiplied by: the point shift, plus
 					what a digit string longer than dig had to leave out. *)
 				DEC( e, i - d );  INC( e, m - n );
-				token.numberType := Real;
-				IF e + n > MaxRealExponent THEN
-					token.numberType := Longreal;
-				END;
 				dig[n] := 0X;
 				(*	One conversion, correctly rounded, and the range is whatever binary64 has
 					rather than a decimal exponent counted by hand -- MAX(FLOAT64) and every
 					subnormal used to be refused as "too large" by the count alone. *)
 				IF ~RealConversions.DecimalToReal( dig, e, rest, token.real ) THEN
 					Error( Basic.NumberTooLarge )
+				END;
+				(*	D asks for binary64 and used to be read into expCh and thrown away; and the
+					range test was one-sided, so 1.0E-300 was typed Real although binary32
+					underflows it to zero. Precision is deliberately NOT a criterion: writing pi
+					to twenty digits in a FLOAT32 module means the most accurate pi, not a
+					FLOAT64 constant. *)
+				IF (expCh = "D") OR (e + n > MaxRealExponent) OR (e + n < -MaxRealExponent) THEN
+					token.numberType := Longreal
+				ELSE
+					token.numberType := Real
 				END
 			END;
 			token.identifierString[si] := 0X;

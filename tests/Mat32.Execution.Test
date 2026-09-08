@@ -312,8 +312,10 @@ positive: TestRoundingComprehensive
 		(* 0 < |x| < 1 *)
 		ASSERT(Math.trunc(0.75) = 0.0, 604);
 		ASSERT(Math.trunc(-0.75) = -0.0, 605);
-		ASSERT(Math.trunc(1.0D-20) = 0.0, 606);
-		ASSERT(Math.trunc(-1.0D-20) = -0.0, 607);
+		(*	E, not D: every other literal in this FLOAT32 case is written without a marker, and
+			D asks for a binary64 constant, which a FLOAT32 parameter will not take. *)
+		ASSERT(Math.trunc(1.0E-20) = 0.0, 606);
+		ASSERT(Math.trunc(-1.0E-20) = -0.0, 607);
 		(* x = 0 *)
 		ASSERT(Math.iszero(Math.trunc(0.5), 1), 608);
 		ASSERT(Math.iszero(Math.trunc(-0.5), -1), 609);

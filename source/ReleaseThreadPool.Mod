@@ -545,8 +545,9 @@ TYPE
 				END;
 			ELSE
 				KernelLog.String("Threadpool had error."); KernelLog.Ln;
-				BEGIN {EXCLUSIVE} hadError := TRUE; END;
 				IF Stats THEN INC(NjobErrors); END;
+				(* After the count, not before it: AwaitAllDone wakes on hadError too. *)
+				BEGIN {EXCLUSIVE} hadError := TRUE; END;
 			END;
 			(* Last, and not first: AwaitAllDone wakes on this, so everything it can then be asked about is already set. *)
 			BEGIN {EXCLUSIVE} DEC(jobsOnTheFly); END;

@@ -1,0 +1,66 @@
+# Tests for MathL: the seventeen-line alias module in front of Math64 (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# There is nothing in MathL but names: three constants and seven procedures, each declared as
+# CONST x = Math64.x. So the only thing that can be wrong with it is a name pointing at the wrong
+# thing, and the only way to see that is to ask both sides the same question. Which is what these
+# cases do -- every assertion compares MathL against Math64 rather than against a decimal, so it
+# stays true if Math64 is ever made more accurate.
+
+positive: every name is the Math64 one
+
+	MODULE Test;
+	IMPORT MathL, Math64;
+	VAR x: FLOAT64; i: SIGNED32;
+	BEGIN
+		ASSERT(MathL.e = Math64.e);
+		ASSERT(MathL.pi = Math64.pi);
+		ASSERT(MathL.ln2 = Math64.ln2);
+
+		(* the procedures, over a range rather than at one point *)
+		FOR i := -20 TO 20 DO
+			x := i / 4.0D0;
+			ASSERT(MathL.sin(x) = Math64.sin(x));
+			ASSERT(MathL.cos(x) = Math64.cos(x));
+			ASSERT(MathL.arctan(x) = Math64.arctan(x));
+			ASSERT(MathL.exp(x) = Math64.exp(x));
+			ASSERT(MathL.arctan2(x, 2.0D0) = Math64.arctan2(x, 2.0D0));
+			IF x > 0.0D0 THEN
+				ASSERT(MathL.sqrt(x) = Math64.sqrt(x));
+				ASSERT(MathL.ln(x) = Math64.ln(x))
+			END
+		END
+	END Test.
+
+positive: and the names still compute what they say they do
+
+	MODULE Test;
+	IMPORT MathL;
+	VAR x: FLOAT64;
+
+		PROCEDURE Near(a, b: FLOAT64): BOOLEAN;
+		BEGIN RETURN ABS(a - b) < 1.0D-12
+		END Near;
+
+	BEGIN
+		(*	Not a second copy of Math64's own suite -- just enough that a name pointing at the
+			wrong procedure of the right shape would still be caught. sin and cos have the same
+			signature, and so do ln and exp. *)
+		ASSERT(Near(MathL.sin(0.0D0), 0.0D0));
+		ASSERT(Near(MathL.sin(MathL.pi / 2.0D0), 1.0D0));
+		ASSERT(Near(MathL.cos(0.0D0), 1.0D0));
+		ASSERT(Near(MathL.cos(MathL.pi), -1.0D0));
+		ASSERT(Near(MathL.sqrt(4.0D0), 2.0D0));
+		ASSERT(Near(MathL.ln(MathL.e), 1.0D0));
+		ASSERT(Near(MathL.exp(1.0D0), MathL.e));
+		ASSERT(Near(MathL.ln(2.0D0), MathL.ln2));
+		ASSERT(Near(MathL.arctan(1.0D0), MathL.pi / 4.0D0));
+		ASSERT(Near(MathL.arctan2(1.0D0, 1.0D0), MathL.pi / 4.0D0));
+		ASSERT(Near(MathL.arctan2(1.0D0, -1.0D0), 3.0D0 * MathL.pi / 4.0D0));
+
+		(* and the two identities that tie them together *)
+		x := 0.7D0;
+		ASSERT(Near(MathL.sin(x)*MathL.sin(x) + MathL.cos(x)*MathL.cos(x), 1.0D0));
+		ASSERT(Near(MathL.exp(MathL.ln(x)), x))
+	END Test.

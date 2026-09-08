@@ -1,0 +1,126 @@
+# Tests for Drand48: the libc random generator's algorithm (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# 185 lines beside Random in std/math, and nothing in the tree calls it. Every expected value
+# below is decided by POSIX rather than by taste: the state advances as
+# X <- (0x5DEECE66D * X + 0xB) mod 2^48 from a starting state of 0x1234ABCD330E, and each of the
+# four draws is a documented slice of that state. So the whole module can be asserted exactly
+# against the same sequence glibc produces, and the numbers were computed independently rather
+# than read out of a run of this code.
+#
+# The state is 48 bits and the multiplier is 35, so `x*a` overflows a SIGNED64 on every step. That
+# is not a defect and the case below pins why: 2^64 is a multiple of 2^48, so the low bits survive
+# the wrap, and Oberon's MOD is floored and hands back the non-negative representative. A run of a
+# hundred thousand draws checks that the state never comes back negative.
+
+positive: the sequence POSIX prescribes, from the default state
+
+	MODULE Test;
+	IMPORT Drand48, SYSTEM;
+	VAR g: Drand48.Generator;
+
+		(*	The bits, not a printed decimal: drand48 is x/2^48 and both are exact in binary64,
+			so there is one right answer and it can be written down. *)
+		PROCEDURE Bits(x: FLOAT64): SIGNED64;
+		BEGIN RETURN SYSTEM.VAL(SIGNED64, x)
+		END Bits;
+
+	BEGIN
+		(* the state, step by step *)
+		NEW(g);
+		ASSERT(g.Xrand48() = 657EB7255101H);
+		ASSERT(g.Xrand48() = 0D72A0C966378H);
+		ASSERT(g.Xrand48() = 5A743C062A23H);
+		ASSERT(g.Xrand48() = 72534ABF62F2H);
+		ASSERT(g.Xrand48() = 5195D97A8D15H);
+
+		(* the same five steps read as a real in [0, 1) *)
+		NEW(g);
+		ASSERT(Bits(g.Drand48()) = 3FD95FADC9544040H);
+		ASSERT(Bits(g.Drand48()) = 3FEAE54192CC6F00H);
+		ASSERT(Bits(g.Drand48()) = 3FD69D0F018A88C0H);
+		ASSERT(Bits(g.Drand48()) = 3FDC94D2AFD8BC80H);
+		ASSERT(Bits(g.Drand48()) = 3FD465765EA34540H);
+
+		(* and as the two integer slices: the top 31 bits, and the top 32 as a signed value *)
+		NEW(g);
+		ASSERT(g.Lrand48() = 851401618);
+		ASSERT(g.Lrand48() = 1804928587);
+		ASSERT(g.Lrand48() = 758783491);
+		ASSERT(g.Lrand48() = 959030623);
+		ASSERT(g.Lrand48() = 684387517);
+
+		NEW(g);
+		ASSERT(g.Mrand48() = 1702803237);
+		ASSERT(g.Mrand48() = -685110122);         (* mrand48 is signed, whatever the comment says *)
+		ASSERT(g.Mrand48() = 1517566982);
+		ASSERT(g.Mrand48() = 1918061247);
+		ASSERT(g.Mrand48() = 1368775034)
+	END Test.
+
+positive: seeding, and what the previous state was
+
+	MODULE Test;
+	IMPORT Drand48;
+	VAR g: Drand48.Generator; last: SIGNED64; par: ARRAY 3 OF SIGNED64;
+	BEGIN
+		(* srand48 puts the seed in the top 32 bits and keeps the low 16 of the default state *)
+		NEW(g); g.Srand48(1);
+		ASSERT(g.Xrand48() = 0AA849495101H);
+		ASSERT(g.Xrand48() = 74599DEA6378H);
+		NEW(g); g.Srand48(1);
+		ASSERT(g.Lrand48() = 89400484);
+		ASSERT(g.Lrand48() = 976015093);
+		ASSERT(g.Lrand48() = 1792756325);
+
+		(*	A negative seed is the low 48 bits of the same shift, which is what C does with a
+			long. The state itself must not come back signed. *)
+		NEW(g); g.Srand48(-1);
+		ASSERT(g.Xrand48() = 4CCE7C6F5101H);
+		ASSERT(g.Xrand48() = 0B9989186378H);
+		NEW(g); g.Srand48(-1);
+		ASSERT(g.Lrand48() = 644300343);
+		ASSERT(g.Lrand48() = 97305740);
+
+		(* seed48 sets the whole state and hands back the one it replaced *)
+		NEW(g);
+		last := g.Seed48(1234ABCD330EH);
+		ASSERT(last = 1234ABCD330EH);              (* which is where a fresh generator starts *)
+		ASSERT(g.Lrand48() = 851401618);
+		last := g.Seed48(0);
+		ASSERT(last = 657EB7255101H);
+		ASSERT(g.Xrand48() = 0BH);                 (* 0*a + c *)
+		ASSERT(g.Xrand48() = 40942DE6BAH);
+
+		(* lcong48 sets state, multiplier and addend together *)
+		NEW(g);
+		par[0] := 1234ABCD330EH; par[1] := 5DEECE66DH; par[2] := 0BH;
+		g.Lcong48(par);
+		ASSERT(g.Xrand48() = 657EB7255101H);       (* the default parameters, restated *)
+		par[0] := 0; par[1] := 1; par[2] := 7;
+		g.Lcong48(par);
+		ASSERT(g.Xrand48() = 7);                   (* 0*1 + 7 *)
+		ASSERT(g.Xrand48() = 14)
+	END Test.
+
+positive: the state stays inside 48 bits over a long run
+
+	MODULE Test;
+	IMPORT Drand48;
+	VAR g: Drand48.Generator; i: SIGNED32; d: FLOAT64; x: SIGNED64;
+	BEGIN
+		(*	Every step multiplies a 48-bit state by a 35-bit multiplier, so the product leaves a
+			SIGNED64 on the very first call. What makes that harmless is that 2^64 is a multiple
+			of 2^48 and Oberon's MOD is floored: the wrap keeps the low bits and MOD hands back
+			the non-negative representative. If either of those stopped being true, the state
+			would go negative and the draws with it -- which is what this run watches for. *)
+		NEW(g);
+		FOR i := 1 TO 100000 DO
+			d := g.Drand48();
+			ASSERT(d >= 0.0); ASSERT(d < 1.0);
+			ASSERT(g.Lrand48() >= 0);
+			x := g.Xrand48();
+			ASSERT(x >= 0); ASSERT(x < 1000000000000H)
+		END
+	END Test.

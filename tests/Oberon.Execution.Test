@@ -8344,15 +8344,23 @@ positive: a real constant meeting an integer variable is typed FLOAT32 (upstream
 	BEGIN
 		d := 43403;
 
-		(* This pins today's behaviour rather than blessing it. The constant is held at
-			full precision but typed FLOAT32, so ConvertOperands takes the integer down to
-			FLOAT32 and the whole expression is computed in single precision -- with D,
-			with E and with no scale factor alike. That is upstream #133 and the second
-			half of #95, and it is open: the fix is a decision about how a constant operand
-			is typed, so when it lands these four assertions are what changes. *)
+		(*	Half of this landed 08.09 and half is still open, which is why the four
+			assertions below no longer agree with each other.
+
+			FIXED: the scanner decided a literal's type from its decimal exponent alone. D,
+			the marker that asks for binary64, was read into a local and thrown away, and the
+			range test was one-sided -- so 1.0E-300 was typed FLOAT32 as well, and any
+			expression using it underflowed to zero. Assertion 972 is the answer that gives.
+
+			OPEN, and this is upstream #133 and the second half of #95: a FLOAT32 and an
+			integer still unify at FLOAT32, so a literal that binary32 does hold takes the
+			integer down with it and the expression is computed in single precision.
+			Assertions 970, 971 and 973 are that, pinned rather than blessed. The fix is a
+			decision about CompatibleTo, which governs assignment too, so it wants its own
+			pass; when it lands, those three are what changes. *)
 		ASSERT(Bits(d / 7.0)     = 040B8386DC0000000H, 970);
 		ASSERT(Bits(d / 7.0E0)   = 040B8386DC0000000H, 971);
-		ASSERT(Bits(d / 7.0D0)   = 040B8386DC0000000H, 972);
+		ASSERT(Bits(d / 7.0D0)   = 040B8386DB6DB6DB7H, 972);   (* D now means binary64 *)
 		ASSERT(Bits(d * 86400.0) = 041EBF09800000000H, 973);
 
 		(* an explicit conversion is how full precision is reached today *)

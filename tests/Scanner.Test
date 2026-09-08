@@ -55,6 +55,52 @@ positive: a decimal real literal is the number that was written
 		Exactly(0.3000000000000000444089209850062616169452667236328125D0, 3FD3333333333334H)
 	END Test.
 
+positive: what the exponent marker asks for is what the literal is
+
+	MODULE Test;
+	IMPORT SYSTEM;
+	VAR i64: SIGNED64; i32: SIGNED32; small: FLOAT64;
+
+		PROCEDURE Bits(x: FLOAT64): SIGNED64;
+		BEGIN RETURN SYSTEM.VAL(SIGNED64, x)
+		END Bits;
+
+	BEGIN
+		(*	A literal has a type as well as a value, and the type is what decides the precision
+			an expression around it is computed in. The scanner used to pick that type from the
+			decimal exponent alone: D, which is the marker that asks for binary64, was read and
+			thrown away, and the test was one-sided, so a value binary32 cannot hold at all was
+			still typed as one.
+
+			Neither shows up where the other operand is a FLOAT64 variable -- the constant is
+			widened then. It shows up against an INTEGER, because there the constant's type wins
+			and the integer is narrowed to it. Hence the shape of every case below: a whole
+			number that binary64 holds exactly and binary32 does not.
+
+			The other half of that narrowing is still open and pinned elsewhere: a literal that
+			binary32 DOES hold still takes the integer down to single precision. That is upstream
+			#133, and its case is `Oberon.Execution.Test`, "a real constant meeting an integer
+			variable is typed FLOAT32". *)
+		i64 := 111594912960769;                    (* 47 bits *)
+		i32 := 1234567891;                         (* 31 bits *)
+
+		(* D means binary64, so nothing here loses a bit *)
+		ASSERT(Bits(1.0D0 * i64) = Bits(FLOAT64(i64)));
+		ASSERT(Bits(i64 * 1.0D0) = Bits(FLOAT64(i64)));
+		ASSERT(Bits(1.0D0 * i32) = Bits(FLOAT64(i32)));
+		ASSERT(Bits(i64 / 1.0D0) = Bits(FLOAT64(i64)));
+		ASSERT(Bits(i64 + 0.0D0) = Bits(FLOAT64(i64)));
+		ASSERT(2.0D0 * i64 = 223189825921538.0D0);
+
+		(*	And a value outside what binary32 can hold is binary64 whatever marker was written:
+			as a FLOAT32 it would be zero, and the expression with it would be zero too. *)
+		ASSERT(1.0E-300 * i32 # 0.0D0);
+		ASSERT(1.0D-300 * i32 # 0.0D0);
+		small := 1.0E-300 * i32;
+		ASSERT(small > 1.0D-292); ASSERT(small < 1.0D-290);
+		ASSERT(1.0E+300 * i32 > 1.0D+308 / 1000.0D0)
+	END Test.
+
 positive: the ends of the range a binary64 has
 
 	MODULE Test;

@@ -199,5 +199,8 @@ positive: a job that says it failed, and a job that trapped
 		uid := pool.CreateJob(Traps, NIL, 0, none);
 		pool.AwaitAllDone;
 		ASSERT(P.NjobsDone = 1);
-		ASSERT(P.NjobErrors = 1)                (* it used to be 0 *)
+		(*	It used to be 0. And the reading has to be there the moment AwaitAllDone returns,
+			which is what the qemu run of 08.09 caught: the pool set the flag that wakes the
+			waiter before it counted the failure, so a slow enough machine woke up first. *)
+		ASSERT(P.NjobErrors = 1)
 	END Test.
