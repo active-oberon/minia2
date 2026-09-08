@@ -1,0 +1,203 @@
+# Tests for ReleaseThreadPool: jobs, priorities, dependencies and what happens when a job fails
+# (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The module calls itself experimental in its own header and says to use something simpler if all
+# you want is a thread pool. It is in std/base all the same, it ships in the SDK, and Release.Mod
+# builds every system image through it -- so the paths that matter are the ones a build takes: a
+# job that works, a job that reports an error, a job that trapped, and a job that must not start
+# before another one has finished.
+#
+# Nothing here asserts a duration or an order of execution between independent jobs; a pool with
+# more than one worker gives no such guarantee. What is asserted is what the pool promises:
+# AwaitAllDone returns only when the work is done or the pool has given up, and a dependency is
+# honoured.
+#
+# Recorded and not changed: the statistics are module-wide and documented to work with one pool at
+# a time, so the cases that read them make one pool and clear the counters first. A worker that
+# reports Exception writes a line to the kernel log, which is where a build would see it.
+
+positive: a job that runs, and a pool that waits for it
+
+	MODULE Test;
+	IMPORT P := ReleaseThreadPool;
+	VAR pool: P.ThreadPool; none: P.Dependencies; done: SIGNED32; uid: SIZE; i: SIGNED32;
+
+		PROCEDURE Count(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN {EXCLUSIVE}
+			INC(done); error := FALSE
+		END Count;
+
+		PROCEDURE NoDependencies(VAR d: P.Dependencies);
+		VAR k: SIGNED32;
+		BEGIN
+			FOR k := 0 TO LEN(d)-1 DO d[k] := P.NoMoreDependencies END
+		END NoDependencies;
+
+	BEGIN
+		P.ClearStats;
+		NoDependencies(none);
+		NEW(pool, 4);
+
+		uid := pool.CreateJob(Count, NIL, 0, none);
+		ASSERT(uid > 0);                        (* every job gets an identity, and they start at 1 *)
+		pool.AwaitAllDone;
+		ASSERT(done = 1);
+		ASSERT(P.NjobsCreated = 1);
+		ASSERT(P.NjobsDone = 1);
+		ASSERT(P.NjobErrors = 0);
+
+		(* a hundred of them, and every one ran exactly once *)
+		done := 0;
+		FOR i := 1 TO 100 DO uid := pool.CreateJob(Count, NIL, 0, none) END;
+		pool.AwaitAllDone;
+		ASSERT(done = 100);
+		ASSERT(P.NjobsDone = 101);
+		ASSERT(P.NjobErrors = 0);
+
+		(* identities are not handed out twice while the jobs are alive *)
+		pool.Close
+	END Test.
+
+positive: a job that must not start before another has finished
+
+	MODULE Test;
+	IMPORT P := ReleaseThreadPool, Objects;
+	VAR pool: P.ThreadPool; none, after: P.Dependencies;
+		first, second: SIZE; order: ARRAY 8 OF CHAR; at: SIZE;
+
+		PROCEDURE NoDependencies(VAR d: P.Dependencies);
+		VAR k: SIGNED32;
+		BEGIN
+			FOR k := 0 TO LEN(d)-1 DO d[k] := P.NoMoreDependencies END
+		END NoDependencies;
+
+		PROCEDURE Mark(c: CHAR);
+		BEGIN {EXCLUSIVE}
+			order[at] := c; INC(at); order[at] := 0X
+		END Mark;
+
+		PROCEDURE Slow(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN
+			Objects.Sleep(100);                 (* long enough that a pool ignoring the order would lose the race *)
+			Mark("1");
+			error := FALSE
+		END Slow;
+
+		PROCEDURE Quick(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN
+			Mark("2"); error := FALSE
+		END Quick;
+
+	BEGIN
+		P.ClearStats;
+		NoDependencies(none);
+		at := 0; order[0] := 0X;
+		NEW(pool, 4);
+
+		first := pool.CreateJob(Slow, NIL, 0, none);
+		NoDependencies(after);
+		after[0] := first;                      (* and after[1] is already the sentinel *)
+		second := pool.CreateJob(Quick, NIL, 0, after);
+		ASSERT(second # first);
+
+		pool.AwaitAllDone;
+		ASSERT(order = "12");                   (* the slow one first, because the quick one waited *)
+		ASSERT(P.NjobsDone = 2);
+		ASSERT(P.NdependencyChecks > 0);
+		ASSERT(P.NdependenciesResolved > 0);
+
+		pool.Close
+	END Test.
+
+positive: a full set of dependencies still leaves room for the sentinel
+
+	MODULE Test;
+	IMPORT P := ReleaseThreadPool;
+	VAR pool: P.ThreadPool; none, full: P.Dependencies;
+		uid: SIZE; done: SIGNED32; i: SIGNED32;
+
+		PROCEDURE NoDependencies(VAR d: P.Dependencies);
+		VAR k: SIGNED32;
+		BEGIN
+			FOR k := 0 TO LEN(d)-1 DO d[k] := P.NoMoreDependencies END
+		END NoDependencies;
+
+		PROCEDURE Count(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN {EXCLUSIVE}
+			INC(done); error := FALSE
+		END Count;
+
+	BEGIN
+		(*	The array is one longer than the number of dependencies it can hold, exactly so that a
+			full set is followed by a sentinel. The walk over it had no bound of its own and the
+			constructor left that last slot alone, so a job with a full set read past the end of
+			its own array. *)
+		P.ClearStats;
+		NoDependencies(none);
+		NEW(pool, 2);
+
+		done := 0;
+		FOR i := 1 TO LEN(full)-1 DO uid := pool.CreateJob(Count, NIL, 0, none) END;
+		pool.AwaitAllDone;
+		ASSERT(done = LEN(full)-1);
+
+		(* now one job that depends on all of them -- they are finished, so it is ready at once *)
+		NoDependencies(full);
+		FOR i := 0 TO LEN(full)-2 DO full[i] := i+1 END;
+		ASSERT(full[LEN(full)-1] = P.NoMoreDependencies);
+		done := 0;
+		uid := pool.CreateJob(Count, NIL, 0, full);
+		pool.AwaitAllDone;
+		ASSERT(done = 1);
+
+		pool.Close
+	END Test.
+
+positive: a job that says it failed, and a job that trapped
+
+	MODULE Test;
+	IMPORT P := ReleaseThreadPool;
+	VAR pool: P.ThreadPool; none: P.Dependencies; uid: SIZE; ran: SIGNED32;
+		p: POINTER TO RECORD x: SIGNED32 END;
+
+		PROCEDURE NoDependencies(VAR d: P.Dependencies);
+		VAR k: SIGNED32;
+		BEGIN
+			FOR k := 0 TO LEN(d)-1 DO d[k] := P.NoMoreDependencies END
+		END NoDependencies;
+
+		PROCEDURE Fails(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN {EXCLUSIVE}
+			INC(ran); error := TRUE
+		END Fails;
+
+		PROCEDURE Traps(parameters: ANY; VAR error: BOOLEAN);
+		BEGIN
+			error := FALSE;
+			p.x := 1                            (* p is NIL *)
+		END Traps;
+
+	BEGIN
+		(* a job that reports an error stops the pool, and AwaitAllDone comes back rather than hanging *)
+		P.ClearStats;
+		NoDependencies(none);
+		NEW(pool, 2);
+		ran := 0;
+		uid := pool.CreateJob(Fails, NIL, 0, none);
+		pool.AwaitAllDone;
+		ASSERT(ran = 1);
+		ASSERT(P.NjobErrors = 1);
+
+		(*	And a job that trapped has to be told apart from one that finished. The worker raised
+			no flag before running the job and cleared one that was already clear, so the handler
+			that names an exception could not fire and the pool called the build a success. *)
+		P.ClearStats;
+		p := NIL;
+		NEW(pool, 2);
+		uid := pool.CreateJob(Traps, NIL, 0, none);
+		pool.AwaitAllDone;
+		ASSERT(P.NjobsDone = 1);
+		ASSERT(P.NjobErrors = 1)                (* it used to be 0 *)
+	END Test.

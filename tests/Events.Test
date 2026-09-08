@@ -1,0 +1,262 @@
+# Tests for Events: the system event log -- sinks, filters and the statistics (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The module says of itself that it is really low-level and imports nothing but KernelLog, Modules
+# and Clock; five modules in the tree log through it (EventsUtils, EventsKernelLog,
+# EventsFileLog, EventsMemoryLog, WMEventLog) and none of them has a case either. What made this
+# worth measuring is that the delivery path had never been walked with a filter attached, and a
+# filter is the only thing a caller of this module is expected to write.
+#
+# Two things shape the cases. Delivery is asynchronous -- the dispatcher has an activity of its
+# own -- so every case waits on a bound and never on a duration. And the module's state is one
+# per process while the cases share a process, so each case clears the statistics it is about to
+# read and unregisters the sink it registered.
+
+positive: a sink hears what is added
+
+	MODULE Test;
+	IMPORT Events, Objects;
+
+	TYPE
+		Counter = OBJECT (Events.Sink)
+			VAR seen: SIGNED32; last: Events.Message;
+
+			PROCEDURE Handle*(event: Events.Event);
+			BEGIN {EXCLUSIVE}
+				INC(seen); last := event.message
+			END Handle;
+
+			PROCEDURE Seen*(): SIGNED32;
+			BEGIN {EXCLUSIVE} RETURN seen
+			END Seen;
+
+			PROCEDURE Last*(VAR m: Events.Message);
+			BEGIN {EXCLUSIVE} m := last
+			END Last;
+		END Counter;
+
+	VAR c: Counter; m: Events.Message; e: Events.Event;
+
+		(* Two seconds of ten-millisecond looks: a bound, so a broken dispatcher fails the case. *)
+		PROCEDURE Await(n: SIGNED32): BOOLEAN;
+		VAR k: SIGNED32;
+		BEGIN
+			k := 0;
+			WHILE (c.Seen() < n) & (k < 200) DO Objects.Sleep(10); INC(k) END;
+			RETURN c.Seen() >= n
+		END Await;
+
+	BEGIN
+		Events.ClearStats;
+		NEW(c); c.name := "Test";
+		ASSERT(Events.NnofListeners = 0);
+		Events.Register(c);
+		(*	One Register is one listener. The module procedure and the dispatcher method behind it
+			each kept the count, so it used to go up by two and down by two. *)
+		ASSERT(Events.NnofListeners = 1);
+
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "the first one", FALSE);
+		ASSERT(Await(1));
+		c.Last(m);
+		ASSERT(m = "the first one");
+
+		(* the record a caller builds by hand carries through unchanged *)
+		e := Events.NewEvent("Test", Events.Error, 1, 2, 3, "by hand");
+		ASSERT(e.originator = "Test");
+		ASSERT(e.type = Events.Error);
+		ASSERT(e.class = 1); ASSERT(e.subclass = 2); ASSERT(e.code = 3);
+		ASSERT(e.message = "by hand");
+		Events.Add(e, FALSE);
+		ASSERT(Await(2));
+		c.Last(m);
+		ASSERT(m = "by hand");
+
+		(* the date and time are stamped when the event is queued, not when it is built *)
+		ASSERT(e.date = 0); ASSERT(e.time = 0);
+
+		Events.Unregister(c);
+		ASSERT(Events.NnofListeners = 0);
+
+		(* and with nobody listening the event is counted as unhandled, not lost silently *)
+		Events.ClearStats;
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "into the void", FALSE);
+		Objects.Sleep(100);
+		ASSERT(Events.NnofEvents = 1);
+		ASSERT(Events.NnofDiscarded = 0)
+	END Test.
+
+positive: a filter that lets an event through, and one that stops it
+
+	MODULE Test;
+	IMPORT Events, Objects;
+
+	TYPE
+		Counter = OBJECT (Events.Sink)
+			VAR seen: SIGNED32;
+			PROCEDURE Handle*(event: Events.Event);
+			BEGIN {EXCLUSIVE} INC(seen)
+			END Handle;
+			PROCEDURE Seen*(): SIGNED32;
+			BEGIN {EXCLUSIVE} RETURN seen
+			END Seen;
+		END Counter;
+
+		(* A filter that passes everything -- the shape that used to wedge the dispatcher. *)
+		Pass = OBJECT (Events.FilterO)
+			PROCEDURE Filter*(event: Events.Event; VAR discard: BOOLEAN);
+			BEGIN discard := FALSE
+			END Filter;
+		END Pass;
+
+		Drop = OBJECT (Events.FilterO)
+			PROCEDURE Filter*(event: Events.Event; VAR discard: BOOLEAN);
+			BEGIN discard := TRUE
+			END Filter;
+		END Drop;
+
+		(* Passes an Error and nothing else, which is what a filter is actually for. *)
+		OnlyErrors = OBJECT (Events.FilterO)
+			PROCEDURE Filter*(event: Events.Event; VAR discard: BOOLEAN);
+			BEGIN discard := event.type # Events.Error
+			END Filter;
+		END OnlyErrors;
+
+	VAR c: Counter; pass: Pass; drop: Drop; errs: OnlyErrors; k: SIGNED32;
+
+		PROCEDURE Await(n: SIGNED32): BOOLEAN;
+		VAR i: SIGNED32;
+		BEGIN
+			i := 0;
+			WHILE (c.Seen() < n) & (i < 200) DO Objects.Sleep(10); INC(i) END;
+			RETURN c.Seen() >= n
+		END Await;
+
+	BEGIN
+		Events.ClearStats;
+		NEW(c); c.name := "Test";
+		Events.Register(c);
+
+		(*	The loop over the filters never advanced to the next one, so a filter that did not
+			discard was asked again for ever -- inside the dispatcher's own lock, which killed
+			every later event in the process, not just this one. *)
+		NEW(pass); c.AddFilter(pass);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "passed", FALSE);
+		ASSERT(Await(1));
+
+		(* and the dispatcher is still alive afterwards, which is the half that used to be lost *)
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "and another", FALSE);
+		ASSERT(Await(2));
+
+		(* a filter that discards is the only thing that stops delivery *)
+		NEW(drop); c.AddFilter(drop);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "dropped", FALSE);
+		Objects.Sleep(100);
+		ASSERT(c.Seen() = 2);
+		c.RemoveFilter(drop);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "through again", FALSE);
+		ASSERT(Await(3));
+
+		(* a filter that chooses by type *)
+		c.RemoveFilter(pass);
+		NEW(errs); c.AddFilter(errs);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "not an error", FALSE);
+		Objects.Sleep(100);
+		ASSERT(c.Seen() = 3);
+		Events.AddEvent("Test", Events.Error, 0, 0, 0, "an error", FALSE);
+		ASSERT(Await(4));
+
+		(*	Removing a filter from a sink that has none. This was the one path RemoveFilter did
+			not survive: it walked f.next with f still NIL (Trap 11). *)
+		c.RemoveFilter(errs);
+		c.RemoveFilter(errs);
+		NEW(drop);
+		c.RemoveFilter(drop);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "no filters left", FALSE);
+		ASSERT(Await(5));
+
+		Events.Unregister(c);
+		ASSERT(Events.NnofListeners = 0);
+
+		(* unregistering something that was never registered leaves the count where it was *)
+		k := Events.NnofListeners;
+		Events.Unregister(c);
+		ASSERT(Events.NnofListeners = k)
+	END Test.
+
+positive: what the statistics count
+
+	MODULE Test;
+	IMPORT Events, Objects;
+	VAR i: SIGNED32;
+
+		PROCEDURE Send(type: SIGNED8);
+		BEGIN
+			Events.AddEvent("Test", type, 0, 0, 0, "counted", FALSE)
+		END Send;
+
+		PROCEDURE AwaitEvents(n: SIGNED32): BOOLEAN;
+		VAR k: SIGNED32;
+		BEGIN
+			k := 0;
+			WHILE (Events.NnofEvents < n) & (k < 200) DO Objects.Sleep(10); INC(k) END;
+			RETURN Events.NnofEvents >= n
+		END AwaitEvents;
+
+	BEGIN
+		Events.ClearStats;
+		(*	ClearStats used to leave these two standing, which is the one pair a reader of the
+			statistics cannot reconstruct from the others. *)
+		ASSERT(Events.NnofEvents = 0);
+		ASSERT(Events.NnofDiscarded = 0);
+		ASSERT(Events.NnofEventsHandled = 0);
+		ASSERT(Events.NnofEventsNotHandled = 0);
+
+		(*	One counter per declared type. Alert had none, so an alert -- the second most serious
+			thing this module can be told about -- was counted as an event of unknown type. *)
+		Events.ClearStats; Send(Events.Undefined);   ASSERT(AwaitEvents(1)); ASSERT(Events.NnofUndefined = 1);
+		Events.ClearStats; Send(Events.Information); ASSERT(AwaitEvents(1)); ASSERT(Events.NnofInformation = 1);
+		Events.ClearStats; Send(Events.Warning);     ASSERT(AwaitEvents(1)); ASSERT(Events.NnofWarning = 1);
+		Events.ClearStats; Send(Events.Error);       ASSERT(AwaitEvents(1)); ASSERT(Events.NnofError = 1);
+		Events.ClearStats; Send(Events.Critical);    ASSERT(AwaitEvents(1)); ASSERT(Events.NnofCritical = 1);
+		Events.ClearStats; Send(Events.Alert);       ASSERT(AwaitEvents(1)); ASSERT(Events.NnofAlert = 1);
+		ASSERT(Events.NnofUnknown = 0);
+		Events.ClearStats; Send(Events.Failure);     ASSERT(AwaitEvents(1)); ASSERT(Events.NnofFailure = 1);
+
+		(* and a type the module does not know is the one that counts as unknown *)
+		Events.ClearStats; Send(99);                 ASSERT(AwaitEvents(1)); ASSERT(Events.NnofUnknown = 1);
+		Events.ClearStats; Send(Events.Unknown);     ASSERT(AwaitEvents(1)); ASSERT(Events.NnofUnknown = 1);
+
+		(* every event is counted once, whatever its type *)
+		Events.ClearStats;
+		FOR i := 1 TO 20 DO Send(Events.Information) END;
+		ASSERT(AwaitEvents(20));
+		ASSERT(Events.NnofEvents = 20);
+		ASSERT(Events.NnofInformation = 20);
+		ASSERT(Events.NnofDiscarded = 0);
+
+		Events.Install                               (* documented as starting the dispatcher; the body is empty *)
+	END Test.
+
+negative: a sink that does not say what to do with an event
+
+	MODULE Test;
+	IMPORT Events;
+	VAR s: Events.Sink; e: Events.Event;
+	BEGIN
+		(* Sink.Handle is abstract and halts; a sink is only useful extended. *)
+		NEW(s);
+		e := Events.NewEvent("Test", Events.Information, 0, 0, 0, "nobody to take it");
+		s.Handle(e)
+	END Test.
+
+negative: a filter that does not say whether to discard
+
+	MODULE Test;
+	IMPORT Events;
+	VAR f: Events.Filter; e: Events.Event; discard: BOOLEAN;
+	BEGIN
+		NEW(f);
+		e := Events.NewEvent("Test", Events.Information, 0, 0, 0, "nobody to judge it");
+		f.Filter(e, discard)
+	END Test.

@@ -37,14 +37,15 @@ TYPE
 		VAR
 			trap : BOOLEAN;
 		BEGIN
-			trap := FALSE;
+			trap := TRUE;
 			IF (compileText # NIL) THEN
 				compileText(t, source, pos, pc, opt, log, diagnostics, error);
 			ELSIF (diagnostics # NIL) THEN
 				diagnostics.Error(source, Streams.Invalid, "Text compile procedure not set");
 			END;
+			trap := FALSE;   (* the runtime sets no such variable: the body has to clear what it raised *)
 		FINALLY
-			IF trap THEN (* trap will be set in case a trap occurs in the block above *)
+			IF trap THEN
 				error := TRUE;
 				diagnostics.Error(source, Streams.Invalid, "COMPILER TRAPPED");
 				log.String("COMPILER TRAPPED!!!"); log.Update;

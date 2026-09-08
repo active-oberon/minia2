@@ -23,7 +23,6 @@ TYPE	WriterMonitor* = OBJECT (Streams.Writer);
 		BEGIN
 			out.Bytes(outBuf, ofs, len);
 			monitor.Bytes(outBuf, ofs, len);
-			INC(sent,len);
 			IF propagate THEN out.Update; monitor.Update END;
 			res:=out.res;
 		END Sender;
@@ -63,7 +62,6 @@ TYPE	EncryptingWriter* = OBJECT (Streams.Writer);
 			FOR i:=0 TO len-1 DO buf[i]:=outBuf[ofs+i] END;
 			IF encrypt#NIL THEN encrypt(buf^,0,len); END;
 			out.Bytes(buf^, 0, len);
-			INC(sent,len);
 			IF propagate THEN out.Update END;
 			res:=out.res;
 		END Sender;
@@ -93,7 +91,6 @@ TYPE	EncryptingWriter* = OBJECT (Streams.Writer);
 			ASSERT((size > 0) & (min <= size) & (min >= 0));
 			in.Bytes(inBuf, ofs, size, len);
 			IF decrypt#NIL THEN decrypt(inBuf, ofs, len); END;
-			INC(received,len);
 			res:=in.res;
 		END Receiver;
 
@@ -233,7 +230,6 @@ TYPE
 		BEGIN
 			out.Bytes(outBuf, ofs, len);
 			IF propagate THEN out.Update END;
-			INC(sent,len);
 			res:=out.res;
 		END Sender;
 
@@ -256,7 +252,6 @@ TYPE
 			ASSERT((size > 0) & (min <= size) & (min >= 0));
 			size := MAX(min,MIN(in.Available(),size));
 			in.Bytes(buf, ofs, size, len);
-			INC(received,len);
 			res:=in.res;
 			monitor.Bytes(buf, ofs, len);
 			monitor.Update;
@@ -282,7 +277,8 @@ TYPE
 
 		PROCEDURE &Init*(out:Streams.Writer; size: SIZE);
 		BEGIN
-			InitWriter(Sender, MIN(size, WriterBufSize));
+			(* MAX(1, ...): a zero-length buffer traps in Streams.Writer.Bytes, and size 0 is a legal limit. *)
+			InitWriter(Sender, MAX(1, MIN(size, WriterBufSize)));
 			SELF.out := out;
 			SELF.size:=size; remain:=size;
 		END Init;
@@ -297,8 +293,10 @@ TYPE
 			IF num<len THEN res:=Streams.EOF ELSE res:=out.res END;
 		END Sender;
 
+		(* Reset^ first, as Base64Writer does: without it the bytes buffered before the reset still go out. *)
 		PROCEDURE Reset*;
 		BEGIN
+			Reset^;
 			remain:=size;
 		END Reset;
 
@@ -310,7 +308,7 @@ TYPE
 
 		PROCEDURE &Init*(in:Streams.Reader; size: SIZE);
 		BEGIN
-			InitReader(Receiver, MIN(size, ReaderBufSize));
+			InitReader(Receiver, MAX(1, MIN(size, ReaderBufSize)));
 			SELF.in := in;
 			total:=size; remain:=size;
 		END Init;
@@ -322,12 +320,13 @@ TYPE
 			IF (remain=0) THEN len:=0; res:=Streams.EOF; RETURN END;
 			in.Bytes(buf, ofs, MIN(remain,size), length);
 			len := length;
-			DEC(remain,len); INC(received,len);
+			DEC(remain,len);
 			res:=in.res;
 		END Receiver;
 
 		PROCEDURE Reset*;
 		BEGIN
+			Reset^;
 			remain:=total;
 		END Reset;
 	END LimitedReader;
@@ -364,7 +363,6 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 					out.Char( etab[group DIV 1000H MOD 64] );
 					out.Char( etab[group DIV 40H MOD 64] );
 					out.Char( etab[group MOD 64] );
-					INC(sent,4);
 					INC( ll, 4 );
 					IF ll >= 72 THEN  out.Ln;  ll := 0  END;
 					group := 0;
@@ -376,8 +374,10 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 			res:=out.res;
 		END Sender;
 
+		(* Close ends the sequence: `done` was tested by Sender and set by nobody, so writing after it ran on past the padding. *)
 		PROCEDURE Close*; (*required termination of a Base64 sequence*)
 		BEGIN
+			IF done THEN res:=Streams.EOF; RETURN END;
 			Update;
 			IF i > 0 THEN   (* encode rest *)
 				IF i = 1 THEN  group := group*100H  END;
@@ -387,6 +387,7 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 				out.Char( '=' );
 			END;
 			out.Update;
+			done:=TRUE;
 			res:=out.res;
 		END Close;
 
@@ -401,7 +402,7 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 		VAR in: Streams.Reader;
 			i, rest, group: SIZE;
 			code: SIGNED16;
-			done:BOOLEAN;
+			done, carry:BOOLEAN;
 
 		PROCEDURE &Init*(in: Streams.Reader);
 		BEGIN
@@ -415,23 +416,26 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 		PROCEDURE Reset*;
 		BEGIN
 			Reset^;
-			group := 0;  i := 0; code:=0; done:=FALSE;
+			group := 0;  i := 0; code:=0; done:=FALSE; carry:=FALSE;
 		END Reset;
 
+		(* Bounded by the room left in inBuf -- four input chars are three output bytes, and one bound cannot count both. *)
 		PROCEDURE Receiver(VAR inBuf: ARRAY OF CHAR; ofs, size, min: SIZE; VAR len: SIZE; VAR res: INTEGER);
-		VAR c:CHAR; size4: SIZE;
+		VAR c:CHAR;
 		BEGIN
-			size4:=size DIV 4 * 4; (* a multiple of 4*)
-			ASSERT((size > 0) & (min <= size4) & (min >= 0));
+			ASSERT((size >= 5) & (min <= size) & (min >= 0));	(* one group plus the two bytes Close's padding can carry *)
 			len:=0;
 			IF done THEN res:=Streams.EOF; RETURN
 			ELSE res:=Streams.Ok
 			END;
 			(* decoding snipped from CryptoBase64 *)
-			REPEAT  in.Char( c )  UNTIL (c > ' ') OR (c = 0X) OR (in.res#Streams.Ok);
+			IF carry THEN carry:=FALSE	(* a code read last call and left unfolded for want of room *)
+			ELSE
+				REPEAT  in.Char( c )  UNTIL (c > ' ') OR (c = 0X) OR (in.res#Streams.Ok);
+				code := dtab[ORD( c )]
+			END;
 			IF (in.res=Streams.Ok) THEN
-				code := dtab[ORD( c )];
-				WHILE (code >= 0) & (in.res=Streams.Ok) & (len< size4) DO
+				WHILE (code >= 0) & (in.res=Streams.Ok) & (len+5 <= size) DO
 					group := group*64 + code;  INC( i );
 					IF i = 4 THEN
 						inBuf[ofs+len] := CHR( group DIV 10000H MOD 100H );  INC( len );
@@ -443,7 +447,8 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 					code := dtab[ORD( c )];
 				END;
 
-				IF c = '=' THEN   (* decode rest *)
+				IF (code >= 0) & (in.res=Streams.Ok) THEN carry:=TRUE
+				ELSIF c = '=' THEN   (* decode rest *)
 					IF i < 2 THEN  res:=Streams.FormatError;
 					ELSE
 						group := group*64;  rest := 2;  in.Char( c );
@@ -459,7 +464,6 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 			ELSE
 				res:=in.res;
 			END;
-			INC(received,len);
 		END Receiver;
 
 		PROCEDURE Pos*(): Streams.Position;
@@ -468,7 +472,13 @@ TYPE	Base64Writer* = OBJECT (Streams.Writer);
 
 	END Base64Reader;
 
+(* A writer that swallows everything -- it had no constructor, so NEW refused it and its own Send was never wired. *)
 TYPE DumpWriter*= OBJECT(Streams.Writer);
+		PROCEDURE &Init*;
+		BEGIN
+			InitWriter(Send, WriterBufSize);
+		END Init;
+
 		PROCEDURE Send* ( CONST buf: ARRAY OF CHAR;  ofs, len: SIZE;  propagate: BOOLEAN;  VAR res: INTEGER );
 		BEGIN
 			res:=Streams.Ok;

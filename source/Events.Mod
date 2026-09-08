@@ -80,7 +80,8 @@ TYPE
 		PROCEDURE RemoveFilter*(filter : Filter);
 		VAR f : Filter;
 		BEGIN {EXCLUSIVE}
-			IF filters = filter THEN
+			IF filters = NIL THEN RETURN
+			ELSIF filters = filter THEN
 				filters := filters.next;
 			ELSE
 				f := filters; WHILE(f.next # NIL) & (f.next # filter) DO f := f.next; END;
@@ -93,7 +94,8 @@ TYPE
 		PROCEDURE HandleInternal(event : Event);
 		VAR f : Filter; discard : BOOLEAN;
 		BEGIN
-			f := filters; WHILE ((f # NIL) & ~discard) DO f.Filter(event, discard); END;
+			discard := FALSE;
+			f := filters; WHILE ((f # NIL) & ~discard) DO f.Filter(event, discard); f := f.next; END;
 			IF ~discard THEN
 				Handle(event);
 			END;
@@ -255,23 +257,21 @@ VAR
 	(* statistics *)
 	NnofEvents-, NnofDiscarded-, NnofEventsHandled-, NnofEventsNotHandled-,
 	NnofUnknown-, NnofUndefined-,
-	NnofInformation-, NnofWarning-, NnofError-, NnofCritical-, NnofFailure-,
+	NnofInformation-, NnofWarning-, NnofError-, NnofCritical-, NnofAlert-, NnofFailure-,
 	NnofListeners- : SIGNED32;
 
 (** Register an event sink at the event dispatcher *)
 PROCEDURE Register*(sink : Sink);
 BEGIN {EXCLUSIVE}
 	ASSERT(sink # NIL);
-	dispatcher.Register(sink);
-	INC(NnofListeners);
+	dispatcher.Register(sink);   (* which keeps NnofListeners; counting it here too doubled it *)
 END Register;
 
 (** Unregister an event sink at the event dispatcher *)
 PROCEDURE Unregister*(sink : Sink);
 BEGIN {EXCLUSIVE}
 	ASSERT(sink # NIL);
-	dispatcher.Unregister(sink);
-	DEC(NnofListeners);
+	dispatcher.Unregister(sink);   (* and it only counts down when the sink was really there *)
 END Unregister;
 
 (** Add an event record to the event queue. If showOnKernenLog is TRUE, a simplified representation
@@ -325,6 +325,7 @@ BEGIN {EXCLUSIVE}
 			|Warning : INC(NnofWarning);
 			|Error: INC(NnofError);
 			|Critical: INC(NnofCritical);
+			|Alert: INC(NnofAlert);
 			|Failure: INC(NnofFailure);
 		ELSE
 			INC(NnofUnknown);
@@ -336,7 +337,9 @@ PROCEDURE ClearStats*; (** ~ *)
 BEGIN {EXCLUSIVE}
 	NnofEvents := 0; NnofDiscarded := 0;
 	NnofUnknown := 0; NnofUndefined := 0;
-	NnofInformation := 0; NnofWarning := 0;  NnofError := 0; NnofCritical := 0; NnofFailure := 0;
+	NnofInformation := 0; NnofWarning := 0;  NnofError := 0; NnofCritical := 0;
+	NnofAlert := 0; NnofFailure := 0;
+	NnofEventsHandled := 0; NnofEventsNotHandled := 0;   (* left standing by every earlier ClearStats *)
 END ClearStats;
 
 (** Start the event dispatcher *)

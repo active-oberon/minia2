@@ -64,7 +64,7 @@ TYPE
 			priority := 0;
 			completed := FALSE;
 
-			FOR i := 0 TO MaxNofDependencies-1 DO
+			FOR i := 0 TO LEN(dependencies)-1 DO
 				dependencies[i] := NoMoreDependencies;
 			END;
 			previous := NIL; next := NIL;
@@ -102,8 +102,9 @@ TYPE
 		PROCEDURE DoJob;
 		VAR trap, error : BOOLEAN;
 		BEGIN
-			trap := FALSE; error := FALSE;
+			trap := TRUE; error := FALSE;
 			job.proc(job.parameters, error);
+			trap := FALSE;   (* not reached if the job trapped, which is how FINALLY below learns of it *)
 		FINALLY
 			IF trap THEN SetState(Exception);
 			ELSIF error THEN SetState(Error);
@@ -380,7 +381,7 @@ TYPE
 		BEGIN (* concurrency allowed here *)
 			ASSERT(job # NIL);
 			i := 0;
-			WHILE (job.dependencies[i] # NoMoreDependencies) DO (* NoMoreDependencies used as sentinel *)
+			WHILE (i < LEN(job.dependencies)) & (job.dependencies[i] # NoMoreDependencies) DO (* the sentinel is the caller's to write *)
 				IF job.dependencies[i] # MoreDependencies THEN (* dependecy still exists *)
 					otherJob := hashTable.Find(job.dependencies[i]);
 					IF (otherJob # NIL) & ~otherJob.IsCompleted() THEN
@@ -523,29 +524,32 @@ TYPE
 			IF Stats THEN INC(NjobsDone); END;
 			jobManager.Remove(job);
 			jobPool.Recycle(job);
-			BEGIN {EXCLUSIVE} DEC(jobsOnTheFly); END;
 			IF (worker.state = Exception) THEN KernelLog.String("EXCEPTION"); KernelLog.Ln; END;
 			IF ~hadError & (worker.state # Error) & (worker.state # Exception) THEN
-				IF (worker.state >= Terminating) THEN KernelLog.String("TERMINTATE"); KernelLog.Ln; RETURN; END;
-				ASSERT(worker.state = Finished);
-				jobManager.ReCheckDependencies;
-				newJob := jobManager.GetReadyJob();
-				IF (newJob # NIL) THEN (* keep worker busy *)
-					worker.SetJob(newJob);
-					IF Stats THEN INC(NjobHandoverSucceeded); END;
+				IF (worker.state >= Terminating) THEN KernelLog.String("TERMINTATE"); KernelLog.Ln;
 				ELSE
-					readyList.Add(worker);
-					IF Stats THEN INC(NjobHandoverFailed); END;
-				END;
-				IF (readyList.GetNofWorkers() > 0) THEN
-					(* maybe some jobs are ready now since we re-checked the dependencies above *)
-					BEGIN {EXCLUSIVE} doScheduling := TRUE; END;
+					ASSERT(worker.state = Finished);
+					jobManager.ReCheckDependencies;
+					newJob := jobManager.GetReadyJob();
+					IF (newJob # NIL) THEN (* keep worker busy *)
+						worker.SetJob(newJob);
+						IF Stats THEN INC(NjobHandoverSucceeded); END;
+					ELSE
+						readyList.Add(worker);
+						IF Stats THEN INC(NjobHandoverFailed); END;
+					END;
+					IF (readyList.GetNofWorkers() > 0) THEN
+						(* maybe some jobs are ready now since we re-checked the dependencies above *)
+						BEGIN {EXCLUSIVE} doScheduling := TRUE; END;
+					END;
 				END;
 			ELSE
 				KernelLog.String("Threadpool had error."); KernelLog.Ln;
 				BEGIN {EXCLUSIVE} hadError := TRUE; END;
 				IF Stats THEN INC(NjobErrors); END;
 			END;
+			(* Last, and not first: AwaitAllDone wakes on this, so everything it can then be asked about is already set. *)
+			BEGIN {EXCLUSIVE} DEC(jobsOnTheFly); END;
 		END JobDone;
 
 		PROCEDURE DoScheduling;

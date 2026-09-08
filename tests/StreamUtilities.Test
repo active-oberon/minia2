@@ -1,0 +1,342 @@
+# Tests for StreamUtilities: the stream decorators -- a monitored copy, a limit, an encryption
+# hook, base64 in both directions and a writer that swallows (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# 664 lines of pure Streams logic, tier 1, no host anywhere in its import closure -- and nothing
+# in the tree calls it, which is the reason it had no case. The module's own examples are
+# commented out at the bottom of the file; the base64 expectation below is the one they promise.
+#
+# Two shapes carry most of the cases. A decorator is measured against the thing it decorates: a
+# ReaderMonitor has to answer exactly as the plain reader underneath it, at the end of the stream
+# included. And base64 is measured against std/encoding's own Base64, which has a suite of its
+# own -- two implementations of one format in one tree is a differential test for free.
+#
+# Recorded and not changed: Base64Writer wraps its output at 72 characters, so what it writes is
+# MIME base64 rather than one line, and the reader skips whitespace to match. A reader past the
+# end of its source answers Ok once and EOF from then on -- that is Streams.Reader's own
+# behaviour, and the decorators reproduce it, which is what the case asserts.
+
+positive: a copy of everything that goes through
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR out, log: Streams.StringWriter; w: Streams.Writer; s, t: ARRAY 256 OF CHAR;
+	BEGIN
+		Streams.OpenStringWriter(out, 256);
+		Streams.OpenStringWriter(log, 256);
+		SU.OpenWriterMonitor(w, out, log);
+
+		w.String("holla"); w.Ln; w.Update;
+		out.Update; ASSERT(out.Pos() = 7); out.Get(s);
+		ASSERT(s[0] = "h"); ASSERT(s[4] = "a");
+		ASSERT(s[5] = 0DX); ASSERT(s[6] = 0AX);   (* Streams.Writer.Ln writes both *)
+		log.Update; ASSERT(log.Pos() = 7); log.Get(t);
+		ASSERT(t = s);                            (* the monitor saw the same bytes, not a summary *)
+
+		(* the position is the one the stream underneath is at, not the decorator's own count *)
+		Streams.OpenStringWriter(out, 256);
+		Streams.OpenStringWriter(log, 256);
+		SU.OpenWriterMonitor(w, out, log);
+		w.String("1234"); w.Update;
+		ASSERT(w.Pos() = 4);
+		ASSERT(w.CanSetPos() = out.CanSetPos());
+		(*	sent is the base class's own count. Three of these decorators used to add the length
+			again inside their Sender, so it came out doubled; LimitedWriter never did, and it was
+			the one that had it right. *)
+		ASSERT(w.sent = 4)
+	END Test.
+
+positive: a reader that keeps a copy of what it read, and answers as the plain one does
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR in, plain: Streams.StringReader; log: Streams.StringWriter; r: Streams.Reader;
+		s: ARRAY 256 OF CHAR; n, m: SIZE; a, b: CHAR; i: SIGNED32;
+	BEGIN
+		Streams.OpenStringReader(in, "abcdefgh");
+		Streams.OpenStringWriter(log, 256);
+		SU.OpenReaderMonitor(r, in, log);
+
+		r.Bytes(s, 0, 8, n); s[n] := 0X;
+		ASSERT(n = 8); ASSERT(s = "abcdefgh");
+		log.Update; log.Get(s);
+		ASSERT(s = "abcdefgh");
+
+		(*	Past the end the decorator must say what the plain reader says, and what the plain
+			reader says is Ok once and EOF after -- Available() clears the end of stream it just
+			found. Pinned rather than fixed: it is Streams.Reader's behaviour, not this module's,
+			and every reader in the tree is written against it. *)
+		Streams.OpenStringReader(plain, "ab");
+		Streams.OpenStringReader(in, "ab");
+		Streams.OpenStringWriter(log, 256);
+		SU.OpenReaderMonitor(r, in, log);
+		plain.Bytes(s, 0, 2, n); r.Bytes(s, 0, 2, m);
+		ASSERT(n = m); ASSERT(plain.res = r.res);
+		FOR i := 1 TO 3 DO
+			plain.Char(a); r.Char(b);
+			ASSERT(a = b);
+			ASSERT(plain.res = r.res)
+		END;
+		ASSERT(r.res = Streams.EOF)
+	END Test.
+
+positive: the pair that scrambles on the way out and unscrambles on the way in
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR out: Streams.StringWriter; in: Streams.StringReader;
+		ew: SU.EncryptingWriter; dr: SU.DecryptingReader;
+		s: ARRAY 8192 OF CHAR; n, i: SIZE;
+
+		PROCEDURE Up(VAR buf: ARRAY OF CHAR; pos, len: SIZE);
+		VAR k: SIZE;
+		BEGIN
+			FOR k := pos TO pos+len-1 DO
+				IF (buf[k] >= "!") & (buf[k] < "~") THEN buf[k] := CHR(ORD(buf[k])+1) END
+			END
+		END Up;
+
+		PROCEDURE Down(VAR buf: ARRAY OF CHAR; pos, len: SIZE);
+		VAR k: SIZE;
+		BEGIN
+			FOR k := pos TO pos+len-1 DO
+				IF (buf[k] > "!") & (buf[k] <= "~") THEN buf[k] := CHR(ORD(buf[k])-1) END
+			END
+		END Down;
+
+	BEGIN
+		(* the module's own example, from the commented-out TestCrypt at the bottom of the file *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(ew, out, Up);
+		ew.String("HelloWorld"); ew.Update;
+		out.Update; out.Get(s);
+		ASSERT(s = "IfmmpXpsme");
+
+		Streams.OpenStringReader(in, "IfmmpXpsme");
+		NEW(dr, in, Down);
+		dr.Bytes(s, 0, 10, n); s[n] := 0X;
+		ASSERT(n = 10); ASSERT(s = "HelloWorld");
+
+		(* no hook at all is the identity, not a trap *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(ew, out, NIL);
+		ew.String("plain"); ew.Update;
+		out.Update; out.Get(s);
+		ASSERT(s = "plain");
+		Streams.OpenStringReader(in, "plain");
+		NEW(dr, in, NIL);
+		dr.Bytes(s, 0, 5, n); s[n] := 0X;
+		ASSERT(s = "plain");
+
+		(*	More than one writer buffer, because the writer copies each chunk into a buffer of
+			its own before handing it to the hook, and the chunk size is the buffer size. *)
+		FOR i := 0 TO 6143 DO s[i] := CHR(ORD("a") + i MOD 26) END;
+		s[6144] := 0X;
+		Streams.OpenStringWriter(out, 8192);
+		NEW(ew, out, Up);
+		ew.Bytes(s, 0, 6144); ew.Update;
+		out.Update;
+		ASSERT(out.Pos() = 6144);
+		ASSERT(ew.sent = 6144);
+		ASSERT(ew.Pos() = 6144)
+	END Test.
+
+positive: a writer with a ceiling, and a reader with one
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR out: Streams.StringWriter; in: Streams.StringReader;
+		lw: SU.LimitedWriter; lr: SU.LimitedReader; s: ARRAY 256 OF CHAR; n: SIZE;
+	BEGIN
+		(* under the limit is transparent *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(lw, out, 100);
+		lw.String("abcd"); lw.Update; out.Update; out.Get(s);
+		ASSERT(s = "abcd"); ASSERT(lw.res = Streams.Ok); ASSERT(lw.remain = 96);
+
+		(* over it, what fits goes out and the writer says the stream ended *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(lw, out, 4);
+		lw.String("abcdefgh"); lw.Update; out.Update; out.Get(s);
+		ASSERT(s = "abcd"); ASSERT(lw.res = Streams.EOF); ASSERT(lw.remain = 0);
+
+		(*	A limit of nothing is a limit. It used to trap on the first byte written, because the
+			internal buffer was made MIN(size, ...) long and a zero-length buffer has nowhere to
+			put anything. *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(lw, out, 0);
+		lw.String("x"); lw.Update; out.Update; out.Get(s);
+		ASSERT(s = ""); ASSERT(lw.res = Streams.EOF); ASSERT(lw.remain = 0);
+
+		(*	Reset gives the limit back -- and has to drop the bytes still in the buffer with it.
+			It used to reset only the counter, so text written before the reset came out after it
+			and counted against the fresh limit. *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(lw, out, 100);
+		lw.String("buffered but never flushed");
+		lw.Reset;
+		ASSERT(lw.remain = 100);
+		lw.String("fresh"); lw.Update; out.Update; out.Get(s);
+		ASSERT(s = "fresh");
+
+		(* the reader half: the limit is on what comes out, and it reports the end *)
+		Streams.OpenStringReader(in, "abcdefgh");
+		NEW(lr, in, 3);
+		lr.Bytes(s, 0, 8, n); s[n] := 0X;
+		ASSERT(n = 3); ASSERT(s = "abc"); ASSERT(lr.remain = 0);
+		ASSERT(lr.received = 3);                (* the reader half counted this twice as well *)
+		ASSERT(lr.Pos() = 3);
+		lr.Bytes(s, 0, 1, n);
+		ASSERT(n = 0); ASSERT(lr.res = Streams.EOF);
+
+		Streams.OpenStringReader(in, "abc");
+		NEW(lr, in, 0);
+		lr.Bytes(s, 0, 3, n);
+		ASSERT(n = 0); ASSERT(lr.res = Streams.EOF);
+
+		Streams.OpenStringReader(in, "abcdefgh");
+		NEW(lr, in, 3);
+		lr.Bytes(s, 0, 3, n);
+		lr.Reset;
+		ASSERT(lr.remain = 3);
+		lr.Bytes(s, 0, 3, n); s[n] := 0X;
+		ASSERT(n = 3); ASSERT(s = "def")        (* the limit came back, the position did not *)
+	END Test.
+
+positive: base64 out, and base64 back in
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams, Base64;
+	VAR out: Streams.StringWriter; in: Streams.StringReader;
+		bw: SU.Base64Writer; br: SU.Base64Reader;
+		s, t: ARRAY 256 OF CHAR;
+		src, back, enc: POINTER TO ARRAY OF CHAR;
+		i, n: SIZE;
+
+		(*	Write `size` bytes through the encoder, read them back through the decoder and
+			compare. The sizes below straddle the reader's own 4096-byte buffer, which is where
+			the decoder used to write past the end of the array it was given (Trap 5.7) and to
+			drop the one input character it had read but had no room to use. *)
+		PROCEDURE Trip(size: SIZE);
+		BEGIN
+			NEW(src, size); NEW(back, size); NEW(enc, 2*size + 4096);
+			FOR i := 0 TO size-1 DO src[i] := CHR(i MOD 256) END;
+			Streams.OpenStringWriter(out, 2*size + 4096);
+			NEW(bw, out); bw.Bytes(src^, 0, size); bw.Close;
+			out.Update; out.Get(enc^);
+			Streams.OpenStringReader(in, enc^);
+			NEW(br, in);
+			br.Bytes(back^, 0, size, n);
+			ASSERT(n = size);
+			FOR i := 0 TO size-1 DO ASSERT(back[i] = src[i]) END
+		END Trip;
+
+	BEGIN
+		(* the expectation the module's own commented-out example promises *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out);
+		bw.String("admin:1234"); bw.Close;
+		out.Update; out.Get(s);
+		ASSERT(s = "YWRtaW46MTIzNA==");
+
+		(* and the same answer as std/encoding's Base64, which is measured by a suite of its own *)
+		Base64.Encode("admin:1234", 10, t);
+		ASSERT(s = t);
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out); bw.String("Man is distinguished"); bw.Close;
+		out.Update; out.Get(s);
+		Base64.Encode("Man is distinguished", 20, t);
+		ASSERT(s = t);
+
+		(* every padding case: no padding, one =, two = *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out); bw.String("abc"); bw.Close; out.Update; out.Get(s);
+		ASSERT(s = "YWJj");
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out); bw.String("ab"); bw.Close; out.Update; out.Get(s);
+		ASSERT(s = "YWI=");
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out); bw.String("a"); bw.Close; out.Update; out.Get(s);
+		ASSERT(s = "YQ==");
+
+		(*	Close ends the sequence. It used to leave the writer open: the flag Sender tests was
+			set by nobody, so bytes written afterwards ran on past the padding and no decoder
+			would read them. *)
+		Streams.OpenStringWriter(out, 256);
+		NEW(bw, out);
+		bw.String("ab"); bw.Close;
+		bw.String("cd"); bw.Close;
+		out.Update; out.Get(s);
+		ASSERT(s = "YWI=");
+		ASSERT(bw.res = Streams.EOF);
+
+		(* the decoder, on what the encoder writes and on what a person types *)
+		Streams.OpenStringReader(in, "YWRtaW46MTIzNA==");
+		NEW(br, in);
+		br.Bytes(s, 0, 10, n); s[n] := 0X;
+		ASSERT(n = 10); ASSERT(s = "admin:1234");
+		Streams.OpenStringReader(in, "  YWJj  ");      (* whitespace is skipped, in and around *)
+		NEW(br, in);
+		br.Bytes(s, 0, 3, n); s[n] := 0X;
+		ASSERT(n = 3); ASSERT(s = "abc");
+
+		(* and both ways, across the buffer boundary in both directions *)
+		Trip(1); Trip(2); Trip(3); Trip(255);
+		Trip(3072); Trip(3073); Trip(3074);            (* 4096 input characters, give or take *)
+		Trip(6144); Trip(6145); Trip(20000)
+	END Test.
+
+positive: a writer whose own thread does the writing
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR out: Streams.StringWriter; a: Streams.Writer; s: ARRAY 8192 OF CHAR; i, k: SIZE;
+	BEGIN
+		(*	The queue is drained by an activity of the forwarder's own, so nothing about when it
+			runs is assertable -- except that Pos() and SetPos() are documented to wait for it.
+			That is what makes this measurable at all, and it is what the case leans on. *)
+		Streams.OpenStringWriter(out, 8192);
+		a := SU.OpenAsynchronousForwarder(out);
+		FOR i := 1 TO 200 DO a.String("0123456789"); a.Update END;
+
+		ASSERT(a.Pos() = 2000);                 (* waits for the queue, then answers *)
+		ASSERT(a.sent = 2000);
+		ASSERT(a.CanSetPos() = out.CanSetPos());
+
+		out.Update;
+		ASSERT(out.Pos() = 2000);
+		out.Get(s);
+		k := 0; WHILE s[k] # 0X DO INC(k) END;
+		ASSERT(k = 2000);
+		FOR i := 0 TO 1999 DO ASSERT(s[i] = CHR(ORD("0") + i MOD 10)) END
+	END Test.
+
+positive: the writer that swallows everything
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR dw: SU.DumpWriter;
+	BEGIN
+		(*	It had no constructor of its own, so NEW would not compile it at all and the Send it
+			declares was never wired to anything. *)
+		NEW(dw);
+		dw.String("into the void"); dw.Update;
+		ASSERT(dw.res = Streams.Ok);
+		ASSERT(dw.sent = 13);
+		dw.Ln; dw.Update;
+		ASSERT(dw.res = Streams.Ok)
+	END Test.
+
+negative: a decoder cannot be given a buffer too small to hold one group
+
+	MODULE Test;
+	IMPORT SU := StreamUtilities, Streams;
+	VAR in: Streams.StringReader; br: SU.Base64Reader; s: ARRAY 8 OF CHAR; n: SIZE;
+	BEGIN
+		(*	Four characters in are three bytes out, so a receiver asked for fewer than five bytes
+			cannot make progress and must say so rather than write past what it was given. *)
+		Streams.OpenStringReader(in, "YWJj");
+		NEW(br, in);
+		br.Receiver(s, 0, 2, 1, n, br.res)
+	END Test.

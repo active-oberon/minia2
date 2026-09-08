@@ -1,0 +1,114 @@
+# Tests for BitStreams: reading and writing below the byte (2026-09-08).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# 85 lines, tier 1, and two callers in lib/compress (OZip3, BWHCompressor) that are themselves
+# uncovered -- so a bit that moved here would show up as a corrupt archive and nowhere else. The
+# order matters and is not stated anywhere in the module: the first bit written is the top bit of
+# the byte, and Finish pads on the low side, which is what makes the pair each other's inverse.
+#
+# Recorded and not changed. A BitReader swallows the result of the reader underneath it: past the
+# end of the stream it answers zero bits for ever and has no field, no accessor and no argument
+# with which to say so. The caller still holds the Streams.Reader it handed in and can ask that,
+# which is why this is pinned in a case rather than repaired -- an accessor nobody reads would fix
+# nothing until OZip3 and BWHCompressor are covered too. Above 31 bits InBits returns the bit
+# pattern and not a magnitude: 32 ones come back as -1, because the accumulator is an INTEGER.
+
+positive: the first bit written is the top bit of the byte
+
+	MODULE Test;
+	IMPORT BitStreams, Streams;
+	VAR w: Streams.StringWriter; bw: BitStreams.BitWriter; s: ARRAY 64 OF CHAR;
+	BEGIN
+		(*	Three bits and then Finish. If the padding went on the high side instead the byte
+			would be 5, and every archive this module writes would be unreadable. *)
+		Streams.OpenStringWriter(w, 64);
+		NEW(bw, w);
+		bw.OutBit(1); bw.OutBit(0); bw.OutBit(1);
+		bw.Finish;
+		w.Update; w.Get(s);
+		ASSERT(ORD(s[0]) = 0A0H);                (* 10100000B *)
+
+		(* a whole byte as one field is that byte *)
+		Streams.OpenStringWriter(w, 64);
+		NEW(bw, w);
+		bw.OutBits(0C5H, 8); bw.Finish;
+		w.Update; w.Get(s);
+		ASSERT(ORD(s[0]) = 0C5H);
+
+		(* Finish on a boundary adds nothing *)
+		Streams.OpenStringWriter(w, 64);
+		NEW(bw, w);
+		bw.OutBits(0FFH, 8); bw.OutBits(0, 8); bw.Finish;
+		w.Update;
+		ASSERT(w.Pos() = 2);
+
+		(* and a field of no bits is not a byte *)
+		Streams.OpenStringWriter(w, 64);
+		NEW(bw, w);
+		bw.OutBits(0, 0); bw.Finish;
+		w.Update;
+		ASSERT(w.Pos() = 0)
+	END Test.
+
+positive: fields written and fields read back
+
+	MODULE Test;
+	IMPORT BitStreams, Streams;
+	VAR w: Streams.StringWriter; r: Streams.StringReader;
+		bw: BitStreams.BitWriter; br: BitStreams.BitReader;
+		s: ARRAY 64 OF CHAR; i, n: SIGNED32;
+	BEGIN
+		(* fields that cross byte boundaries, which is the whole reason the module exists *)
+		Streams.OpenStringWriter(w, 64);
+		NEW(bw, w);
+		bw.OutBits(5, 3); bw.OutBits(1, 1); bw.OutBits(300, 12); bw.OutBits(0, 4);
+		bw.Finish;
+		w.Update;
+		ASSERT(w.Pos() = 3);                     (* Get empties the writer, so ask before asking for the bytes *)
+		w.Get(s);
+		ASSERT(ORD(s[0]) = 0B1H); ASSERT(ORD(s[1]) = 2CH); ASSERT(ORD(s[2]) = 0);
+
+		Streams.OpenStringReader(r, s);
+		NEW(br, r);
+		ASSERT(br.InBits(3) = 5);
+		ASSERT(br.InBits(1) = 1);
+		ASSERT(br.InBits(12) = 300);
+		ASSERT(br.InBits(4) = 0);
+
+		(* every width from nothing to a whole word, one value at a time *)
+		FOR n := 0 TO 31 DO
+			Streams.OpenStringWriter(w, 64);
+			NEW(bw, w);
+			bw.OutBits(ASH(1, n) - 1, n); bw.Finish;
+			w.Update; w.Get(s);
+			Streams.OpenStringReader(r, s);
+			NEW(br, r);
+			ASSERT(br.InBits(n) = ASH(1, n) - 1)
+		END;
+
+		(* Reset gives up the rest of the byte in hand and starts at the next one *)
+		Streams.OpenStringReader(r, "AB");
+		NEW(br, r);
+		i := br.InBits(3);
+		br.Reset;
+		ASSERT(br.InBits(8) = ORD("B"));
+
+		(*	Pinned, not asserted as correct: past the end the reader answers zeros and says
+			nothing. The source it was given is where the truth is. *)
+		Streams.OpenStringReader(r, "A");
+		NEW(br, r);
+		ASSERT(br.InBits(8) = ORD("A"));
+		ASSERT(br.InBits(8) = 0);
+		ASSERT(br.InBits(8) = 0);
+		ASSERT(r.res = Streams.EOF);
+
+		(* above 31 bits the answer is the bit pattern, not the number *)
+		s[0] := 0FFX; s[1] := 0FFX; s[2] := 0FFX; s[3] := 0FFX; s[4] := 0X;
+		Streams.OpenStringReader(r, s);
+		NEW(br, r);
+		ASSERT(br.InBits(31) = MAX(SIGNED32));
+		Streams.OpenStringReader(r, s);
+		NEW(br, r);
+		ASSERT(br.InBits(32) = -1)
+	END Test.

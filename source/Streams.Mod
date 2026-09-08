@@ -125,6 +125,7 @@ TYPE
 		VAR n: SIZE;
 		BEGIN
 			ASSERT ( len >= 0 );
+			IF len = 0 THEN RETURN END;   (* x may be empty, and ADDRESSOF(x[ofs]) below does not ask *)
 			LOOP
 				n := LEN( buf ) - tail;   (* space available *)
 				IF n = 0 THEN
