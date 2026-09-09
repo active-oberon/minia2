@@ -44,7 +44,7 @@ TYPE
 
 		PROCEDURE Use(register: SIZE; pc: SIZE);
 		BEGIN
-			IF LEN(table) <= register THEN Grow END;
+			WHILE LEN(table) <= register DO Grow END; (* a section from an intermediate file names any number it likes *)
 			IF table[register].first >pc THEN table[register].first := pc END;
 			IF table[register].last <pc THEN table[register].last := pc END;
 		END Use;
@@ -681,7 +681,7 @@ TYPE
 						DEC(lastMapped)
 					END;
 				END;
-				IF lastMapped < firstMapped THEN firstMapped := MAX(SIGNED32); lastMapped := -1 END;
+				IF lastMapped < firstMapped THEN firstMapped := MAX(SIZE); lastMapped := -1 END;
 			END;
 		END Unmap;
 
@@ -747,37 +747,47 @@ TYPE
 
 	END PhysicalRegisters;
 
-	CONST MaxSpilledRegisters=64;
+	CONST MaxSpilledRegisters=64; (* initial size only, the stack grows *)
 
 	TYPE
+	SpillStackSlots=POINTER TO ARRAY OF Ticket;
+
 	SpillStack*=OBJECT
 	VAR
-		spillStack: ARRAY MaxSpilledRegisters OF Ticket; (* registers of spill stack position to virtual register, none if unused *)
+		spillStack: SpillStackSlots; (* registers of spill stack position to virtual register, none if unused *)
 		spillStackSize,maxSpillStackSize: SIGNED32;
 
 		PROCEDURE &Init*;
-		VAR i: SIGNED32;
+		VAR i: SIZE;
 		BEGIN
 			spillStackSize := 0; maxSpillStackSize := 0;
+			IF spillStack = NIL THEN NEW(spillStack, MaxSpilledRegisters) END;
 			FOR i := 0 TO LEN(spillStack)-1 DO
 				spillStack[i] := NIL;
 			END;
 		END Init;
 
+		PROCEDURE Grow;
+		VAR new: SpillStackSlots; i: SIZE;
+		BEGIN
+			NEW(new, LEN(spillStack)*2);
+			FOR i := 0 TO LEN(spillStack)-1 DO new[i] := spillStack[i] END;
+			FOR i := LEN(spillStack) TO LEN(new)-1 DO new[i] := NIL END;
+			spillStack := new;
+		END Grow;
+
 		(* return next free spill offset in stack *)
 		PROCEDURE NextFree*(): SIGNED32;
-		VAR i: SIGNED32; index: Ticket;
+		VAR i: SIGNED32;
 		BEGIN
 			i := 0;
-			index := spillStack[i];
-			WHILE (index # NIL) DO
-				INC(i); index := spillStack[i];
-			END;
+			WHILE (i < LEN(spillStack)) & (spillStack[i] # NIL) DO INC(i) END;
 			RETURN i
 		END NextFree;
 
 		PROCEDURE Allocate*(offset: SIGNED32; ticket: Ticket);
 		BEGIN
+			WHILE ticket.offset >= LEN(spillStack) DO Grow END;
 			spillStack[ticket.offset] := ticket;
 			IF spillStackSize <= ticket.offset THEN spillStackSize := ticket.offset+1 END;
 			IF maxSpillStackSize < spillStackSize THEN maxSpillStackSize := spillStackSize END;
@@ -979,7 +989,7 @@ TYPE
 				IF Spillable(ticket,TRUE) THEN spill := ticket END;
 				ticket := ticket.next
 			END;
-			IF ticket = NIL THEN
+			IF spill = NIL THEN (* nothing of the width that was asked for *)
 				ticket := tickets.live;
 				WHILE ticket # NIL DO
 					IF Spillable(ticket,FALSE) THEN spill := ticket END;

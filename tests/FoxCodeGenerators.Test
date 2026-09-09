@@ -1,0 +1,827 @@
+# Tests for source/FoxCodeGenerators.Mod -- the half of a backend that no backend writes for itself:
+# the pass over an intermediate section, and the register allocator every one of the four backends
+# inherits from it.
+#
+# options --command="System.Free Test FoxCodeGeneratorsTestShared;System.Load Test"
+#
+# It had no test of its own, and it is the shared base of FoxAMDBackend, FoxA64Backend,
+# FoxARMBackend and FoxTRMBackend: a defect here is a defect in every target at once. What the
+# module does is three things. It walks an intermediate section once to find out between which two
+# instructions each virtual register is alive; it hands every instruction to the backend, or, when
+# the backend says it cannot do that one, replaces it with a call to a runtime procedure; and it
+# hands out physical registers to virtual ones, spilling to a stack slot when the register file
+# runs out.
+#
+# A case here drives that without a backend. FoxCodeGeneratorsTestShared has a register file of
+# eight equal registers and a generator that emits four zero bytes per instruction and writes down
+# every move the allocator ordered, so a case can read back what was decided rather than what was
+# encoded. The sections are built by hand, because a real backend only ever builds the shapes its
+# own front end produces, and the module claims to serve any.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxCodeGeneratorsTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A register allocator driven without a backend, and what it says it did" *)
+
+	IMPORT CG := FoxCodeGenerators, IntermediateCode := FoxIntermediateCode, BinaryCode := FoxBinaryCode,
+		Sections := FoxSections, ObjectFile, Basic := FoxBasic, Global := FoxGlobal, Diagnostics, Streams, Strings;
+
+	CONST
+		NofRegisters* = 8;	(** enough to run out of *)
+
+	TYPE
+		Text* = ARRAY 4096 OF CHAR;
+		Ticket* = CG.Ticket;
+		Type* = IntermediateCode.Type;
+		Operand* = IntermediateCode.Operand;
+		InSection* = IntermediateCode.Section;
+		OutSection* = BinaryCode.Section;
+
+	TYPE
+		(** The physical register file a backend owns -- eight of them, all equal, so that a case can say what "no register left" means. *)
+		Regs* = OBJECT (CG.PhysicalRegisters)
+		VAR
+			map: ARRAY NofRegisters OF Ticket;
+			reserved: ARRAY NofRegisters OF BOOLEAN;
+			hint-: SIGNED32;
+
+			PROCEDURE &InitRegs*;
+			VAR i: SIGNED32;
+			BEGIN
+				FOR i := 0 TO NofRegisters-1 DO map[i] := NIL; reserved[i] := FALSE END;
+				hint := IntermediateCode.None
+			END InitRegs;
+
+			PROCEDURE Allocate* (index: SIGNED32; virtualRegister: Ticket);
+			BEGIN map[index] := virtualRegister
+			END Allocate;
+
+			PROCEDURE Mapped* (physical: SIGNED32): Ticket;
+			BEGIN
+				IF (physical < 0) OR (physical >= NofRegisters) THEN RETURN NIL ELSE RETURN map[physical] END
+			END Mapped;
+
+			PROCEDURE Free* (index: SIGNED32);
+			BEGIN IF (index >= 0) & (index < NofRegisters) THEN map[index] := NIL END
+			END Free;
+
+			PROCEDURE NextFree* (CONST type: Type): SIGNED32;
+			VAR i: SIGNED32;
+			BEGIN
+				FOR i := 0 TO NofRegisters-1 DO
+					IF (map[i] = NIL) & ~reserved[i] THEN RETURN i END
+				END;
+				RETURN IntermediateCode.None
+			END NextFree;
+
+			PROCEDURE AllocationHint* (index: SIGNED32);
+			BEGIN hint := index
+			END AllocationHint;
+
+			PROCEDURE SetReserved* (index: SIGNED32; res: BOOLEAN);
+			BEGIN IF (index >= 0) & (index < NofRegisters) THEN reserved[index] := res END
+			END SetReserved;
+
+			PROCEDURE Reserved* (index: SIGNED32): BOOLEAN;
+			BEGIN
+				IF (index < 0) OR (index >= NofRegisters) THEN RETURN FALSE ELSE RETURN reserved[index] END
+			END Reserved;
+
+			PROCEDURE Dump* (w: Streams.Writer);
+			VAR i: SIGNED32;
+			BEGIN
+				FOR i := 0 TO NofRegisters-1 DO
+					IF map[i] # NIL THEN w.String("r"); w.Int(i, 1); w.String(" taken; ") END
+				END
+			END Dump;
+
+			PROCEDURE NumberRegisters* (): SIGNED32;
+			BEGIN RETURN NofRegisters
+			END NumberRegisters;
+
+			(** How many of the eight are handed out -- the number a case about spilling watches. *)
+			PROCEDURE InUse* (): SIGNED32;
+			VAR i, count: SIGNED32;
+			BEGIN
+				count := 0;
+				FOR i := 0 TO NofRegisters-1 DO IF map[i] # NIL THEN INC(count) END END;
+				RETURN count
+			END InUse;
+
+		END Regs;
+
+	TYPE
+		(** A generator that emits nothing but bytes and writes down what the allocator asked it to do. *)
+		Gen* = OBJECT (CG.GeneratorWithTickets)
+		VAR
+			regs-: Regs;
+			log-: Text;					(** every move the allocator ordered, in order *)
+			generated-: SIGNED32;		(** instructions handed to Generate *)
+			bytesPerInstruction*: SIGNED32;
+			spillStackSize-: SIGNED32;	(** what AllocateSpillStack was told, accumulated *)
+			fixupAt*, fixupTo*: SIZE;	(** instruction that gets a local relative fixup, and the instruction it points at *)
+			fixupBits*: SIGNED32;
+			fixupDisplacement*: SIZE;
+			unsupported*: SIGNED8;		(** the one opcode this backend claims it cannot do *)
+
+			PROCEDURE &InitGen* (regs: Regs; parts: SIGNED32; diagnostics: Diagnostics.Diagnostics; optimize: BOOLEAN);
+			BEGIN
+				InitTicketGenerator(diagnostics, optimize, parts, regs);
+				SELF.regs := regs; log := ""; generated := 0; bytesPerInstruction := 4; spillStackSize := 0;
+				fixupAt := -1; fixupTo := -1; fixupBits := 32; fixupDisplacement := 0;
+				unsupported := IntermediateCode.NofOpcodes		(* no opcode by default *)
+			END InitGen;
+
+			PROCEDURE Say* (CONST what: ARRAY OF CHAR; which: SIGNED32);
+			VAR number: ARRAY 32 OF CHAR;
+			BEGIN
+				Strings.AppendX(log, what); Strings.IntToStr(which, number); Strings.AppendX(log, number); Strings.AppendX(log, ";")
+			END Say;
+
+			PROCEDURE GetPartType* (CONST type: Type; part: SIGNED32; VAR typePart: Type);
+			BEGIN
+				(* one part per register unless a case asks for more; a second part is the upper half of the same width *)
+				IF part = 0 THEN typePart := type
+				ELSIF (part = 1) & (type.sizeInBits = 64) THEN IntermediateCode.InitType(typePart, type.form, 32)
+				ELSE IntermediateCode.InitType(typePart, IntermediateCode.Undefined, IntermediateCode.Undefined)
+				END
+			END GetPartType;
+
+			PROCEDURE ToSpillStack* (ticket: Ticket);
+			BEGIN Say("toStack r", ticket.register)
+			END ToSpillStack;
+
+			PROCEDURE AllocateSpillStack* (size: SIGNED32);
+			BEGIN INC(spillStackSize, size); Say("stack ", size)
+			END AllocateSpillStack;
+
+			PROCEDURE ToRegister* (ticket: Ticket);
+			BEGIN Say("toReg r", ticket.register)
+			END ToRegister;
+
+			PROCEDURE ExchangeTickets* (ticket1, ticket2: Ticket);
+			BEGIN Say("exchange r", ticket1.register)
+			END ExchangeTickets;
+
+			PROCEDURE Supported* (CONST instr: IntermediateCode.Instruction; VAR moduleName, procedureName: ARRAY OF CHAR): BOOLEAN;
+			BEGIN
+				IF instr.opcode = unsupported THEN
+					COPY("Runtime", moduleName); COPY("Helper", procedureName); RETURN FALSE
+				ELSE
+					moduleName := ""; procedureName := ""; RETURN TRUE
+				END
+			END Supported;
+
+			PROCEDURE Generate* (VAR instr: IntermediateCode.Instruction);
+			VAR i: SIGNED32; symbol: ObjectFile.Identifier; patterns: ObjectFile.FixupPatterns; fixup: BinaryCode.Fixup;
+			BEGIN
+				INC(generated);
+				IF inPC = fixupAt THEN
+					NEW(patterns, 1); patterns[0].offset := 0; patterns[0].bits := fixupBits;
+					symbol.name := in.name; symbol.fingerprint := 0;
+					fixup := BinaryCode.NewFixup(BinaryCode.Relative, out.pc, symbol, fixupTo, fixupDisplacement, 0, patterns);
+					out.fixupList.AddFixup(fixup)
+				END;
+				FOR i := 1 TO bytesPerInstruction DO out.PutByte(0) END
+			END Generate;
+
+		END Gen;
+
+	VAR
+		int8*, int16*, int32*, int64*, uint32*, float32*, float64*, undefined*: Type;
+		gp*: IntermediateCode.RegisterClass;
+
+	(** The 64-bit system a backend of this tree asks for -- only the address size and the alignments matter here. *)
+	PROCEDURE System* (): Global.System;
+	VAR system: Global.System;
+	BEGIN
+		NEW(system, 8, 8, 64, 8, 64, 64, 64, 128, 0, FALSE);
+		Global.SetDefaultDeclarations(system, 8);
+		Global.SetDefaultOperators(system);
+		RETURN system
+	END System;
+
+	(** A module to hang sections off. Its syntax tree is NIL: nothing here reads it. *)
+	PROCEDURE Module* (): Sections.Module;
+	VAR module: Sections.Module;
+	BEGIN
+		NEW(module, NIL, System());
+		RETURN module
+	END Module;
+
+	(** An intermediate section, built by hand instruction by instruction. *)
+	PROCEDURE NewIn* (module: Sections.Module; CONST name: ARRAY OF CHAR): InSection;
+	VAR segmented: Basic.SegmentedName;
+	BEGIN
+		Basic.ToSegmentedName(name, segmented);
+		RETURN IntermediateCode.NewSection(module.allSections, Sections.CodeSection, segmented, NIL, FALSE)
+	END NewIn;
+
+	(** The binary section the generator writes into -- one byte to the unit, little endian, like every byte-addressed target. *)
+	PROCEDURE NewOut* (CONST name: ARRAY OF CHAR): OutSection;
+	VAR segmented: Basic.SegmentedName;
+	BEGIN
+		Basic.ToSegmentedName(name, segmented);
+		RETURN BinaryCode.NewBinarySection(ObjectFile.Code, 8, segmented, FALSE, FALSE)
+	END NewOut;
+
+	PROCEDURE Reg* (CONST type: Type; register: SIZE): Operand;
+	BEGIN RETURN IntermediateCode.Register(type, gp, register)
+	END Reg;
+
+	PROCEDURE Imm* (CONST type: Type; value: SIGNED64): Operand;
+	BEGIN RETURN IntermediateCode.Immediate(type, value)
+	END Imm;
+
+	PROCEDURE Emit2* (in: InSection; opcode: SIGNED8; op1, op2: Operand);
+	VAR instruction: IntermediateCode.Instruction;
+	BEGIN
+		IntermediateCode.InitInstruction2(instruction, Basic.invalidPosition, opcode, op1, op2);
+		in.Emit(instruction)
+	END Emit2;
+
+	PROCEDURE Emit3* (in: InSection; opcode: SIGNED8; op1, op2, op3: Operand);
+	VAR instruction: IntermediateCode.Instruction;
+	BEGIN
+		IntermediateCode.InitInstruction(instruction, Basic.invalidPosition, opcode, op1, op2, op3);
+		in.Emit(instruction)
+	END Emit3;
+
+	PROCEDURE Emit1* (in: InSection; opcode: SIGNED8; op1: Operand);
+	VAR instruction: IntermediateCode.Instruction;
+	BEGIN
+		IntermediateCode.InitInstruction1(instruction, Basic.invalidPosition, opcode, op1);
+		in.Emit(instruction)
+	END Emit1;
+
+	PROCEDURE Emit0* (in: InSection; opcode: SIGNED8);
+	VAR instruction: IntermediateCode.Instruction;
+	BEGIN
+		IntermediateCode.InitInstruction0(instruction, Basic.invalidPosition, opcode);
+		in.Emit(instruction)
+	END Emit0;
+
+	(** The bytes of the generated section as hexadecimal. *)
+	PROCEDURE Hex* (section: OutSection; from, to: SIZE): Text;
+	VAR text: Text; digits: ARRAY 3 OF CHAR; i: SIZE;
+	BEGIN
+		text := "";
+		FOR i := from TO to DO
+			Strings.IntToHexStr(ORD(section.GetByte(i)), 2, digits); Strings.AppendX(text, digits)
+		END;
+		RETURN text
+	END Hex;
+
+	(** How many fixups the section still carries -- the ones the generator could not resolve itself. *)
+	PROCEDURE Fixups* (section: OutSection): SIGNED32;
+	VAR fixup: BinaryCode.Fixup; count: SIGNED32;
+	BEGIN
+		count := 0; fixup := section.fixupList.firstFixup;
+		WHILE fixup # NIL DO INC(count); fixup := fixup.nextFixup END;
+		RETURN count
+	END Fixups;
+
+	(** A diagnostics that keeps what it was told, so a case can read the words of a refusal. *)
+	PROCEDURE NewDiagnostics* (VAR writer: Streams.StringWriter): Diagnostics.Diagnostics;
+	VAR diagnostics: Diagnostics.StreamDiagnostics;
+	BEGIN
+		Streams.OpenStringWriter(writer, 4096);
+		NEW(diagnostics, writer);
+		RETURN diagnostics
+	END NewDiagnostics;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	BEGIN
+		IntermediateCode.InitType(int8, IntermediateCode.SignedInteger, 8);
+		IntermediateCode.InitType(int16, IntermediateCode.SignedInteger, 16);
+		IntermediateCode.InitType(int32, IntermediateCode.SignedInteger, 32);
+		IntermediateCode.InitType(int64, IntermediateCode.SignedInteger, 64);
+		IntermediateCode.InitType(uint32, IntermediateCode.UnsignedInteger, 32);
+		IntermediateCode.InitType(float32, IntermediateCode.Float, 32);
+		IntermediateCode.InitType(float64, IntermediateCode.Float, 64);
+		IntermediateCode.InitType(undefined, IntermediateCode.Undefined, IntermediateCode.Undefined);
+		gp := IntermediateCode.GeneralPurposeRegister
+	END FoxCodeGeneratorsTestShared.
+
+positive: a register is alive between the first instruction that names it and the last
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Live"); out := T.NewOut("Live");
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, 7));
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 2), T.Imm(T.int32, 9));
+		T.Emit3(in, IC.add, T.Reg(T.int32, 2), T.Reg(T.int32, 2), T.Reg(T.int32, 1));
+		NEW(gen, NIL, FALSE);
+		gen.Section(in, out);
+
+		ASSERT(gen.FirstUse(1) = 0, 1);
+		ASSERT(gen.LastUse(1) = 2, 2);
+		ASSERT(gen.FirstUse(2) = 1, 3);
+		ASSERT(gen.LastUse(2) = 2, 4);
+
+		(*	There is no virtual register zero -- IntermediateCode.InitRegister refuses it -- and the
+			special registers are negative. Both answer None rather than an entry of the table. *)
+		ASSERT(gen.FirstUse(0) = IC.None, 5);
+		ASSERT(gen.FirstUse(IC.SP) = IC.None, 6);
+		ASSERT(gen.LastUse(IC.FP) = IC.None, 7)
+	END Test.
+
+positive: a register number the table has not grown to yet
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		(*	The table of first and last uses starts at 64 entries and doubles when it is too small.
+			A section whose registers are numbered by a front end arrives with 1, 2, 3 ... and grows
+			it a step at a time; one that arrives from FoxIntermediateParser -- a hand-written or
+			generated intermediate file -- names whatever number it likes. Doubling once is not
+			enough for that, and the next-door VirtualRegisters.SetMapped doubles in a loop. *)
+		module := T.Module();
+		in := T.NewIn(module, "Sparse"); out := T.NewOut("Sparse");
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 500), T.Imm(T.int32, 7));
+		NEW(gen, NIL, FALSE);
+		gen.Section(in, out);
+
+		ASSERT(gen.FirstUse(500) = 0, 1);
+		ASSERT(gen.LastUse(500) = 0, 2)
+	END Test.
+
+positive: a copy whose source dies on the spot is not a copy at all
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Copy"); out := T.NewOut("Copy");
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, 7));
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 2), T.Reg(T.int32, 1));	(* r1 dies here, r2 is born here *)
+		T.Emit3(in, IC.add, T.Reg(T.int32, 2), T.Reg(T.int32, 2), T.Imm(T.int32, 1));
+		NEW(gen, NIL, TRUE);
+		gen.Section(in, out);
+
+		(*	The copy becomes a nop and everything that read r2 afterwards reads r1 instead. *)
+		ASSERT(in.instructions[1].opcode = IC.nop, 1);
+		ASSERT(in.instructions[2].op1.register = 1, 2);
+		ASSERT(in.instructions[2].op2.register = 1, 3);
+
+		(*	And r1 now lives as long as r2 did. *)
+		ASSERT(gen.LastUse(1) = 2, 4)
+	END Test.
+
+positive: the same section keeps its copy when the optimiser is off
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "NoCopy"); out := T.NewOut("NoCopy");
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, 7));
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 2), T.Reg(T.int32, 1));
+		T.Emit3(in, IC.add, T.Reg(T.int32, 2), T.Reg(T.int32, 2), T.Imm(T.int32, 1));
+		NEW(gen, NIL, FALSE);
+		gen.Section(in, out);
+
+		ASSERT(in.instructions[1].opcode = IC.mov, 1);
+		ASSERT(in.instructions[2].op1.register = 2, 2)
+	END Test.
+
+positive: a copy between two different widths stays a copy
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		(*	The elimination is only sound when the two registers hold the same thing; a mov that
+			narrows or widens is a conversion, whatever its opcode says. *)
+		module := T.Module();
+		in := T.NewIn(module, "Widths"); out := T.NewOut("Widths");
+		T.Emit2(in, IC.mov, T.Reg(T.int64, 1), T.Imm(T.int64, 7));
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 2), T.Reg(T.int64, 1));
+		T.Emit3(in, IC.add, T.Reg(T.int32, 2), T.Reg(T.int32, 2), T.Imm(T.int32, 1));
+		NEW(gen, NIL, TRUE);
+		gen.Section(in, out);
+
+		ASSERT(in.instructions[1].opcode = IC.mov, 1);
+		ASSERT(in.instructions[2].op1.register = 2, 2)
+	END Test.
+
+positive: data, reserve and label are the three instructions the generic pass writes itself
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Data"); out := T.NewOut("Data");
+		T.Emit1(in, IC.data, T.Imm(T.int32, 12345678H));
+		T.Emit1(in, IC.data, T.Imm(T.int8, 0AAH));
+		T.Emit1(in, IC.reserve, IC.Number(3));
+		T.Emit1(in, IC.label, IC.Number(0));
+		NEW(gen, NIL, FALSE);
+		gen.Section(in, out);
+
+		(*	Four bytes of the word, one of the byte, three reserved zeroes; the label is a position,
+			not a byte. *)
+		ASSERT(out.pc = 8, 1);
+		ASSERT(T.Hex(out, 0, 7) = "78563412AA000000", 2);
+		ASSERT(T.Fixups(out) = 0, 3);
+		ASSERT(gen.error = FALSE, 4)
+	END Test.
+
+positive: a data word that names a symbol leaves a fixup behind
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators,
+		Basic := FoxBasic, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: CG.GenericCodeGenerator;
+		op: T.Operand; name: Basic.SegmentedName;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Pointer"); out := T.NewOut("Pointer");
+		op := T.Imm(T.int32, 0);
+		Basic.ToSegmentedName("Elsewhere", name);
+		IC.SetSymbol(op, name, 0);
+		T.Emit1(in, IC.data, op);
+		NEW(gen, NIL, FALSE);
+		gen.Section(in, out);
+
+		(*	The four bytes are written now and the address is written by whoever links the section. *)
+		ASSERT(out.pc = 4, 1);
+		ASSERT(T.Fixups(out) = 1, 2)
+	END Test.
+
+positive: a jump inside the section is resolved against the section itself
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs; i: SIGNED32;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Jump"); out := T.NewOut("Jump");
+		FOR i := 1 TO 5 DO T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, i)) END;
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		gen.SetModule(module);
+
+		(*	The backend leaves a relative fixup at instruction 0 pointing at instruction 4. Four
+			bytes per instruction, so the distance is 16. *)
+		gen.fixupAt := 0; gen.fixupTo := 4; gen.fixupBits := 32;
+		gen.Section(in, out);
+
+		ASSERT(gen.error = FALSE, 1);
+		ASSERT(T.Hex(out, 0, 3) = "10000000", 2);
+		(*	Resolved means gone: only the fixups somebody else has to apply survive the pass. *)
+		ASSERT(T.Fixups(out) = 0, 3)
+	END Test.
+
+positive: a jump too far for its field is a diagnostic, not a wrong address
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, Sections := FoxSections, Streams;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs;
+		w: Streams.StringWriter; text: T.Text; i: SIGNED32;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "TooFar"); out := T.NewOut("TooFar");
+		FOR i := 1 TO 64 DO T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, i)) END;
+		NEW(regs); NEW(gen, regs, 1, T.NewDiagnostics(w), FALSE);
+		gen.SetModule(module);
+		(*	63 instructions ahead is 252 bytes, and the field holds eight bits signed. *)
+		gen.fixupAt := 0; gen.fixupTo := 63; gen.fixupBits := 8;
+		gen.Section(in, out);
+		w.Update; w.Get(text);
+
+		ASSERT(gen.error = TRUE, 1);
+		ASSERT(T.Said(text, "fixup out of range"), 2);
+		ASSERT(T.Said(text, "TooFar"), 3);
+		(*	And nothing was written into the field. *)
+		ASSERT(T.Hex(out, 0, 0) = "00", 4)
+	END Test.
+
+positive: an instruction the backend cannot do becomes a call to the runtime
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Emulated"); out := T.NewOut("Emulated");
+		T.Emit2(in, IC.mov, T.Reg(T.int32, 1), T.Imm(T.int32, 3));
+		T.Emit3(in, IC.mul, T.Reg(T.int32, 1), T.Reg(T.int32, 1), T.Imm(T.int32, 5));
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		gen.SetModule(module);
+		gen.unsupported := IC.mul;
+		gen.Section(in, out);
+
+		(*	One mov, then the two source operands pushed, the call, and the result taken back:
+			five instructions where the section had two. *)
+		ASSERT(gen.generated = 5, 1);
+		ASSERT(out.pc = 20, 2);
+
+		(*	The module now imports the one the runtime procedure lives in -- inserted raw, because
+			whoever writes an emulation knows what they are calling. *)
+		ASSERT(module.imports.Length() = 1, 3);
+		ASSERT(module.imports.GetName(0) = "Runtime", 4)
+	END Test.
+
+positive: tickets are kept in the order in which they die
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR tk: CG.Tickets; a, b, c, again: CG.Ticket;
+	BEGIN
+		NEW(tk);
+		(*	Entered out of order on purpose: the list is sorted by last use, because that is the
+			order in which the allocator wants to hand the registers back. *)
+		a := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 0, 5);
+		b := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 1, 3);
+		c := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 2, 7);
+
+		ASSERT(tk.live = b, 1);
+		ASSERT(tk.live.next = a, 2);
+		ASSERT(tk.live.next.next = c, 3);
+		ASSERT(tk.live.next.next.next = NIL, 4);
+
+		tk.Remove(b);
+		ASSERT(tk.live = a, 5);
+		ASSERT(tk.live.next = c, 6);
+
+		(*	A removed ticket goes on a free list and comes back out of it -- one section of a big
+			module asks for thousands. *)
+		again := tk.Enter(T.gp, T.int64, IC.None, TRUE, TRUE, 9, 1);
+		ASSERT(again = b, 7);
+		ASSERT(again.type.sizeInBits = 64, 8);
+		ASSERT(again.parts = 0, 9);
+		ASSERT(tk.live = again, 10)
+	END Test.
+
+positive: the spill stack hands out the lowest free slot and rewinds when the top goes
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR ss: CG.SpillStack; tk: CG.Tickets; a, b: CG.Ticket;
+	BEGIN
+		NEW(ss); NEW(tk);
+		a := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 0, 5);
+		b := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 1, 7);
+
+		ASSERT(ss.NextFree() = 0, 1);
+		a.offset := 0; ss.Allocate(0, a);
+		ASSERT(ss.Size() = 1, 2);
+		ASSERT(ss.NextFree() = 1, 3);
+		b.offset := 1; ss.Allocate(1, b);
+		ASSERT(ss.Size() = 2, 4);
+
+		(*	Freeing a hole in the middle gives the slot back but not the size: the frame is as deep
+			as its deepest slot. *)
+		ss.Free(0);
+		ASSERT(ss.NextFree() = 0, 5);
+		ASSERT(ss.Size() = 2, 6);
+
+		(*	Freeing the top rewinds past every hole below it. *)
+		ss.Free(1);
+		ASSERT(ss.Size() = 0, 7);
+		(*	And what the frame has to reserve is the high-water mark, not what is live now. *)
+		ASSERT(ss.MaxSize() = 2, 8)
+	END Test.
+
+positive: a spill stack with no room left
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR ss: CG.SpillStack; tk: CG.Tickets; ticket: CG.Ticket; i: SIGNED32;
+	BEGIN
+		(*	The stack was a fixed array of 64 slots and the search for a free one had no bound, so
+			the 65th spill in one section read past the end of it -- an index trap inside the
+			compiler rather than a message about the program being compiled. Machine-generated code
+			and deeply inlined expressions reach 64 live values. *)
+		NEW(ss); NEW(tk);
+		FOR i := 0 TO 63 DO
+			ticket := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, i, i);
+			ticket.offset := i;
+			ss.Allocate(i, ticket)
+		END;
+		ASSERT(ss.Size() = 64, 1);
+		ASSERT(ss.NextFree() = 64, 2);
+
+		ticket := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 64, 64);
+		ticket.offset := 64;
+		ss.Allocate(64, ticket);
+		ASSERT(ss.Size() = 65, 3);
+		ASSERT(ss.MaxSize() = 65, 4);
+
+		ss.Free(64);
+		ASSERT(ss.Size() = 64, 5);
+		ASSERT(ss.NextFree() = 64, 6)
+	END Test.
+
+positive: a virtual register is a ticket, and the ticket may live on the stack instead
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs;
+		i: SIGNED32; ticket: CG.Ticket;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Nine"); out := T.NewOut("Nine");
+		FOR i := 1 TO 9 DO T.Emit2(in, IC.mov, T.Reg(T.int32, i), T.Imm(T.int32, i)) END;
+		FOR i := 1 TO 9 DO T.Emit3(in, IC.add, T.Reg(T.int32, i), T.Reg(T.int32, i), T.Imm(T.int32, 1)) END;
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		gen.SetModule(module);
+		gen.Section(in, out);
+
+		(*	The generic pass allocates nothing by itself: whether an operand needs a register is the
+			backend's question, and it asks it per instruction. *)
+		ASSERT(regs.InUse() = 0, 1);
+
+		(*	Eight virtual registers fit the file. A backend reserves a register for the instruction
+			it is generating and releases it afterwards, which is what the second call does here. *)
+		FOR i := 1 TO 8 DO
+			gen.MapVirtualRegister(i, T.gp, T.int32, 0);
+			regs.SetReserved(i-1, FALSE)
+		END;
+		ASSERT(regs.InUse() = 8, 2);
+		ASSERT(gen.spillStack.Size() = 0, 3);
+
+		(*	The ninth has nowhere to go and is spilled before it is ever loaded. *)
+		gen.MapVirtualRegister(9, T.gp, T.int32, 0);
+		ticket := gen.virtualRegisters.Mapped(9, 0);
+		ASSERT(ticket # NIL, 4);
+		ASSERT(ticket.spilled, 5);
+		ASSERT(ticket.register = IC.None, 6);
+		ASSERT(ticket.offset = 0, 7);
+		ASSERT(gen.spillStack.Size() = 1, 8);
+		(*	And the backend was told to make room in the frame, once. *)
+		ASSERT(gen.spillStackSize = 1, 9);
+
+		(*	Unspilling it swaps it with a live register instead of moving two values through memory. *)
+		gen.UnSpill(ticket);
+		ASSERT(~ticket.spilled, 10);
+		ASSERT(ticket.register # IC.None, 11);
+		ASSERT(T.Said(gen.log, "exchange"), 12)
+	END Test.
+
+positive: the width that was asked for decides who gets spilled
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR gen: T.Gen; regs: T.Regs; wide, narrow, spill: CG.Ticket;
+	BEGIN
+		(*	GetPreferredSpill walks the live tickets twice: once for one of exactly the width that
+			is needed, and, only if there is none, once for anything at all. The second walk was
+			guarded by the loop variable of the first, which is NIL every time a loop ends, so the
+			second walk always ran and always overwrote the answer of the first. The preference
+			existed in the source and never once applied. *)
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		wide := gen.tickets.Enter(T.gp, T.int64, 0, TRUE, FALSE, 0, 1);
+		narrow := gen.tickets.Enter(T.gp, T.int32, 1, TRUE, FALSE, 0, 2);
+
+		spill := gen.GetPreferredSpill(T.int64);
+		ASSERT(spill = wide, 1);
+		ASSERT(spill.type.sizeInBits = 64, 2);
+
+		spill := gen.GetPreferredSpill(T.int32);
+		ASSERT(spill = narrow, 3);
+
+		(*	When nothing of the right width is live, anything spillable will do. *)
+		spill := gen.GetPreferredSpill(T.int8);
+		ASSERT(spill # NIL, 4)
+	END Test.
+
+positive: a float is never spilled to make room for an integer
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR gen: T.Gen; regs: T.Regs; number, real, spill: CG.Ticket;
+	BEGIN
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		number := gen.tickets.Enter(T.gp, T.int64, 0, TRUE, FALSE, 0, 1);
+		real := gen.tickets.Enter(T.gp, T.float64, 1, TRUE, FALSE, 0, 2);
+
+		(*	Same width, different register file: spilling one to make room in the other frees
+			nothing. *)
+		spill := gen.GetPreferredSpill(T.int64);
+		ASSERT(spill = number, 1);
+		spill := gen.GetPreferredSpill(T.float64);
+		ASSERT(spill = real, 2)
+	END Test.
+
+positive: a virtual register maps to as many tickets as it has parts
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Streams;
+	VAR vr: CG.VirtualRegisters; tk: CG.Tickets; a, b, c: CG.Ticket; w: Streams.StringWriter; text: T.Text;
+	BEGIN
+		NEW(tk); NEW(vr, 2);
+		a := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 0, 5);
+		b := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 1, 6);
+		c := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 2, 7);
+
+		ASSERT(vr.Parts() = 2, 1);
+		vr.SetMapped(3, 0, a); vr.SetMapped(3, 1, b);
+		ASSERT(vr.Mapped(3, 0) = a, 2);
+		ASSERT(vr.Mapped(3, 1) = b, 3);
+		ASSERT(a.parts = 1, 4);
+
+		(*	The table starts at 64 registers and grows in a loop, so a number far past the end is
+			as good as a number just past it. *)
+		vr.SetMapped(100, 0, c);
+		ASSERT(vr.Mapped(100, 0) = c, 5);
+		ASSERT(vr.firstMapped = 3, 6);
+		ASSERT(vr.lastMapped = 100, 7);
+
+		(*	There is no register zero, so the table never answers for one. *)
+		ASSERT(vr.Mapped(0, 0) = NIL, 8);
+
+		vr.Unmap(3);
+		ASSERT(vr.Mapped(3, 0) = NIL, 9);
+		ASSERT(vr.Mapped(3, 1) = NIL, 10);
+		ASSERT(vr.firstMapped = 100, 11);
+
+		Streams.OpenStringWriter(w, LEN(text));
+		vr.Dump(w); w.Update; w.Get(text);
+		ASSERT(T.Said(text, "register.part 100.0"), 12);
+		ASSERT(~T.Said(text, "register.part 3."), 13)
+	END Test.
+
+positive: an empty mapping says the same thing whether it was never used or emptied again
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators;
+	VAR fresh, emptied: CG.VirtualRegisters; tk: CG.Tickets; a: CG.Ticket;
+	BEGIN
+		(*	Both ends of the range are reset when the last register is unmapped, and the reset used
+			MAX(SIGNED32) where the constructor used MAX(SIZE). On a 64-bit host those are two
+			different numbers, so "nothing is mapped" read differently depending on the history. *)
+		NEW(tk); NEW(fresh, 1); NEW(emptied, 1);
+		a := tk.Enter(T.gp, T.int32, IC.None, TRUE, TRUE, 0, 5);
+		emptied.SetMapped(7, 0, a);
+		emptied.Unmap(7);
+
+		ASSERT(emptied.lastMapped = fresh.lastMapped, 1);
+		ASSERT(emptied.firstMapped = fresh.firstMapped, 2)
+	END Test.
+
+positive: a temporary needs a register now, so somebody else goes to the stack
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs;
+		i: SIGNED32; temp: CG.Ticket;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Temp"); out := T.NewOut("Temp");
+		FOR i := 1 TO 8 DO T.Emit2(in, IC.mov, T.Reg(T.int32, i), T.Imm(T.int32, i)) END;
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		gen.SetModule(module);
+		gen.Section(in, out);
+		FOR i := 1 TO 8 DO gen.MapVirtualRegister(i, T.gp, T.int32, 0); regs.SetReserved(i-1, FALSE) END;
+		ASSERT(regs.InUse() = 8, 1);
+
+		temp := gen.TemporaryTicket(T.gp, T.int32);
+		ASSERT(temp # NIL, 2);
+		ASSERT(temp.register # IC.None, 3);
+		ASSERT(~temp.spilled, 4);
+		ASSERT(temp.parts = 1, 5);
+
+		(*	The one spilled is the one whose last use is furthest away -- the value nobody will
+			miss for longest. *)
+		ASSERT(gen.spillStack.Size() = 1, 6);
+		ASSERT(T.Said(gen.log, "toStack"), 7);
+
+		(*	And a temporary with no type at all is no ticket. *)
+		ASSERT(gen.TemporaryTicket(T.gp, T.undefined) = NIL, 8)
+	END Test.
+
+positive: a register is handed back at the last instruction that reads it
+
+	MODULE Test;
+	IMPORT T := FoxCodeGeneratorsTestShared, IC := FoxIntermediateCode, CG := FoxCodeGenerators, Sections := FoxSections;
+	VAR module: Sections.Module; in: T.InSection; out: T.OutSection; gen: T.Gen; regs: T.Regs;
+		i: SIGNED32; temp: CG.Ticket; taken: SIGNED32;
+	BEGIN
+		module := T.Module();
+		in := T.NewIn(module, "Release"); out := T.NewOut("Release");
+		FOR i := 1 TO 8 DO T.Emit2(in, IC.mov, T.Reg(T.int32, i), T.Imm(T.int32, i)) END;
+		NEW(regs); NEW(gen, regs, 1, NIL, FALSE);
+		gen.SetModule(module);
+		gen.Section(in, out);
+		FOR i := 1 TO 8 DO gen.MapVirtualRegister(i, T.gp, T.int32, 0); regs.SetReserved(i-1, FALSE) END;
+
+		temp := gen.TemporaryTicket(T.gp, T.int32);
+		taken := regs.InUse();
+		gen.ReleaseHint(temp.register);
+
+		ASSERT(regs.InUse() = taken-1, 1);
+		(*	And the register just freed is the one the next allocation is nudged towards, so a value
+			stays where it was rather than walking the file. *)
+		ASSERT(regs.hint # IC.None, 2);
+		ASSERT(~regs.Reserved(regs.hint), 3)
+	END Test.
