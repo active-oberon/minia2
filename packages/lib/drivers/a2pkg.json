@@ -15,7 +15,7 @@
     "XDisplay"
   ],
   "status": "draft",
-  "description": "Low-level device drivers: display registry, serial ports (V24), keyboard/mouse, PC speaker, clipboard.",
+  "description": "Low-level device drivers: display registry, serial ports (V24), the pins of a board (GPIO), keyboard/mouse, PC speaker, clipboard.",
   "provides": [
     "A2Sequencers",
     "AndroidDisplay",
@@ -26,6 +26,7 @@
     "DisplayGTF",
     "DisplayNull",
     "Displays",
+    "GPIO",
     "HostClipboard",
     "Joysticks",
     "KbdMouse",
@@ -54,6 +55,7 @@
     "AndroidDisplay and AndroidInput (ours, out of the Android phase) and Beep entered 2026-08-24. The two Android ones are marked graphical: they ARE a display and an input device.",
     "Beep and Clipboard are marked graphical from 2026-08-24, and they were in the payload before that by an accident the check could not see: a module with a file per platform gets a line per file in the dependency graph, and the reader replaced instead of merging, so Windows.Beep.Mod (Kernel32) hid Unix.Beep.Mod (X11, Displays, XDisplay). Fixed in docker/gen-headless-core.sh; these two are what it caught.",
     "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload.",
+    "GPIO entered 2026-09-09, ours and new: the kernel's GPIO character device, which is how a program drives the pins of a Raspberry Pi. Unix only -- there is no Windows twin and no board behind one -- so it is in the Linux payload and in no other.",
     "XDisplay moved here from apps/desktop 2026-09-09: it is the X11 half of the pair whose other halves (Display, KbdMouse) were already here, and `ob build --gui` links all three. The desktop keeps DisplayDemo, which is a demo and not a driver."
   ]
 }

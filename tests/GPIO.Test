@@ -1,0 +1,157 @@
+# Tests for GPIO: the pins of a board, through the kernel's GPIO character device (2026-09-09).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# The module was written for the DIY line -- a program on Active Oberon that makes a board do
+# something physical -- and it is the first module in the tree that touches the pins of a Linux
+# machine at all. What can be asked without a board is what these cases ask: the layout the kernel
+# expects, and every way a request is refused.
+#
+# WHAT A BOARD WOULD ADD, and no case here can: the round trip. Requesting a line, driving it and
+# reading it back needs a /dev/gpiochip*, and the machines this suite runs on (x86-64 desktop, the
+# phone, qemu) have no GPIO controller -- there is no gpio-sim in a stock Debian kernel either
+# (`CONFIG_GPIO_SIM is not set`). The last case therefore asks the only thing it can: if there IS a
+# chip 0, its answers have to be sane. On a Raspberry Pi that case is the real one.
+#
+# THE LAYOUT CASE holds its own copies of the module's records, because the module keeps them
+# private, and asserts the sizes and offsets a C program measures against <linux/gpio.h> on the
+# same machine. Two things make that enough:
+#
+#   -  a record of the wrong SIZE cannot go unnoticed at run time, board or no board: the ioctl
+#      numbers are derived from SIZEOF the way <asm/ioctl.h> derives them, so the kernel is handed
+#      a number it does not know and answers ENOTTY (25) rather than reading the wrong bytes.
+#   -  the layout does not depend on the target. Every 64-bit field in these records sits at an
+#      offset that is already a multiple of eight, so the 4-byte cap a 32-bit backend puts on
+#      alignment (FoxARMBackend.Mod:3651 passes maxVarAlign = 32 bits) lays them out exactly as the
+#      64-bit backends do. That is why the same records can be compiled for the 32-bit board on the
+#      desk, and it is measured here rather than hoped for.
+
+positive: the records have the layout the kernel's structs have
+
+	MODULE Test;
+
+	(*	the copies, field for field, of what source/Unix.GPIO.Mod declares privately *)
+	TYPE
+		ChipInfo = RECORD
+			name: ARRAY 32 OF CHAR;
+			label: ARRAY 32 OF CHAR;
+			lines: UNSIGNED32;
+		END;
+		Attribute = RECORD
+			id: UNSIGNED32;
+			padding: UNSIGNED32;
+			value: UNSIGNED64;
+		END;
+		ConfigAttribute = RECORD
+			attr: Attribute;
+			mask: UNSIGNED64;
+		END;
+		Config = RECORD
+			flags: SET64;
+			numAttrs: UNSIGNED32;
+			padding: ARRAY 5 OF UNSIGNED32;
+			attrs: ARRAY 10 OF ConfigAttribute;
+		END;
+		LineRequest = RECORD
+			offsets: ARRAY 64 OF UNSIGNED32;
+			consumer: ARRAY 32 OF CHAR;
+			config: Config;
+			numLines: UNSIGNED32;
+			eventBufferSize: UNSIGNED32;
+			padding: ARRAY 5 OF UNSIGNED32;
+			fd: SIGNED32;
+		END;
+		LineValues = RECORD
+			bits: SET64;
+			mask: SET64;
+		END;
+
+	VAR info: ChipInfo; config: Config; request: LineRequest; values: LineValues;
+
+	BEGIN
+		(* struct gpiochip_info *)
+		ASSERT(SIZEOF(ChipInfo) = 68);
+		ASSERT(ADDRESSOF(info.label) - ADDRESSOF(info) = 32);
+		ASSERT(ADDRESSOF(info.lines) - ADDRESSOF(info) = 64);
+
+		(* struct gpio_v2_line_attribute and its config attribute *)
+		ASSERT(SIZEOF(Attribute) = 16);
+		ASSERT(SIZEOF(ConfigAttribute) = 24);
+
+		(* struct gpio_v2_line_config *)
+		ASSERT(SIZEOF(Config) = 272);
+		ASSERT(ADDRESSOF(config.numAttrs) - ADDRESSOF(config) = 8);
+		ASSERT(ADDRESSOF(config.attrs) - ADDRESSOF(config) = 32);
+
+		(* struct gpio_v2_line_request -- the one the ioctl number carries the size of *)
+		ASSERT(SIZEOF(LineRequest) = 592);
+		ASSERT(ADDRESSOF(request.consumer) - ADDRESSOF(request) = 256);
+		ASSERT(ADDRESSOF(request.config) - ADDRESSOF(request) = 288);
+		ASSERT(ADDRESSOF(request.numLines) - ADDRESSOF(request) = 560);
+		ASSERT(ADDRESSOF(request.eventBufferSize) - ADDRESSOF(request) = 564);
+		ASSERT(ADDRESSOF(request.fd) - ADDRESSOF(request) = 588);
+
+		(* struct gpio_v2_line_values *)
+		ASSERT(SIZEOF(LineValues) = 16);
+		ASSERT(ADDRESSOF(values.mask) - ADDRESSOF(values) = 8)
+	END Test.
+
+positive: a chip that is not there is refused, and says why
+
+	MODULE Test;
+	IMPORT GPIO;
+
+	CONST NoSuchChip = 250;			(* no machine has 251 GPIO controllers *)
+		ENOENT = 2;
+
+	VAR name, label: ARRAY 32 OF CHAR; lines: SIGNED32; held: GPIO.Lines;
+
+	BEGIN
+		ASSERT(~GPIO.Info(NoSuchChip, name, label, lines));
+		ASSERT(GPIO.error = ENOENT);
+
+		(* and the same for a request: NIL, not a trap, and the errno of the open that failed *)
+		held := GPIO.Line(NoSuchChip, 17, GPIO.Output, "test");
+		ASSERT(held = NIL);
+		ASSERT(GPIO.error = ENOENT)
+	END Test.
+
+positive: a request of no lines and of too many is refused before the device is opened
+
+	MODULE Test;
+	IMPORT GPIO;
+
+	CONST EINVAL = 22;
+
+	VAR none: POINTER TO ARRAY OF SIGNED32; toomany: ARRAY GPIO.MaxLines + 1 OF SIGNED32;
+		held: GPIO.Lines; i: SIZE;
+
+	BEGIN
+		(*	asking for nothing takes a dynamic array: `ARRAY 0 OF` is not a type and a slice of
+			negative length is not an index *)
+		NEW(none, 0);
+		held := GPIO.Request(0, none^, GPIO.Output, "test");
+		ASSERT(held = NIL);
+		ASSERT(GPIO.error = EINVAL);
+
+		FOR i := 0 TO LEN(toomany) - 1 DO toomany[i] := SIGNED32(i) END;
+		held := GPIO.Request(0, toomany, GPIO.Output, "test");
+		ASSERT(held = NIL);
+		ASSERT(GPIO.error = EINVAL)
+	END Test.
+
+positive: a chip that is there answers for itself
+
+	MODULE Test;
+	IMPORT GPIO;
+
+	VAR name, label: ARRAY 32 OF CHAR; lines: SIGNED32;
+
+	BEGIN
+		(*	The case that speaks on a board and stays quiet everywhere else. A chip with no lines,
+			or one that names itself nothing, would be an answer read out of the wrong offsets. *)
+		IF GPIO.Info(0, name, label, lines) THEN
+			ASSERT(lines > 0); ASSERT(lines <= 1024);
+			ASSERT(name[0] # 0X)
+		END
+	END Test.

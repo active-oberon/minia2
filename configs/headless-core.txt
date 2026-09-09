@@ -157,6 +157,7 @@ FoxTestBackend
 FoxTextualSymbolFile
 FoxTranspilerBackend
 Frames
+GPIO
 GZip
 GenericCollections
 GenericLinker

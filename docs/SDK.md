@@ -180,6 +180,35 @@ worked out by the generator, because a C flag is `(0x1|0x2)` and this language h
 integers. The ones that take arguments or stand for something that is not a constant are
 counted in that same comment.
 
+## The pins of a board (GPIO)
+
+A program from this SDK can drive the header of a Raspberry Pi (or of any Linux machine with a GPIO
+controller) with no library and no binding: `GPIO` is in the Linux payload and talks to
+`/dev/gpiochip0` directly.
+
+```sh
+ob build -t a64 examples/Blink.Mod   # a Raspberry Pi OS 64-bit binary
+scp Blink pi@board:                  # ...copied to the board and run there
+```
+
+```oberon
+led := GPIO.Line(0, 17, GPIO.Output, "blink");   (* chip 0, BCM 17, physical pin 11 *)
+ok := led.Write({0});                             (* the first line of the request, high *)
+ok := led.Read(values);                           (* 0 IN values is that same line *)
+led.Close
+```
+
+Lines are asked for in a set and their values come back in one: `GPIO.Request` takes an array of
+line numbers, and bit *i* of a value is the *i*-th line of the request. Flags say what a line is —
+`Input`, `Output`, `ActiveLow`, `PullUp`, `PullDown`, `NoBias`, `OpenDrain`, `OpenSource` — and a
+failure leaves the C `errno` in `GPIO.error`: **13** means the user is not in the group that owns
+`/dev/gpiochip*` (`usermod -aG gpio $USER`, then log in again), **16** that another program holds
+the line.
+
+This is the kernel's v2 character-device interface, so it wants Linux 5.10 or later — every
+Raspberry Pi OS since Bullseye. There is no Windows counterpart, and none is planned: the module is
+in `lib/` on Linux and in no other payload.
+
 ## Use it with Docker
 
 Mount your working directory at `/work` and call `ob`:

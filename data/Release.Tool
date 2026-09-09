@@ -520,6 +520,10 @@ PACKAGE Drivers ARCHIVE "Drivers.zip" SOURCE "DriversSrc.zip" DESCRIPTION "Devic
 	WIN { Windows.V24.Mod }
 	UNIX { Unix.V24.Mod }
 
+	# The pins of a board, through the kernel's GPIO character device -- Linux only, and no
+	# counterpart anywhere else: a Windows machine has no header to solder to.
+	UNIX { Unix.GPIO.Mod }
+
 	# PC speaker driver
 	BIOS { BIOS.Beep.Mod }
 	WIN { Windows.Beep.Mod }
