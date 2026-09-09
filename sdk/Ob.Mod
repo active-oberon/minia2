@@ -819,7 +819,12 @@ BEGIN
 		IF ~ObHost.Exists(libGui) THEN
 			DieOn("this SDK ships no windowed objects: no ", libGui); RETURN
 		END;
-		IF ~AddSearchPath(libGui) THEN RETURN END;
+		(*	lib as well as lib-gui, and before the display goes up: a driver is only the modules the
+			headless payload does not already carry, so on Windows Display imports User32 out of lib
+			and the install failed with "could not get module while importing User32". On Linux
+			lib-gui happens to be closed under its own imports -- X11 is in it -- which is why the
+			order went unnoticed. PrepareIn adds lib again later; a search path repeated is harmless. *)
+		IF ~AddSearchPath(lib) OR ~AddSearchPath(libGui) THEN RETURN END;
 		command := "Display.Install"; Strings.Append(command, guiSize);
 		Commands.Call(command, {Commands.Wait}, result, message);
 		IF result # Commands.Ok THEN

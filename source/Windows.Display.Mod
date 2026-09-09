@@ -1097,16 +1097,16 @@ VAR
 				create.style :=
 					{User32.WSMinimizeBox, User32.WSMaximizeBox, User32.WSSysMenu, User32.WSVisible, User32.WSBorder, User32.WSThickFrame};
 				x := User32.CWUseDefault;  y := User32.CWUseDefault;  COPY( windowClassName, create.className );  border := 0;
+				(*	w and h are the DRAWING AREA, and the frame is added to them below. A size that
+					was asked for used to have the frame taken off it instead, so `--gui=800x600`
+					drew into 784 by 561 while the Unix twin of this module gave the 800 by 600 that
+					was asked for: the same command, two sizes. Nothing given still means maximized,
+					and there the frame does come off the screen. *)
 				IF h = 0 THEN
 					h := User32.GetSystemMetrics( SMCYMaximized ) - captionY - 2 * frameY;
 					IF w = 0 THEN
 						w := User32.GetSystemMetrics( SMCXMaximized ) - 2 * frameX;
 						create.style := create.style + {User32.WSMaximize};
-					END;
-				ELSE
-					h := h - captionY - 2 * frameY;
-					IF (w # 0) THEN
-						w := w - 2 * frameX;
 					END;
 				END;
 				IF w = 0 THEN w := User32.GetSystemMetrics( SMCXMaximized ) - 2 * frameX;  END;
@@ -1175,7 +1175,7 @@ VAR
 		IGNORE User32.ReleaseDC(0,hDC);
 	END DoInstall;
 
-	PROCEDURE Install*(context : Commands.Context); (** ["H"] [ width [height] ] ["FULLSCREEN"] [ x [y] ] *)
+	PROCEDURE Install*(context : Commands.Context); (** [-b] [-f] [-n] [-d] [-w=<width>] [-h=<height>] [-x=<left>] [-y=<top>] [ width [height] ] *)
 	VAR x,y,w,h : SIGNED32; options: Options.Options;
 	BEGIN
 		NEW(options);
@@ -1198,6 +1198,17 @@ VAR
 			IF ~options.GetInteger("h", h) THEN h := 0 END;
 			IF options.GetFlag("n") THEN DisableCursor END;
 			IF options.GetFlag("d") THEN IGNORE User32.SetProcessDPIAware() END;
+			(*	The size may also stand where this procedure's own interface has always said it does: as two
+				numbers after the flags, `Display.Install 800 600` -- the form the tool commands at the end
+				of this module use, and the form the Unix twin of the module reads. Only -w and -h were read
+				here, so `ob build --gui=800x600` handed the driver a size it dropped on the floor and the
+				window came up maximized, with nothing said. Options.Parse stops at the first thing that is
+				not an option and leaves the stream there, so the numbers are still to be read. *)
+			IF (w = 0) & (h = 0) THEN
+				context.arg.SkipWhitespace;  context.arg.Int(w, FALSE);
+				context.arg.SkipWhitespace;  context.arg.Int(h, FALSE);
+				IF (w <= 0) OR (h <= 0) THEN w := 0;  h := 0 END
+			END;
 		END;
 		closeRequests := 0;
 		InitMod();

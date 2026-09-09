@@ -609,6 +609,7 @@ tasks:
       - task: display
       - task: wm
       - task: zoom
+      - task: win-gui
       - task: terminal
       - task: treesitter
 
@@ -635,6 +636,25 @@ tasks:
           status=$?
           if [ "$status" -eq 2 ]; then
             echo "[SKIP] measuring the pixel size needs Xephyr and a bundled SDK (task bundle)"
+          else
+            exit "$status"
+          fi
+        }
+
+  win-gui:
+    desc: The windowed half of `ob build --gui` on Windows -- the size asked for, and the display in ob itself
+    cmds:
+      - |
+        set -eo pipefail
+        # `bash`, spelled out: this step is the one that runs on Windows, where task execs the
+        # file itself and a shell script is not a Win32 application.
+        bash {{.CURRENT_DIR}}/tests/win-gui-check.sh {{.BUILD_DIR}}/bundle-win64 || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            # No wine here: a window is drawn on the machine it is drawn on, and under wine this
+            # measures wine's window and not Windows'. So the step runs on Windows or skips.
+            [ -z "$WIN_GUI_REQUIRE" ] || { echo "[FAIL] the windowed half needs Windows and the Windows SDK (task win-bundle), and WIN_GUI_REQUIRE is set"; exit 1; }
+            echo "[SKIP] the windowed half is measured on Windows itself, against the Windows SDK (task win-bundle)"
           else
             exit "$status"
           fi
