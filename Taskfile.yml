@@ -608,6 +608,7 @@ tasks:
       - task: bind
       - task: display
       - task: wm
+      - task: zoom
       - task: terminal
       - task: treesitter
 
@@ -624,6 +625,20 @@ tasks:
       - |
         set -eo pipefail
         {{.CURRENT_DIR}}/tests/wm-check.sh {{.BUILD_DIR}}/{{.HOST}}
+
+  zoom:
+    desc: The size of a pixel, and the zoom a dense screen gets from it (needs Xephyr)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/zoom-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "[SKIP] measuring the pixel size needs Xephyr and a bundled SDK (task bundle)"
+          else
+            exit "$status"
+          fi
+        }
 
   backdrop:
     desc: The wallpaper a person picks -- replaced, not stacked, and still there next start

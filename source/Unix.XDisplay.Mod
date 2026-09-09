@@ -381,12 +381,22 @@ TYPE
 				VAR
 					event: X11.Event;  root: X11.Window;
 					gRoot, gX, gY, gW, gH, gBW, gD, res: SIGNED32;  screenw, screenh	: SIGNED32;
+					screenmm: SIGNED32;
 				BEGIN
 					xdisp := disp;
 					Machine.Acquire( Machine.X11 );
 					screen := X11.DefaultScreen( xdisp );
 					screenw := X11.DisplayWidth( xdisp, screen );
 					screenh := X11.DisplayHeight( xdisp, screen );
+					(*	The size of a pixel, as unit/36000 mm, which is what WindowManager zooms the view
+						by: X reports the screen in millimetres, so this is that over the pixels across
+						it. Both other displays in the tree have always answered -- Windows from
+						LogPixelsX, Android from the application -- and this one never did, so every X11
+						screen looked nominal and a dense one came up laid out at a fraction of its size.
+						A server that does not know its screen answers 0 or less, and then unit stays 0,
+						which ZoomForUnit reads as "do not zoom" -- the behaviour every X11 screen had. *)
+					screenmm := X11.DisplayWidthMM( xdisp, screen );
+					IF (screenmm > 0) & (screenw > 0) THEN  unit := 36000 * screenmm DIV screenw  END;
 					depth := X11.DefaultDepth( xdisp, screen );
 					cmap := X11.DefaultColormap( xdisp, screen );
 					foreground := X11.BlackPixel( xdisp, screen );
