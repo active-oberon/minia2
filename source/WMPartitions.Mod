@@ -781,9 +781,9 @@ TYPE
 		END ButtonHandler;
 
 		PROCEDURE ScrollY(sender, data : ANY);
-		VAR y : WMProperties.Int32Property;
+		VAR y : WMProperties.SizeProperty;
 		BEGIN
-			y := data (WMProperties.Int32Property);
+			y := data (WMProperties.SizeProperty);
 			grid.bounds.SetTop(-y.Get());
 		END ScrollY;
 

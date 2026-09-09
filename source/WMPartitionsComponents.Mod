@@ -161,7 +161,7 @@ TYPE
 		diskOverviewPanel : WMStandardComponents.Panel;
 
 		scrollbarX, scrollbarY : WMStandardComponents.Scrollbar;
-		scrollX, scrollY : SIGNED32; (* current position of scrollbars *)
+		scrollX, scrollY : SIZE; (* current position of scrollbars *)
 
 		titleGrid : NoWheelGrid; (* prototype; for layouting only *)
 		maxWidths : ARRAY DiskOverviewTableColumns OF SIZE; (* maximum cell widths per column*)
@@ -281,16 +281,16 @@ TYPE
 		END CreateContent;
 
 		PROCEDURE ScrollY(sender, data : ANY);
-		VAR y : WMProperties.Int32Property;
+		VAR y : WMProperties.SizeProperty;
 		BEGIN
-			IF data # NIL THEN y := data (WMProperties.Int32Property); scrollY := y.Get(); END;
+			IF data # NIL THEN y := data (WMProperties.SizeProperty); scrollY := y.Get(); END;
 			diskOverviewPanel.bounds.SetTop(-scrollY);
 		END ScrollY;
 
 		PROCEDURE ScrollX(sender, data : ANY);
-		VAR x : WMProperties.Int32Property;
+		VAR x : WMProperties.SizeProperty;
 		BEGIN
-			IF data # NIL THEN x := data (WMProperties.Int32Property); scrollX := x.Get(); END;
+			IF data # NIL THEN x := data (WMProperties.SizeProperty); scrollX := x.Get(); END;
 			diskOverviewPanel.bounds.SetLeft(-scrollX);
 		END ScrollX;
 
@@ -1195,7 +1195,7 @@ TYPE
 
 		scrollbarY : WMStandardComponents.Scrollbar;
 		scrollPanel : WMStandardComponents.Panel;
-		scrollY : SIGNED32; (* current position of scrollbar *)
+		scrollY : SIZE; (* current position of scrollbar *)
 
 		state : SIGNED32;
 		timer : Kernel.Timer;
@@ -1272,9 +1272,9 @@ TYPE
 		END Initialize;
 
 		PROCEDURE ScrollY(sender, data : ANY);
-		VAR y : WMProperties.Int32Property;
+		VAR y : WMProperties.SizeProperty;
 		BEGIN
-			IF data # NIL THEN y := data (WMProperties.Int32Property); scrollY := y.Get(); END;
+			IF data # NIL THEN y := data (WMProperties.SizeProperty); scrollY := y.Get(); END;
 			scrollPanel.bounds.SetTop(-scrollY);
 		END ScrollY;
 
