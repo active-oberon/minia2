@@ -1,0 +1,508 @@
+# Tests for source/FoxBinaryCode.Mod -- the last step before an object file: the bit bucket a
+# backend writes its instructions into, and the fixup that patches an address into bits already
+# written.
+#
+# options --command="System.Free Test FoxBinaryCodeTestShared;System.Load Test"
+#
+# It had no test of its own, and two defects were found in it by reading on 07.09 (GetLongreal read
+# four bytes of eight; ConvertReal encoded the bits by hand and had no answer for a subnormal).
+# Both were fixed then without a case behind them -- these are that case, plus the rest of the
+# module.
+#
+# A section here is a bit set plus a program counter measured in units, where a unit is as small as
+# one bit and as large as 32. Everything a backend does goes through it: PutByte/PutWord/PutDWord/
+# PutQWord write at the pc and advance it, the ...At twins write at an address and leave the pc
+# alone, and ApplyFixup patches a displacement into a pattern of bit fields. A case builds the
+# section by hand, because a backend of the tree only ever builds one shape of it and the module
+# claims to serve four.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxBinaryCodeTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A binary section built by hand, and what comes back out of it" *)
+
+	IMPORT BinaryCode := FoxBinaryCode, Basic := FoxBasic, ObjectFile, Streams, Strings;
+
+	TYPE
+		Text* = ARRAY 8192 OF CHAR;
+		Section* = BinaryCode.Section;
+		Unit* = BinaryCode.Unit;
+
+	(** A code section of the given endianness and unit width -- one byte to the unit is what every byte-addressed backend asks for. *)
+	PROCEDURE New* (unit: ObjectFile.Bits; bigEndian: BOOLEAN): Section;
+	VAR name: Basic.SegmentedName;
+	BEGIN
+		Basic.ToSegmentedName("Test", name);
+		RETURN BinaryCode.NewBinarySection(ObjectFile.Code, unit, name, FALSE, bigEndian)
+	END New;
+
+	(** The bytes of a section as hexadecimal, so a case can say what the memory image looks like. *)
+	PROCEDURE Hex* (section: Section; from, to: Unit): Text;
+	VAR text: Text; digits: ARRAY 3 OF CHAR; i: Unit;
+	BEGIN
+		text := "";
+		FOR i := from TO to DO
+			Strings.IntToHexStr(ORD(section.GetByte(i)), 2, digits);
+			Strings.AppendX(text, digits)
+		END;
+		RETURN text
+	END Hex;
+
+	(** Fixup patterns from a table of offset/bits pairs, the way the comment in ObjectFile writes them. *)
+	PROCEDURE Patterns* (CONST offset, bits: ARRAY OF SIGNED32; count: SIGNED32): ObjectFile.FixupPatterns;
+	VAR patterns: ObjectFile.FixupPatterns; i: SIGNED32;
+	BEGIN
+		NEW(patterns, count);
+		FOR i := 0 TO count-1 DO
+			patterns[i].offset := offset[i]; patterns[i].bits := bits[i]
+		END;
+		RETURN patterns
+	END Patterns;
+
+	(** One pattern of `bits` bits at offset 0 -- the shape of nearly every fixup a real backend makes. *)
+	PROCEDURE OnePattern* (bits: SIGNED32): ObjectFile.FixupPatterns;
+	VAR offsets, widths: ARRAY 1 OF SIGNED32;
+	BEGIN
+		offsets[0] := 0; widths[0] := bits;
+		RETURN Patterns(offsets, widths, 1)
+	END OnePattern;
+
+	(** A fixup against a symbol whose name never matters here -- only its displacement does. *)
+	PROCEDURE Fixup* (mode: INTEGER; offset, displacement: Unit; scale: ObjectFile.Bits;
+		patterns: ObjectFile.FixupPatterns): BinaryCode.Fixup;
+	VAR symbol: ObjectFile.Identifier;
+	BEGIN
+		Basic.ToSegmentedName("Target", symbol.name); symbol.fingerprint := 0;
+		RETURN BinaryCode.NewFixup(mode, offset, symbol, 0, displacement, scale, patterns)
+	END Fixup;
+
+	(** Everything a section says about itself, for the cases about Dump. *)
+	PROCEDURE Dumped* (section: Section): Text;
+	VAR out: Streams.StringWriter; text: Text;
+	BEGIN
+		Streams.OpenStringWriter(out, LEN(text));
+		section.Dump(out); out.Update; out.Get(text);
+		RETURN text
+	END Dumped;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	END FoxBinaryCodeTestShared.
+
+positive: what goes in at the pc comes back out at the same address
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.PutByte(12H);
+		ASSERT(s.pc = 1, 1);
+		s.PutWord(3456H);
+		ASSERT(s.pc = 3, 2);
+		s.PutDWord(789ABCDEH);
+		ASSERT(s.pc = 7, 3);
+		s.PutQWord(0123456789ABCDEFH);
+		ASSERT(s.pc = 15, 4);
+
+		ASSERT(ORD(s.GetByte(0)) = 12H, 5);
+		ASSERT(s.GetWord(1) = 3456H, 6);
+		ASSERT(s.GetDWord(3) = 789ABCDEH, 7);
+		ASSERT(s.GetQWord(7) = 0123456789ABCDEFH, 8);
+
+		(*	The bytes of a little-endian image, least significant first. *)
+		ASSERT(T.Hex(s, 0, 14) = "125634DEBC9A78EFCDAB8967452301", 9)
+	END Test.
+
+positive: a big-endian section writes the same numbers the other way round
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section;
+	BEGIN
+		(*	Endianness here is a property of the section, not of the host: the tree has big-endian
+			targets (TRM) and the case has to hold on a little-endian machine. *)
+		s := T.New(8, TRUE);
+		s.PutWord(1234H);
+		s.PutDWord(56789ABCH);
+		s.PutQWord(0011223344556677H);
+
+		ASSERT(T.Hex(s, 0, 1) = "1234", 1);
+		ASSERT(T.Hex(s, 2, 5) = "56789ABC", 2);
+		ASSERT(T.Hex(s, 6, 13) = "0011223344556677", 3);
+
+		(*	And reading is the mirror of writing, whatever the order. *)
+		ASSERT(s.GetWord(0) = 1234H, 4);
+		ASSERT(s.GetDWord(2) = 56789ABCH, 5);
+		ASSERT(s.GetQWord(6) = 0011223344556677H, 6)
+	END Test.
+
+positive: the ...At twins write at an address and leave the pc where it was
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section; pc: T.Unit;
+	BEGIN
+		(*	This is how a backend patches a forward jump: the instruction is emitted with a hole,
+			and the hole is filled later without disturbing the pc the emitter is at. *)
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		s.PutQWord(0);
+		pc := s.pc;
+		ASSERT(pc = 16, 1);
+
+		s.PutByteAt(0, 0AAH);
+		s.PutWordAt(1, 0BBCCH);
+		s.PutDWordAt(3, 5DEEFF00H);
+		s.PutQWordAt(7, 0102030405060708H);
+		ASSERT(s.pc = pc, 2);
+
+		ASSERT(ORD(s.GetByte(0)) = 0AAH, 3);
+		ASSERT(s.GetWord(1) = 0BBCCH, 4);
+		ASSERT(s.GetDWord(3) = 5DEEFF00H, 5);
+		ASSERT(s.GetQWord(7) = 0102030405060708H, 6)
+	END Test.
+
+positive: PutBytes writes the width it is asked for, and all four widths exist
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section;
+	BEGIN
+		(*	PutBytes is the entry the intermediate backend uses when the width is a number it
+			computed rather than a literal in the source, so every case of the CASE matters. *)
+		s := T.New(8, FALSE);
+		s.PutBytes(0FFH, 1);
+		ASSERT(s.pc = 1, 1);
+		s.PutBytes(0FFFFH, 2);
+		ASSERT(s.pc = 3, 2);
+		s.PutBytes(-1, 4);
+		ASSERT(s.pc = 7, 3);
+		s.PutBytes(-1, 8);
+		ASSERT(s.pc = 15, 4);
+		ASSERT(T.Hex(s, 0, 14) = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", 5)
+	END Test.
+
+positive: a real and a long real survive the trip through the bits
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, BinaryCode := FoxBinaryCode;
+	VAR s: T.Section;
+	BEGIN
+		(*	GetLongreal read four bytes of the eight it had written (GetDWord where GetQWord was
+			meant), so every FLOAT64 constant read back out of a section was wrong. Found by
+			reading on 07.09 and fixed then; this is the case that keeps it fixed. *)
+		s := T.New(8, FALSE);
+		s.PutReal(1.5);
+		s.PutLongreal(1.5);
+		ASSERT(s.pc = 12, 1);
+		ASSERT(s.GetReal(0) = 1.5, 2);
+		ASSERT(s.GetLongreal(4) = 1.5, 3);
+
+		(*	And the bits are IEEE 754, which is what the target expects to find in its image. *)
+		ASSERT(T.Hex(s, 0, 3) = "0000C03F", 4);
+		ASSERT(T.Hex(s, 4, 11) = "000000000000F83F", 5)
+	END Test.
+
+positive: a subnormal and an infinity are numbers too
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, BinaryCode := FoxBinaryCode;
+	VAR s: T.Section; smallest, infinity, minusZero: FLOAT64;
+	BEGIN
+		(*	The conversion used to normalise the value in a loop and shift the significand out one
+			bit at a time, which has no answer for a subnormal (the exponent field came out
+			negative and ran into the sign) and none for an infinity. Both are values a program
+			can write as a constant, and both now go through SYSTEM.VAL. *)
+		smallest := BinaryCode.ConvertToLongreal(1);						(* 4.9E-324, the smallest subnormal *)
+		infinity := BinaryCode.ConvertToLongreal(7FF0000000000000H);
+		ASSERT(smallest > 0, 1);
+		ASSERT(infinity > 0, 2);
+
+		s := T.New(8, FALSE);
+		s.PutLongreal(smallest);
+		s.PutLongreal(infinity);
+		ASSERT(s.GetLongreal(0) = smallest, 3);
+		ASSERT(s.GetLongreal(8) = infinity, 4);
+		ASSERT(T.Hex(s, 0, 7) = "0100000000000000", 5);
+		ASSERT(T.Hex(s, 8, 15) = "000000000000F07F", 6);
+
+		(*	Negative zero is the one value whose sign bit is all it has, and it has to survive the
+			trip -- a constant folded to +0.0 by the compiler would not show that, so the value is
+			built from its bits. *)
+		minusZero := BinaryCode.ConvertToLongreal(SIGNED64(8000000000000000H));
+		ASSERT(minusZero = 0, 7);
+		s.PutLongreal(minusZero);
+		ASSERT(T.Hex(s, 16, 23) = "0000000000000080", 8)
+	END Test.
+
+positive: an absolute fixup patches the displacement into the bits
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.PutByte(0E8H);					(* an opcode, and four bytes of hole after it *)
+		s.PutDWord(0);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 1, 12345678H, 0, T.OnePattern(32))), 1);
+		ASSERT(s.GetDWord(1) = 12345678H, 2);
+		ASSERT(ORD(s.GetByte(0)) = 0E8H, 3)
+	END Test.
+
+positive: a relative fixup is measured from the fixup, not from the section
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Relative, 4, 100H, 0, T.OnePattern(32))), 1);
+		ASSERT(s.GetDWord(4) = 100H - 4, 2);
+
+		(*	Backwards is the common case -- a loop jumps to a label behind it. *)
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Relative, 4, 0, 0, T.OnePattern(32))), 3);
+		ASSERT(s.GetDWord(4) = 0FFFFFFFCH, 4)
+	END Test.
+
+positive: a fixup in several fields fills them least significant first
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section; offsets, widths: ARRAY 2 OF SIGNED32;
+	BEGIN
+		(*	ARM and A64 hold an address in two fields with something else between them, which is
+			the whole reason a fixup is a list of patterns and not a width. The patterns consume
+			the address in order: the first pattern gets the low bits. *)
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		offsets[0] := 0; widths[0] := 8;
+		offsets[1] := 16; widths[1] := 8;
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 0, 0ABCDH, 0, T.Patterns(offsets, widths, 2))), 1);
+		ASSERT(ORD(s.GetByte(0)) = 0CDH, 2);
+		ASSERT(ORD(s.GetByte(1)) = 0, 3);
+		ASSERT(ORD(s.GetByte(2)) = 0ABH, 4);
+
+		(*	And the sum of the fields is the width that has to hold the address: one bit more and
+			the fixup is refused rather than folded into the fields. *)
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 0, 1ABCDH, 0, T.Patterns(offsets, widths, 2))), 5)
+	END Test.
+
+positive: a scaled fixup stores the address in the units the instruction counts in
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		(*	A64 branches count instructions, not bytes, so the fixup carries a scale of -2 and the
+			stored word is the byte displacement shifted right by two. *)
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 0, 40H, -2, T.OnePattern(32))), 1);
+		ASSERT(s.GetDWord(0) = 10H, 2)
+	END Test.
+
+positive: an address that does not fit the pattern is refused, not truncated
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		(*	This is the check that turns a jump too far into a diagnostic instead of a jump
+			somewhere else. An absolute field is read signed by one target and unsigned by the
+			next, so eight bits hold -128..255 -- but a negative address only fits when the sign
+			bit is inside the field. It was not: the check shifted the address right by the whole
+			width for both signs, so -129..-256 passed and were then written as 7F..00, an address
+			with no relation to the one asked for. *)
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 0, 0FFH, 0, T.OnePattern(8))), 1);
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 1, 100H, 0, T.OnePattern(8))), 2);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 2, -80H, 0, T.OnePattern(8))), 3);
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 3, -81H, 0, T.OnePattern(8))), 4);
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Absolute, 4, -100H, 0, T.OnePattern(8))), 5);
+
+		(*	A refused fixup leaves the bits alone -- the caller reports an error and the image is
+			thrown away, but a half-patched instruction in a dump is a lie. *)
+		ASSERT(ORD(s.GetByte(1)) = 0, 6);
+		ASSERT(ORD(s.GetByte(3)) = 0, 7);
+		ASSERT(ORD(s.GetByte(4)) = 0, 8)
+	END Test.
+
+positive: a relative displacement is signed, and the whole field is the sign
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		(*	Unlike an absolute address, a relative one is signed on every target, so eight bits
+			hold -128..127 and 128 is a jump too far. *)
+		s := T.New(8, FALSE);
+		s.PutQWord(0);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Relative, 0, 7FH, 0, T.OnePattern(8))), 1);
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Relative, 0, 80H, 0, T.OnePattern(8))), 2);
+		ASSERT(s.ApplyFixup(T.Fixup(ObjectFile.Relative, 0, -80H, 0, T.OnePattern(8))), 3);
+		ASSERT(~s.ApplyFixup(T.Fixup(ObjectFile.Relative, 0, -81H, 0, T.OnePattern(8))), 4)
+	END Test.
+
+positive: Align moves the pc up to a multiple, and only up
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.PutByte(1);
+		s.Align(4);
+		ASSERT(s.pc = 4, 1);
+		s.Align(4);
+		ASSERT(s.pc = 4, 2);
+		s.Align(1);
+		ASSERT(s.pc = 4, 3);
+		s.PutByte(2);
+		s.Align(16);
+		ASSERT(s.pc = 16, 4);
+
+		(*	The gap is zero, not whatever the bit set had there. *)
+		ASSERT(T.Hex(s, 1, 3) = "000000", 5);
+		ASSERT(ORD(s.GetByte(4)) = 2, 6)
+	END Test.
+
+positive: SetPC can go back, and what was written stays written
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared;
+	VAR s: T.Section;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.PutDWord(11223344H);
+		s.SetPC(0);
+		ASSERT(s.GetDWord(0) = 11223344H, 1);
+		s.PutByte(0FFH);
+		ASSERT(s.GetDWord(0) = 112233FFH, 2);
+
+		(*	And forward past the end grows the section, which is how a data section reserves space. *)
+		s.SetPC(100);
+		s.PutByte(7);
+		ASSERT(ORD(s.GetByte(100)) = 7, 3);
+		ASSERT(ORD(s.GetByte(50)) = 0, 4)
+	END Test.
+
+positive: a section says its size, its fixups and its bytes when dumped
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section; text: T.Text;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.SetAlignment(FALSE, 4);
+		s.PutByte(0DEH); s.PutByte(0ADH);
+		s.fixupList.AddFixup(T.Fixup(ObjectFile.Absolute, 0, 20H, 0, T.OnePattern(32)));
+		text := T.Dumped(s);
+		ASSERT(T.Said(text, "unit=8"), 1);
+		ASSERT(T.Said(text, "relocatable"), 2);
+		ASSERT(T.Said(text, "align=4"), 3);
+		ASSERT(T.Said(text, "size=2"), 4);
+		ASSERT(T.Said(text, "Target"), 5);
+		ASSERT(T.Said(text, "displ=32"), 6);
+		ASSERT(T.Said(text, "abs"), 7);
+		ASSERT(T.Said(text, "DE"), 8);
+		ASSERT(T.Said(text, "AD"), 9)
+	END Test.
+
+positive: the fixup list and the alias list keep the order they were given
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, BinaryCode := FoxBinaryCode, Basic := FoxBasic, ObjectFile;
+	VAR s: T.Section; alias: BinaryCode.Alias; identifier: ObjectFile.Identifier; text: T.Text;
+	BEGIN
+		s := T.New(8, FALSE);
+		s.fixupList.AddFixup(T.Fixup(ObjectFile.Absolute, 0, 1, 0, T.OnePattern(32)));
+		s.fixupList.AddFixup(T.Fixup(ObjectFile.Absolute, 4, 2, 0, T.OnePattern(32)));
+		ASSERT(s.fixupList.fixups = 2, 1);
+		ASSERT(s.fixupList.firstFixup.offset = 0, 2);
+		ASSERT(s.fixupList.lastFixup.offset = 4, 3);
+		ASSERT(s.fixupList.firstFixup.nextFixup = s.fixupList.lastFixup, 4);
+
+		identifier.fingerprint := 0;
+		Basic.ToSegmentedName("First", identifier.name);
+		NEW(alias, identifier, 0);
+		s.aliasList.AddAlias(alias);
+		ASSERT(s.aliasList.aliases = 1, 5);
+		ASSERT(s.aliasList.firstAlias = alias, 6)
+	END Test.
+
+positive: Reset empties the section and forgets the fixups
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, ObjectFile;
+	VAR s: T.Section;
+	BEGIN
+		(*	Reset is what the intermediate backend calls when it emits a section a second time --
+			a section is emitted, measured, and emitted again once the sizes are known. *)
+		s := T.New(8, FALSE);
+		s.PutDWord(11223344H);
+		s.fixupList.AddFixup(T.Fixup(ObjectFile.Absolute, 0, 1, 0, T.OnePattern(32)));
+		s.Reset;
+		ASSERT(s.pc = 0, 1);
+		ASSERT(s.fixupList.fixups = 0, 2);
+		s.PutByte(0);
+		ASSERT(ORD(s.GetByte(0)) = 0, 3)
+	END Test.
+
+positive: a label remembers the pc it was put at
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, Basic := FoxBasic;
+	VAR s: T.Section; position: Basic.Position;
+	BEGIN
+		(*	Labels are how a trap address becomes a source position, so their offsets are the map
+			itself. They are kept newest first. *)
+		s := T.New(8, FALSE);
+		position.start := 10;
+		s.AddLabel(position);
+		s.PutDWord(0);
+		position.start := 20;
+		s.AddLabel(position);
+		ASSERT(s.labels.offset = 4, 1);
+		ASSERT(s.labels.position.start = 20, 2);
+		ASSERT(s.labels.prev.offset = 0, 3);
+		ASSERT(s.labels.prev.position.start = 10, 4)
+	END Test.
+
+positive: DumpCode prints the range it was asked for
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, Streams;
+	VAR s: T.Section; out: Streams.StringWriter; text: T.Text; i: SIGNED32;
+	BEGIN
+		(*	The range arguments were ignored on the path without comments -- DumpBlock was called
+			with the whole section whatever was asked for. Only Dump called it, with the whole
+			section, so nobody saw it; the next caller would have. *)
+		s := T.New(8, FALSE);
+		FOR i := 0 TO 19 DO s.PutByte(i) END;
+		Streams.OpenStringWriter(out, LEN(text));
+		s.DumpCode(out, 2, 3); out.Update; out.Get(text);
+		ASSERT(T.Said(text, "02 03"), 1);
+		ASSERT(~T.Said(text, "00 01"), 2);
+		ASSERT(~T.Said(text, "04"), 3)
+	END Test.
+
+positive: a dump breaks its line every sixteen bytes, with a gap in the middle
+
+	MODULE Test;
+	IMPORT T := FoxBinaryCodeTestShared, Streams;
+	VAR s: T.Section; out: Streams.StringWriter; text: T.Text; i: SIGNED32;
+	BEGIN
+		(*	The gap between the two halves of a line was written at address 8 rather than at
+			column 8, so it appeared once in the whole dump and every line after the first was one
+			run of sixteen. *)
+		s := T.New(8, FALSE);
+		FOR i := 0 TO 31 DO s.PutByte(0) END;
+		Streams.OpenStringWriter(out, LEN(text));
+		s.DumpCode(out, 0, 31); out.Update; out.Get(text);
+		ASSERT(T.Said(text, "00 00 00 00 00 00 00 00  00"), 1);   (* the gap, twice: once per line *)
+		ASSERT(T.Said(text, "10] "), 2)                            (* and the second line starts at 16 *)
+	END Test.

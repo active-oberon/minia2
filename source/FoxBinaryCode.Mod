@@ -495,6 +495,8 @@ TYPE
 				address := ASH (address, -pattern.bits);
 			END PatchPattern;
 
+			(*	CheckBits accepts an absolute address that fits the field either way round, signed or
+				unsigned -- but a negative one only fits when the sign bit is inside the field. *)
 			PROCEDURE CheckBits(): BOOLEAN;
 			VAR nobits, remainder: Bits; i: SIZE;
 			BEGIN
@@ -502,7 +504,7 @@ TYPE
 				FOR i := 0 TO fixup.patterns-1 DO
 					INC(nobits,fixup.pattern[i].bits);
 				END;
-				IF fixup.mode = Relative THEN DEC(nobits) END;
+				IF (fixup.mode = Relative) OR (address < 0) THEN DEC(nobits) END;
 				remainder := ASH(address,-nobits);
 				RETURN (nobits >31) OR (remainder = 0) OR (remainder = -1)
 			END CheckBits;
@@ -565,7 +567,7 @@ TYPE
 					w.String("] ");
 					nr := 0;
 					WHILE (i<=to) & (nr<16) DO
-						IF i = 8 THEN w.String(" ") END;
+						IF nr = 8 THEN w.String(" ") END; (* the gap belongs to the column, not to address 8 *)
 						DumpUnit(i);
 						w.String(" ");
 						INC(i); INC(nr);
@@ -596,7 +598,7 @@ TYPE
 					c.Dump(w); w.Ln; c := c.nextComment;
 				END;
 			ELSE
-				DumpBlock(0,SELF.pc-1)
+				DumpBlock(from,to)
 			END
 		END DumpCode;
 
