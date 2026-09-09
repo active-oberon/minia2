@@ -1,0 +1,182 @@
+
+# Tests for Inputs: where a keystroke and a pointer arrive from whatever driver is installed (2026-09-09).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# 329 lines, tier 1, and no suite until now although every windowed program in the SDK reads its
+# events here: `ob build --gui` installs a driver that broadcasts on Inputs.keyboard and
+# Inputs.mouse, and the program registers a sink. What the module promises and nothing else
+# states: a broadcaster delivers to everybody registered at the moment of the message, and the
+# Pointer turns a driver's movements into a position inside limits somebody set.
+#
+# Recorded and not changed, both because a caller can see them and neither has a caller that
+# minds: Register does not look for a sink it already holds, so a sink registered twice hears
+# twice and one Unregister leaves it hearing once. Delivery is in the reverse of registration
+# order, which no caller in the tree depends on and no comment claims.
+#
+# NOT covered here, and it needs a driver rather than a case: Broadcaster.Handle holds the
+# monitor while it calls the sinks, so a sink that registers or unregisters from inside Handle
+# deadlocks instead of failing. The same shape was a defect in Events (7.26) -- there the cure
+# was in the module; here every caller in the tree is a driver that only broadcasts, so a case
+# that proved it would hang the suite rather than fail it.
+
+positive: everybody registered hears the message
+
+	MODULE Test;
+	IMPORT Inputs;
+	TYPE
+		Counter = OBJECT (Inputs.Sink)
+		VAR heard: SIZE; lastKey: SIGNED32;
+
+			PROCEDURE Handle*(VAR m: Inputs.Message);
+			BEGIN
+				INC(heard);
+				IF m IS Inputs.KeyboardMsg THEN
+					WITH m: Inputs.KeyboardMsg DO lastKey := m.keysym END
+				END
+			END Handle;
+
+		END Counter;
+
+	VAR group: Inputs.Group; one, two: Counter; message: Inputs.KeyboardMsg;
+
+	BEGIN
+		group := Inputs.NewBroadcaster();
+		NEW(one); NEW(two);
+		group.Register(one); group.Register(two);
+
+		message.keysym := Inputs.KsEscape; message.ch := 1BX; message.flags := {};
+		group.Handle(message);
+		ASSERT(one.heard = 1); ASSERT(two.heard = 1);
+		ASSERT(one.lastKey = Inputs.KsEscape); ASSERT(two.lastKey = Inputs.KsEscape);
+
+		(* a sink that has left hears nothing more *)
+		group.Unregister(one);
+		message.keysym := Inputs.KsReturn;
+		group.Handle(message);
+		ASSERT(one.heard = 1); ASSERT(two.heard = 2);
+		ASSERT(one.lastKey = Inputs.KsEscape); ASSERT(two.lastKey = Inputs.KsReturn);
+
+		(* unregistering something that was never there changes nothing *)
+		NEW(one); group.Unregister(one);
+		group.Handle(message);
+		ASSERT(two.heard = 3)
+	END Test.
+
+positive: a sink registered twice hears twice
+
+	MODULE Test;
+	IMPORT Inputs;
+	TYPE
+		Counter = OBJECT (Inputs.Sink)
+		VAR heard: SIZE;
+
+			PROCEDURE Handle*(VAR m: Inputs.Message);
+			BEGIN INC(heard) END Handle;
+
+		END Counter;
+
+	VAR group: Inputs.Group; sink: Counter; message: Inputs.KeyboardMsg;
+
+	BEGIN
+		(*	Recorded, not repaired: Plugins.AddEventHandler looks for the handler it is given and
+			answers AlreadyRegistered, and Register does not. Every caller in the tree registers
+			once, and a sink is cheap to compare, so this is the twin that does less. *)
+		group := Inputs.NewBroadcaster();
+		NEW(sink);
+		group.Register(sink); group.Register(sink);
+		message.keysym := Inputs.KsTab;
+		group.Handle(message);
+		ASSERT(sink.heard = 2);
+
+		group.Unregister(sink);
+		group.Handle(message);
+		ASSERT(sink.heard = 3)                        (* one Unregister for one Register *)
+	END Test.
+
+positive: the pointer stays inside the limits it was given
+
+	MODULE Test;
+	IMPORT Inputs;
+	TYPE
+		Watch = OBJECT (Inputs.Sink)
+		VAR heard: SIZE; x, y: SIGNED32; keys: SET;
+
+			PROCEDURE Handle*(VAR m: Inputs.Message);
+			BEGIN
+				IF m IS Inputs.PointerMsg THEN
+					WITH m: Inputs.PointerMsg DO
+						INC(heard);  x := m.x;  y := m.y;  keys := m.keys
+					END
+				END
+			END Handle;
+
+		END Watch;
+
+	VAR watch: Watch; mouse: Inputs.MouseMsg; absolute: Inputs.AbsMouseMsg;
+
+	BEGIN
+		(*	Inputs.main is the pointer the system installs: a driver hands it movements, it keeps
+			the position and broadcasts it on Inputs.pointer. The limits are the screen, so a
+			driver sets them when it registers a display -- and everything outside them has to
+			come back as an edge, not as a coordinate nobody can draw at. *)
+		NEW(watch);
+		Inputs.pointer.Register(watch);
+		Inputs.main.SetLimits(100, 50, 0);
+		ASSERT(watch.heard >= 1);                     (* setting the limits reports a position *)
+
+		mouse.dx := 1000; mouse.dy := 1000; mouse.dz := 0; mouse.keys := {0};
+		Inputs.mouse.Handle(mouse);
+		ASSERT(watch.x = 100); ASSERT(watch.y = 50);
+		ASSERT(0 IN watch.keys);                      (* the buttons travel with the position *)
+
+		mouse.dx := -5000; mouse.dy := -5000; mouse.keys := {};
+		Inputs.mouse.Handle(mouse);
+		ASSERT(watch.x = 0); ASSERT(watch.y = 0);
+		ASSERT(watch.keys = {});
+
+		(* an absolute driver -- a touch screen, an X11 pointer -- sets the position outright *)
+		absolute.x := 42; absolute.y := 17; absolute.z := 0; absolute.keys := {};
+		Inputs.mouse.Handle(absolute);
+		ASSERT(watch.x = 42); ASSERT(watch.y = 17);
+
+		absolute.x := 999; absolute.y := 999;
+		Inputs.mouse.Handle(absolute);
+		ASSERT(watch.x = 100); ASSERT(watch.y = 50);
+
+		Inputs.pointer.Unregister(watch)
+	END Test.
+
+positive: the three groups and the plugin registry are there to register with
+
+	MODULE Test;
+	IMPORT Inputs;
+	BEGIN
+		ASSERT(Inputs.keyboard # NIL);
+		ASSERT(Inputs.mouse # NIL);
+		ASSERT(Inputs.pointer # NIL);
+		ASSERT(Inputs.main # NIL);
+		ASSERT(Inputs.oberonInput # NIL);
+		ASSERT(Inputs.oberonInput.name = "Inputs")
+	END Test.
+
+negative: a sink that does not say what to do with the message
+
+	MODULE Test;
+	IMPORT Inputs;
+	VAR sink: Inputs.Sink; message: Inputs.KeyboardMsg;
+	BEGIN
+		(* Sink.Handle is abstract and halts; a sink is only useful extended *)
+		NEW(sink);
+		sink.Handle(message)
+	END Test.
+
+negative: a group that is not a broadcaster
+
+	MODULE Test;
+	IMPORT Inputs;
+	VAR group: Inputs.Group; sink: Inputs.Sink;
+	BEGIN
+		NEW(group); NEW(sink);
+		group.Register(sink)
+	END Test.

@@ -9,7 +9,7 @@ MODULE KbdMouse;   (* g.f.	9.7.07 *)
 
 (* replacement for the keyboard and mouse drivers in the Unix ports *)
 
-IMPORT Machine, S := SYSTEM, Inputs, Plugins, X11, Displays, XDisplay, Commands, Objects, Trace;
+IMPORT Machine, S := SYSTEM, Inputs, Plugins, X11, Displays, XDisplay, Commands, Modules, Objects, Trace;
 
 #IF COOP THEN
 	IMPORT Environment;
@@ -47,12 +47,17 @@ VAR
 	poll: Poll; 
 	keySymbol: ARRAY 256 OF SIGNED32;
 
+	(*	TerminateA2 asks the desktop to close down, and closes down itself where there is no desktop:
+		WMTerminator belongs to the window manager, and a program built with `ob build --gui` has the
+		display without it -- so the window's close button called a module that was not there and
+		nothing happened at all. *)
 	PROCEDURE TerminateA2;
 	VAR
 		res: INTEGER;
 		s: ARRAY 256 OF CHAR;
 	BEGIN
 		Commands.Call( "WMTerminator.Shutdown", {}, res, s );
+		IF res # Commands.Ok THEN  Modules.Shutdown( Modules.Reboot )  END
 	END TerminateA2;
 
 	PROCEDURE CheckAlternateKeys( VAR mb: SET );
@@ -267,7 +272,8 @@ VAR
 	
 	PROCEDURE Init*;
 	VAR  val: ARRAY 8 OF CHAR;
-	BEGIN		
+	BEGIN
+		GetXDisplay;	(* here, not in the body: Await blocks until XDisplay.Install has registered *)
 		Machine.GetConfig( "MB", val );
 		IF (val = "3") OR (val = "") THEN
 			DisableMouseEmulation
@@ -300,6 +306,11 @@ VAR
 	VAR i: SIGNED32;
 	BEGIN
 		FOR i := 0 TO 255 DO keySymbol[i] := i END;
+		(*	Escape has a character, so it comes through the table and not through the raw X keysym --
+			and it was the one named key the table left out, so `keysym = Inputs.KsEscape` never
+			matched on X11 while the Windows display has always delivered it (Windows.Display.Mod).
+			WMDialogs, WMNavigate and WMDemo all ask for exactly that. *)
+		keySymbol[01BH] := Inputs.KsEscape;
 		keySymbol[008H] := Inputs.KsBackSpace;
 		keySymbol[07FH] := Inputs.KsDelete;
 		keySymbol[009H] := Inputs.KsTab;
@@ -326,8 +337,7 @@ VAR
 	END GetXDisplay;
 
 BEGIN
-	ASSERT( SIGNED32({0} ) = 1 );
-	GetXDisplay;
+	ASSERT( SIGNED32({0} ) = 1 )
 END KbdMouse.
 
 

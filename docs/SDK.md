@@ -263,9 +263,17 @@ ob build   Hello.Mod -o hello    # standalone Linux binary (go build)
 ob build   Hello.Mod -t win64 -o hello.exe   # cross-build a Windows .exe
 ob build   Hello.Mod -t a64 -o hello-arm64  # cross-build an AArch64 binary
 ob compile Hello.Mod -o out      # just the .GofUu object file
+ob build   Window.Mod --gui      # a windowed binary: it opens its own window
 ob version                       # SDK banner
-obit repl                        # interactive A2 shell
+ob repl                          # interactive A2 shell
 ```
+
+`--gui` links the display and the input device into the binary and installs them before your
+procedure runs, so the program is handed a `Displays.Display` to draw on and gets its keys and its
+pointer through `Inputs` — one window with a canvas in it, no desktop and no widgets. It builds for
+this machine only (the windowed objects in `lib-gui/` are this SDK's own platform), and without the
+flag `IMPORT Displays` is still a compile error, which is what keeps a headless program headless.
+`examples/Window.Mod` is the shape: take the display, paint, register two sinks, leave on Escape.
 
 > **Quoting matters.** Use single quotes and `"$PWD"` exactly as above. `$PWD`
 > is left unexpanded in the alias definition and resolves to the *current*

@@ -51,7 +51,7 @@ VAR
 	debugging: BOOLEAN;			(* `ob dap` compiles with --debug, so DebugMap gets the line table *)
 
 	sdk-, project-: Path;			(* the SDK this binary belongs to; the directory the user is in *)
-	lib-, libWin-, libA64-, libLinux-, libSym-: Path;
+	lib-, libWin-, libA64-, libLinux-, libSym-, libGui-: Path;
 	packages-, bootList-, bootListWin-: Path;
 
 (* --- paths ------------------------------------------------------------------------------- *)
@@ -170,6 +170,7 @@ BEGIN
 	Join(sdk, "lib-a64", libA64);
 	Join(sdk, "lib-linux64", libLinux);
 	Join(sdk, "lib-sym", libSym);
+	Join(sdk, "lib-gui", libGui);	(* the display and the events, for `ob build --gui` only *)
 	Join(sdk, "packages", packages);
 	Join(sdk, "boot-modules.txt", bootList);
 	Join(sdk, "boot-modules-win64.txt", bootListWin);
@@ -855,15 +856,24 @@ END ReadBootList;
 	a generated module can be a string -- which is one more file the shell version had to create,
 	name and delete.
 *)
-PROCEDURE EntrySource(CONST module, procedure: ARRAY OF CHAR; VAR source: ARRAY OF CHAR);
+PROCEDURE EntrySource(CONST module, procedure: ARRAY OF CHAR; gui: BOOLEAN; VAR source: ARRAY OF CHAR);
 BEGIN
 	(* the command name is quoted with apostrophes: Oberon has no escape inside a string, so a
 	   double quote here would have to be written as one, and generated source is hard enough to
 	   read already *)
 	source := "MODULE ObEntry; IMPORT Commands, Modules, Trace, ";
+	(* the import is what links the display and the keyboard in; the call needs a name, because the
+	   Windows twin of Display.Install takes a context and the Unix one takes nothing *)
+	IF gui THEN Strings.Append(source, "Display, ") END;
 	Strings.Append(source, module);
 	Strings.Append(source, "; VAR res: INTEGER; msg: ARRAY 256 OF CHAR;");
-	Strings.Append(source, " BEGIN Commands.Call('");
+	Strings.Append(source, " BEGIN ");
+	IF gui THEN
+		Strings.Append(source, "Commands.Call('Display.Install', {Commands.Wait}, res, msg);");
+		Strings.Append(source, " IF res # 0 THEN Trace.String(msg); Trace.Ln;");
+		Strings.Append(source, " Modules.Shutdown(Modules.PowerDown) END;")
+	END;
+	Strings.Append(source, " Commands.Call('");
 	Strings.Append(source, module); Strings.AppendChar(source, '.');
 	Strings.Append(source, procedure);
 	Strings.Append(source, "', {Commands.Wait}, res, msg);");
@@ -904,13 +914,15 @@ VAR source, output, absolute, scratch, destination, directory, fileName, name: P
 	compilerPlatform, objectExtension, symbolExtension, suffix: Path;
 	linkOptions, boot, bootModules, library: Path;
 	arguments: ARRAY 4096 OF CHAR; entry: ARRAY 1024 OF CHAR; line: Path;
+	gui: BOOLEAN;
 BEGIN
-	source := ""; output := ""; procedure := "Do"; COPY(HostTarget, target);
+	source := ""; output := ""; procedure := "Do"; gui := FALSE; COPY(HostTarget, target);
 	WHILE NextArgument(argument) DO
 		IF (argument = "-o") OR (argument = "--output") THEN
 			IF ~NextArgument(output) THEN Die("-o needs a name"); RETURN END
 		ELSIF (argument = "-t") OR (argument = "--target") THEN
 			IF ~NextArgument(target) THEN Die("-t needs a target"); RETURN END
+		ELSIF argument = "--gui" THEN gui := TRUE
 		ELSIF argument[0] = '-' THEN
 			DieOn("unknown option: ", argument); RETURN
 		ELSIF source = "" THEN COPY(argument, source)
@@ -918,7 +930,7 @@ BEGIN
 		END
 	END;
 	IF source = "" THEN
-		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [Proc]"); RETURN
+		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [--gui] [Proc]"); RETURN
 	END;
 	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
 	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
@@ -926,6 +938,14 @@ BEGIN
 			linkOptions, suffix, boot) THEN RETURN END;
 	IF ~TargetLibrary(target, library) THEN RETURN END;
 	IF ~ReadBootList(boot, FALSE, bootModules) THEN DieOn("cannot read the boot module list ", boot); RETURN END;
+	(* The windowed objects are this SDK's own platform and nothing else: there is no lib-gui for a
+	   cross target, so asking for one has to say so rather than fail on an import. *)
+	IF gui & (target # HostTarget) THEN
+		DieOn("--gui builds for this machine only, not for target ", target); RETURN
+	END;
+	IF gui & ~ObHost.Exists(libGui) THEN
+		DieOn("this SDK ships no windowed objects: no ", libGui); RETURN
+	END;
 
 	IF output = "" THEN COPY(name, output); Strings.Append(output, suffix) END;
 	Absolute(project, output, destination);
@@ -952,9 +972,10 @@ BEGIN
 			OR ~AddVendored() OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
 		DiscardScratch(scratch); RETURN
 	END;
+	IF gui & ~AddSearchPath(libGui) THEN DiscardScratch(scratch); RETURN END;
 	BuildSiblings(scratch, compilerPlatform, objectExtension, symbolExtension);
 	IF CompileFile(absolute, compilerPlatform, objectExtension, symbolExtension, TRUE) THEN
-		EntrySource(name, procedure, entry);
+		EntrySource(name, procedure, gui, entry);
 		IF CompileString("ObEntry", entry, compilerPlatform, objectExtension, symbolExtension) THEN
 			(* the file name is quoted for the linker's option parser, which otherwise reads an
 			   unquoted value up to the first character that cannot be in a name: hello-arm64
@@ -3248,7 +3269,7 @@ PROCEDURE Help;
 BEGIN
 	Say("ob — a Go-style CLI over the A2 (Active Oberon) toolchain.");
 	Say("");
-	Say("  ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [Proc]");
+	Say("  ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [--gui] [Proc]");
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
 	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");

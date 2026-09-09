@@ -147,7 +147,9 @@ TYPE
 		VAR c: Plugin; item: EventHandlerList;
 		BEGIN {EXCLUSIVE}
 			ASSERT(p # NIL);
-			IF p.registry # NIL THEN	(* was registered *)
+			(* = SELF, not # NIL: a plugin registered in another registry is not in this list, and
+			   the walk below then ran off the end of it looking for one *)
+			IF p.registry = SELF THEN	(* was registered here *)
 				IF p = root THEN
 					root := root.link
 				ELSE

@@ -11,7 +11,8 @@
     "Display",
     "DisplayNull",
     "Displays",
-    "KbdMouse"
+    "KbdMouse",
+    "XDisplay"
   ],
   "status": "draft",
   "description": "Low-level device drivers: display registry, serial ports (V24), keyboard/mouse, PC speaker, clipboard.",
@@ -34,7 +35,8 @@
     "ShellSerial",
     "TVDriver",
     "V24",
-    "V24Tracer"
+    "V24Tracer",
+    "XDisplay"
   ],
   "requires": {
     "std/base": "*",
@@ -51,6 +53,7 @@
     "Six devices entered 2026-08-24, unclaimed until then: a joystick, the generic sequencer (negelef), a serial-line tracer, a raw printer, the serial shell and the TV tuner. All compile headless: a driver in this system is a module, not a kernel privilege.",
     "AndroidDisplay and AndroidInput (ours, out of the Android phase) and Beep entered 2026-08-24. The two Android ones are marked graphical: they ARE a display and an input device.",
     "Beep and Clipboard are marked graphical from 2026-08-24, and they were in the payload before that by an accident the check could not see: a module with a file per platform gets a line per file in the dependency graph, and the reader replaced instead of merging, so Windows.Beep.Mod (Kernel32) hid Unix.Beep.Mod (X11, Displays, XDisplay). Fixed in docker/gen-headless-core.sh; these two are what it caught.",
-    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload."
+    "Moved out of std/ 2026-08-27 by the Rust border (docs/STDLIB.md): the standard library holds what packages talk to each other through; this is a leaf that ob get can deliver. Sources still live in source/ -- only the classification moved. `headless` false keeps it out of the SDK payload.",
+    "XDisplay moved here from apps/desktop 2026-09-09: it is the X11 half of the pair whose other halves (Display, KbdMouse) were already here, and `ob build --gui` links all three. The desktop keeps DisplayDemo, which is a demo and not a driver."
   ]
 }

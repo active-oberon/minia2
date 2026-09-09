@@ -640,7 +640,8 @@ VAR
 	BEGIN
 		UnixFiles.GetWorkingDirectory( cwd );
 		COPY( Machine.version, winName );
-		Strings.Append( winName, ",  Work: " );  Strings.Append( winName, cwd );
+		(* AppendX, not Append: a working directory longer than the title array trapped the driver at install *)
+		Strings.AppendX( winName, ",  Work: " );  Strings.AppendX( winName, cwd );
 		COPY( winName, iconName);
 		i := 0;
 		WHILE iconName[i] > ' ' DO  INC( i )  END;

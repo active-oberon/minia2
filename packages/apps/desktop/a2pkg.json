@@ -113,7 +113,6 @@
     "WebDefaultSSMP",
     "WinApplications",
     "WindowManager",
-    "XDisplay",
     "YMF754Util"
   ],
   "requires": {

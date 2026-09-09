@@ -71,6 +71,7 @@ Unix.BootConsole.Mod
 Shell.Mod
 StdIOShell.Mod
 Displays.Mod
+Inputs.Mod
 Events.Mod
 EventsUtils.Mod
 EventsKernelLog.Mod

@@ -81,6 +81,19 @@ done < "$root/configs/headless-core.txt"
 [ "$copied" = 1 ] || { echo "no headless-core objects found in $build/bin" >&2; exit 1; }
 install -m 644 "$build"/bin/*.SymUu "$out/lib-sym/"
 
+# lib-gui/ is the display and the events (configs/gui-core.txt), searched only by `ob build --gui`.
+# Beside lib/ rather than in it, so that a program that asks for no window still cannot import one
+# by accident, and so that the headless payload stays the number the registry says it is.
+if [ -s "$root/configs/gui-core.txt" ]; then
+	mkdir -p "$out/lib-gui"
+	while read -r m; do
+		case "$m" in ''|\#*) continue ;; esac
+		for e in SymUu GofUu; do
+			[ -f "$build/bin/$m.$e" ] && install -m 644 "$build/bin/$m.$e" "$out/lib-gui/"
+		done
+	done < "$root/configs/gui-core.txt"
+fi
+
 # The cross targets, each only if its objects are there, looked for beside the build that was
 # named -- so a bundle out of another build tree picks up that tree's Win64 and A64.
 targets="$(dirname "$build")"
@@ -174,6 +187,7 @@ EOF
 echo "bundle: $out ($(du -sh "$out" | cut -f1))"
 echo "  version : $version"
 echo "  stdlib  : $(ls "$out/lib"/*.SymUu | wc -l) modules (linux64), $(ls "$out/lib-sym"/*.SymUu | wc -l) symbols for the language server"
+[ -d "$out/lib-gui" ] && echo "  gui     : $(ls "$out/lib-gui"/*.SymUu | wc -l) modules for ob build --gui"
 [ -d "$out/lib-win64" ] && echo "  win64   : $(ls "$out/lib-win64"/*.SymWw | wc -l) modules"
 [ -d "$out/lib-a64" ] && echo "  a64     : $(ls "$out/lib-a64"/*.SymU8 | wc -l) modules"
 

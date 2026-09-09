@@ -1,0 +1,180 @@
+
+# Tests for Plugins: the registry every driver in this system registers through (2026-09-09).
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+#
+# 276 lines, tier 1, and no suite until now although a display, a disk, a network interface and a
+# file system all arrive through it -- Displays.registry.Await("XDisplay") is how `ob build --gui`
+# finds its driver. What the module promises and nothing else states: registration order is
+# preserved (GetAll and Enumerate hand plugins back in the order they arrived), a name is unique
+# within a registry, and a plugin belongs to one registry at a time.
+#
+# Recorded and not changed: Remove leaves p.link pointing into the list it just left. That looks
+# like a leak and is deliberate -- Enumerate walks without the lock, so a plugin removed under it
+# still has a way to the rest of the list. Two registries with the same name is a HALT inside
+# Init, not a result code, because a registry has nowhere to report to.
+
+positive: plugins come back in the order they were registered
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg: Plugins.Registry; a, b, c: Plugins.Plugin; table: Plugins.Table; res: INTEGER;
+	BEGIN
+		NEW(reg, "PluginsTestOrder", "a registry to register in");
+		NEW(a); a.SetName("First"); reg.Add(a, res); ASSERT(res = Plugins.Ok);
+		NEW(b); b.SetName("Second"); reg.Add(b, res); ASSERT(res = Plugins.Ok);
+		NEW(c); c.SetName("Third"); reg.Add(c, res); ASSERT(res = Plugins.Ok);
+
+		(* Add appends, so the answer is not the last one registered *)
+		ASSERT(reg.Get("Second") = b);
+		ASSERT(reg.Get("") = a);                      (* "" is documented as the first existing one *)
+		ASSERT(reg.Get("Fourth") = NIL);
+
+		reg.GetAll(table);
+		ASSERT(LEN(table^) = 3);
+		ASSERT(table[0] = a); ASSERT(table[1] = b); ASSERT(table[2] = c);
+
+		(* a description nobody set is filled in rather than left empty *)
+		ASSERT(a.desc = "Unknown plugin")
+	END Test.
+
+positive: an empty registry answers NIL and hands out no table
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg: Plugins.Registry; table: Plugins.Table;
+	BEGIN
+		NEW(reg, "PluginsTestEmpty", "nothing registers here");
+		ASSERT(reg.Get("") = NIL);
+		ASSERT(reg.Get("Anything") = NIL);
+		table := NIL;
+		reg.GetAll(table);
+		ASSERT(table = NIL)                            (* not a zero-length array *)
+	END Test.
+
+positive: a name is taken once, and a plugin joins one registry at a time
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg, other: Plugins.Registry; a, b: Plugins.Plugin; res: INTEGER;
+	BEGIN
+		NEW(reg, "PluginsTestNames", "one");
+		NEW(other, "PluginsTestNamesToo", "two");
+		NEW(a); a.SetName("Taken"); reg.Add(a, res); ASSERT(res = Plugins.Ok);
+
+		NEW(b); b.SetName("Taken");
+		reg.Add(b, res); ASSERT(res = Plugins.DuplicateName);
+		ASSERT(reg.Get("Taken") = a);                  (* the one that was there stays *)
+
+		reg.Add(a, res); ASSERT(res = Plugins.AlreadyRegistered);
+		other.Add(a, res); ASSERT(res = Plugins.AlreadyRegistered);
+
+		(* out of one registry and into another, which is what a driver does when it is replaced *)
+		reg.Remove(a);
+		ASSERT(reg.Get("Taken") = NIL);
+		other.Add(a, res); ASSERT(res = Plugins.Ok);
+		ASSERT(other.Get("Taken") = a)
+	END Test.
+
+positive: a registry removes only what is registered in it
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR mine, yours: Plugins.Registry; p: Plugins.Plugin; res: INTEGER;
+	BEGIN
+		(*	Remove tested `p.registry # NIL` -- registered SOMEWHERE -- and then walked its own
+			list looking for p until it fell off the end: Trap on an empty registry, and on a
+			non-empty one too. A plugin held by two subsystems (a disk that is also a partition,
+			a display that a window manager tracks) is exactly the case that reaches this. *)
+		NEW(mine, "PluginsTestMine", "the registry that has it");
+		NEW(yours, "PluginsTestYours", "the registry that does not");
+		NEW(p); p.SetName("Only"); mine.Add(p, res); ASSERT(res = Plugins.Ok);
+
+		yours.Remove(p);                               (* empty list, and not p's registry *)
+		ASSERT(mine.Get("Only") = p);
+
+		(* and again with something in the way, so the walk has a list to fall off the end of *)
+		NEW(p); p.SetName("Bystander"); yours.Add(p, res); ASSERT(res = Plugins.Ok);
+		yours.Remove(mine.Get("Only"));
+		ASSERT(mine.Get("Only") # NIL);
+		ASSERT(yours.Get("Bystander") # NIL);
+
+		(* a plugin that was never anywhere is a no-op, as before *)
+		NEW(p); mine.Remove(p)
+	END Test.
+
+positive: a plugin with no name is given one
+
+	MODULE Test;
+	IMPORT Plugins, Strings;
+	VAR reg: Plugins.Registry; a, b: Plugins.Plugin; res: INTEGER;
+	BEGIN
+		NEW(reg, "PluginsTestGenName", "names are made up here");
+		NEW(a); reg.Add(a, res); ASSERT(res = Plugins.Ok);
+		NEW(b); reg.Add(b, res); ASSERT(res = Plugins.Ok);
+		ASSERT(a.name # ""); ASSERT(b.name # "");
+		ASSERT(a.name # b.name);
+		(* the made-up name says which registry made it up *)
+		ASSERT(Strings.Pos("PluginsTestGenName", a.name) = 0);
+		ASSERT(reg.Get(a.name) = a)
+	END Test.
+
+positive: the handlers hear both halves
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg: Plugins.Registry; p: Plugins.Plugin; res: INTEGER;
+		added, removed: SIZE; last: Plugins.Plugin;
+
+	PROCEDURE Heard(event: INTEGER; plugin: Plugins.Plugin);
+	BEGIN
+		last := plugin;
+		IF event = Plugins.EventAdd THEN INC(added) ELSE INC(removed) END
+	END Heard;
+
+	BEGIN
+		NEW(reg, "PluginsTestEvents", "somebody is listening");
+		reg.AddEventHandler(Heard, res); ASSERT(res = Plugins.Ok);
+		reg.AddEventHandler(Heard, res); ASSERT(res = Plugins.AlreadyRegistered);
+
+		NEW(p); p.SetName("Heard"); reg.Add(p, res); ASSERT(res = Plugins.Ok);
+		ASSERT(added = 1); ASSERT(removed = 0); ASSERT(last = p);
+
+		reg.Remove(p);
+		ASSERT(added = 1); ASSERT(removed = 1); ASSERT(last = p);
+
+		(* a refused registration is not an event *)
+		NEW(p); p.SetName("Heard"); reg.Add(p, res); ASSERT(res = Plugins.Ok);
+		reg.Add(p, res); ASSERT(res = Plugins.AlreadyRegistered);
+		ASSERT(added = 2);
+
+		reg.RemoveEventHandler(Heard, res); ASSERT(res = Plugins.Ok);
+		reg.RemoveEventHandler(Heard, res); ASSERT(res = Plugins.NeverRegistered);
+		reg.Remove(p);
+		ASSERT(removed = 1)                            (* nobody left to hear it *)
+	END Test.
+
+positive: every registry is registered in the registry of registries
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg: Plugins.Registry;
+	BEGIN
+		NEW(reg, "PluginsTestInMain", "and in main");
+		ASSERT(Plugins.main.Get("PluginsTestInMain") = reg);
+		ASSERT(Plugins.main.Get("") # NIL);
+		(* main is not in itself *)
+		ASSERT(Plugins.main.Get(Plugins.main.name) = NIL)
+	END Test.
+
+negative: a name set after the plugin has been registered
+
+	MODULE Test;
+	IMPORT Plugins;
+	VAR reg: Plugins.Registry; p: Plugins.Plugin; res: INTEGER;
+	BEGIN
+		(* the registry indexes by name, so a rename in place would lose the plugin *)
+		NEW(reg, "PluginsTestRename", "no renaming here");
+		NEW(p); p.SetName("Before"); reg.Add(p, res); ASSERT(res = Plugins.Ok);
+		p.SetName("After")
+	END Test.

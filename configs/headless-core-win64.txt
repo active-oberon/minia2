@@ -86,6 +86,7 @@ DataTrees
 Dates
 DebugMap
 Debugging
+DependencyWalker
 Diagnostics
 DiskCaches
 DiskFS

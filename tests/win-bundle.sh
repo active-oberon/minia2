@@ -92,6 +92,20 @@ while read -r m; do
 	done
 done
 ls "$out/lib"/*.SymWw >/dev/null 2>&1 || { echo "no Win64 objects found in $winbin" >&2; exit 1; }
+
+# lib-gui/ is the display and the events (configs/gui-core-win64.txt), searched only by
+# `ob build --gui`, which is host-only -- so on this SDK it is the Win64 half. NOT YET RUN on
+# Windows: the list is derived the same way as the Linux one and the objects are copied the same
+# way, but no windowed binary has been built there.
+if [ -s "$root/configs/gui-core-win64.txt" ]; then
+	mkdir -p "$out/lib-gui"
+	while read -r m; do
+		case "$m" in ''|\#*) continue ;; esac
+		for e in SymWw GofWw; do
+			[ -f "$winbin/$m.$e" ] && install -m 644 "$winbin/$m.$e" "$out/lib-gui/"
+		done
+	done < "$root/configs/gui-core-win64.txt"
+fi
 install -m 644 "$root/configs/moduleListWin.txt" "$out/boot-modules-win64.txt"
 
 # The AArch64 objects come along so that a teacher on Windows can build for a Raspberry Pi. The

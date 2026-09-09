@@ -94,12 +94,12 @@ BOOT=compilers/Linux64/oberon
 # symbol extension, output list. The defines are what DependencyWalker resolves the
 # conditional imports with, and they are why the same source yields two different graphs.
 generate() {
-	local platform="$1" bin defines objext symext out graph
+	local platform="$1" bin defines objext symext out guiout graph
 	case "$platform" in
 		linux64) bin=target/Linux64/bin; defines=UNIX,AMD64; objext=GofUu; symext=SymUu
-		         out=configs/headless-core.txt ;;
+		         out=configs/headless-core.txt; guiout=configs/gui-core.txt ;;
 		win64)   bin=target/Win64/bin;   defines=WIN,AMD64;  objext=GofWw; symext=SymWw
-		         out=configs/headless-core-win64.txt ;;
+		         out=configs/headless-core-win64.txt; guiout=configs/gui-core-win64.txt ;;
 		*) echo "unknown platform: $platform (linux64, win64)" >&2; return 2 ;;
 	esac
 	if [ ! -d "$bin" ]; then
@@ -113,9 +113,9 @@ generate() {
 	    source/*.Mod 2>/dev/null | tr -d '\r' | grep "\.$objext:" > "$graph"
 
 	# 2. Seed from the registry, close under imports, check the annotations, emit.
-	python3 - "$graph" "$bin" "$out" "$objext" "$symext" "$CHECK" <<'PY'
+	python3 - "$graph" "$bin" "$out" "$objext" "$symext" "$CHECK" "$guiout" <<'PY'
 import sys, os, glob, json
-graph, binp, out, objext, symext, check = sys.argv[1:7]
+graph, binp, out, objext, symext, check, guiout = sys.argv[1:8]
 check = check == "1"
 
 # A module can have a line per platform file -- Unix.Beep.Mod and Windows.Beep.Mod are both
@@ -217,23 +217,52 @@ for m in keep:
         users = sorted(x for x in keep if m in deps.get(x, ()))[:4]
         problems.append(f"{m}: in the payload, claimed by no package (needed by {' '.join(users) or 'a root'})")
 
+# The second list: what a windowed program links against. Seeded from the window system itself --
+# the same ROOTS/WM test that keeps these modules out of lib/ -- and not from the `graphical`
+# lists, which are a wider set: a disk tool or an FTP client is in one because it draws its own
+# front end, and that is a package to fetch rather than payload to carry (seeding from `graphical`
+# gave 103 modules and 5.6 MB of codecs and disk tools). Only shipped packages contribute, so the
+# desktop's own WM* stay home: what this buys is one window with a canvas in it, which is the form
+# `ob build --gui` bakes. Minus whatever lib/ carries anyway, so no object travels twice.
+# Three names, and the import graph decides the rest: Display is the shim `ob build --gui` calls,
+# which imports this platform's driver and its keyboard; Inputs is where the events arrive; Raster
+# is the pixel formats a canvas is drawn through. Seeding wider does not buy a wider product --
+# every WM* the window manager needs belongs to the desktop, which does not ship, and the input
+# methods and the codecs are packages to fetch.
+GUISEED = {"Display", "Inputs", "Raster"}
+guiseed = GUISEED & have
+guikeep = sorted((closure(guiseed) & have) - set(keep))
+for m in guikeep:
+    if m not in owner:
+        users = sorted(x for x in guikeep if m in deps.get(x, ()))[:4]
+        problems.append(f"{m}: in the graphical payload, claimed by no package "
+                        f"(needed by {' '.join(users) or 'a root'})")
+
 if problems:
     print(f"{os.path.basename(out)}: the registry and the tree disagree:", file=sys.stderr)
     for p in problems:
         print("  " + p, file=sys.stderr)
     sys.exit(1)
 
-if check:
-    was = [l.strip() for l in open(out)] if os.path.exists(out) else []
-    was = [l for l in was if l and not l.startswith("#")]
-    if was != keep:
-        print(f"{os.path.basename(out)}: out of date -- "
-              f"{len(set(was)-set(keep))} to drop, {len(set(keep)-set(was))} to add", file=sys.stderr)
-        sys.exit(1)
-    print(f"{os.path.basename(out)}: {len(keep)} modules, as the registry says")
-else:
-    open(out, "w").write("\n".join(keep) + "\n")
-    print(f"{os.path.basename(out)}: {len(keep)} modules from {len(packages)} packages")
+def emit(path, modules, what):
+    if check:
+        was = [l.strip() for l in open(path)] if os.path.exists(path) else []
+        was = [l for l in was if l and not l.startswith("#")]
+        if was != modules:
+            print(f"{os.path.basename(path)}: out of date -- "
+                  f"{len(set(was)-set(modules))} to drop, {len(set(modules)-set(was))} to add",
+                  file=sys.stderr)
+            return False
+        print(f"{os.path.basename(path)}: {len(modules)} modules, as the registry says")
+    else:
+        open(path, "w").write("\n".join(modules) + "\n")
+        print(f"{os.path.basename(path)}: {len(modules)} {what} from {len(packages)} packages")
+    return True
+
+ok = emit(out, keep, "modules")
+ok = emit(guiout, guikeep, "graphical modules") and ok
+if not ok:
+    sys.exit(1)
 PY
 	rm -f "$graph"
 }

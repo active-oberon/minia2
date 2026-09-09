@@ -585,7 +585,11 @@ elif [ ! -d "$(dirname "$build")/Win64/bin" ]; then
 else
 	winout="$work/win-sdk"
 	if "$root/tests/win-bundle.sh" "$build" -o "$winout" --no-tar > "$work/win-bundle.log" 2>&1; then
-		runsdk() { ( cd "$winout" && WINEDEBUG=-all env -u A2SDK timeout 900 wine "$@" 2>&1 | grep -v "Authorization required" ); }
+		# `|| true` on the filter, not decoration: grep answers 1 when it prints nothing, pipefail
+		# passes that on, and set -e then killed this script mid-list -- so a wine that said nothing
+		# read as no failure at all, with neither a FAIL line nor the verdict. Every case below
+		# judges the text it got, so a status swallowed here is not a status lost.
+		runsdk() { ( cd "$winout" && WINEDEBUG=-all env -u A2SDK timeout 900 wine "$@" 2>&1 | { grep -v "Authorization required" || true; } ); }
 		# Captured once and reported from the capture. Re-running the command inside the FAIL
 		# branch printed a SECOND, healthy run under a failure label -- which is what a cold wine
 		# prefix produces: the first invocation after a rebuild is slow enough to say nothing, the

@@ -1,13 +1,11 @@
 MODULE Display;
 
-IMPORT Commands;
+(* imports, not Commands.Call: a static binary holds what something imports, and `ob build --gui` links this *)
+IMPORT XDisplay, KbdMouse;
 
 PROCEDURE Install*;
-VAR msg: ARRAY 256 OF CHAR; res: INTEGER;
 BEGIN
-	Commands.Call("XDisplay.Install", {Commands.Wait}, res, msg);
-	Commands.Call("KbdMouse.Init", {Commands.Wait}, res, msg);
+	XDisplay.Install; KbdMouse.Init
 END Install;
 
 END Display.
-
