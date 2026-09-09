@@ -897,6 +897,7 @@ TYPE
 				FOR i := 1 TO last DO w.Char(digits[i]) END
 			END;
 			INC(exponent, Digits - 1);	(* the point moved to just after the first digit *)
+			IF digits[0] = "0" THEN exponent := 0 END;	(* zero has no exponent -- it used to print as 0.0E16 *)
 			IF exponent # 0 THEN w.Char("E"); w.Int(exponent, 1) END
 		END FormatedFloat;
 
@@ -1518,6 +1519,7 @@ TYPE
 		PROCEDURE Comment(x: SyntaxTree.Comment);
 		VAR i: SIGNED32; ch: CHAR;
 		BEGIN
+			i := 0; (* the index started wherever the stack left it *)
 			BeginComment;
 			WHILE (i<LEN(x.source^)) & (x.source[i] #  0X) DO
 				ch := x.source[i];

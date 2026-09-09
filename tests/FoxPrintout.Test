@@ -1,0 +1,372 @@
+# Tests for source/FoxPrintout.Mod -- the printer that writes a parsed module back out as source.
+#
+# options --command="System.Free Test FoxPrintoutTestShared;System.Load Test"
+#
+# It is not a debugging aid: the textual symbol file is printed with it, `Compiler.Compile --print`
+# is it, and so is textDocument/formatting in our language server -- so what it prints is what a
+# person gets back in the editor. Nothing measured it until now; the defect found by reading on
+# 07.09 (a FLOAT64 constant printed to 16 significant digits, so a module was "redefined" on its
+# own first compilation) came from exactly this file.
+#
+# The form every case uses: parse a module from a string, print it, and ask something about the
+# text. Two of them ask the strongest question there is -- whether what came out compiles, and
+# whether printing it a second time gives the same text. The printer runs without the semantic
+# checker here (that is also how the language server calls it), which is why an unresolved type
+# prints as `(*unresolved*)Name`; the language server strips those before it hands the text back.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxPrintoutTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A module parsed from a string, printed, and asked about" *)
+
+	IMPORT Scanner := FoxScanner, Parser := FoxParser, SyntaxTree := FoxSyntaxTree,
+		Printout := FoxPrintout, Streams, Diagnostics, Strings, Commands, Files;
+
+	TYPE
+		Text* = ARRAY 16384 OF CHAR;
+
+	VAR
+		Quote*: ARRAY 2 OF CHAR;	(** the character no string literal in a case can hold *)
+
+	(** One line of a module under construction. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN Strings.AppendX(text, piece); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	(** Part of a line -- Active Oberon has no string concatenation, so a quote is appended. *)
+	PROCEDURE Add* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN Strings.AppendX(text, piece)
+	END Add;
+
+	(** Parse and print. FALSE means the source did not parse, which is a broken case, not a finding. *)
+	PROCEDURE Print* (CONST source: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): BOOLEAN;
+	VAR reader: Streams.StringReader; diagnostics: Diagnostics.DiagnosticsList;
+		scanner: Scanner.Scanner; parser: Parser.Parser; module: SyntaxTree.Module;
+		out: Streams.StringWriter; printer: Printout.Printer;
+	BEGIN
+		NEW(diagnostics);
+		Streams.OpenStringReader(reader, source);
+		scanner := Scanner.NewScanner("source", reader, 0, diagnostics);
+		parser := Parser.NewParser(scanner, diagnostics, "");
+		module := parser.Module();
+		IF (module = NIL) OR parser.error THEN RETURN FALSE END;
+		Streams.OpenStringWriter(out, LEN(text));
+		printer := Printout.NewPrinter(out, Printout.SourceCode, FALSE);
+		printer.Module(module); out.Update; out.Get(text);
+		RETURN TRUE
+	END Print;
+
+	(**	Remove the (*unresolved*) marks -- printing without the checker leaves one per type, and the
+		language server strips them the same way before it hands the text back. *)
+	PROCEDURE Strip* (VAR text: ARRAY OF CHAR);
+	VAR at: SIZE;
+	BEGIN
+		at := Strings.Pos("(*unresolved*)", text);
+		WHILE at >= 0 DO
+			Strings.Delete(text, at, 14);
+			at := Strings.Pos("(*unresolved*)", text)
+		END
+	END Strip;
+
+	(**	Print, then print what was printed: a printer that formats is only useful if it has a fixed
+		point, or formatting a file twice keeps changing it. *)
+	PROCEDURE Stable* (CONST source: ARRAY OF CHAR; VAR once: ARRAY OF CHAR): BOOLEAN;
+	VAR twice: Text;
+	BEGIN
+		IF ~Print(source, once) THEN RETURN FALSE END;
+		IF ~Print(once, twice) THEN RETURN FALSE END;
+		Strip(once); Strip(twice);
+		RETURN once = twice
+	END Stable;
+
+	(** Compile a text as a module of its own, and hand back what the compiler said. *)
+	PROCEDURE Compiles* (CONST name, source: ARRAY OF CHAR; VAR message: ARRAY OF CHAR): BOOLEAN;
+	VAR file: Files.File; writer: Files.Writer; arg: Streams.StringReader; out: Streams.StringWriter;
+		context: Commands.Context; result: INTEGER; error: ARRAY 128 OF CHAR;
+	BEGIN
+		file := Files.New(name);
+		IF file = NIL THEN RETURN FALSE END;
+		NEW(writer, file, 0); writer.String(source); writer.Update; Files.Register(file);
+
+		Streams.OpenStringReader(arg, name);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate("Compiler.Compile", context, {Commands.Wait}, result, error);
+		out.Get(message);
+		RETURN Strings.Pos("error", message) < 0
+	END Compiles;
+
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	BEGIN
+		Quote[0] := CHR(34); Quote[1] := 0X
+	END FoxPrintoutTestShared.
+
+positive: what the printer writes is a module again
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text: T.Text; message: T.Text;
+	BEGIN
+		(*	The strongest question about a printer: does what it prints compile. Everything below
+			asks narrower ones. *)
+		source := "";
+		T.Line(source, "MODULE PrintedBack;");
+		T.Line(source, "TYPE Colour = ENUM red, green, blue END;");
+		T.Line(source, "VAR x: SIGNED32; r: FLOAT64; c: Colour;");
+		T.Line(source, "PROCEDURE Half (n: SIGNED32): FLOAT64;");
+		T.Line(source, "BEGIN RETURN n / 2.0");
+		T.Line(source, "END Half;");
+		T.Line(source, "BEGIN x := 3; r := Half(x); c := Colour.green");
+		T.Line(source, "END PrintedBack.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Compiles("PrintedBack.Mod", text, message), 2)
+	END Test.
+
+positive: an expression keeps its meaning, in brackets
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text: T.Text;
+	BEGIN
+		(*	The printer brackets every binary expression rather than working out precedence, which
+			is verbose but cannot get an expression wrong -- and that is the property to hold on
+			to, because a printer that drops a bracket changes what the program computes. *)
+		source := "";
+		T.Line(source, "MODULE M;");
+		T.Line(source, "VAR a, b, c: SIGNED32; ok: BOOLEAN;");
+		T.Line(source, "BEGIN");
+		T.Line(source, "	a := (a + b) * c;");
+		T.Line(source, "	b := a - (b - c);");
+		T.Line(source, "	ok := (a = 0) & (b > 0) OR ~(c = 0)");
+		T.Line(source, "END M.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "((a + b) * c)"), 2);
+		ASSERT(T.Said(text, "(a - (b - c))"), 3);
+		ASSERT(T.Said(text, "(((a = 0) & (b > 0)) OR"), 4)
+	END Test.
+
+positive: every type in the language comes back out as itself
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text, message: T.Text;
+	BEGIN
+		source := "";
+		T.Line(source, "MODULE Types;");
+		T.Line(source, "TYPE");
+		T.Line(source, "	Colour = ENUM red, green, blue END;");
+		T.Line(source, "	Record = RECORD a: SIGNED32; b: FLOAT64 END;");
+		T.Line(source, "	Pointer = POINTER TO Record;");
+		T.Line(source, "	Proc = PROCEDURE (x: SIGNED32; VAR y: FLOAT64): BOOLEAN;");
+		T.Line(source, "	Matrix = ARRAY [*, *] OF FLOAT64;");
+		T.Line(source, "	Fixed = ARRAY 4, 4 OF SIGNED32;");
+		T.Line(source, "	Open = POINTER TO ARRAY OF CHAR;");
+		T.Line(source, "VAR c: Colour; p: Pointer; f: Proc; m: Matrix; a: Fixed; o: Open;");
+		T.Line(source, "END Types.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "ENUM red, green, blue END"), 2);
+		ASSERT(T.Said(text, "RECORD"), 3);
+		ASSERT(T.Said(text, "POINTER TO"), 4);
+		ASSERT(T.Said(text, "PROCEDURE (x:"), 5);
+		ASSERT(T.Said(text, "ARRAY [*, *] OF"), 6);
+		ASSERT(T.Said(text, "ARRAY 4 OF ARRAY 4 OF"), 7);   (* a two-dimensional array prints as an array of arrays *)
+		ASSERT(T.Said(text, "ARRAY OF"), 8);
+		ASSERT(T.Compiles("Types.Mod", text, message), 9)
+	END Test.
+
+positive: an active object keeps its modifiers, its AWAIT and its FINALLY
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text, message: T.Text;
+	BEGIN
+		(*	The modifiers are the language: an object printed without {ACTIVE} is a different
+			program, and one printed without {EXCLUSIVE} is a race. *)
+		source := "";
+		T.Line(source, "MODULE Active;");
+		T.Line(source, "TYPE");
+		T.Line(source, "	Worker = OBJECT");
+		T.Line(source, "		VAR count: SIGNED32; done: BOOLEAN;");
+		T.Line(source, "		PROCEDURE Add (n: SIGNED32);");
+		T.Line(source, "		BEGIN {EXCLUSIVE} INC(count, n)");
+		T.Line(source, "		END Add;");
+		T.Line(source, "		PROCEDURE Await;");
+		T.Line(source, "		BEGIN {EXCLUSIVE} AWAIT(count > 0)");
+		T.Line(source, "		END Await;");
+		T.Line(source, "	BEGIN {ACTIVE, SAFE}");
+		T.Line(source, "		done := TRUE");
+		T.Line(source, "	FINALLY");
+		T.Line(source, "		count := 0");
+		T.Line(source, "	END Worker;");
+		T.Line(source, "VAR w: Worker;");
+		T.Line(source, "BEGIN NEW(w)");
+		T.Line(source, "END Active.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "{EXCLUSIVE}"), 2);
+		ASSERT(T.Said(text, "{ACTIVE, SAFE}"), 3);
+		ASSERT(T.Said(text, "AWAIT"), 4);
+		ASSERT(T.Said(text, "FINALLY"), 5);
+		ASSERT(T.Compiles("Active.Mod", text, message), 6)
+	END Test.
+
+positive: the statements that are not assignments print too
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text, message: T.Text;
+	BEGIN
+		source := "";
+		T.Line(source, "MODULE Control;");
+		T.Line(source, "VAR i: SIGNED32; ch: CHAR;");
+		T.Line(source, "PROCEDURE Classify (x: SIGNED32): CHAR;");
+		T.Line(source, "BEGIN");
+		T.Line(source, "	CASE x OF");
+		T.Line(source, "	| 0 .. 9: RETURN 'd'");
+		T.Line(source, "	| 10, 20: RETURN 't'");
+		T.Line(source, "	ELSE RETURN '?'");
+		T.Line(source, "	END");
+		T.Line(source, "END Classify;");
+		T.Line(source, "BEGIN");
+		T.Line(source, "	FOR i := 10 TO 0 BY -2 DO ch := Classify(i) END;");
+		T.Line(source, "	WHILE i < 10 DO INC(i) END;");
+		T.Line(source, "	REPEAT DEC(i) UNTIL i = 0;");
+		T.Line(source, "	LOOP");
+		T.Line(source, "		IF i > 3 THEN EXIT ELSIF i = 2 THEN INC(i) END;");
+		T.Line(source, "		INC(i)");
+		T.Line(source, "	END");
+		T.Line(source, "END Control.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "CASE x OF"), 2);
+		ASSERT(T.Said(text, "0 .. 9"), 3);
+		ASSERT(T.Said(text, "10, 20"), 4);
+		ASSERT(T.Said(text, "BY"), 5);
+		ASSERT(T.Said(text, "REPEAT"), 6);
+		ASSERT(T.Said(text, "UNTIL"), 7);
+		ASSERT(T.Said(text, "LOOP"), 8);
+		ASSERT(T.Said(text, "EXIT"), 9);
+		ASSERT(T.Said(text, "ELSIF"), 10);
+		ASSERT(T.Compiles("Control.Mod", text, message), 11)
+	END Test.
+
+positive: a real constant is printed at the precision that reads back to itself
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text: T.Text;
+	BEGIN
+		(*	Sixteen significant digits are not enough for a binary64: the constant read back
+			differs in the last bit, and the compiler then reports the module as "is redefined" on
+			its own first compilation. Seventeen is the number that round-trips, and this is the
+			case behind the fix made on 07.09. *)
+		source := "";
+		T.Line(source, "MODULE Reals;");
+		T.Line(source, "CONST Tenth = 0.1; Big = 1.0E+300; Small = 1.0E-300; Zero = 0.0; Neg = -2.5;");
+		T.Line(source, "END Reals.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "1.0000000000000001E-1"), 2);   (* 0.1 to seventeen digits *)
+		ASSERT(T.Said(text, "1.0000000000000001E300"), 3);   (* seventeen digits is what binary64 needs *)
+		ASSERT(T.Said(text, "1.0E-300"), 4);
+		ASSERT(T.Said(text, "-2.5"), 5);
+
+		(*	And zero is zero: it used to print as 0.0E16, because the exponent of the decimal point
+			was added to an exponent that a zero does not have. *)
+		ASSERT(T.Said(text, "Zero = 0.0;"), 6)
+	END Test.
+
+positive: a string constant survives the trip, quotes and all
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text, message: T.Text;
+	BEGIN
+		(*	Printed strings come back in the language's other literal form, \"like this"\, which is
+			what lets a printed string hold a quote of its own. The case is that the result still
+			compiles. *)
+		source := "";
+		T.Line(source, "MODULE Strings;");
+		T.Add(source, "CONST Greeting = "); T.Add(source, T.Quote); T.Add(source, "hello");
+		T.Add(source, T.Quote); T.Line(source, "; Tab = 09X;");
+		T.Line(source, "VAR s: ARRAY 8 OF CHAR;");
+		T.Line(source, "BEGIN COPY(Greeting, s)");
+		T.Line(source, "END Strings.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "hello"), 2);
+		ASSERT(T.Said(text, "9X"), 3);
+		ASSERT(T.Compiles("Strings.Mod", text, message), 4)
+	END Test.
+
+positive: printing a printed module gives the same text back
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, once: T.Text;
+	BEGIN
+		(*	A formatter has to have a fixed point, or formatting a file twice keeps changing it --
+			and this printer is textDocument/formatting in our language server. Without comments
+			in the source it has one. *)
+		source := "";
+		T.Line(source, "MODULE Fixed;");
+		T.Line(source, "TYPE T = ARRAY 4 OF SIGNED32;");
+		T.Line(source, "VAR x: T; i: SIGNED32;");
+		T.Line(source, "PROCEDURE Sum (): SIGNED32;");
+		T.Line(source, "VAR s: SIGNED32;");
+		T.Line(source, "BEGIN");
+		T.Line(source, "	FOR i := 0 TO 3 DO s := s + x[i] END;");
+		T.Line(source, "	RETURN s");
+		T.Line(source, "END Sum;");
+		T.Line(source, "BEGIN i := Sum()");
+		T.Line(source, "END Fixed.");
+
+		ASSERT(T.Stable(source, once), 1)
+	END Test.
+
+positive: a comment at the end of a declaration moves, and moves again
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, once, twice: T.Text;
+	BEGIN
+		(*	Pinned, not blessed. A comment written after the semicolon of a declaration is attached
+			to the declaration it follows and printed inside it, before the semicolon; parsing that
+			text attaches it to the NEXT declaration instead, so a second printing puts it
+			somewhere else again. Formatting a file with end-of-line comments twice therefore does
+			not settle. The fix is in how the parser attaches a same-line comment, not in the
+			printer, and it wants its own pass. *)
+		source := "";
+		T.Line(source, "MODULE Moves;");
+		T.Line(source, "TYPE T = SIGNED32; (* one after it *)");
+		T.Line(source, "VAR x: T;");
+		T.Line(source, "END Moves.");
+
+		ASSERT(T.Print(source, once), 1);
+		ASSERT(T.Print(once, twice), 2);
+		ASSERT(T.Said(once, "(* one after it *)"), 3);
+		ASSERT(T.Said(twice, "(* one after it *)"), 4);
+		ASSERT(once # twice, 5)                            (* what the fix would change *)
+	END Test.
+
+positive: an import list keeps its aliases
+
+	MODULE Test;
+	IMPORT T := FoxPrintoutTestShared;
+	VAR source, text: T.Text;
+	BEGIN
+		source := "";
+		T.Line(source, "MODULE Imports;");
+		T.Line(source, "IMPORT S := SYSTEM, Streams, Files;");
+		T.Line(source, "VAR i: SIGNED32;");
+		T.Line(source, "BEGIN i := S.VAL(SIGNED32, 1.0E0)");
+		T.Line(source, "END Imports.");
+
+		ASSERT(T.Print(source, text), 1);
+		ASSERT(T.Said(text, "IMPORT S := SYSTEM, Streams, Files;"), 2)
+	END Test.
