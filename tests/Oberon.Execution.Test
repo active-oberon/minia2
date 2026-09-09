@@ -8823,3 +8823,41 @@ positive: a delegate declared in a template module survives instantiation
 		p := G.PlainOne();                         (* a plain procedure type over the same boundary *)
 		ASSERT(p(6) = 12, 1183);
 	END Test.
+
+# the sign of zero
+# Negation is not subtraction from zero: -(+0.0) is -0.0, and 0.0 - 0.0 is +0.0. The AMD64 backend
+# emitted the second for the first (XORPS temp,temp; SUBPS temp,x), so on x86 the sign of a zero was
+# lost by a unary minus while A64 (FNEG), ARM (FNEGS/FNEGD) and the FPU path (FCHS) all kept it.
+# The sign is not decoration: it is what makes 1/x an infinity of the right sign, and it is how
+# ATan2 and every complex function tell which side of a cut they are on.
+
+positive: a unary minus flips the sign bit, including on a zero
+	MODULE Test;
+	IMPORT SYSTEM;
+	VAR zero, one: FLOAT64; zero32: FLOAT32;
+
+	PROCEDURE Bits(x: FLOAT64): SIGNED64;
+	BEGIN RETURN SYSTEM.VAL(SIGNED64, x) END Bits;
+
+	PROCEDURE Bits32(x: FLOAT32): SIGNED32;
+	BEGIN RETURN SYSTEM.VAL(SIGNED32, x) END Bits32;
+
+	BEGIN
+		zero := 0.0; zero32 := 0.0; one := 1.0;
+
+		ASSERT(Bits(-zero) = SIGNED64(8000000000000000H), 1184);
+		ASSERT(Bits32(-zero32) = SIGNED32(80000000H), 1185);
+		ASSERT(Bits(-(-zero)) = 0, 1186);
+		ASSERT(Bits(ABS(-zero)) = 0, 1187);
+
+		(* and an ordinary value is negated the way it always was *)
+		ASSERT(-one = -1.0, 1188);
+		ASSERT(-(-one) = 1.0, 1189);
+
+		(* the sign of the zero is what decides the sign of the infinity *)
+		ASSERT(one / (-zero) < 0.0, 1190);
+		ASSERT(one / zero > 0.0, 1191);
+
+		(*	A constant is folded by the compiler, which does the negation with its own arithmetic:
+			the folded -0.0 is +0.0 until the bootstrap in compilers/ is rebuilt with this fix. *)
+	END Test.

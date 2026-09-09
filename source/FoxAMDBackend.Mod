@@ -3141,18 +3141,22 @@ TYPE
 			END;
 		END EmitNeg;
 
+		(*	EmitNegXMM flips the sign bit -- 0-x turns -0.0 into +0.0, and every other backend uses a real negate (FNEG, FNEGS/FNEGD, FCHS). *)
 		PROCEDURE EmitNegXMM(CONST instruction: IntermediateCode.Instruction);
-		VAR temp, op: Assembler.Operand; ticket: Ticket;
+		VAR temp, op, shift: Assembler.Operand; ticket: Ticket;
 		BEGIN
 			PrepareOp2(instruction, Low, op, ticket);
 			GetTemporaryRegister(instruction.op1.type,temp);
+			emitter.Emit2(InstructionSet.opPCMPEQD, temp, temp); (* all ones, then shifted up: the sign bit alone *)
 			IF instruction.op1.type.sizeInBits = 32 THEN
-				emitter.Emit2(InstructionSet.opXORPS, temp, temp);
-				emitter.Emit2(InstructionSet.opSUBPS, temp, op);
+				shift := Assembler.NewImm8(31);
+				emitter.Emit2(InstructionSet.opPSLLD, temp, shift);
+				emitter.Emit2(InstructionSet.opXORPS, temp, op);
 				emitter.Emit2(InstructionSet.opMOVAPS, op, temp);
 			ELSE
-				emitter.Emit2(InstructionSet.opXORPD, temp, temp);
-				emitter.Emit2(InstructionSet.opSUBPD, temp, op);
+				shift := Assembler.NewImm8(63);
+				emitter.Emit2(InstructionSet.opPSLLQ, temp, shift);
+				emitter.Emit2(InstructionSet.opXORPD, temp, op);
 				emitter.Emit2(InstructionSet.opMOVAPS, op, temp);
 			END;
 			FinishOp(instruction.op1, Low, op, ticket);
