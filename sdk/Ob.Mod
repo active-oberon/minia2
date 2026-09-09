@@ -207,6 +207,39 @@ END NextArgument;
 	/home/a followed by the flags -b. That is the same bug that made `ob build -o hello-arm64`
 	write a file called `hello`.
 *)
+(*
+	`--gui=800x600` into the arguments of the command that installs the display: " 800 600". Two
+	numbers with an x between them and nothing else -- a size nobody can read is worth a refusal
+	rather than a window of some other size.
+*)
+PROCEDURE WindowSize(CONST argument: ARRAY OF CHAR; VAR arguments: ARRAY OF CHAR): BOOLEAN;
+VAR i, width, height: SIGNED32;
+
+	PROCEDURE Number(VAR value: SIGNED32): BOOLEAN;
+	VAR digits: SIGNED32;
+	BEGIN
+		value := 0; digits := 0;
+		WHILE (argument[i] >= '0') & (argument[i] <= '9') DO
+			value := value * 10 + (ORD(argument[i]) - ORD('0'));
+			INC(i); INC(digits)
+		END;
+		RETURN (digits > 0) & (value > 0)
+	END Number;
+
+BEGIN
+	i := 6;								(* past "--gui=" *)
+	IF ~Number(width) THEN RETURN FALSE END;
+	IF (argument[i] # 'x') & (argument[i] # 'X') THEN RETURN FALSE END;
+	INC(i);
+	IF ~Number(height) THEN RETURN FALSE END;
+	IF argument[i] # 0X THEN RETURN FALSE END;
+	arguments := " ";
+	Strings.AppendInt(arguments, width);
+	Strings.AppendChar(arguments, ' ');
+	Strings.AppendInt(arguments, height);
+	RETURN TRUE
+END WindowSize;
+
 PROCEDURE Execute(CONST command, arguments: ARRAY OF CHAR): BOOLEAN;
 VAR reader: Streams.StringReader; context: Commands.Context;
 	result: INTEGER; message: ARRAY 256 OF CHAR;
@@ -758,12 +791,42 @@ BEGIN
 END RunFile;
 
 PROCEDURE RunVerb;
-VAR source, procedure: Path; message: ARRAY 256 OF CHAR;
+VAR source, procedure, argument, guiSize, command: Path; message: ARRAY 256 OF CHAR;
+	gui: BOOLEAN; result: INTEGER;
 BEGIN
-	IF ~NextArgument(source) OR (source = "") THEN
-		Die("usage: ob run <File.Mod> [Proc]"); RETURN
+	source := ""; procedure := ""; guiSize := ""; gui := FALSE;
+	WHILE NextArgument(argument) DO
+		IF argument = "--gui" THEN gui := TRUE
+		ELSIF Strings.StartsWith("--gui=", 0, argument) THEN
+			gui := TRUE;
+			IF ~WindowSize(argument, guiSize) THEN
+				DieOn("--gui takes a size like 800x600, not ", argument); RETURN
+			END
+		ELSIF argument[0] = '-' THEN DieOn("unknown option: ", argument); RETURN
+		ELSIF source = "" THEN COPY(argument, source)
+		ELSE COPY(argument, procedure)
+		END
 	END;
-	IF ~NextArgument(procedure) OR (procedure = "") THEN procedure := "Do" END;
+	IF source = "" THEN
+		Die("usage: ob run [--gui[=800x600]] <File.Mod> [Proc]"); RETURN
+	END;
+	IF procedure = "" THEN procedure := "Do" END;
+	(*	The display is put up in this process, before the program is compiled: the same directory
+		carries the objects the program links against and the modules Display.Install loads by
+		name, so one search path answers both. Nothing is linked -- `ob run` is the loop where the
+		program is not linked at all -- which is why this verb needs no lib-gui of its own target. *)
+	IF gui THEN
+		IF ~ObHost.Exists(libGui) THEN
+			DieOn("this SDK ships no windowed objects: no ", libGui); RETURN
+		END;
+		IF ~AddSearchPath(libGui) THEN RETURN END;
+		command := "Display.Install"; Strings.Append(command, guiSize);
+		Commands.Call(command, {Commands.Wait}, result, message);
+		IF result # Commands.Ok THEN
+			IF message = "" THEN COPY("the display could not be installed", message) END;
+			Die(message); RETURN
+		END
+	END;
 	IF ~RunFile(source, procedure, NIL, NIL, message) THEN
 		IF message # "" THEN Die(message) ELSE failed := TRUE END
 	END
@@ -856,7 +919,8 @@ END ReadBootList;
 	a generated module can be a string -- which is one more file the shell version had to create,
 	name and delete.
 *)
-PROCEDURE EntrySource(CONST module, procedure: ARRAY OF CHAR; gui: BOOLEAN; VAR source: ARRAY OF CHAR);
+PROCEDURE EntrySource(CONST module, procedure, guiSize: ARRAY OF CHAR; gui: BOOLEAN;
+		VAR source: ARRAY OF CHAR);
 BEGIN
 	(* the command name is quoted with apostrophes: Oberon has no escape inside a string, so a
 	   double quote here would have to be written as one, and generated source is hard enough to
@@ -869,7 +933,9 @@ BEGIN
 	Strings.Append(source, "; VAR res: INTEGER; msg: ARRAY 256 OF CHAR;");
 	Strings.Append(source, " BEGIN ");
 	IF gui THEN
-		Strings.Append(source, "Commands.Call('Display.Install', {Commands.Wait}, res, msg);");
+		Strings.Append(source, "Commands.Call('Display.Install");
+		Strings.Append(source, guiSize);		(* " 800 600", or nothing at all *)
+		Strings.Append(source, "', {Commands.Wait}, res, msg);");
 		Strings.Append(source, " IF res # 0 THEN Trace.String(msg); Trace.Ln;");
 		Strings.Append(source, " Modules.Shutdown(Modules.PowerDown) END;")
 	END;
@@ -914,15 +980,21 @@ VAR source, output, absolute, scratch, destination, directory, fileName, name: P
 	compilerPlatform, objectExtension, symbolExtension, suffix: Path;
 	linkOptions, boot, bootModules, library: Path;
 	arguments: ARRAY 4096 OF CHAR; entry: ARRAY 1024 OF CHAR; line: Path;
-	gui: BOOLEAN;
+	gui: BOOLEAN;  guiSize: Path;
 BEGIN
-	source := ""; output := ""; procedure := "Do"; gui := FALSE; COPY(HostTarget, target);
+	source := ""; output := ""; procedure := "Do"; gui := FALSE; guiSize := "";
+	COPY(HostTarget, target);
 	WHILE NextArgument(argument) DO
 		IF (argument = "-o") OR (argument = "--output") THEN
 			IF ~NextArgument(output) THEN Die("-o needs a name"); RETURN END
 		ELSIF (argument = "-t") OR (argument = "--target") THEN
 			IF ~NextArgument(target) THEN Die("-t needs a target"); RETURN END
 		ELSIF argument = "--gui" THEN gui := TRUE
+		ELSIF Strings.StartsWith("--gui=", 0, argument) THEN
+			gui := TRUE;
+			IF ~WindowSize(argument, guiSize) THEN
+				DieOn("--gui takes a size like 800x600, not ", argument); RETURN
+			END
 		ELSIF argument[0] = '-' THEN
 			DieOn("unknown option: ", argument); RETURN
 		ELSIF source = "" THEN COPY(argument, source)
@@ -930,7 +1002,7 @@ BEGIN
 		END
 	END;
 	IF source = "" THEN
-		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [--gui] [Proc]"); RETURN
+		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [--gui[=800x600]] [Proc]"); RETURN
 	END;
 	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
 	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;
@@ -975,7 +1047,7 @@ BEGIN
 	IF gui & ~AddSearchPath(libGui) THEN DiscardScratch(scratch); RETURN END;
 	BuildSiblings(scratch, compilerPlatform, objectExtension, symbolExtension);
 	IF CompileFile(absolute, compilerPlatform, objectExtension, symbolExtension, TRUE) THEN
-		EntrySource(name, procedure, gui, entry);
+		EntrySource(name, procedure, guiSize, gui, entry);
 		IF CompileString("ObEntry", entry, compilerPlatform, objectExtension, symbolExtension) THEN
 			(* the file name is quoted for the linker's option parser, which otherwise reads an
 			   unquoted value up to the first character that cannot be in a name: hello-arm64
@@ -3269,10 +3341,10 @@ PROCEDURE Help;
 BEGIN
 	Say("ob — a Go-style CLI over the A2 (Active Oberon) toolchain.");
 	Say("");
-	Say("  ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [--gui] [Proc]");
+	Say("  ob build   <File.Mod> [-o name] [-t linux64|win64|a64] [--gui[=800x600]] [Proc]");
 	Say("                                     link a standalone native executable");
 	Say("  ob compile <File.Mod> [-o <dir>]   compile one module to an object file");
-	Say("  ob run     <File.Mod> [Proc]       compile, then run a command (default: Do)");
+	Say("  ob run     [--gui[=800x600]] <File.Mod> [Proc]  compile, then run (default: Do)");
 	Say("  ob get <pkg>[@ver] ...             fetch package(s) into .a2pkg/, pin them, resolve deps");
 	Say("  ob test [File.Test ...] [-v] [-j N] run test files (default: every *.Test here)");
 	Say("  ob doc [File.Mod] [-o dir]         generate HTML API docs (index + per-module)");

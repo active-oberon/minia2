@@ -12,6 +12,8 @@
 # Xephyr is what makes it measurable without hardware: it is an X server whose density is an
 # argument, so the same binary can be shown a 200 dpi screen and a 96 dpi one in the same run.
 #
+# The window size `--gui=800x600` asks for is checked here too: same probe, same server, one run.
+#
 # Usage: tests/zoom-check.sh [bundle directory]
 
 set -eo pipefail
@@ -71,6 +73,32 @@ probe() {
 
 probe 200 2			# a dense screen: laid out at twice the size
 probe 96 1			# the density the layout was drawn for: left alone
+
+# The window size, which rides along here because it needs the same probe and the same server: the
+# only way to ask for one used to be the AOSCONFIG variable, and a program that wants a window of
+# its own size could not say so. 640 and 480 are chosen for being multiples of 8 -- the driver
+# rounds the width down to one, so 700 comes out 696.
+"$bundle/ob" build --gui=640x480 "$root/tests/ZoomProbe.Mod" -o ProbeSized >"$work/build-sized.log" 2>&1 || {
+	echo "FAIL  --gui=640x480 did not build"; sed 's/^/        /' "$work/build-sized.log" | tail -8; fail=1
+}
+if [ -x ./ProbeSized ]; then
+	pkill -f "Xephyr $display" 2>/dev/null || true
+	Xephyr "$display" -screen 1200x800 -dpi 96 -nolisten tcp >"$work/xephyr-sized.log" 2>&1 &
+	server=$!
+	sleep 2
+	said="$(DISPLAY="$display" XAUTHORITY= timeout 60 ./ProbeSized 2>&1 | tr -d '\r' | grep '^zoom:' || true)"
+	kill "$server" 2>/dev/null || true
+	case "$said" in
+		"zoom: 640 x 480"*) echo "ok    --gui=640x480 asks for the window and gets it" ;;
+		*) echo "FAIL  --gui=640x480 gave ${said:-<no output>}"; fail=1 ;;
+	esac
+fi
+
+# And the flag refuses what it cannot read, rather than picking some other size.
+case "$("$bundle/ob" build --gui=800 "$root/tests/ZoomProbe.Mod" 2>&1)" in
+	*"--gui takes a size like 800x600"*) echo "ok    a size it cannot read is refused" ;;
+	*) echo "FAIL  --gui=800 was not refused"; fail=1 ;;
+esac
 
 echo
 if [ "$fail" = 0 ]; then echo "zoom-check: OK"; else echo "zoom-check: FAILED"; fi

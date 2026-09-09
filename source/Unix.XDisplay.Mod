@@ -23,6 +23,7 @@ CONST
 
 VAR
 	winName, iconName: ARRAY 128 OF CHAR;
+	reqWidth, reqHeight: SIGNED32;		(* the window size somebody asked for; 0 means the configuration decides *)
 
 
 TYPE
@@ -852,11 +853,24 @@ VAR
 		RETURN size
 	END GetDisplaySize;
 
+	(*	SetSize asks for a window of a given size, which is what `ob build --gui=800x600` bakes and
+		what `Display.Install 800 600` passes on: without it the only way to say was the AOSCONFIG
+		variable, so a windowed program could not choose its own window. Zero means "ask the
+		configuration", which is what every caller did before. *)
+	PROCEDURE SetSize*( width, height: SIGNED32 );
+	BEGIN
+		reqWidth := width;  reqHeight := height
+	END SetSize;
+
 	PROCEDURE Install*;
 	VAR disp: Display; res: INTEGER; s, w, h: SIGNED32; xdisp: X11.DisplayPtr;
 	BEGIN
 		InitNames; xdisp := OpenX11Display( );
-		s := GetDisplaySize( w, h );
+		IF (reqWidth > 0) & (reqHeight > 0) THEN
+			w := reqWidth;  h := reqHeight;  s := -1		(* -1: the size is absolute, not a percentage *)
+		ELSE
+			s := GetDisplaySize( w, h )
+		END;
 		NEW( disp, xdisp, w, h, s, s );
 		disp.SetName( "XDisplay" );
 		disp.desc := "X11 display driver";

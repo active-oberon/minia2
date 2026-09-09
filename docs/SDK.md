@@ -263,7 +263,8 @@ ob build   Hello.Mod -o hello    # standalone Linux binary (go build)
 ob build   Hello.Mod -t win64 -o hello.exe   # cross-build a Windows .exe
 ob build   Hello.Mod -t a64 -o hello-arm64  # cross-build an AArch64 binary
 ob compile Hello.Mod -o out      # just the .GofUu object file
-ob build   Window.Mod --gui      # a windowed binary: it opens its own window
+ob build   Window.Mod --gui=800x600   # a windowed binary, in a window of that size
+ob run     Window.Mod --gui      # the same program without linking it first
 ob version                       # SDK banner
 ob repl                          # interactive A2 shell
 ```
@@ -274,6 +275,14 @@ pointer through `Inputs` — one window with a canvas in it, no desktop and no w
 this machine only (the windowed objects in `lib-gui/` are this SDK's own platform), and without the
 flag `IMPORT Displays` is still a compile error, which is what keeps a headless program headless.
 `examples/Window.Mod` is the shape: take the display, paint, register two sinks, leave on Escape.
+
+Without a size the window is the screen less a margin; `--gui=800x600` asks for one, and the width
+is rounded down to a multiple of eight (so `700` comes out `696`). `ob run --gui` does the same
+without linking anything, which is the loop to develop in. A program that would rather be told at
+run time can be: the driver reads `DisplaySize` out of `AOSCONFIG`, either as `800x600` or as a
+percentage of the screen.
+
+    AOSCONFIG="Color 0  StackSize 128  DisplaySize 800x600" ./Window
 
 > **Quoting matters.** Use single quotes and `"$PWD"` exactly as above. `$PWD`
 > is left unexpanded in the alias definition and resolves to the *current*
