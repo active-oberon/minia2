@@ -7,6 +7,11 @@
 # 7433 passed, and the 77 below. The eleven defects the same run found are fixed rather
 # than listed; the whole of it is written up in Ideas.md 7.21.
 #
+# 10.09.2026, the next full run here: 7729 cases, and the 77 grew to 84 -- two suites
+# written on 09.09 are for modules this host does not have. Note for whoever runs it: put
+# Git for Windows' usrin on PATH first, or the five Processes.Test cases that call `cat`
+# and `echo` fail on the programs being missing and read like a regression.
+#
 # --- the suite is the Unix twin's, and its cases import Unix ------------------------
 # `UnixFiles.Test` says so in its own header ("Tests for source/Unix.UnixFiles.Mod") and
 # every case imports `Unix`, which no Windows build has; the two cases of `Clock.Test` and
@@ -122,6 +127,23 @@ DAP.Test	positive: a breakpoint stops the program on the line the client asked f
 DAP.Test	positive: a step from a breakpoint stops on the next statement
 DAP.Test	positive: the core alone, driven the way PET drives it
 DAP.Test	positive: a step out of the outermost procedure plants nothing in the machinery that started it
+#
+# --- the module the suite is for does not exist on this host ------------------------
+# Measured 10.09.2026, the first run of the whole board here since the two suites were
+# written. `GPIO.Test` is for `Unix.GPIO.Mod`, and there is no Windows twin of it: the
+# three cases that `IMPORT GPIO` cannot compile, while the fourth asks only about the
+# layout of the kernel's structs and passes. `Inputs.Test` is for a module that ships in
+# `lib-gui/`, which only `ob build --gui` searches -- the board here runs against the
+# payload SDK, where the window system is deliberately absent, so all four cases fail on
+# `IMPORT Inputs`. On Linux both suites pass because the board there is run against the
+# whole build. Neither is a defect and neither has anything to fix on this host.
+GPIO.Test	positive: a chip that is not there is refused, and says why
+GPIO.Test	positive: a request of no lines and of too many is refused before the device is opened
+GPIO.Test	positive: a chip that is there answers for itself
+Inputs.Test	positive: everybody registered hears the message
+Inputs.Test	positive: a sink registered twice hears twice
+Inputs.Test	positive: the pointer stays inside the limits it was given
+Inputs.Test	positive: the three groups and the plugin registry are there to register with
 #
 # --- the case names a Unix program and a Unix convention ----------------------------
 # `Processes.Test` runs the programs "every Unix has and nobody has ever changed the
