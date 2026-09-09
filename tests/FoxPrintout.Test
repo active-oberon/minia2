@@ -13,6 +13,14 @@
 # whether printing it a second time gives the same text. The printer runs without the semantic
 # checker here (that is also how the language server calls it), which is why an unresolved type
 # prints as `(*unresolved*)Name`; the language server strips those before it hands the text back.
+#
+# One rule this suite is the reason for: **a case must not name the module it compiles after a
+# library module.** `ob test` gives the whole run one work directory and puts it on the search path,
+# so `MODULE Strings` compiled by a case here shadowed the real `Strings` for every later case and
+# every later suite -- 109 failures by the 44th suite, with `Strings.String` reported "undeclared"
+# in modules that never mentioned this suite. It stayed hidden because the Linux board is run with
+# `-j`, where the pieces get a work directory each; the first serial run since this suite was
+# written (Windows, 10.09) showed it at once.
 
 positive: the helpers these tests are written with
 
@@ -266,9 +274,12 @@ positive: a real constant is printed at the precision that reads back to itself
 			its own first compilation. Seventeen is the number that round-trips, and this is the
 			case behind the fix made on 07.09. *)
 		source := "";
-		T.Line(source, "MODULE Reals;");
+		(*	Not MODULE Reals: a case compiles into the work directory the whole run shares, so a
+			module named like a library module shadows the real one for every later case -- see the
+			module note at the top of this suite. *)
+		T.Line(source, "MODULE PrintedReals;");
 		T.Line(source, "CONST Tenth = 0.1; Big = 1.0E+300; Small = 1.0E-300; Zero = 0.0; Neg = -2.5;");
-		T.Line(source, "END Reals.");
+		T.Line(source, "END PrintedReals.");
 
 		ASSERT(T.Print(source, text), 1);
 		ASSERT(T.Said(text, "1.0000000000000001E-1"), 2);   (* 0.1 to seventeen digits *)
@@ -291,17 +302,17 @@ positive: a string constant survives the trip, quotes and all
 			what lets a printed string hold a quote of its own. The case is that the result still
 			compiles. *)
 		source := "";
-		T.Line(source, "MODULE Strings;");
+		T.Line(source, "MODULE PrintedStrings;");
 		T.Add(source, "CONST Greeting = "); T.Add(source, T.Quote); T.Add(source, "hello");
 		T.Add(source, T.Quote); T.Line(source, "; Tab = 09X;");
 		T.Line(source, "VAR s: ARRAY 8 OF CHAR;");
 		T.Line(source, "BEGIN COPY(Greeting, s)");
-		T.Line(source, "END Strings.");
+		T.Line(source, "END PrintedStrings.");
 
 		ASSERT(T.Print(source, text), 1);
 		ASSERT(T.Said(text, "hello"), 2);
 		ASSERT(T.Said(text, "9X"), 3);
-		ASSERT(T.Compiles("Strings.Mod", text, message), 4)
+		ASSERT(T.Compiles("PrintedStrings.Mod", text, message), 4)
 	END Test.
 
 positive: printing a printed module gives the same text back
