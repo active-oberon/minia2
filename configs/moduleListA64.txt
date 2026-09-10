@@ -101,6 +101,7 @@ Hashing.Mod
 Unix.HostLibs.Mod
 VirtualDisks.Mod
 Unix.V24.Mod
+Unix.GPIO.Mod
 OpenAL.Mod
 OpenALSound.Mod
 Debugging.Mod
