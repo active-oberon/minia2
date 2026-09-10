@@ -114,12 +114,13 @@ TYPE
 	VAR
 		first, last: WriteEntry;
 		free: WriteEntry;
+		busy: BOOLEAN;	(* an entry is off the queue but not yet written -- Pos/SetPos have to wait for it too *)
 		size: SIZE;
 		sender: Streams.Sender;
 
 		PROCEDURE & InitWriter(sender: Streams.Sender; size: SIZE);
 		BEGIN
-			first := NIL; last := NIL; free := NIL;
+			first := NIL; last := NIL; free := NIL; busy := FALSE;
 			SELF.size := size;
 			SELF.sender := sender;
 			InitWriter^(Add, size);
@@ -164,7 +165,8 @@ TYPE
 		PROCEDURE ReturnEntry(entry: WriteEntry);
 		BEGIN{EXCLUSIVE}
 			entry.next := free;
-			free := entry
+			free := entry;
+			busy := FALSE
 		END ReturnEntry;
 
 		PROCEDURE PutEntry(entry: WriteEntry);
@@ -181,6 +183,7 @@ TYPE
 			entry := first;
 			first := first.next;
 			IF first = NIL THEN last := NIL END;
+			busy := TRUE;
 			RETURN entry
 		END GetEntry;
 
@@ -216,13 +219,13 @@ TYPE
 
 		PROCEDURE SetPos*(pos: Streams.Position);
 		BEGIN{EXCLUSIVE}
-			AWAIT(first = NIL);
+			AWAIT((first = NIL) & ~busy);
 			Reset; out.SetPos(pos);
 		END SetPos;
 
 		PROCEDURE Pos*(): Streams.Position;
 		BEGIN{EXCLUSIVE}
-			AWAIT(first = NIL);
+			AWAIT((first = NIL) & ~busy);
 			RETURN out.Pos()
 		END Pos;
 
