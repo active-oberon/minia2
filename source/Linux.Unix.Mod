@@ -463,9 +463,17 @@ TYPE
 	FdSet* = ARRAY FdSetLen OF SET32;
 
 
+	(*	`struct dirent64`, and 64 bits is the point of it. The plain `struct dirent` of a 32-bit
+		host carries a 32-bit d_off, and on ext4 with a hashed directory index the offset of the
+		very first entry does not fit one: glibc then answers readdir with NIL and EOVERFLOW, so
+		every directory on such a filesystem reads as empty. Measured 2026-09-10 on armhf against
+		this tree's own lib/ -- `ob version` said the standard library held no modules at all.
+		The 64-bit form has the same layout on every host we build for (measured: ino at 0, off at
+		8, reclen at 16, type at 18, name at 19, on x86-64 and on armhf alike), so there is one
+		record here and not one per word size. *)
 	Dirent* = POINTER {UNSAFE, UNTRACED} TO RECORD
-				ino-		: ino_t;
-				off-		: off_t;
+				ino-		: SIGNED64;
+				off-		: SIGNED64;
 				reclen-	: SIGNED16;
 				typ-		: CHAR;
 				name-	: (*array of*) CHAR;
@@ -790,7 +798,7 @@ VAR
 	getenv-		: PROCEDURE {C} ( name: ADDRESS ): ADDRESS;
 
 	opendir-		: PROCEDURE {C} ( name: ADDRESS ): ADDRESS;
-	readdir-		: PROCEDURE {C} ( dir: ADDRESS ): Dirent;
+	readdir-		: PROCEDURE {C} ( dir: ADDRESS ): Dirent;	(* readdir64: see Dirent *)
 	closedir-		: PROCEDURE {C} ( dir: ADDRESS );
 
 	sigsetjmp-	: PROCEDURE {C} ( env: ADDRESS;  savemask: SIGNED32 ): SIGNED32;
@@ -1657,7 +1665,9 @@ VAR
 		Dlsym( libc, "getenv",		ADDRESSOF( getenv ) );
 
 		Dlsym( libc, "opendir",		ADDRESSOF( opendir ) );
-		Dlsym( libc, "readdir",		ADDRESSOF( readdir ) );
+		(* readdir64 rather than readdir: on a 32-bit host the plain one fails on ext4, see Dirent.
+			On a 64-bit one the two are the same function under two names. *)
+		Dlsym( libc, "readdir64",	ADDRESSOF( readdir ) );
 		Dlsym( libc, "closedir",	ADDRESSOF( closedir ) );
 
 
