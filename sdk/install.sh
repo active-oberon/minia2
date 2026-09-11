@@ -65,9 +65,9 @@ if [ "$uninstall" = 1 ]; then
 	exit 0
 fi
 
-# Which tarball this machine wants. The Windows SDK is a third asset and a `.exe`; a shell
+# Which tarball this machine wants. The Windows SDK is another asset and a `.exe`; a shell
 # capable of running this script is not evidence that Windows is what it is running on, so
-# only the two Linux hosts are resolved here and anything else is told what to take by hand.
+# only the Linux hosts are resolved here and anything else is told what to take by hand.
 platform=""
 if [ -z "$tarball" ]; then
 	os="$(uname -s)"
@@ -84,6 +84,11 @@ if [ -z "$tarball" ]; then
 		Linux/x86_64|Linux/amd64) platform="linux-amd64" ;;
 		Linux/aarch64|Linux/arm64)
 			if [ "$bionic" = 1 ]; then platform="android-arm64"; else platform="linux-arm64"; fi ;;
+		# The 32-bit machines: an old x86 laptop, and a Pi 1, 2 or Zero, which is where a 32-bit
+		# Raspberry Pi OS still is. A Pi 3, 4 or 5 running the 64-bit image answers aarch64 above
+		# and takes the arm64 tarball, which is the better one -- this is not for those.
+		Linux/i386|Linux/i486|Linux/i586|Linux/i686) platform="linux-386" ;;
+		Linux/armv7l|Linux/armv6l|Linux/armhf) platform="linux-armhf" ;;
 		Darwin/*) die "macOS has no SDK build yet; the Docker image runs there (docs/SDK.md)" ;;
 		*) die "no SDK build for $os on $arch; the releases page lists what there is: https://github.com/$repo/releases" ;;
 	esac

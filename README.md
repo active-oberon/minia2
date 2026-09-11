@@ -20,8 +20,9 @@ vanilla trees.
 
 ## Targets
 
-**Linux64, Win64 and AArch64.** The `compilers/` bootstrap binaries are self-contained
-A2+Fox executables for 64-bit x86; 32-bit is not built.
+**Linux64, Win64, AArch64, Linux32 and LinuxARM.** The `compilers/` bootstrap binaries
+are self-contained A2+Fox executables for 64-bit x86; the other four are cross-built from
+that host, and each of them is an SDK of its own on the machine it is for.
 
 AArch64 is a full target, not a cross-compile that nobody has run: the system boots, the
 standard library compiles for it, modules load at run time, the compiler compiles on the
@@ -30,6 +31,17 @@ a64-suites`) and on a real phone, which is where the one defect an emulator cann
 was found. The backend, the assembler and the linker support for it are ours
 (`source/FoxA64*.Mod`); `task a64-stdlib` builds the library and `task a64-bundle`
 assembles an SDK whose native target is a64.
+
+The two 32-bit targets are for hardware that is on the desk rather than for an audience:
+i386 for an old x86 laptop, armhf for a Raspberry Pi 1, 2 or Zero (a Pi 3/4/5 runs the
+64-bit image and takes the arm64 tarball, which is the better one). `task Linux32` and
+`task LinuxARM` build them, `task bundle32` and `task bundle-armhf` assemble the tarball
+and then *use* it — the i386 one on this machine, the armhf one under `qemu-arm`. Using
+it is the check and not a formality: both defects the first run found were invisible to a
+build. `Builtins` imports `FPE64` on 32-bit ARM and nowhere else, so an armhf library
+filtered through the x86-64 payload list could not compile a line on the device; and
+32-bit `readdir` fails with `EOVERFLOW` on ext4, so every directory read as empty and
+`ob version` reported a standard library of no modules.
 
 ## Build
 
@@ -69,6 +81,8 @@ task bundle-check    # unpack the tarball elsewhere and use it with an empty env
 task win-bundle      # the Windows SDK: ob.exe and the library it compiles against
 task a64-bundle      # the AArch64 SDK, native on the device (glibc)
 task a64-bundle-android  # the same against Bionic: Termux without proot
+task bundle32        # the i386 SDK, and its own run.sh against it
+task bundle-armhf    # the armhf SDK, used under qemu (task arm32-sysroot for the C library)
 task docker          # the Docker image (same payload at /opt/a2sdk)
 ```
 
@@ -83,8 +97,10 @@ It is `sdk/install.sh`; `--dir`, `--bin`, `--version`, `--tarball` and `--uninst
 are the whole interface, and `task install-check` is what answers for it.
 
 The tarball needs nothing but 64-bit x86 Linux and glibc — unpack it and run `./ob`. It
-carries `ob build -t win64` (a Windows `.exe`) and `-t a64` (an AArch64 ELF) as cross
-targets when their objects are present. The Windows SDK is `ob.exe` and needs no bash,
+carries `-t win64` (a Windows `.exe`), `-t a64` (an AArch64 ELF), `-t linux32` (i386) and
+`-t arm32` (armhf) as cross targets when their objects are present; `ob version` says
+which. An SDK that is itself one of the other four is a native one and carries no cross
+targets at all. The Windows SDK is `ob.exe` and needs no bash,
 Cygwin or WSL; the AArch64 one runs on the device — a Pi 4/5, an ARM server, a phone
 under `proot-distro` — and compiles there natively. Termux itself is Bionic, not glibc, so
 it has a tarball of its own (`android-arm64`), and `install.sh` picks between the two by

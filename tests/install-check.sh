@@ -132,6 +132,15 @@ case "$(A2SDK_SYSROOT="$work/proot" probe Linux aarch64)" in
 	*"minia2-sdk-0000.00.00-linux-arm64.tar.gz"*) ok "a glibc rootfs on an Android kernel asks for linux-arm64" ;;
 	*) bad "proot resolved to: $(A2SDK_SYSROOT="$work/proot" probe Linux aarch64 | tr '\n' ' ')" ;;
 esac
+# The 32-bit machines the two new tarballs are for: an old x86 laptop and a Pi 1/2/Zero.
+case "$(probe Linux i686)" in
+	*"minia2-sdk-0000.00.00-linux-386.tar.gz"*) ok "32-bit x86 asks for the linux-386 tarball" ;;
+	*) bad "i686 resolved to: $(probe Linux i686 | tr '\n' ' ')" ;;
+esac
+case "$(probe Linux armv7l)" in
+	*"minia2-sdk-0000.00.00-linux-armhf.tar.gz"*) ok "32-bit ARM asks for the linux-armhf tarball" ;;
+	*) bad "armv7l resolved to: $(probe Linux armv7l | tr '\n' ' ')" ;;
+esac
 case "$(probe Linux riscv64)" in
 	*"no SDK build for Linux on riscv64"*) ok "a machine with no build is told so, and where to look" ;;
 	*) bad "an unsupported machine was not refused: $(probe Linux riscv64 | tr '\n' ' ')" ;;

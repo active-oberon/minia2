@@ -118,6 +118,9 @@ FoxA64InstructionSet
 FoxAMD64Assembler
 FoxAMD64InstructionSet
 FoxAMDBackend
+FoxARMAssembler
+FoxARMBackend
+FoxARMInstructionSet
 FoxArrayBase
 FoxArrayBaseOptimized
 FoxAssembler

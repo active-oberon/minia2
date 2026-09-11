@@ -26,6 +26,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user-static libc6-arm64-cross llvm
+      - name: Install the 32-bit C libraries the i386 and armhf SDKs run against
+        # Same rule as the line above: without these the two 32-bit bundle checks skip, and a skip
+        # reads exactly like a pass -- which is how a bundle that builds and cannot compile a line
+        # on its own target would get through. libc6-i386 is what runs the i386 SDK here;
+        # libc6-armhf-cross is the sysroot qemu-arm gives the armhf one.
+        run: sudo apt-get install -y --no-install-recommends libc6-i386 libc6-armhf-cross
       - name: Install wine, which is what runs the Windows SDK here
         # ob is a Windows binary now, not a shell script, so the only way to answer for the Windows
         # SDK on a Linux runner is to run it. Without wine the Windows part of `task ob` skips, and
@@ -84,6 +90,20 @@ jobs:
         env:
           A64_REQUIRE: "1"
         run: task a64-bundle
+      - name: The 32-bit tarball SDKs (i386 and armhf), built and used
+        # The old laptop and the Raspberry Pi 1/2/Zero. Both are cross-built here and then USED:
+        # the i386 one runs on this runner, the armhf one under qemu. Building is not the check --
+        # both of the defects this found were invisible to a build. `Builtins` imports FPE64 on
+        # ARM and nowhere else, so an armhf lib assembled from the x86-64 payload list could not
+        # compile a line on the device; and 32-bit readdir fails with EOVERFLOW on ext4, so every
+        # directory read as empty and `ob version` reported no standard library at all.
+        env:
+          BUNDLE32_REQUIRE: "1"
+        run: |
+          task Linux32
+          task LinuxARM
+          task bundle32
+          task bundle-armhf
       - name: A64 test suites (push to main only — it is the better part of an hour)
         # Every tests/*.Test case compiled for AArch64, and executed under qemu where the suite
         # executes: the two language suites are 5450 compilation and 695 execution cases, the same

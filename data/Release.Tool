@@ -1577,23 +1577,11 @@ PACKAGE Contributions ARCHIVE "Contributions.zip" SOURCE "ContributionsSrc.zip" 
 	CalcFn.Mod CalcD1.Mod CalcD2.Mod CalcD3.Mod CalcD4.Mod CalcGauss.Mod
 	MathMitLef.Mod CalcConvolution.Mod CalcGrunwald.Mod CalcDiethelm.Mod
 
-	I386 {
-
-		# Disable index checking for these modules with \sx for efficiency
-		I386.Array1dBytes.Mod Array1dInt.Mod Array1dRat.Mod Array1dRe.Mod Array1dCplx.Mod I386.ArrayXdBytes.Mod
-		ArrayXdInt.Mod ArrayXdRat.Mod ArrayXdRe.Mod ArrayXdCplx.Mod Array2dInt.Mod Array2dRat.Mod
-		Array2dRe.Mod Array2dCplx.Mod
-
-		VecInt.Mod VecRat.Mod VecRe.Mod VecCplx.Mod
-
-		MtxInt.Mod MtxRat.Mod MtxRe.Mod MtxCplx.Mod
-
-		CubeInt.Mod CubeRat.Mod CubeRe.Mod CubeCplx.Mod
-
-		LinEqRe.Mod LinEqLU.Mod LinEqCholesky.Mod LinEqSVD.Mod
-		HCubeInt.Mod HCubeRat.Mod HCubeRe.Mod HCubeCplx.Mod
-		DataTemplate.Mod.Text MathRandomSeed.dat
-	}
+	# [minia2] removed the I386-only numeric library (Array1d*/ArrayXd*/Array2d*, Vec*, Mtx*,
+	# Cube*, HCube*, LinEq*, 33 modules): vanilla lists it for I386 alone, so no AMD64 or ARM
+	# build has ever carried it, and a Linux32 SDK holding a numeric library the Linux64 one
+	# does not is a difference between targets, not a feature. packages/lib/numerics covers
+	# what is actually shipped.
 
 	# Testsuite
 	CapoTest1.2.zip	# requires Oberon

@@ -106,9 +106,12 @@ fi
 
 # 4. One module to an object file. Both the transcript and the file: a reported path that was
 #    never written would pass on the log alone.
+#    The extension is the SDK's own -- GofUu on x86-64, GofU on i386, GofA on armhf, GofU8 on
+#    AArch64 -- so it is matched rather than spelled: this check ran green for a year on one
+#    machine and would have called every other SDK broken.
 s=0; run "$results/compile.log" 300 "$ob" compile JsonDemo.Mod -o obj || s=$?
-report "ob compile" "$s" "$results/compile.log" 'wrote .*JsonDemo\.GofUu'
-[ -f "$work/obj/JsonDemo.GofUu" ] || { echo "        (and the object file is not there)"; }
+report "ob compile" "$s" "$results/compile.log" 'wrote .*JsonDemo\.Gof[A-Za-z0-9]*'
+ls "$work"/obj/JsonDemo.Gof* >/dev/null 2>&1 || { echo "        (and the object file is not there)"; }
 
 # 5. A project of more than one module, which is what anything real is: three, with a two-deep
 #    import chain. Siblings are importable only because `ob` puts the project in the scratch dir
@@ -141,6 +144,46 @@ s=0; started=$SECONDS
 ( cd "$multi" && timeout 600 "$ob" run App.Mod > "$results/multi.log" 2>&1 ) || s=$?
 _ELAPSED=$((SECONDS - started))
 report "a project of three modules" "$s" "$results/multi.log" 'quad 11 = 44'
+
+# 5b. What was just compiled has to win over what was lying around. `ob compile` leaves an object
+#     file beside the source; a later `ob build` of the same module, after an edit, must link the
+#     code it just made -- not the leftover. Case 5 is why the project directory is on the search
+#     path at all, and the scratch directory the fresh object file goes to is added after it, so a
+#     stale file there is found first: a build that says "wrote" and ships last week's code. It is
+#     silent, it needs no unusual usage to hit -- compile once, edit, build -- and nothing else
+#     here would see it, because every other case builds in a directory with no object file in it.
+stale="$work/stale"
+mkdir -p "$stale"
+cat > "$stale/Stale.Mod" <<'MOD'
+MODULE Stale;
+IMPORT KernelLog;
+	PROCEDURE Do*;
+	BEGIN KernelLog.String("edition one"); KernelLog.Ln
+	END Do;
+END Stale.
+MOD
+s=0; started=$SECONDS
+( cd "$stale" && timeout 300 "$ob" compile Stale.Mod > "$results/stale.log" 2>&1 ) || s=$?
+# Rewritten rather than sed -i'd: this script ships in the tarball and runs on machines whose sed
+# does not take -i without an argument.
+cat > "$stale/Stale.Mod" <<'MOD'
+MODULE Stale;
+IMPORT KernelLog;
+	PROCEDURE Do*;
+	BEGIN KernelLog.String("edition two"); KernelLog.Ln
+	END Do;
+END Stale.
+MOD
+( cd "$stale" && timeout 600 "$ob" build Stale.Mod -o stale >> "$results/stale.log" 2>&1 ) || s=$?
+_ELAPSED=$((SECONDS - started))
+if [ "$s" -ne 0 ] || [ ! -x "$stale/stale" ]; then
+	report "a build after an edit" "$s" "$results/stale.log" 'wrote .*stale'
+else
+	s=0; started=$SECONDS
+	( cd "$stale" && timeout 120 ./stale > "$results/stale-run.log" 2>&1 ) || s=$?
+	_ELAPSED=$((SECONDS - started))
+	report "a build after an edit" "$s" "$results/stale-run.log" 'edition two'
+fi
 
 # 6. The tier rule, read from the std manifests -- so also the check that packages/ shipped.
 s=0; run "$results/lint.log" 120 "$ob" lint || s=$?
@@ -255,6 +298,60 @@ if [ -d "$root/lib-a64" ]; then
 else
 	skipped "ob build -t a64" "this bundle carries no AArch64 objects"
 fi
+
+# 10b. The two 32-bit targets, the same shape and one procedure rather than two more copies of
+#      it. Building is the whole check on a machine that cannot run the result; where it can --
+#      a 32-bit C library for i386, qemu and an armhf sysroot for the other -- it runs it too.
+#      This is what would have caught lib-arm32 shipping without FPE64: it built and could not
+#      compile a line on the device.
+cross32() {
+	local target="$1" dir="$2" machine="$3" out="$4" emu="$5" prefix="$6" arch
+	if [ ! -d "$root/$dir" ]; then
+		skipped "ob build -t $target" "this bundle carries no ${target} objects"; return
+	fi
+	local s=0
+	run "$results/build-$target.log" 600 "$ob" build Hello.Mod -t "$target" -o "$out" || s=$?
+	arch="$(od -An -tx1 -j18 -N2 -- "$work/$out" 2>/dev/null | tr -d ' \n')"
+	if [ "$s" -ne 0 ] || [ "$arch" != "$machine" ]; then
+		printf '  FAIL  %-30s no %s ELF came out (e_machine %s)\n' "ob build -t $target" "$target" "${arch:-none}"
+		FAILED+=("ob build -t $target"); fail=$((fail+1))
+		tail -12 "$results/build-$target.log" | tr -d '\r' | sed 's/^/          /'
+		return
+	fi
+	printf '  ok    %-30s %6s  %s\n' "ob build -t $target" "${_ELAPSED}s" "${results#"$root"/}/build-$target.log"
+	pass=$((pass+1))
+
+	if [ -n "$emu" ] && [ -z "$prefix" ]; then
+		skipped "the $target binary, run" "no C library for it here"; return
+	fi
+	if [ -n "$emu" ] && ! command -v "$emu" >/dev/null; then
+		skipped "the $target binary, run" "no $emu here"; return
+	fi
+	s=0
+	if [ -n "$emu" ]; then
+		QEMU_LD_PREFIX="$prefix" run "$results/run-$target.log" 300 "$emu" "$work/$out" || s=$?
+	else
+		run "$results/run-$target.log" 300 "$work/$out" || s=$?
+	fi
+	if [ "$s" -eq 0 ] && grep -q 'Hello from A2' "$results/run-$target.log"; then
+		printf '  ok    %-30s %6s  %s\n' "the $target binary, run" "${_ELAPSED}s" "${results#"$root"/}/run-$target.log"
+		pass=$((pass+1))
+	else
+		skipped "the $target binary, run" "it is here but would not run (C library?)"
+	fi
+}
+
+# i386 runs on this machine or not at all: there is no emulator in the picture, only a 32-bit libc.
+if [ -f /lib/ld-linux.so.2 ] || [ -f /lib32/ld-linux.so.2 ]; then i386prefix=/; else i386prefix=""; fi
+cross32 linux32 lib-linux32 0300 hello32 "" "$i386prefix"
+
+# armhf: qemu plus a sysroot, the same arrangement the AArch64 case above uses.
+armprefix="${ARM32_SYSROOT:-}"
+for d in "$armprefix" /usr/arm-linux-gnueabihf "$root/../LinuxARM/sysroot"; do
+	[ -n "$d" ] && [ -f "$d/lib/ld-linux-armhf.so.3" ] && { armprefix="$d"; break; }
+	armprefix=""
+done
+cross32 arm32 lib-arm32 2800 hello-armhf "$(command -v qemu-arm-static || command -v qemu-arm || echo qemu-arm)" "$armprefix"
 
 # 11. The language suites, out of the bundle's own tests/ against its own baseline: thousands of
 #    cases, each in a process of its own, and the check that says this tarball's compiler is the

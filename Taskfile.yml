@@ -518,11 +518,8 @@ tasks:
     cmds:
       - |
         case "{{.PLATFORM}}" in
-          Linux64|Linux32)
+          Linux64|Linux32|LinuxARM)
             OUT="{{.CONFIGS}}/moduleListLinux.txt"
-            ;;
-          LinuxARM)
-            OUT="{{.CONFIGS}}/moduleListLinuxARM.txt"
             ;;
           Win64|Win32)
             OUT="{{.CONFIGS}}/moduleListWin.txt"
@@ -563,6 +560,23 @@ tasks:
       - task: build-platform
         vars:
           PLATFORM: Win64
+
+  # The 32-bit targets, cross-built from this host and deliberately not in PLATFORMS: they are
+  # built when a bundle for them is wanted, not on every `task default`, which is the difference
+  # between a five-minute build and a twenty-minute one.
+  Linux32:
+    desc: Build Linux32 platform (i386 -- the old laptop)
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: Linux32
+
+  LinuxARM:
+    desc: Build LinuxARM platform (armhf -- Raspberry Pi 1/2/Zero)
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: LinuxARM
 
   test:
     desc: Run compiler tests for host platform
@@ -965,7 +979,7 @@ tasks:
     cmds:
       - |
         set -eo pipefail
-        {{.CURRENT_DIR}}/tests/a64-sysroot.sh {{.BUILD_DIR}}/A64/sysroot || {
+        {{.CURRENT_DIR}}/tests/sysroot.sh arm64 {{.BUILD_DIR}}/A64/sysroot || {
           status=$?
           if [ "$status" -eq 2 ]; then
             # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
@@ -1076,6 +1090,48 @@ tasks:
           if [ "$status" -eq 2 ]; then
             [ -z "$A64_REQUIRE" ] || { echo "[FAIL] bundling the A64 SDK needs the A64 standard library and a built host compiler, and A64_REQUIRE is set"; exit 1; }
             echo "[SKIP] bundling the A64 SDK needs the A64 standard library (task a64-stdlib) and a built host compiler"
+          else
+            exit "$status"
+          fi
+        }
+
+  arm32-sysroot:
+    desc: Unpack an armhf C library into target/LinuxARM/sysroot, for running the armhf SDK under qemu
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/sysroot.sh armhf {{.BUILD_DIR}}/LinuxARM/sysroot || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$BUNDLE32_REQUIRE" ] || { echo "[FAIL] the armhf sysroot needs docker or libc6-armhf-cross, and BUNDLE32_REQUIRE is set"; exit 1; }
+            echo "[SKIP] unpacking an armhf C library needs docker; install libc6-armhf-cross instead"
+          else
+            exit "$status"
+          fi
+        }
+
+  bundle32:
+    desc: The i386 tarball SDK, assembled and used on this machine (needs `task Linux32`)
+    cmds:
+      - task: bundle32-run
+        vars: {PLATFORM: Linux32, WHAT: "the i386 SDK", NEEDS: "a 32-bit C library"}
+
+  bundle-armhf:
+    desc: The armhf tarball SDK, assembled and used under qemu (needs `task LinuxARM`)
+    cmds:
+      - task: bundle32-run
+        vars: {PLATFORM: LinuxARM, WHAT: "the armhf SDK", NEEDS: "qemu-arm and an armhf C library (task arm32-sysroot)"}
+
+  bundle32-run:
+    internal: true
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/bundle32-check.sh {{.PLATFORM}} {{.BUILD_DIR}}/{{.PLATFORM}} || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$BUNDLE32_REQUIRE" ] || { echo "[FAIL] {{.WHAT}} needs {{.NEEDS}}, and BUNDLE32_REQUIRE is set"; exit 1; }
+            echo "[SKIP] {{.WHAT}} needs a build (task {{.PLATFORM}}) and {{.NEEDS}}"
           else
             exit "$status"
           fi

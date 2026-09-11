@@ -79,6 +79,8 @@ OBERON="$SDK/oberon"
 LIB="$SDK/lib"                 # Linux64 stdlib (.GofUu/.SymUu) + compiler runtime
 LIBWIN="$SDK/lib-win64"        # Win64 stdlib (.GofWw/.SymWw), if present
 LIBA64="$SDK/lib-a64"          # AArch64 stdlib (.GofU8/.SymU8), if present
+LIBLINUX32="$SDK/lib-linux32"  # i386 stdlib (.GofU/.SymU), if present
+LIBARM32="$SDK/lib-arm32"      # armhf stdlib (.GofA/.SymA), if present
 LIBSYM="$SDK/lib-sym"          # ALL Linux64 stdlib .SymUu (for LSP import resolution)
 SYMDIR="${A2_SYMS:-/psym}"     # the project's own .SymUu, if it has a build of its own (LSP)
 PLATFORM="${A2_PLATFORM:-Unix64}"            # compiler backend (Linux); HOST_PLATFORM below is
@@ -171,6 +173,18 @@ make_workdir() {
       ln -s "$LIB"/*.GofUu    "$w"/ 2>/dev/null || true   # Linux compiler runtime
       ln -s "$LIBA64"/*.SymU8 "$w"/ 2>/dev/null || true   # AArch64 target symbols
       ln -s "$LIBA64"/*.GofU8 "$w"/ 2>/dev/null || true   # AArch64 link objects
+      ;;
+    linux32)
+      [ -d "$LIBLINUX32" ] || die "linux32 target unavailable: no $LIBLINUX32 in this SDK"
+      ln -s "$LIB"/*.GofUu       "$w"/ 2>/dev/null || true   # Linux compiler runtime
+      ln -s "$LIBLINUX32"/*.SymU "$w"/ 2>/dev/null || true   # i386 target symbols
+      ln -s "$LIBLINUX32"/*.GofU "$w"/ 2>/dev/null || true   # i386 link objects
+      ;;
+    arm32)
+      [ -d "$LIBARM32" ] || die "arm32 target unavailable: no $LIBARM32 in this SDK"
+      ln -s "$LIB"/*.GofUu     "$w"/ 2>/dev/null || true   # Linux compiler runtime
+      ln -s "$LIBARM32"/*.SymA "$w"/ 2>/dev/null || true   # armhf target symbols
+      ln -s "$LIBARM32"/*.GofA "$w"/ 2>/dev/null || true   # armhf link objects
       ;;
     *)
       ln -s "$LIB"/*"$SYM_EXT"  "$w"/ 2>/dev/null || true
@@ -344,14 +358,23 @@ cmd_build() {
       # module was compiled against, which -p=LinuxA64 carries.
       c_ext="GofU8"; s_ext=".SymU8"; bootfile="$BOOT_LIST"; suffix=""
       linkopts="-p=LinuxA64 --extension=GofU8" ;;
-    *) die "unknown target: $target (use linux64, win64 or a64)" ;;
+    linux32)
+      # and the same boot list again, for the same reason
+      c_ext="GofU"; s_ext=".SymU"; bootfile="$BOOT_LIST"; suffix=""
+      linkopts="-p=Linux32 --extension=GofU" ;;
+    arm32)
+      c_ext="GofA"; s_ext=".SymA"; bootfile="$BOOT_LIST"; suffix=""
+      linkopts="-p=LinuxARM --extension=GofA" ;;
+    *) die "unknown target: $target (use linux64, win64, a64, linux32 or arm32)" ;;
   esac
   [ -f "$bootfile" ] || die "boot module list not found: $bootfile"
   local c_plat
   case "$target" in
-    win64) c_plat="Win64" ;;
-    a64)   c_plat="UnixA64" ;;
-    *)     c_plat="$PLATFORM" ;;
+    win64)   c_plat="Win64" ;;
+    a64)     c_plat="UnixA64" ;;
+    linux32) c_plat="Unix32" ;;
+    arm32)   c_plat="UnixARM" ;;
+    *)       c_plat="$PLATFORM" ;;
   esac
 
   local mod w boot dest; mod="$(module_name "$src")"
@@ -1040,6 +1063,14 @@ cmd_version() {
     if [ -d "$LIBA64" ] && [ "$LIBA64" != "$LIB" ]; then
       echo "            $(ls "$LIBA64"/*.SymU8 2>/dev/null | wc -l) modules (a64)"
       targets="$targets, a64 (AArch64 ELF)"
+    fi
+    if [ -d "$LIBLINUX32" ]; then
+      echo "            $(ls "$LIBLINUX32"/*.SymU 2>/dev/null | wc -l) modules (linux32)"
+      targets="$targets, linux32 (i386 ELF)"
+    fi
+    if [ -d "$LIBARM32" ]; then
+      echo "            $(ls "$LIBARM32"/*.SymA 2>/dev/null | wc -l) modules (arm32)"
+      targets="$targets, arm32 (armhf ELF)"
     fi
   fi
   echo "  targets : $targets"

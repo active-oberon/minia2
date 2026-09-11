@@ -34,6 +34,14 @@ CONST
 	HostTarget = "a64";
 	ObjectExtension = "GofU8"; SymbolExtension = ".SymU8";
 	CompilerPlatform = "UnixA64"; LinkerPlatform = "LinuxA64";
+#ELSIF I386 THEN
+	HostTarget = "linux32";
+	ObjectExtension = "GofU"; SymbolExtension = ".SymU";
+	CompilerPlatform = "Unix32"; LinkerPlatform = "Linux32";
+#ELSIF ARM THEN
+	HostTarget = "arm32";
+	ObjectExtension = "GofA"; SymbolExtension = ".SymA";
+	CompilerPlatform = "UnixARM"; LinkerPlatform = "LinuxARM";
 #ELSE
 	HostTarget = "linux64";
 	ObjectExtension = "GofUu"; SymbolExtension = ".SymUu";
@@ -51,7 +59,7 @@ VAR
 	debugging: BOOLEAN;			(* `ob dap` compiles with --debug, so DebugMap gets the line table *)
 
 	sdk-, project-: Path;			(* the SDK this binary belongs to; the directory the user is in *)
-	lib-, libWin-, libA64-, libLinux-, libSym-, libGui-: Path;
+	lib-, libWin-, libA64-, libLinux-, libLinux32-, libArm32-, libSym-, libGui-: Path;
 	packages-, bootList-, bootListWin-: Path;
 
 (* --- paths ------------------------------------------------------------------------------- *)
@@ -169,6 +177,8 @@ BEGIN
 	Join(sdk, "lib-win64", libWin);
 	Join(sdk, "lib-a64", libA64);
 	Join(sdk, "lib-linux64", libLinux);
+	Join(sdk, "lib-linux32", libLinux32);
+	Join(sdk, "lib-arm32", libArm32);
 	Join(sdk, "lib-sym", libSym);
 	Join(sdk, "lib-gui", libGui);	(* the display and the events, for `ob build --gui` only *)
 	Join(sdk, "packages", packages);
@@ -178,7 +188,9 @@ BEGIN
 	   and there is no separate cross directory for it. *)
 	IF (HostTarget = "a64") & ~ObHost.Exists(libA64) THEN COPY(lib, libA64) END;
 	IF (HostTarget = "win64") & ~ObHost.Exists(libWin) THEN COPY(lib, libWin) END;
-	IF (HostTarget = "linux64") & ~ObHost.Exists(libLinux) THEN COPY(lib, libLinux) END
+	IF (HostTarget = "linux64") & ~ObHost.Exists(libLinux) THEN COPY(lib, libLinux) END;
+	IF (HostTarget = "linux32") & ~ObHost.Exists(libLinux32) THEN COPY(lib, libLinux32) END;
+	IF (HostTarget = "arm32") & ~ObHost.Exists(libArm32) THEN COPY(lib, libArm32) END
 END Layout;
 
 (** Where the user's sources, a2pkg.json and .a2pkg/ live: the directory ob was started in. *)
@@ -628,6 +640,10 @@ BEGIN
 	END;
 #ELSIF ARM64 THEN
 	targets := "a64 (ELF, native)";
+#ELSIF I386 THEN
+	targets := "linux32 (ELF, native)";
+#ELSIF ARM THEN
+	targets := "arm32 (ELF, native)";
 #ELSE
 	targets := "linux64 (ELF)";
 	IF ObHost.Exists(libWin) THEN
@@ -635,6 +651,12 @@ BEGIN
 	END;
 	IF ObHost.Exists(libA64) THEN
 		WriteCount("a64", libA64, ".SymU8"); Strings.Append(targets, ", a64 (AArch64 ELF)")
+	END;
+	IF ObHost.Exists(libLinux32) THEN
+		WriteCount("linux32", libLinux32, ".SymU"); Strings.Append(targets, ", linux32 (i386 ELF)")
+	END;
+	IF ObHost.Exists(libArm32) THEN
+		WriteCount("arm32", libArm32, ".SymA"); Strings.Append(targets, ", arm32 (armhf ELF)")
 	END;
 #END
 	line := "  targets : "; Strings.Append(line, targets); Say(line)
@@ -845,8 +867,10 @@ END RunVerb;
 PROCEDURE TargetSettings(CONST target: ARRAY OF CHAR;
 		VAR compilerPlatform, objectExtension, symbolExtension, linkOptions, suffix, boot: ARRAY OF CHAR): BOOLEAN;
 BEGIN
-	IF (HostTarget = "a64") & (target # "a64") THEN
-		DieOn("this SDK's runtime is AArch64 and ships no objects for target ", target); RETURN FALSE
+	(*	Only the two 64-bit desktop hosts carry cross targets; an SDK built for AArch64, i386 or
+		ARM32 is a native one and ships its own objects and no others. *)
+	IF (HostTarget # "linux64") & (HostTarget # "win64") & (target # HostTarget) THEN
+		DieOn("this SDK is a native one and ships no objects for target ", target); RETURN FALSE
 	END;
 	IF target = "linux64" THEN
 		compilerPlatform := "Unix64"; objectExtension := "GofUu"; symbolExtension := ".SymUu";
@@ -861,6 +885,13 @@ BEGIN
 		   which -p=LinuxA64 carries. *)
 		compilerPlatform := "UnixA64"; objectExtension := "GofU8"; symbolExtension := ".SymU8";
 		linkOptions := "-p=LinuxA64 --extension=GofU8"; suffix := ""; COPY(bootList, boot)
+	ELSIF target = "linux32" THEN
+		(* and the same boot list again, for the same reason *)
+		compilerPlatform := "Unix32"; objectExtension := "GofU"; symbolExtension := ".SymU";
+		linkOptions := "-p=Linux32 --extension=GofU"; suffix := ""; COPY(bootList, boot)
+	ELSIF target = "arm32" THEN
+		compilerPlatform := "UnixARM"; objectExtension := "GofA"; symbolExtension := ".SymA";
+		linkOptions := "-p=LinuxARM --extension=GofA"; suffix := ""; COPY(bootList, boot)
 	ELSE
 		DieOn("unknown target: ", target); RETURN FALSE
 	END;
@@ -878,6 +909,8 @@ BEGIN
 	IF target = HostTarget THEN COPY(lib, directory)
 	ELSIF target = "win64" THEN COPY(libWin, directory)
 	ELSIF target = "a64" THEN COPY(libA64, directory)
+	ELSIF target = "linux32" THEN COPY(libLinux32, directory)
+	ELSIF target = "arm32" THEN COPY(libArm32, directory)
 	ELSE COPY(libLinux, directory)
 	END;
 	IF ~ObHost.Exists(directory) THEN
@@ -1007,7 +1040,7 @@ BEGIN
 		END
 	END;
 	IF source = "" THEN
-		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64] [--gui[=800x600]] [Proc]"); RETURN
+		Die("usage: ob build <File.Mod> [-o <name>] [-t linux64|win64|a64|linux32|arm32] [--gui[=800x600]] [Proc]"); RETURN
 	END;
 	IF ~ObHost.RealPath(source, absolute) THEN DieOn("no such file: ", source); RETURN END;
 	IF ~ModuleName(absolute, name) THEN DieOn("cannot read a MODULE header from ", source); RETURN END;

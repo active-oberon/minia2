@@ -15,7 +15,6 @@ BitStreams
 BootConsole
 BootManager
 Builtins
-CPUID
 CRC
 CSS2
 CSS2Parser
@@ -107,6 +106,7 @@ FATFiles
 FATVolumes
 FNHistories
 FP1616
+FPE64
 FTPClient
 FTPFS
 FileTrapWriter
@@ -122,7 +122,6 @@ FoxARMAssembler
 FoxARMBackend
 FoxARMInstructionSet
 FoxArrayBase
-FoxArrayBaseOptimized
 FoxAssembler
 FoxBackend
 FoxBasic
@@ -160,11 +159,13 @@ FoxTestBackend
 FoxTextualSymbolFile
 FoxTranspilerBackend
 Frames
+GPIO
 GZip
 GenericCollections
 GenericLinker
 GenericMaps
 GenericSort
+Glue
 H2ao
 HTMLParser
 HTMLScanner
@@ -188,7 +189,6 @@ IsoImages
 JSON
 Joysticks
 Kernel
-Kernel32
 KernelLog
 LPR
 LSP
@@ -231,7 +231,6 @@ NbrStrings
 Network
 NewHTTPClient
 NextPrime
-ODBC
 OGGUtilities
 OGGVorbisPlayer
 OZip3
@@ -270,7 +269,6 @@ RfsClientProxy
 RfsConnection
 RfsFS
 SMTPClient
-SQL
 SSHPackets
 SambaClient
 SambaServer
@@ -279,7 +277,7 @@ SerialsVirtual
 Shell
 ShellCommands
 ShellSerial
-Shortreal
+Sockets
 SoundDevices
 StdIO
 StdIOShell
@@ -317,15 +315,16 @@ UDPChatBase
 UDPChatServer
 UTF8Strings
 Unicode
+Unix
+UnixBinary
+UnixFiles
 Unzip
 UpTime
-User32
 V24
 V24Tracer
 Versioning
 VirtualDisks
 WMEvents
-WSock32
 WebCGI
 WebComplex
 WebFTPServer
@@ -338,9 +337,6 @@ WebHTTPTools
 WebSSMPPlugin
 WebSockets
 WebStd
-WinDisks
-WinFS
-WinTrace
 X509
 XML
 XMLGeneratorSchema

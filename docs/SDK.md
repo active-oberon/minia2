@@ -7,13 +7,14 @@ What is left in `docker/` is the image itself.)*
 A Go-style toolchain for **A2 / Active Oberon**. It wraps the repo's self-hosting
 toolchain (the `oberon` runtime + the precompiled standard library that `task`
 produces) behind an `ob` CLI that feels like Go: `ob run` (compile+run), `ob build`
-(standalone native executable with the runtime baked in — Linux ELF or, via
-`-t win64` / `-t a64`, a Windows PE `.exe` or an AArch64 ELF), `ob compile`, and
+(standalone native executable with the runtime baked in — Linux ELF or, via `-t`,
+a Windows PE `.exe`, an AArch64 ELF, a 32-bit x86 ELF or an armhf one), `ob compile`, and
 `ob lsp` (a language server with diagnostics for your editor) and `ob dap` (a debug
 adapter with breakpoints and stepping). See *Limitations* for the current scope.
 
 **Docker is one way to have it, not the only one.** The same payload ships as a
-tarball for three hosts — `linux-amd64`, `linux-arm64`, `windows-amd64` — and `ob`
+tarball for five hosts — `linux-amd64`, `linux-arm64`, `windows-amd64`, `linux-386`
+and `linux-armhf` — and `ob`
 finds its SDK beside itself and takes the project to be the current directory.
 Which one to pick:
 
@@ -38,6 +39,8 @@ task bundle                 # the tarball: target/bundle + minia2-sdk-<version>-
 task bundle-check           # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle             # the Windows SDK: ob.exe and the library it compiles against
 task a64-bundle             # the AArch64 SDK, native on the device
+task bundle32               # the i386 SDK, and the bundle's own run.sh against it
+task bundle-armhf           # the armhf SDK, used under qemu-arm (task arm32-sysroot first)
 ```
 
 Or by hand:
@@ -77,6 +80,12 @@ For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone under 
 `task a64-bundle` builds the SDK where a64 is the native target and the compiler runs on
 the device. On Windows the SDK is `ob.exe` and the same library layout beside it; it
 wants no bash, no Cygwin and no WSL, and `ob.exe build` writes a `.exe` natively.
+
+For a 32-bit machine — an old x86 laptop, a Raspberry Pi 1, 2 or Zero — `task Linux32`
+and `task LinuxARM` build the platform and `task bundle32` / `task bundle-armhf` assemble
+the SDK for it. These are native SDKs and carry no cross targets: the compiler runs on
+the machine it compiles for. A Pi 3, 4 or 5 runs the 64-bit image and should take the
+`linux-arm64` tarball instead, which is faster and better tested.
 
 ## Projects of more than one module
 
@@ -510,6 +519,8 @@ END Hello.
 | `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 255 modules (symbol + object files) |
 | `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 254 modules, for `build -t win64` |
 | `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 408 modules including the runtime's, for `build -t a64` |
+| `lib-linux32/*.SymU`, `*.GofU` | the headless-core i386 stdlib, for `build -t linux32` (in the tarball; not in the image) |
+| `lib-arm32/*.SymA`, `*.GofA` | the same for armhf, for `build -t arm32` — it carries `FPE64`, which the others have no module for |
 | `ob` | the driver: one command over the compiler, the linker and the language server |
 
 The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
@@ -540,7 +551,10 @@ naive ~255MB Linux-only image in three steps:
   generic `Plugins` driver registry, not the GUI. Windows has its own list,
   `headless-core-win64.txt`, from the Win64 closure — not a translation of the
   Linux one: `WinTrace` appears in no Linux closure and `StdIO` imports it on
-  Windows. The kept set is closed under imports, so every retained module both
+  Windows. 32-bit ARM has one too, `headless-core-armhf.txt`: `Builtins` imports
+  `FPE64` there and on no other target, and an armhf library without it cannot
+  compile anything at all. i386 shares the x86-64 list — same modules, different
+  word size. The kept set is closed under imports, so every retained module both
   compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is a compile
   error by design — use the full desktop build for GUI work.
 

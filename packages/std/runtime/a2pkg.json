@@ -7,6 +7,7 @@
   "description": "The closed kernel: what the compiler emits calls into without the programmer naming it, and what must exist before any module can load. Allocation and the collector, module loading and type descriptors, activities and AWAIT, the platform binding, the clock.",
   "provides": [
     "Builtins",
+    "FPE64",
     "Trace",
     "Glue",
     "Unix",
@@ -32,8 +33,8 @@
   },
   "requires": {},
   "platform": {
-    "note": "Glue, Machine, Unix, UnixFiles are the Unix64/Linux64 platform layer. On a future multi-platform SDK these resolve to the target's variant ([Platform.]Module.Mod).",
-    "target": "Linux64"
+    "note": "Glue, Machine, Unix, UnixFiles are the platform layer and resolve to the target's variant ([Platform.]Module.Mod). Some names here exist on one target only and are absent from the others' payload: Kernel32, User32 and WSock32 on Windows, FPE64 (double-precision helpers Builtins calls) on 32-bit ARM. Added 2026-09-10, when a Raspberry Pi bundle without it reported that Builtins could not be imported and every compile on the device failed.",
+    "target": "Linux64, Linux32, LinuxARM, Win64"
   },
   "residual": [
     "The boundary is the Go and Zig one: a module belongs here iff generated code references it, or iff the loader cannot run without it. It is CLOSED -- nothing here imports anything from a package above, and docker/gen-headless-core.sh would not notice if it did, so the property is worth re-checking by hand when a module is added.",

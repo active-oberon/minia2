@@ -5,6 +5,12 @@
 #
 #     configs/headless-core.txt         Linux64  (the image's /opt/a2sdk/lib, and the tarball's)
 #     configs/headless-core-win64.txt   Win64    (lib-win64/ in the tarball, lib/ in the Windows SDK)
+#     configs/headless-core-armhf.txt   LinuxARM (lib/ in the Raspberry Pi tarball)
+#
+# Linux32 has no list of its own: i386 and x86-64 close over the same modules and differ only in
+# word size, so the first list serves both. LinuxARM does need one -- Builtins imports FPE64
+# there and nowhere else, and an armhf lib assembled by filtering with the Linux64 list carries
+# no FPE64, so on the device every import of Builtins fails and nothing compiles at all.
 #
 # WHAT DECIDES MEMBERSHIP
 #
@@ -95,22 +101,33 @@ BOOT=compilers/Linux64/oberon
 # conditional imports with, and they are why the same source yields two different graphs.
 generate() {
 	local platform="$1" bin defines objext symext out guiout graph
+	local sources=(source/*.Mod)
 	case "$platform" in
 		linux64) bin=target/Linux64/bin; defines=UNIX,AMD64; objext=GofUu; symext=SymUu
 		         out=configs/headless-core.txt; guiout=configs/gui-core.txt ;;
 		win64)   bin=target/Win64/bin;   defines=WIN,AMD64;  objext=GofWw; symext=SymWw
 		         out=configs/headless-core-win64.txt; guiout=configs/gui-core-win64.txt ;;
-		*) echo "unknown platform: $platform (linux64, win64)" >&2; return 2 ;;
+		armhf)   bin=target/LinuxARM/bin; defines=UNIX,ARM;  objext=GofA;  symext=SymA
+		         out=configs/headless-core-armhf.txt; guiout=configs/gui-core-armhf.txt
+		         # Windows.Kernel32.Mod ends in UNIMPLEMENTED for every machine that is not x86,
+		         # so the walker cannot even parse it with UNIX,ARM and gives up on the whole run.
+		         # A Unix target has no business reading the Windows platform layer anyway; the
+		         # two x86 lists keep it only because it happens to parse for them.
+		         sources=(); for f in source/*.Mod; do case "$f" in source/Windows.*) ;; *) sources+=("$f") ;; esac; done ;;
+		*) echo "unknown platform: $platform (linux64, win64, armhf)" >&2; return 2 ;;
 	esac
 	if [ ! -d "$bin" ]; then
-		echo "no build in $bin — skipping $platform (build it with: task ${platform/linux64/Linux64})" >&2
+		case "$platform" in
+			linux64) task=Linux64 ;; win64) task=Win64 ;; armhf) task=LinuxARM ;; *) task="$platform" ;;
+		esac
+		echo "no build in $bin — skipping $platform (build it with: task $task)" >&2
 		return 0
 	fi
 
 	graph="$(mktemp)"
 	# 1. Full module dependency graph, via A2's own DependencyWalker.
 	AOSPATH=data "$BOOT" DependencyWalker.Walk --define="$defines" --fileExtension=".$objext" \
-	    source/*.Mod 2>/dev/null | tr -d '\r' | grep "\.$objext:" > "$graph"
+	    "${sources[@]}" 2>/dev/null | tr -d '\r' | grep "\.$objext:" > "$graph"
 
 	# 2. Seed from the registry, close under imports, check the annotations, emit.
 	python3 - "$graph" "$bin" "$out" "$objext" "$symext" "$CHECK" "$guiout" <<'PY'
@@ -272,4 +289,5 @@ if [ $# -gt 0 ]; then
 else
 	generate linux64
 	generate win64
+	generate armhf
 fi

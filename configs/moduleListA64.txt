@@ -134,6 +134,9 @@ FoxAMDBackend.Mod
 FoxAssembler.Mod
 FoxIntermediateAssembler.Mod
 FoxDisassembler.Mod
+FoxARMInstructionSet.Mod
+FoxARMAssembler.Mod
+FoxARMBackend.Mod
 FoxA64InstructionSet.Mod
 FoxA64Assembler.Mod
 FoxA64Backend.Mod

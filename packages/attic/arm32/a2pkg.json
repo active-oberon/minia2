@@ -4,11 +4,8 @@
   "context": "A2",
   "shipped": false,
   "status": "unsupported",
-  "description": "The 32-bit ARM back end, assembler and disassembler.",
+  "description": "The 32-bit ARM disassembler.",
   "provides": [
-    "FoxARMAssembler",
-    "FoxARMBackend",
-    "FoxARMInstructionSet",
     "ARMDecoder"
   ],
   "requires": {
@@ -18,7 +15,8 @@
     "std/system": "*"
   },
   "residual": [
-    "configs/env.yml knows Linux64 and Win64 only: this target is not built here, so the code is unverified by construction. It is what a LinARM-32 tarball (idea 2d) would need, and idea 2d is deferred because 64-bit Raspberry Pi OS runs our linux-arm64 tarball today.",
+    "The back end, the assembler and the instruction set left here on 2026-09-10, when LinuxARM became a target this tree builds and ships (configs/env.yml, `task LinuxARM`): they are in std/compiler now.",
+    "This is what stayed: Decoder loads it by name rather than importing it, and Decoder itself draws, so nothing headless reaches this.",
     "Not to be confused with FoxA64*, which is ours and is in std/compiler."
   ]
 }
