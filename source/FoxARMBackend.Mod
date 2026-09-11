@@ -2334,6 +2334,12 @@ TYPE
 			ELSIF IsNonComplexInteger(irInstruction.op1) THEN
 				ASSERT(backend.useFPU64);
 				PrepareDoubleSourceOp(irInstruction, Low, destination, left, right);
+				(*	An integer division is done by the floating point unit here, and FSITOD reads
+					the whole 32-bit word: a SIGNED16 or SIGNED8 operand that is not extended first
+					is read as its unsigned self. `-3 DIV 2` over SIGNED16 computed 65533 DIV 2 =
+					32766 until 2026-09-12. *)
+				SignOrZeroExtendOperand(left, irInstruction.op2.type);
+				SignOrZeroExtendOperand(right, irInstruction.op3.type);
 				(* left and right operands to double *)
 				float := GetFreeRegister(IntermediateCode.FloatType(32));
 				Emit2(opFMSR, float, left);
@@ -3260,7 +3266,9 @@ TYPE
 				(* to single precision float: *)
 				IF IsInteger(irSource) THEN
 					ASSERT(~IsComplex(irSource));
-					(* integer to single precision float: ignore high part of source *)
+					(* integer to single precision float: ignore high part of source, but extend a
+					   narrow one first -- FSITOS reads the whole word (see EmitDiv). *)
+					IF irSource.type.sizeInBits < 32 THEN SignOrZeroExtendOperand(source[Low], irSource.type) END;
 					temp := GetFreeRegister(IntermediateCode.FloatType(32));
 					Emit2(opFMSR, temp, source[Low]);
 					IF irSource.type.form = IntermediateCode.UnsignedInteger THEN
@@ -3284,7 +3292,9 @@ TYPE
 				(* to double precision float: *)
 				IF IsInteger(irSource) THEN
 					ASSERT(~IsComplex(irSource));
-					(* integer to double precision float: ignore high part of source *)
+					(* integer to double precision float: ignore high part of source, but extend a
+					   narrow one first -- FSITOD reads the whole word (see EmitDiv). *)
+					IF irSource.type.sizeInBits < 32 THEN SignOrZeroExtendOperand(source[Low], irSource.type) END;
 					temp := GetFreeRegister(IntermediateCode.FloatType(32));
 					Emit2(opFMSR, temp, source[Low]);
 					IF irSource.type.form = IntermediateCode.UnsignedInteger THEN

@@ -806,6 +806,15 @@ BEGIN
 		FSQRT S0, S0
 	END;
 	RETURN RESULT;
+#ELSIF ARM THEN
+	(*	VFP, for the same reason as the branch above and as the A64 one: the fallback is
+		exp(0.5 * ln(x)), which is near the root and not equal to it. Single precision here, so
+		the single-word load and the single-word root. *)
+	CODE
+		FLDS S0, [FP, #x]
+		FSQRTS S0, S0
+	END;
+	RETURN RESULT;
 #ELSE
 	RETURN exp(0.5 * ln(x));
 #END

@@ -805,6 +805,16 @@ BEGIN
 		FSQRT D0, D0
 	END;
 	RETURN RESULT;
+#ELSIF ARM THEN
+	(*	And VFP takes one too, in exactly the same way and for exactly the same reason: the
+		fallback below is exp(0.5 * ln(x)), which is near the root and not equal to it, so
+		sqrt(4.0) was not 2.0 and hypot(3, 4) was not 5. This target is compiled with
+		--useFPU32 --useFPU64 (source/Compiler.Mod, platform UnixARM), so the unit is there. *)
+	CODE
+		FLDD D0, [FP, #x]
+		FSQRTD D0, D0
+	END;
+	RETURN RESULT;
 #ELSE
 	RETURN exp(0.5 * ln(x));
 #END

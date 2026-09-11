@@ -15,14 +15,30 @@ TYPE
 		low*: UNSIGNED32; high*: SIGNED32;
 	END;
 
+	(*	The four narrow signed helpers below re-establish the sign of their arguments, and they have
+		to: the emulation call the back end plants for a narrow DIV or MOD pushes the operand with
+		its own 8- or 16-bit type and does NOT widen it to a word first (FoxCodeGenerators.Mod,
+		`Emulate`, which pushes x.op2 and x.op3 as they are), so what arrives here is the halfword
+		or byte zero-extended. `-3 DIV 2` on SIGNED16 therefore computed 65533 DIV 2 = 32766.
+		An ordinary Oberon call widens correctly -- this is the emulation path alone. Written as a
+		range test rather than a conversion so that it costs nothing and is right either way: a
+		properly widened argument is already negative and is left alone. *)
+	PROCEDURE Signed8(x: SIGNED32): SIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} IF x >= 80H THEN DEC(x, 100H) END; RETURN x
+	END Signed8;
+
+	PROCEDURE Signed16(x: SIGNED32): SIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} IF x >= 8000H THEN DEC(x, 10000H) END; RETURN x
+	END Signed16;
+
 	PROCEDURE DivS8*(left, right: SIGNED8): SIGNED8;
 	VAR result, dummy: SIGNED32;
-	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(left, right, result, dummy); RETURN SIGNED8(result)
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(Signed8(left), Signed8(right), result, dummy); RETURN SIGNED8(result)
 	END DivS8;
 
 	PROCEDURE DivS16*(left, right: SIGNED16): SIGNED16;
 	VAR result, dummy: SIGNED32;
-	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(left, right, result, dummy); RETURN SIGNED16(result)
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(Signed16(left), Signed16(right), result, dummy); RETURN SIGNED16(result)
 	END DivS16;
 
 	PROCEDURE DivS32*(left, right: SIGNED32): SIGNED32;
@@ -34,6 +50,21 @@ TYPE
 	VAR result, dummy: UNSIGNED32;
 	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, result, dummy); RETURN result
 	END DivU32;
+
+	(*	The unsigned byte and halfword pair, which vanilla never wrote: the back end emits a call
+		to them for `a DIV b` and `a MOD b` over UNSIGNED8 and UNSIGNED16, and without them the
+		compiler stops with "emulation procedure Builtins.ModU8 not present" -- so an ordinary MOD
+		over a byte could not be compiled for this target at all. Same shape as the signed pair
+		above: the work is the 32-bit routine, and only the result is narrowed. *)
+	PROCEDURE DivU8*(left, right: UNSIGNED8): UNSIGNED8;
+	VAR result, dummy: UNSIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, result, dummy); RETURN UNSIGNED8(result)
+	END DivU8;
+
+	PROCEDURE DivU16*(left, right: UNSIGNED16): UNSIGNED16;
+	VAR result, dummy: UNSIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, result, dummy); RETURN UNSIGNED16(result)
+	END DivU16;
 
 	PROCEDURE DivS64*(left, right: SIGNED64): SIGNED64;
 	VAR result, dummy: SIGNED64;
@@ -47,12 +78,12 @@ TYPE
 
 	PROCEDURE ModS8*(left, right: SIGNED8): SIGNED8;
 	VAR result, dummy: SIGNED32;
-	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(left, right, dummy, result); RETURN SIGNED8(result)
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(Signed8(left), Signed8(right), dummy, result); RETURN SIGNED8(result)
 	END ModS8;
 
 	PROCEDURE ModS16*(left, right: SIGNED16): SIGNED16;
 	VAR result, dummy: SIGNED32;
-	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(left, right, dummy, result); RETURN SIGNED16(result)
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModS32(Signed16(left), Signed16(right), dummy, result); RETURN SIGNED16(result)
 	END ModS16;
 
 	PROCEDURE ModS32*(left, right: SIGNED32): SIGNED32;
@@ -64,6 +95,16 @@ TYPE
 	VAR result, dummy: UNSIGNED32;
 	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, dummy, result); RETURN result
 	END ModU32;
+
+	PROCEDURE ModU8*(left, right: UNSIGNED8): UNSIGNED8;
+	VAR result, dummy: UNSIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, dummy, result); RETURN UNSIGNED8(result)
+	END ModU8;
+
+	PROCEDURE ModU16*(left, right: UNSIGNED16): UNSIGNED16;
+	VAR result, dummy: UNSIGNED32;
+	BEGIN {UNCOOPERATIVE, UNCHECKED} DivModU32(left, right, dummy, result); RETURN UNSIGNED16(result)
+	END ModU16;
 
 	PROCEDURE ModS64*(left, right: SIGNED64): SIGNED64;
 	VAR result, dummy: SIGNED64;
@@ -579,13 +620,22 @@ TYPE
 		HALT(100);
 	END ConvF32U32;
 
-	(* if an FPU32 is available, the result must be made available via FPU register *)
+	(*	if an FPU32 is available, the result must be made available via FPU register.
+
+		The halves are added in FLOAT64 and the sum narrowed once, which is the whole fix: adding
+		them in FLOAT32, as this did until 2026-09-12, cancels catastrophically on any negative
+		number. -5 is high = -1, low = 4294967291; in single precision the low half rounds up to
+		2^32 and the high half is -2^32 exactly, so the sum is ZERO -- and -255 came out -256.
+		FLOAT32(-5) therefore compiled to 0.0 on a 32-bit ARM host, so `ASSERT(-value = -5)` failed
+		in the language suites and every negative real constant in a program compiled ON the board
+		was wrong. The FLOAT64 twin below has always done the same arithmetic in double, where
+		2^32 - 5 is exact -- which is why only single precision was broken. *)
 	PROCEDURE ConvF32S64F*(x: DoubleWord): FLOAT32;
-	VAR l,h:FLOAT32;
+	VAR l,h:FLOAT64;
 	BEGIN {UNCOOPERATIVE, UNCHECKED}
 		l := x.low;
 		h := x.high;
-		RETURN  h * 100000000H + l;
+		RETURN  FLOAT32(h * 100000000H + l);
 	END ConvF32S64F;
 
 	(* ---- STRING OPERATIONS ---- *)
@@ -624,7 +674,14 @@ TYPE
 		destinationLength := LEN(destination);
 		sourceLength := LEN(source);
 		IF destinationLength < sourceLength THEN sourceLength := destinationLength END;
-		SYSTEM.MOVE(ADDRESSOF(source[0]), ADDRESSOF(destination[0]), sourceLength)
+		SYSTEM.MOVE(ADDRESSOF(source[0]), ADDRESSOF(destination[0]), sourceLength);
+		(*	The terminator, which this has never written and the AMD64 twin always has
+			(AMD64.Builtins.Mod, `dest[l1-1] := 0X`). Without it a COPY that truncates leaves the
+			destination full and unterminated: COPY("source", dest) into an ARRAY 2 OF CHAR gave
+			"so" where the language says "s", and eight cases of the execution suite said so on
+			the board. Guarded, unlike the twin: a zero-length open array would otherwise be
+			written one byte before its start. *)
+		IF sourceLength > 0 THEN destination[sourceLength-1] := 0X END
 	END CopyString;
 
 END Builtins.
