@@ -1017,7 +1017,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	TextSize, AlignedTextSize, DataSize, AlignedDataSize: SIZE;
 	resources: Resources; resourceContent: Builder;
 	ResourceSize, AlignedResourceSize, ResourceAddress: SIZE;
-	stamp, stampIndex: SIZE;
+	stamp: SIGNED64; stampIndex: SIZE;
 	pos: SIZE;
 	sum, carry: SIZE; pending: BOOLEAN;	(* the file's checksum, accumulated as it is written *)
 
@@ -1049,15 +1049,18 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	BEGIN INC(pos, size); WHILE size # 0 DO writer.Char (0X); Take (0); DEC (size); END;
 	END Reserve;
 
-	PROCEDURE WriteBYTE (value: SIZE);
-	BEGIN writer.Char (CHR (value)); INC(pos); Take (value MOD 100H);
+	(*	SIGNED64 and not SIZE: a PE field is 8, 16 or 32 bits wide whatever the machine writing it
+		is, and WritePTR below splits a 64-bit value in two -- which on a 32-bit host is an
+		expression these three could not be handed at all. *)
+	PROCEDURE WriteBYTE (value: SIGNED64);
+	BEGIN writer.Char (CHR (value MOD 100H)); INC(pos); Take (SIZE(value MOD 100H));
 	END WriteBYTE;
 
-	PROCEDURE WriteWORD (value: SIZE);
+	PROCEDURE WriteWORD (value: SIGNED64);
 	BEGIN WriteBYTE (value MOD 100H); WriteBYTE (value DIV 100H);
 	END WriteWORD;
 
-	PROCEDURE WriteDWORD (value: SIZE);
+	PROCEDURE WriteDWORD (value: SIGNED64);
 	BEGIN WriteWORD (value MOD 10000H); WriteWORD (value DIV 10000H);
 	END WriteDWORD;
 
@@ -1865,7 +1868,6 @@ VAR options: Options.Options;
 	silent, useAll, strict: BOOLEAN;
 	codeFileFormat, dataFileFormat: FileFormat;
 	codeDisplacement, dataDisplacement: GenericLinker.Address;
-	displacement: SIGNED64;
 	path, extension, codeFileName, dataFileName, moduleName, logFileName, tempName: Files.FileName;
 	diagnostics: Diagnostics.StreamDiagnostics; code, data: Arrangement; linker: GenericLinker.Linker;
 	linkRoot: ARRAY 256 OF CHAR; logFile: Files.File; log: Files.Writer;
@@ -1877,6 +1879,27 @@ VAR options: Options.Options;
 	reader: Streams.Reader;
 	moduleList: GenericLinker.HashTableSegmentedName;
 	segmentedName: ObjectFile.SegmentedName;
+
+	(*	Read as 64 bits: an image base of 140000000H, which is where a 64 bit Windows image
+		conventionally sits, does not fit in the 32 bit reader that used to be here. An address is
+		a machine word, though, so a host narrower than the base it is asked for cannot represent
+		it -- and says so, rather than truncating to a base that links and does not load.
+
+		`--dataDisplacement` defaults to the code's: it used to be read into `codeDisplacement`,
+		which moved the code and left the data displacement with whatever was on the stack. *)
+	PROCEDURE Displacement (CONST name: Options.Name; default: GenericLinker.Address;
+			VAR address: GenericLinker.Address): BOOLEAN;
+	VAR value: SIGNED64;
+	BEGIN
+		IF ~options.GetInteger64 (name, value) THEN address := default; RETURN TRUE END;
+		IF (value < MIN (GenericLinker.Address)) OR (value > MAX (GenericLinker.Address)) THEN
+			context.error.String ("--"); context.error.String (name);
+			context.error.String (" does not fit an address on this host"); context.error.Ln;
+			RETURN FALSE
+		END;
+		address := GenericLinker.Address (value); RETURN TRUE
+	END Displacement;
+
 BEGIN
 	NEW (options);
 	options.Add('p',"platform", Options.String);
@@ -1927,13 +1950,8 @@ BEGIN
 	IF ~options.GetString ("logFileName", logFileName) THEN
 		COPY(codeFileName, logFileName); Files.SplitExtension(logFileName,logFileName,tempName); Files.JoinExtension(logFileName,"log",logFileName);
 	END;
-	(*	Read as 64 bits: an image base of 140000000H, which is where a 64 bit Windows image
-		conventionally sits, does not fit in the 32 bit reader that used to be here.
-
-		And the second line used to read into `codeDisplacement`: giving `--dataDisplacement` moved
-		the code and left the data displacement with whatever was on the stack. *)
-	IF options.GetInteger64 ("displacement", displacement) THEN codeDisplacement := displacement ELSE codeDisplacement := 0 END;
-	IF options.GetInteger64 ("dataDisplacement", displacement) THEN dataDisplacement := displacement ELSE dataDisplacement := codeDisplacement END;
+	IF ~Displacement ("displacement", 0, codeDisplacement) THEN context.result := Commands.CommandError; RETURN END;
+	IF ~Displacement ("dataDisplacement", codeDisplacement, dataDisplacement) THEN context.result := Commands.CommandError; RETURN END;
 	codeFileFormat := GetFileFormat (options, "fileFormat", WriteBinaryFile);
 	dataFileFormat := GetFileFormat (options, "dataFileFormat", codeFileFormat);
 

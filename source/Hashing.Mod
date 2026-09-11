@@ -23,9 +23,21 @@ MODULE Hashing;
 IMPORT Strings;
 
 CONST
-	prime = 1099511628211;				(* FNV-1a, 64 bit; the multiplication wraps and is meant to *)
 	basis = 2166136261;					(* FNV's 32-bit basis: the 64-bit one does not fit a literal here *)
+
+	(* The prime, the fold and the sign mask are all as wide as SIZE, and SIZE is a machine word:
+	   on i386 and ARM32 the 64-bit prime is not assignable to one, and ROT(h, 32) over a 32-bit
+	   word is the identity, so the fold that spreads the high bits into the low ones would do
+	   nothing at all. Same algorithm, the width the machine has. *)
+#IF I386 OR ARM THEN
+	prime = 16777619;					(* FNV-1a, 32 bit *)
+	positive = 7FFFFFFFH;
+	foldHigh = 16; foldLow = 13;
+#ELSE
+	prime = 1099511628211;				(* FNV-1a, 64 bit; the multiplication wraps and is meant to *)
 	positive = 7FFFFFFFFFFFFFFFH;		(* a hash is a number, and a negative one is a nuisance *)
+	foldHigh = 32; foldLow = 29;
+#END
 
 (*	The bucket a map picks is the hash modulo a power of two, so it reads the LOW bits, while
 	the accumulation above fills the high ones. Fold them down and return something no caller
@@ -33,9 +45,9 @@ CONST
 PROCEDURE Mix(h: SIZE): SIZE;
 BEGIN
 	h := h * prime;
-	h := SIZE(SET(h) / SET(ROT(h, 32)));
+	h := SIZE(SET(h) / SET(ROT(h, foldHigh)));
 	h := h * prime;
-	h := SIZE(SET(h) / SET(ROT(h, 29)));
+	h := SIZE(SET(h) / SET(ROT(h, foldLow)));
 	RETURN SIZE(SET(h) * SET(positive))
 END Mix;
 

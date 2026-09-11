@@ -992,8 +992,10 @@ VAR
 
 	(* ---- hover / go-to-definition (frontend + checker, then AST lookup) ---- *)
 
-	(* LSP 0-based (line, character) -> byte offset in text *)
-	PROCEDURE PosToOffset* (text: Strings.String; line, char: SIGNED32): SIGNED64;
+	(* LSP 0-based (line, character) -> byte offset in text. SIZE and not SIGNED64: the body
+	   counts a SIZE and three of the callers narrowed it straight back, which on a 32-bit host
+	   is a conversion the other callers did not do. *)
+	PROCEDURE PosToOffset* (text: Strings.String; line, char: SIGNED32): SIZE;
 	VAR i: SIZE; l, c: SIGNED32;
 	BEGIN
 		IF text = NIL THEN RETURN 0 END;
@@ -2669,7 +2671,7 @@ VAR
 	PROCEDURE IdentModuleAt (text: Strings.String; line, char: SIGNED32; VAR mod: ARRAY OF CHAR): BOOLEAN;
 	VAR off, e, k: SIZE;
 	BEGIN
-		mod[0] := 0X; off := SIZE(PosToOffset(text, line, char));
+		mod[0] := 0X; off := PosToOffset(text, line, char);
 		IF ~IsIdentChar(text[off]) THEN RETURN FALSE END;
 		e := off; WHILE IsIdentChar(text[e]) DO INC(e) END;
 		IF text[e] # "." THEN RETURN FALSE END;
@@ -2810,7 +2812,7 @@ VAR
 		impKw := IndexOf(text, "IMPORT", 0);
 		IF impKw >= 0 THEN
 			impEnd := IndexOf(text, ";", impKw);
-			cur := SIZE(PosToOffset(text, sl, sc));
+			cur := PosToOffset(text, sl, sc);
 			IF (impEnd > impKw) & (cur >= impKw) & (cur <= impEnd) THEN
 				m := Analyze(text);
 				IF m # NIL THEN
@@ -2832,7 +2834,7 @@ VAR
 		END;
 		(* comment / uncomment a non-empty selection *)
 		IF (sl # el) OR (sc # ec) THEN
-			o1 := SIZE(PosToOffset(text, sl, sc)); o2 := SIZE(PosToOffset(text, el, ec));
+			o1 := PosToOffset(text, sl, sc); o2 := PosToOffset(text, el, ec);
 			IF o2 > o1 THEN
 				wrapped := (text[o1] = "(") & (text[o1+1] = "*") & (o2 >= o1+4)
 					& (text[o2-2] = "*") & (text[o2-1] = ")");

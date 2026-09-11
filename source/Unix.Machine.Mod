@@ -642,6 +642,20 @@ CODE
 	MOV RBX, [RBP + s]
 	LOCK
 	BTR [RBX], EAX
+#ELSIF ARM THEN
+	(*	The A64 branch below with the 32-bit exclusive pair: ARMv7 has no bit-test-and-reset
+		either, so the mask is built and the word rewritten under a load-exclusive. Registers as
+		the other atomics here use them. *)
+	LDR	R0, [FP, #s]			; the address of the set
+	LDR	R3, [FP, #bit]
+	MOV	R4, #1
+	LSL	R4, R4, R3				; the bit to take out
+loop:
+	LDREX	R1, R0
+	BIC	R1, R1, R4
+	STREX	R2, R1, R0
+	CMP	R2, #0
+	BNE	loop					; the store did not hold: read again
 #ELSIF ARM64 THEN
 	(*	A64 has no bit-test-and-reset: the mask is built and the word is rewritten under a
 		load-exclusive, which is what the other atomics here do as well. *)

@@ -910,11 +910,16 @@ END IsLiteral;
 (* --- files -------------------------------------------------------------------------------- *)
 
 PROCEDURE ReadWhole(CONST file: ARRAY OF CHAR; VAR text: Strings.String): BOOLEAN;
-VAR handle: Files.File; reader: Files.Reader; length: SIZE; read: SIZE;
+VAR handle: Files.File; reader: Files.Reader; size: Files.Size; length: SIZE; read: SIZE;
 BEGIN
 	handle := Files.Old(file);
 	IF handle = NIL THEN RETURN FALSE END;
-	length := handle.Length();
+	(* A file is measured in Files.Size, which is 64 bits on every host; a buffer is measured in
+	   SIZE, which on a 32-bit one is not. Refused rather than truncated: a header read short
+	   generates bindings that compile and are wrong. *)
+	size := handle.Length();
+	IF size >= MAX(SIZE) THEN RETURN FALSE END;
+	length := SIZE(size);
 	NEW(text, length + 1);
 	NEW(reader, handle, 0);
 	reader.Bytes(text^, 0, length, read);

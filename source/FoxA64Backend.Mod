@@ -945,7 +945,7 @@ TYPE
 		PROCEDURE EmitEnter(CONST irInstruction: IntermediateCode.Instruction);
 		VAR allocationSize: SIZE;
 		BEGIN
-			localsSize := irInstruction.op2.intValue;
+			localsSize := SIZE(irInstruction.op2.intValue);
 			Basic.Align(localsSize, 8);
 			allocationSize := localsSize;
 			spillStackStart := localsSize;
@@ -984,7 +984,7 @@ TYPE
 			ModifyStackPointer(-8);
 			IF (irInstruction.op3.intValue # 0)
 				& (irInstruction.op2.intValue # SyntaxTree.WinAPICallingConvention) THEN
-				ModifyStackPointer(-irInstruction.op3.intValue)
+				ModifyStackPointer(-SIZE(irInstruction.op3.intValue))
 			END;
 			Emit1(InstructionSet.opRET, opLR)
 		END EmitExit;
@@ -1060,12 +1060,12 @@ TYPE
 				ELSE
 					EmitLongCall(irInstruction.op1.symbol, irInstruction.op1.symbolOffset)
 				END;
-				ModifyStackPointer(-irInstruction.op2.intValue)
+				ModifyStackPointer(-SIZE(irInstruction.op2.intValue))
 			ELSE
 				target := RegisterFromIrOperand(irInstruction.op1, emptyOperand);
 				Emit1(InstructionSet.opBLR, AddressRegister(target.register));
 				ReleaseHint(target.register);
-				ModifyStackPointer(-irInstruction.op2.intValue)
+				ModifyStackPointer(-SIZE(irInstruction.op2.intValue))
 			END
 		END EmitCall;
 
