@@ -623,6 +623,7 @@ tasks:
       - task: display
       - task: wm
       - task: zoom
+      - task: gui-repaint
       - task: win-gui
       - task: terminal
       - task: treesitter
@@ -650,6 +651,21 @@ tasks:
           status=$?
           if [ "$status" -eq 2 ]; then
             echo "[SKIP] measuring the pixel size needs Xephyr and a bundled SDK (task bundle)"
+          else
+            exit "$status"
+          fi
+        }
+
+  gui-repaint:
+    desc: A windowed program's picture, after something covered it (needs Xephyr and a bundled SDK)
+    cmds:
+      - |
+        set -eo pipefail
+        {{.CURRENT_DIR}}/tests/gui-repaint-check.sh {{.BUILD_DIR}}/bundle || {
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            [ -z "$GUI_REPAINT_REQUIRE" ] || { echo "[FAIL] the repaint check needs Xephyr, Xlib and a bundled SDK, and GUI_REPAINT_REQUIRE is set"; exit 1; }
+            echo "[SKIP] measuring what a covered window keeps needs Xephyr, the Xlib headers and a bundled SDK (task bundle)"
           else
             exit "$status"
           fi

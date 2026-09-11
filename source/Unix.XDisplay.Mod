@@ -4,7 +4,7 @@ Refer to the general ETH Oberon System license contract available at: http://www
 MODULE XDisplay;   (** AUTHOR "gf"; PURPOSE  "display driver plugin for X Windows *)
 
 
-IMPORT S := SYSTEM, Trace, Unix, Machine, Files, UnixFiles, X11, Displays, Strings;
+IMPORT S := SYSTEM, Trace, Unix, Machine, Files, X11, Displays, Strings;
 
 CONST
 	BG = 0;  FG = 15;   (* Background, foreground colors.*)
@@ -383,6 +383,7 @@ TYPE
 					event: X11.Event;  root: X11.Window;
 					gRoot, gX, gY, gW, gH, gBW, gD, res: SIGNED32;  screenw, screenh	: SIGNED32;
 					screenmm: SIGNED32;
+					attributes: X11.XSetWindowAttributes;
 				BEGIN
 					xdisp := disp;
 					Machine.Acquire( Machine.X11 );
@@ -406,6 +407,17 @@ TYPE
 					primary := X11.CreateSimpleWindow( xdisp, root, 0, 0,
 											     			screenw - 16, screenh - 32, 0,
 														foreground, background );
+					(*	Ask the server to keep the pixels while nobody is looking at them. This display
+						has no copy of the screen -- it draws straight into the window with PutImage and
+						reads back with GetImage -- so whatever X throws away is gone, and a window that
+						was covered or put away came back blank. The full desktop never noticed: there
+						the window manager re-renders the view from its own model when KbdMouse turns an
+						Expose into the 0FFC6H it sends, and a program built with `ob build --gui` has
+						no window manager to do that. Advice and not a promise -- a server may answer
+						NotUseful -- but every server anybody runs a window on honours it. *)
+					attributes.backingStore := X11.Always;
+					res := X11.ChangeWindowAttributes( xdisp, primary, X11.CWBackingStore, attributes );
+
 					X11.StoreName( xdisp, primary, ADDRESSOF( winName ) );
 					X11.SetIconName( xdisp, primary, ADDRESSOF( iconName ) );
 					X11.SetCommand( xdisp, primary, Unix.argv, Unix.argc );
@@ -646,17 +658,33 @@ VAR
 		RETURN S.VAL( X11.Pattern, pat )
 	END NewPattern;
 
+(*	The window is named after the PROGRAM, which since `ob build --gui` is what it usually holds:
+	one program with a display of its own, not the A2 desktop. The old title was the system version
+	and the working directory -- true of the desktop, where the window IS the system and the work
+	path is what the user wants to see, and neither true nor anybody's business of a standalone
+	binary showing its own window on somebody's screen. The version stays behind the name: it is
+	what a bug report needs and it costs nothing.
+
+	argv[0] is the name: for `ob build --gui` it is the binary that was built, for `ob run --gui`
+	it is `ob`, which is the truth in both cases. A path is cut down to its last element. *)
 	PROCEDURE InitNames;
-	VAR cwd: ARRAY 128 OF CHAR;  i: SIGNED32;
+	VAR argument: ARRAY 128 OF CHAR;  i, start: SIGNED32;
 	BEGIN
-		UnixFiles.GetWorkingDirectory( cwd );
-		COPY( Machine.version, winName );
-		(* AppendX, not Append: a working directory longer than the title array trapped the driver at install *)
-		Strings.AppendX( winName, ",  Work: " );  Strings.AppendX( winName, cwd );
-		COPY( winName, iconName);
-		i := 0;
-		WHILE iconName[i] > ' ' DO  INC( i )  END;
-		iconName[i] := 0X
+		Unix.GetArg( 0, argument );
+		start := 0;  i := 0;
+		WHILE argument[i] # 0X DO
+			IF argument[i] = '/' THEN  start := i + 1  END;
+			INC( i )
+		END;
+		(* i is the length; the count is what is left after the last slash, not the room in the
+		   destination -- Strings.Copy walks the SOURCE for as many characters as it is told. *)
+		IF start > 0 THEN  Strings.Copy( argument, start, i - start, iconName )
+		ELSE  COPY( argument, iconName )
+		END;
+		IF iconName = "" THEN  COPY( "A2", iconName )  END;
+		(* AppendX, not Append: a name longer than the title array trapped the driver at install *)
+		COPY( iconName, winName );
+		Strings.AppendX( winName, " -- " );  Strings.AppendX( winName, Machine.version )
 	END InitNames;
 
 	PROCEDURE getDisplayName;

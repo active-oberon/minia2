@@ -922,6 +922,7 @@ VAR
 
 	CloseDisplay- : PROCEDURE {C} (display:DisplayPtr): INTEGER;
 	CreateWindow- : PROCEDURE {C} (display: DisplayPtr; parent: Window; x, y: INTEGER; width, height, borderWidth, depth, class: INTEGER; visual: VisualPtr; valuemask: LONGINTEGER;  VAR attributes: XSetWindowAttributes ): Window;
+	ChangeWindowAttributes- : PROCEDURE {C} (display: DisplayPtr; w: Window; valuemask: LONGINTEGER; VAR attributes: XSetWindowAttributes ): INTEGER;
 	DestroyWindow-: PROCEDURE {C}(display:DisplayPtr; win: Window): INTEGER;
 	DisplayWidthMM-: PROCEDURE {C} (d: DisplayPtr; screen: INTEGER ): INTEGER;
 	FreeColormap- : PROCEDURE {C} (display: DisplayPtr; colormap: Colormap);
@@ -1085,6 +1086,7 @@ VAR
 		Unix.Dlsym( xlib, "XAllocColor", ADDRESSOF( AllocColor ) );
 		Unix.Dlsym( xlib, "XCloseDisplay", ADDRESSOF( CloseDisplay));
 		Unix.Dlsym( xlib, "XCreateWindow", ADDRESSOF( CreateWindow));
+		Unix.Dlsym( xlib, "XChangeWindowAttributes", ADDRESSOF( ChangeWindowAttributes));
 		Unix.Dlsym( xlib, "XDestroyWindow", ADDRESSOF( DestroyWindow));
 		Unix.Dlsym( xlib, "XDisplayWidthMM", ADDRESSOF( DisplayWidthMM));
 		Unix.Dlsym( xlib, "XFreeColormap", ADDRESSOF( FreeColormap));
