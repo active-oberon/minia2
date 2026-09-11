@@ -65,13 +65,18 @@ static bool scan_comment(TSLexer *lexer) {
 static bool scan_code_body(TSLexer *lexer) {
   bool any = false;
   bool after_hash = false;
+  // Only at the start of a word: read_word already refuses MODULEX for MODULE, but it was
+  // entered wherever an E or a W stood, so the END inside DIVIDEND closed the block. One
+  // assembler comment in I386.Builtins.Mod -- "= DIVIDEND (l)" -- and the remaining 440 lines
+  // of the module were an error.
+  bool at_word_start = true;
   char word[8];
 
   for (;;) {
     if (lexer->eof(lexer)) break;
     lexer->mark_end(lexer);
 
-    if (!after_hash && (lexer->lookahead == 'E' || lexer->lookahead == 'W')) {
+    if (at_word_start && !after_hash && (lexer->lookahead == 'E' || lexer->lookahead == 'W')) {
       int n = read_word(lexer, word);
       if (word_is(word, n, "END", 3) || word_is(word, n, "WITH", 4)) {
         if (!any) return false;
@@ -79,10 +84,12 @@ static bool scan_code_body(TSLexer *lexer) {
         return true;
       }
       any = true;
+      at_word_start = false;   // read_word stopped on whatever ends the word
       continue;
     }
 
     after_hash = lexer->lookahead == '#';
+    at_word_start = !is_word_char(lexer->lookahead);
     lexer->advance(lexer, false);
     any = true;
   }
