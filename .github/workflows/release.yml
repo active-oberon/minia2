@@ -50,6 +50,27 @@ jobs:
           # Renamed so the two SDKs sit side by side on the release page; inside it still unpacks
           # into a2-a64/, which is what its own README says to cd into.
           cp target/A64/bundle.tar.gz "minia2-sdk-${GITHUB_REF_NAME}-linux-arm64.tar.gz"
+      # The two 32-bit machines: an old x86 laptop, and a Pi 1, 2 or Zero, which is where a 32-bit
+      # Raspberry Pi OS still is. A Pi 3/4/5 runs the 64-bit image and should take linux-arm64,
+      # which is faster and better tested -- these are for the hardware that cannot.
+      #
+      # Cross-built here like the AArch64 one, and USED before they are published: the i386 SDK
+      # runs on this runner, the armhf one under qemu. BUNDLE32_REQUIRE turns a machine that
+      # cannot run them into a failure rather than a skip, because a skip would publish a tarball
+      # nobody had started.
+      - name: Tarball SDKs (i386 and armhf)
+        env:
+          BUNDLE32_REQUIRE: "1"
+        run: |
+          sudo apt-get install -y --no-install-recommends libc6-i386 libc6-armhf-cross qemu-user-static
+          task Linux32
+          task LinuxARM
+          task bundle32              # assembles a bundle of its own and runs its run.sh
+          task bundle-armhf
+          # and the ones that are published; the checks above leave no tarball on purpose
+          tests/bundle.sh -p Linux32 -o target/bundle-linux32
+          tests/bundle.sh -p LinuxARM -o target/bundle-armhf
+          cp target/minia2-sdk-*-linux-386.tar.gz target/minia2-sdk-*-linux-armhf.tar.gz .
       # The same device, without proot: Bionic. A separate asset because the loader and the one
       # library the image names are read before any of our code runs, so they cannot be decided on
       # the phone. The NDK is on the runner image already; A64_REQUIRE turns a missing one into a
