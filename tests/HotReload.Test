@@ -1,0 +1,258 @@
+# Tests for the module life cycle -- loading a module into a running system and unloading it again.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test HotReloadDay HotReloadTestShared;System.Load Test"
+#
+# `Modules.ThisModule` and `Modules.FreeModule` are what "code carried into a running system" means
+# here, and between them is the one thing this system can do that Go, Rust and C++ cannot. Both are
+# exercised constantly -- every `IMPORT` goes through the first -- but only in the direction a start
+# takes. Nothing anywhere asked what happens on the *second* load of the same name, or on the load
+# after an unload, or on the thousandth.
+#
+# The unload is where the risk is, and `FreeModule` does not hide it: it frees on `m.refcnt = 0`
+# alone (source/Modules.Mod:676, :689), and that count is of importing modules -- not of live
+# activities, and not of procedure variables another module was handed. Then the code is overwritten
+# with `0CCX` (source/Modules.Mod:706). So an activity still running in a freed module, or a
+# delegate still held by its caller, is a trap a second later rather than a refusal at the call.
+# Nothing in the language stops either. What stands between them and a working system is a
+# discipline, and these cases are that discipline written down:
+#
+#   the registry holds the type, the loaded module supplies only behaviour;
+#   the module drops its registration and stops its activities in its termination handler;
+#   only then is it freed.
+#
+# `HotReloadTestShared` plays the registry and `HotReloadDay` the loaded module, and the import goes
+# the way it has to go -- the day imports the registry, never the reverse. That direction is not a
+# style choice: it puts the reference count on the right side, so the registry cannot be freed out
+# from under a loaded day (the fourth case measures exactly that), while a day, which nobody
+# imports, is free to come and go.
+#
+# The termination handler is the whole of the discipline's mechanism, and it works because `Free`
+# calls it before the code is overwritten -- source/Modules.Mod:677 against :706. That is the only
+# window in which a module can still run code to take itself apart.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the registry these tests are written with, and the day it loads
+
+	MODULE HotReloadTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A registry that outlives the modules registered in it" *)
+
+	IMPORT Commands, Files, Streams, Strings;
+
+	CONST
+		(** The module the cases load and unload; its object file is compiled by `CompileDay`. *)
+		DayName* = "HotReloadDay";
+
+	TYPE
+		(**	What a day supplies. Declared here, in the module that stays, because a type declared in
+			a module that goes leaves its type descriptor dangling behind every object of it. *)
+		Behaviour* = PROCEDURE (): SIGNED32;
+
+	VAR
+		(** How many days have registered and how many have terminated; a day counts itself. *)
+		loads*, terminations*: SIGNED32;
+
+		behaviour: Behaviour;
+
+	(** Register a day's behaviour. Called from the day's module body. *)
+	PROCEDURE Register* (b: Behaviour);
+	BEGIN
+		behaviour := b; INC(loads)
+	END Register;
+
+	(**	Drop the registration. Called from the day's termination handler -- before the free, because
+		afterwards this variable would point into overwritten code. *)
+	PROCEDURE Forget*;
+	BEGIN
+		behaviour := NIL; INC(terminations)
+	END Forget;
+
+	(** What is registered right now, or NIL. *)
+	PROCEDURE Current* (): Behaviour;
+	BEGIN
+		RETURN behaviour
+	END Current;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	PROCEDURE Line (VAR text: ARRAY OF CHAR; CONST source: ARRAY OF CHAR);
+	BEGIN
+		Strings.Append(text, source); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	(**	Write the day's source and compile it, so that `Modules.ThisModule(DayName)` finds an object
+		file to load. The day is a module in the shape every day of the demo has to be: a behaviour
+		to register, an activity that is alive for as long as the module is, and a termination
+		handler that unregisters the one and stops the other. *)
+	PROCEDURE CompileDay* (): BOOLEAN;
+	VAR source: ARRAY 2048 OF CHAR; name: ARRAY 64 OF CHAR;
+		file: Files.File; writer: Files.Writer; text: ARRAY 1024 OF CHAR;
+	BEGIN
+		source := "";
+		Line(source, "MODULE HotReloadDay;");
+		Line(source, "IMPORT Modules, K := HotReloadTestShared;");
+		Line(source, "TYPE");
+		Line(source, "	Beast = OBJECT");
+		Line(source, "		VAR running, done: BOOLEAN;");
+		Line(source, "		PROCEDURE &Init*; BEGIN running := TRUE; done := FALSE END Init;");
+		Line(source, "		PROCEDURE Stop; BEGIN {EXCLUSIVE} running := FALSE END Stop;");
+		Line(source, "		PROCEDURE AwaitDone; BEGIN {EXCLUSIVE} AWAIT(done) END AwaitDone;");
+		Line(source, "	BEGIN {ACTIVE}");
+		Line(source, "		BEGIN {EXCLUSIVE} AWAIT(~running) END;");
+		Line(source, "		BEGIN {EXCLUSIVE} done := TRUE END");
+		Line(source, "	END Beast;");
+		Line(source, "VAR beast: Beast;");
+		Line(source, "PROCEDURE Behaviour (): SIGNED32;");
+		Line(source, "BEGIN RETURN 7 END Behaviour;");
+		Line(source, "PROCEDURE Terminate;");
+		Line(source, "BEGIN K.Forget; beast.Stop; beast.AwaitDone; beast := NIL END Terminate;");
+		Line(source, "BEGIN");
+		Line(source, "	NEW(beast); Modules.InstallTermHandler(Terminate); K.Register(Behaviour)");
+		Line(source, "END HotReloadDay.");
+
+		COPY(DayName, name); Strings.Append(name, ".Mod");
+		file := Files.New(name);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(source);
+		writer.Update;
+		Files.Register(file);
+
+		RETURN Run("Compiler.Compile", name, text) = 0
+	END CompileDay;
+
+	BEGIN
+		loads := 0; terminations := 0; behaviour := NIL
+	END HotReloadTestShared.
+
+positive: a day is loaded, registers itself, and answers
+
+	MODULE Test;
+	IMPORT Modules, K := HotReloadTestShared;
+
+	VAR module: Modules.Module; behaviour: K.Behaviour; res: INTEGER; msg: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(K.CompileDay());
+		ASSERT(Modules.ModuleByName(K.DayName) = NIL);	(* nothing has loaded it yet *)
+		ASSERT(K.Current() = NIL);
+
+		msg := "untouched";
+		module := Modules.ThisModule(K.DayName, res, msg);
+
+		ASSERT(res = Modules.Ok);
+		ASSERT(module # NIL);
+		ASSERT(module.name = K.DayName);
+		ASSERT(Modules.ModuleByName(K.DayName) # NIL);
+
+		(*	The body ran: it registered from inside itself, and what it registered is code that runs
+			-- the registry never named the procedure, only its type. *)
+		ASSERT(K.loads = 1);
+		behaviour := K.Current();
+		ASSERT(behaviour # NIL);
+		ASSERT(behaviour() = 7)
+	END Test.
+
+positive: freeing a day runs its termination handler, and the registry is empty afterwards
+
+	MODULE Test;
+	IMPORT Modules, K := HotReloadTestShared;
+
+	VAR module: Modules.Module; res: INTEGER; msg: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(K.CompileDay());
+		module := Modules.ThisModule(K.DayName, res, msg);
+		ASSERT(res = Modules.Ok);
+		ASSERT(K.Current() # NIL);
+
+		msg := "untouched";
+		Modules.FreeModule(K.DayName, res, msg);
+
+		ASSERT(res = Modules.Ok);
+		ASSERT(msg = "");	(* nothing went wrong, so nothing is said *)
+		ASSERT(K.terminations = 1);	(* the handler ran, and it ran before the code was overwritten *)
+		ASSERT(K.Current() = NIL);	(* and it dropped the delegate, which now points at 0CCX *)
+
+		(*	Gone from the registry under its own name. The record itself is kept on the free list
+			with a `?` appended (source/Modules.Mod:693), because an address inside it still has to
+			answer a trap handler. *)
+		ASSERT(Modules.ModuleByName(K.DayName) = NIL)
+	END Test.
+
+positive: the registry cannot be freed while a day imports it, and can be once the day is gone
+
+	MODULE Test;
+	IMPORT Modules, Strings, K := HotReloadTestShared;
+
+	VAR registry, module: Modules.Module; before: SIZE; res: INTEGER; msg: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(K.CompileDay());
+		registry := Modules.ModuleByName("HotReloadTestShared");
+		ASSERT(registry # NIL);
+		before := registry.refcnt;	(* this case imports it too, so the count is not zero to start with *)
+
+		module := Modules.ThisModule(K.DayName, res, msg);
+		ASSERT(res = Modules.Ok);
+		ASSERT(registry.refcnt = before + 1);	(* the day's import is what protects the registry *)
+
+		msg := "untouched";
+		Modules.FreeModule("HotReloadTestShared", res, msg);
+		ASSERT(res # Modules.Ok);
+		ASSERT(K.Current() # NIL);	(* refused, and nothing was taken apart on the way to refusing *)
+		ASSERT(Strings.Pos("reference count not zero", msg) >= 0);
+
+		Modules.FreeModule(K.DayName, res, msg);
+		ASSERT(res = Modules.Ok);
+		ASSERT(registry.refcnt = before)
+	END Test.
+
+positive: a thousand loads and frees of a live module, and the system is still here
+
+	MODULE Test;
+	IMPORT Modules, K := HotReloadTestShared;
+
+	CONST
+		(*	The discipline is a sequence -- unregister, stop, await, free -- and a sequence with a
+			race in it passes once and fails on the run nobody is watching. One load proves the
+			mechanism; a thousand is what says the race is not there. *)
+		Cycles = 1000;
+
+	VAR module: Modules.Module; behaviour: K.Behaviour; i: SIGNED32; res: INTEGER; msg: ARRAY 256 OF CHAR;
+
+	BEGIN
+		ASSERT(K.CompileDay());
+
+		FOR i := 1 TO Cycles DO
+			module := Modules.ThisModule(K.DayName, res, msg);
+			ASSERT(res = Modules.Ok);
+			ASSERT(module # NIL);
+
+			(*	A fresh instance every time, not the previous one handed back: the count the day
+				keeps in the registry is the count of module bodies that have run. *)
+			ASSERT(K.loads = i);
+
+			behaviour := K.Current();
+			ASSERT(behaviour # NIL);
+			ASSERT(behaviour() = 7);	(* code from the load just done, at a new address each time *)
+
+			Modules.FreeModule(K.DayName, res, msg);
+			ASSERT(res = Modules.Ok);
+			ASSERT(K.terminations = i);
+			ASSERT(K.Current() = NIL)
+		END;
+
+		ASSERT(K.loads = Cycles);
+		ASSERT(K.terminations = Cycles)
+	END Test.
