@@ -185,6 +185,41 @@ else
 	report "a build after an edit" "$s" "$results/stale-run.log" 'edition two'
 fi
 
+# 5c. The same leftover, one import away. Case 5b is the module being built; this is a sibling it
+#     imports, which is the other half of the same search-path order: `ob run` and `ob compile`
+#     set their paths in PrepareIn, and there too the project came before the directory this run
+#     compiles into. Edit a sibling after an `ob compile` left an object file beside it and the
+#     run took last edition's -- `ob run` printed 1 where the source said 2, with no diagnostic.
+staledep="$work/staledep"
+mkdir -p "$staledep"
+cat > "$staledep/StaleDep.Mod" <<'MOD'
+MODULE StaleDep;
+	PROCEDURE Value*(): SIGNED32;
+	BEGIN RETURN 1
+	END Value;
+END StaleDep.
+MOD
+cat > "$staledep/StaleMain.Mod" <<'MOD'
+MODULE StaleMain;
+IMPORT KernelLog, StaleDep;
+	PROCEDURE Do*;
+	BEGIN KernelLog.String("sibling says "); KernelLog.Int(StaleDep.Value(), 0); KernelLog.Ln
+	END Do;
+END StaleMain.
+MOD
+s=0; started=$SECONDS
+( cd "$staledep" && timeout 300 "$ob" compile StaleDep.Mod > "$results/staledep.log" 2>&1 ) || s=$?
+cat > "$staledep/StaleDep.Mod" <<'MOD'
+MODULE StaleDep;
+	PROCEDURE Value*(): SIGNED32;
+	BEGIN RETURN 2
+	END Value;
+END StaleDep.
+MOD
+( cd "$staledep" && timeout 600 "$ob" run StaleMain.Mod >> "$results/staledep.log" 2>&1 ) || s=$?
+_ELAPSED=$((SECONDS - started))
+report "a sibling edited after a compile" "$s" "$results/staledep.log" 'sibling says 2'
+
 # 6. The tier rule, read from the std manifests -- so also the check that packages/ shipped.
 s=0; run "$results/lint.log" 120 "$ob" lint || s=$?
 report "ob lint" "$s" "$results/lint.log" 'no upward dependencies'

@@ -578,13 +578,15 @@ BEGIN
 END AddVendored;
 
 (*
-	Search paths every verb wants: the standard library, the user's own directory, and where this
-	run writes -- the last one because a sibling compiled a moment ago has to be findable, and the
-	working directory is not searched once a search path exists.
+	Search paths every verb wants: the standard library, where this run writes, and the user's own
+	directory. What this run just compiled comes before the project because an object file left
+	beside the source by an earlier `ob compile` would otherwise win and ship last week's code --
+	silently, since a search path hit is a hit. The working directory is not searched once a search
+	path exists, which is why `work` is on the list at all.
 *)
 PROCEDURE PrepareIn(CONST work: ARRAY OF CHAR): BOOLEAN;
 BEGIN
-	RETURN AddSearchPath(lib) & AddSearchPath(project) & AddVendored() & AddSearchPath(work) & SetWorkPath(work)
+	RETURN AddSearchPath(lib) & AddSearchPath(work) & AddSearchPath(project) & AddVendored() & SetWorkPath(work)
 END PrepareIn;
 
 (* --- verbs ------------------------------------------------------------------------------- *)
@@ -1335,8 +1337,8 @@ PROCEDURE DocumentModule(CONST file, scratch, output: ARRAY OF CHAR): BOOLEAN;
 VAR name, page, source, destination: Path;
 BEGIN
 	IF ~ModuleName(file, name) THEN DieOn("cannot read a MODULE header from ", file); RETURN FALSE END;
-	IF ~AddSearchPath(lib) OR ~AddSearchPath(project) OR ~AddVendored()
-			OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(scratch) OR ~AddSearchPath(project)
+			OR ~AddVendored() OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
 	COPY(name, page); Strings.Append(page, ".html");
 	IF ~CompileForDocumentation(file, page) THEN RETURN FALSE END;
 	Join(scratch, page, source); Join(output, page, destination);
@@ -1412,7 +1414,7 @@ BEGIN
 	END;
 
 	(* the siblings are compiled once, here, rather than by each of the children in turn *)
-	IF AddSearchPath(lib) & AddSearchPath(project) & AddVendored() & AddSearchPath(scratch) & SetWorkPath(scratch) THEN
+	IF AddSearchPath(lib) & AddSearchPath(scratch) & AddSearchPath(project) & AddVendored() & SetWorkPath(scratch) THEN
 		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension)
 	END;
 
@@ -3048,8 +3050,8 @@ BEGIN
 	   front end are loaded by name when the compiler runs, and what runs here is this machine's
 	   code whatever is being compiled. The two libraries cannot be confused for each other -- a
 	   target is its object and symbol file extensions. *)
-	IF ~AddSearchPath(lib) OR ~AddSearchPath(testLibrary) OR ~AddSearchPath(project)
-			OR ~AddVendored() OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(testLibrary) OR ~AddSearchPath(scratch)
+			OR ~AddSearchPath(project) OR ~AddVendored() OR ~SetWorkPath(scratch) THEN
 		failed := TRUE
 	ELSE
 		Join(scratch, "TesterInput.txt", source);
@@ -3149,8 +3151,8 @@ BEGIN
 	ReadCaseLimit;
 	IF ~ObHost.ExecutablePath(testSelf) THEN Die("cannot find my own binary"); RETURN END;
 	IF ~ScratchDirectory(testScratch) THEN Die("cannot create a scratch directory"); RETURN END;
-	IF AddSearchPath(lib) & AddSearchPath(testLibrary) & AddSearchPath(project)
-			& AddVendored() & AddSearchPath(testScratch) & SetWorkPath(testScratch) THEN
+	IF AddSearchPath(lib) & AddSearchPath(testLibrary) & AddSearchPath(testScratch)
+			& AddSearchPath(project) & AddVendored() & SetWorkPath(testScratch) THEN
 		BuildSiblings(testScratch, testPlatform, testObject, testSymbol)
 	END;
 	(* Only now, because the image is linked into the scratch directory. *)
@@ -3339,8 +3341,8 @@ BEGIN
 			linkOptions, suffix, boot) THEN RETURN END;
 	LSP.SetTarget(symbolExtension, compilerPlatform);
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
-	IF AddSearchPath(lib) & AddSearchPath(libSym) & AddSearchPath(project)
-			& AddSearchPath(scratch) & SetWorkPath(scratch) THEN
+	IF AddSearchPath(lib) & AddSearchPath(libSym) & AddSearchPath(scratch)
+			& AddSearchPath(project) & SetWorkPath(scratch) THEN
 		IF ObHost.Env("A2_SYMS", symbols) & (symbols # "") THEN ignore := AddSearchPath(symbols) END;
 		NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
 		IF live THEN LSP.RunLive(context) ELSE LSP.Run(context) END
