@@ -7,6 +7,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      A2_SDK_VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,6 +20,10 @@ jobs:
           wget -qO "$HOME/.local/bin/yq" https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           chmod +x "$HOME/.local/bin/yq"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install target runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libc6-i386 libc6-armhf-cross libc6-arm64-cross qemu-user-static
       - name: Build (Linux64 + Win64)
         run: |
           task Linux64
@@ -33,13 +39,6 @@ jobs:
         run: |
           tests/a64-runtime-check.sh target/Linux64 target/A64/bin
           task a64-stdlib
-      - name: Tarball SDK (x86-64 Linux) + check it
-        env:
-          BUNDLE_REQUIRE: "1"
-        run: |
-          task bundle-check          # assembles a bundle of its own and uses it under `env -i`
-          task bundle                # the one that is published
-          cp target/*.tar.gz .
       # The SDK for a 64-bit ARM machine -- a Pi 4/5, an ARM server, a phone under Termux. There
       # a64 is not a cross target: the compiler runs on the device.
       - name: Tarball SDK (AArch64)
@@ -62,7 +61,6 @@ jobs:
         env:
           BUNDLE32_REQUIRE: "1"
         run: |
-          sudo apt-get install -y --no-install-recommends libc6-i386 libc6-armhf-cross qemu-user-static
           task Linux32
           task LinuxARM
           task bundle32              # assembles a bundle of its own and runs its run.sh
@@ -71,6 +69,13 @@ jobs:
           tests/bundle.sh -p Linux32 -o target/bundle-linux32
           tests/bundle.sh -p LinuxARM -o target/bundle-armhf
           cp target/minia2-sdk-*-linux-386.tar.gz target/minia2-sdk-*-linux-armhf.tar.gz .
+      - name: Tarball SDK (x86-64 Linux) + check it
+        env:
+          BUNDLE_REQUIRE: "1"
+        run: |
+          task bundle-check          # assembles a bundle of its own and uses it under `env -i`
+          task bundle                # the one that is published
+          cp "target/minia2-sdk-${GITHUB_REF_NAME}-linux-amd64.tar.gz" .
       # The same device, without proot: Bionic. A separate asset because the loader and the one
       # library the image names are read before any of our code runs, so they cannot be decided on
       # the phone. The NDK is on the runner image already; A64_REQUIRE turns a missing one into a
@@ -108,8 +113,18 @@ jobs:
         run: tests/install-check.sh
       # Checksums for the assets. install.sh verifies against this file when the release has one;
       # a release without it installs anyway and says the checksum was not verified.
-      - name: Checksums
-        run: sha256sum minia2-*-*.zip minia2-sdk-*.tar.gz active-oberon-*.vsix > SHA256SUMS
+      - name: Verify release assets and checksums
+        run: |
+          for host in linux-amd64 windows-amd64 linux-386 linux-armhf linux-arm64 android-arm64; do
+            archive="minia2-sdk-${GITHUB_REF_NAME}-${host}.tar.gz"
+            test -s "$archive"
+            tar -tzf "$archive" > /dev/null
+          done
+          for platform in Linux64 Win64; do
+            unzip -tq "minia2-${platform}-${GITHUB_REF_NAME}.zip"
+          done
+          sha256sum minia2-*-*.zip minia2-sdk-*.tar.gz active-oberon-*.vsix > SHA256SUMS
+          (cd sdk && sha256sum install.sh) >> SHA256SUMS
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -117,6 +132,7 @@ jobs:
           # The notes are a file in the tree rather than a tag message: they get reviewed in a
           # diff like everything else, and a release whose notes nobody wrote says so loudly.
           body_path: docs/RELEASE_NOTES.md
+          fail_on_unmatched_files: true
           files: |
             minia2-*-*.zip
             minia2-sdk-*.tar.gz

@@ -1,7 +1,7 @@
 # minia2 as an SDK — the manual
 
 *(Was `docker/README.md` until 2026-08-24. It moved because it is about the SDK, not about the
-image: the image is one of four ways to have the same payload, and the other three are tarballs.
+image: Docker and the native SDK archives are separate distribution formats.
 What is left in `docker/` is the image itself.)*
 
 A Go-style toolchain for **A2 / Active Oberon**. It wraps the repo's self-hosting
@@ -13,14 +13,14 @@ a Windows PE `.exe`, an AArch64 ELF, a 32-bit x86 ELF or an armhf one), `ob comp
 adapter with breakpoints and stepping). See *Limitations* for the current scope.
 
 **Docker is one way to have it, not the only one.** The same payload ships as a
-tarball for five hosts — `linux-amd64`, `linux-arm64`, `windows-amd64`, `linux-386`
-and `linux-armhf` — and `ob`
+tarball for six host environments — `linux-amd64`, `linux-arm64`, `windows-amd64`,
+`linux-386`, `linux-armhf` and `android-arm64` (Bionic/Termux) — and `ob`
 finds its SDK beside itself and takes the project to be the current directory.
 Which one to pick:
 
 | | Docker image | Tarball |
 |---|---|---|
-| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | 64-bit Linux (x86 or ARM) + glibc, or 64-bit Windows. No shell, no runtime, nothing installed |
+| needs | Docker (Linux, macOS, Windows via Desktop/WSL2) | Linux (x86-64, AArch64, i386 or armhf) + glibc; AArch64 Android + Bionic; or 64-bit Windows. The native `ob` needs no shell |
 | get it | `docker pull puhachenko/minia2-sdk` | `curl -fsSL …/sdk/install.sh \| sh`, a release tarball, or `task bundle` |
 | use it | `docker run --rm -v "$PWD:/work" minia2-sdk run Hello.Mod` | `ob run Hello.Mod` |
 | editor (LSP) | a container per session, sources bind-mounted | `cmd = { "/path/to/ob", "lsp" }` |
@@ -59,7 +59,8 @@ privilege asked for:
 curl -fsSL https://raw.githubusercontent.com/active-oberon/minia2/main/sdk/install.sh | sh
 ```
 
-`--dir`, `--bin`, `--version`, `--tarball` and `--uninstall` are the whole interface.
+Installer options are `--dir`, `--bin`, `--version`, `--tarball`, `--no-link` and `--uninstall`
+(`--help` lists them). Windows archives are unpacked manually.
 Or by hand, from a release tarball:
 
 ```sh
@@ -71,21 +72,26 @@ cd minia2-sdk-<version>-linux-amd64
 mkdir -p ~/.local/bin && ln -sf "$PWD/ob" ~/.local/bin/ob    # `ob` on the PATH
 ```
 
-Nothing is installed and nothing is written outside the directory. `ob` follows the
+The unpacked SDK is self-contained; only the optional link above is written outside it.
+`ob` follows the
 symlink back to the SDK, so the link above needs no environment variable; `A2SDK` still
 overrides the location if you want it elsewhere. The project is the current directory
 (`A2_PROJECT` overrides that), which under Docker is the `/work` mount.
 
-For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone under Termux —
+For a machine that is itself AArch64 — a Pi 4/5, an ARM server, a phone in a glibc environment —
 `task a64-bundle` builds the SDK where a64 is the native target and the compiler runs on
-the device. On Windows the SDK is `ob.exe` and the same library layout beside it; it
+the device. Native Termux needs the separate `android-arm64` archive, built with
+`task a64-bundle-android` against Bionic; the installer selects it automatically.
+On Windows the SDK is `ob.exe` and the same library layout beside it; it
 wants no bash, no Cygwin and no WSL, and `ob.exe build` writes a `.exe` natively.
 
 For a 32-bit machine — an old x86 laptop, a Raspberry Pi 1, 2 or Zero — `task Linux32`
 and `task LinuxARM` build the platform and `task bundle32` / `task bundle-armhf` assemble
 the SDK for it. These are native SDKs and carry no cross targets: the compiler runs on
-the machine it compiles for. A Pi 3, 4 or 5 runs the 64-bit image and should take the
-`linux-arm64` tarball instead, which is faster and better tested.
+the machine it compiles for. Choose by the installed OS architecture: a Pi 3, 4 or 5
+with a 64-bit OS takes
+`linux-arm64`; a 32-bit OS takes `linux-armhf`. Availability of a release asset must
+be checked on the release being installed; build recipes do not prove publication.
 
 ## Projects of more than one module
 
@@ -106,6 +112,14 @@ Dependencies are the other thing: `ob get github.com/user/repo` vendors them und
 and those are populated the same way, lower tier first. A2's namespace is flat, so a name
 provided twice is a collision: between two packages it is a hard error, and a module of your
 own with a package's name shadows it with a warning.
+
+Fresh build output is searched before project and vendored leftovers in `BuildVerb`
+(`sdk/Ob.Mod`, commit `c40708d`). Older SDKs can link an adjacent stale object after
+`ob compile`, edit, then `ob build`; `tests/bundle-selfcheck.sh` case 5b covers this.
+Updating the source checkout alone does not update the installed `ob`: rebuild and
+install with `task update` on Linux x86-64/AArch64, then restart editor servers.
+For a 32-bit host, rebuild its platform and archive and install it with
+`sdk/install.sh --tarball <archive>`; `task update` currently skips installation there.
 
 Two shapes this does not cover: sources in subdirectories (only the top of the project is
 read), and a project whose modules have their own build output you want reused rather than
@@ -292,7 +306,8 @@ alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'
 > the terminal, or the reverse. This section used to recommend exactly that, from the days
 > when the image was the only way to have the SDK.
 
-Reload the shell (`source ~/.bashrc`) and the workflow becomes:
+The native SDK workflow is below. With Docker, use `obd` instead of `ob`, and
+`obdit repl` for the interactive shell. Put aliases in the startup file of your shell.
 
 ```sh
 ob run     Hello.Mod             # compile + run (go run)
@@ -324,7 +339,7 @@ percentage of the screen.
 
 > **Quoting matters.** Use single quotes and `"$PWD"` exactly as above. `$PWD`
 > is left unexpanded in the alias definition and resolves to the *current*
-> directory each time you call `ob` — that is what bind-mounts your sources into
+> directory each time you call `obd` — that is what bind-mounts your sources into
 > `/work`. Writing `"PWD"` (no `$`) makes Docker create an empty **named volume**
 > called `PWD` instead, and every file lands as "no such file: Hello.Mod".
 
@@ -449,53 +464,19 @@ From the tarball the command is the path to `ob` and nothing else:
 `{ "/path/to/minia2-sdk-.../ob", "lsp", "--live" }` — the project is the directory the
 editor is in, so there is no mount to get right and no container per session.
 
-**Neovim** — the config-manager-agnostic way (works with NVChad/LazyVim/etc.
-without touching their files): two standard Neovim runtime files.
+**Neovim:** use the maintained configuration described in [IDE.md §1c](IDE.md#1c-neovim).
+It selects `$A2_OB`, then `ob` on `PATH`, then Docker; the Docker path mounts
+`A2_STDLIB_SRC` and `A2_SYMS`. The full keymap list is in that guide.
 
-`~/.config/nvim/ftdetect/oberon.lua`:
-```lua
-vim.filetype.add({ extension = { Mod = "oberon" } })
-```
-
-`~/.config/nvim/after/ftplugin/oberon.lua`:
-```lua
-vim.diagnostic.config({ virtual_lines = { current_line = true } })  -- full error text inline
-local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0)) or vim.fn.getcwd()
-local init = {}
-local stdlib = vim.env.A2_STDLIB_SRC   -- optional: a full A2 source tree, for stdlib jumps
-local cmd
-if vim.env.A2_OB and vim.env.A2_OB ~= "" then       -- the tarball SDK: $A2_OB is its `ob`
-  cmd = { vim.env.A2_OB, "lsp", "--live" }
-  if stdlib and stdlib ~= "" then init.stdlibSrc = stdlib end
-else                                                -- the image: mount the project at /work
-  cmd = { "docker", "run", "--rm", "-i", "-v", dir .. ":/work:ro" }
-  if stdlib and stdlib ~= "" then
-    vim.list_extend(cmd, { "-v", stdlib .. ":/libsrc:ro" }); init.stdlibSrc = stdlib
-  end
-  vim.list_extend(cmd, { "minia2-sdk", "lsp", "--live" })
-end
-vim.lsp.start({
-  name = "ob", cmd = cmd, root_dir = dir, init_options = init,
-  flags = { debounce_text_changes = 500 },   -- live, but only after you pause typing
-})
--- keymaps: gh = hover, gd / <C-]> / Ctrl-Click = go to definition
-vim.keymap.set("n", "gh", vim.lsp.buf.hover, { buffer = true })
-vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = true })
-```
-Drop `--live` and the `flags` line for on-open/save-only. `vim.diagnostic.config`
-is global — remove that line if you don't want inline text for other filetypes. Set
-`export A2_STDLIB_SRC=$HOME/Projects/A2/a2oberon/source` (a full A2 tree) so
-go-to-definition can reach standard-library modules from any project, and
-`export A2_OB=/path/to/minia2-sdk-.../ob` to use the tarball SDK instead of the image.
-
-**VS Code**: use a generic LSP bridge extension (e.g. *"Generic LSP Client"*) or a
-tiny extension whose `serverOptions` runs the same `docker … minia2-sdk lsp` command
-with `transport: stdio` and a document selector for the `oberon` language / `*.Mod`.
+**VS Code:** install the repository's `active-oberon-<version>.vsix`, built from
+`editors/vscode` and included by the release workflow. It supplies the language client,
+syntax highlighting and `ob dap` integration. Trust the workspace and see
+[IDE.md §1d](IDE.md#1d-vs-code) for settings and debugging.
 
 **Test it without an editor** — pipe a framed session in:
 
 ```sh
-printf 'Content-Length: %d\r\n\r\n%s' 78 \
+printf 'Content-Length: %d\r\n\r\n%s' 75 \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' \
   | docker run --rm -i minia2-sdk lsp
 ```
@@ -516,22 +497,21 @@ END Hello.
 | Piece | Role |
 |-------|------|
 | `/opt/a2sdk/oberon` | the self-contained A2 runtime (statically-linked kernel + Fox compiler + linker), a dynamically-linked glibc ELF |
-| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — 255 modules (symbol + object files) |
-| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — 254 modules, for `build -t win64` |
-| `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — 408 modules including the runtime's, for `build -t a64` |
+| `/opt/a2sdk/lib/*.SymUu`, `*.GofUu` | the **headless-core** Linux64 stdlib — symbol + object files selected by the registry |
+| `/opt/a2sdk/lib-win64/*.SymWw`, `*.GofWw` | the headless-core Win64 stdlib — for `build -t win64` |
+| `/opt/a2sdk/lib-a64/*.SymU8`, `*.GofU8` | the headless-core AArch64 stdlib — including runtime modules, for `build -t a64` |
 | `lib-linux32/*.SymU`, `*.GofU` | the headless-core i386 stdlib, for `build -t linux32` (in the tarball; not in the image) |
 | `lib-arm32/*.SymA`, `*.GofA` | the same for armhf, for `build -t arm32` — it carries `FPE64`, which the others have no module for |
 | `ob` | the driver: one command over the compiler, the linker and the language server |
 
-The image is ~161MB (of which ~16MB is the optional Win64 stdlib), trimmed from a
-naive ~255MB Linux-only image in three steps:
+Historical image measurements were ~161 MB versus ~255 MB before trimming; these
+are not current size guarantees. The payload is reduced in three ways:
 
 - **No desktop `data/`** (fonts, wallpapers, skins — ~48MB): headless compile/run
   never reads it.
 - **No extra apt packages**: the runtime's shared libs (`libc`, `libdl`,
   `ld-linux`) already ship in `debian:bookworm-slim`.
-- **Only what the registry names** (~16MB saved): of the 712 built stdlib modules,
-  255 are shipped. Membership is decided by `packages/std/*/a2pkg.json`: a module
+- **Only what the registry names**: membership is decided by `packages/std/*/a2pkg.json`: a module
   travels if a package whose `headless` is true lists it in `provides` and not in
   `graphical`, or if the import closure of such a module needs it. So the payload
   is a decision somebody wrote down package by package, and
@@ -556,7 +536,8 @@ naive ~255MB Linux-only image in three steps:
   compile anything at all. i386 shares the x86-64 list — same modules, different
   word size. The kept set is closed under imports, so every retained module both
   compiles and loads. Importing a GUI module (e.g. `WMGraphics`) is a compile
-  error by design — use the full desktop build for GUI work.
+  error in headless mode — use a native SDK with `lib-gui/` and `--gui` for a canvas
+  window, or the full desktop build for PET and desktop applications.
 
 **`ob` is itself Active Oberon** (`sdk/Ob.Mod`), linked into a binary that already holds
 Fox: a verb calls `Compiler.Modules` in this process rather than starting one, and an SDK
@@ -612,12 +593,12 @@ so tests can import the code under test.
 emulator or an AArch64 C library, the files whose cases execute are reported as
 **skipped** rather than passed — saying so out loud is the whole point.
 
-`-j N` runs N pieces of the suites at a time. Files are not the unit: 5450
-of this tree's 6965 cases are in one file, so the case lists themselves are cut into
+`-j N` runs N pieces of the suites at a time. In the historical benchmark, 5450
+of 6965 cases were in one file, so the case lists themselves are cut into
 chunks, and a chunk brings with it the earlier cases its own cases import (found from
 the IMPORT clauses at parse time, replayed compile-only in the chunk's own directory).
 Output is buffered per chunk and printed in order, so a parallel run reads exactly like
-a sequential one: this tree's 6965 cases give the same 7034 verdict lines in the same
+a sequential one: that 6965-case run gave the same 7034 verdict lines in the same
 order, in **2m31s on eight cores against 19m02s on one**.
 
 This deliberately does *not* use the in-tree `FoxTest`/`TestSuite` harness: their
@@ -660,16 +641,17 @@ regenerates it from the current run. The repo's own baseline is `tests/a2test-ex
 and CI runs `ob test` over `tests/` against it, so a new failure anywhere in the suite
 fails the build.
 
-## Limitations (PoC scope)
+## Limitations
 
 - **The Win64 `.exe` needs Windows (or Wine) to run** — it is a `PE32+ console
   x86-64` image, confirmed running under Wine. Native macOS Mach-O is not
   supported at all.
-- Networking on the Win64 target is incomplete (the Linux `Sockets` module has no
-  Win64 build in this stdlib); Linux and AArch64 have the full TCP/UDP/HTTP stack.
-- The base must be glibc (the runtime links `libc`/`libdl`); musl/Alpine will not
-  work — for the SDK image and for running Linux `build` output.
-- Dead-code elimination is module-granular, so binaries are larger than Go's
-  (hello-world ≈ 1.3 MB — it contains the full kernel + GC + scheduler).
+- The Unix-specific `Sockets` module is not in the Win64 library. Windows has its
+  own `TCP`, `UDP` and `DNS` modules, plus `LocalSockets` backed by named pipes;
+  importing Unix-only APIs still requires a platform-specific alternative.
+- Linux archives and Linux build output need glibc; musl/Alpine is not supported.
+  Android uses its separate Bionic build, not the glibc archive.
+- Dead-code elimination is module-granular. Executables embed the kernel, collector
+  and scheduler; measure their size for the specific build and import closure.
 - The Windows SDK (`ob.exe`) cross-builds for `a64` but not for `linux64`: it carries no
   Linux objects, and says so rather than writing something that cannot link.

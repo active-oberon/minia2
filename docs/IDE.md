@@ -2,13 +2,13 @@
 
 A full editor experience for **A2 / Active Oberon**, with no per-OS toolchain to
 build: the compiler, standard library and a language server ship as one SDK. **The way to
-have it is the tarball** — 64-bit Linux on x86 or ARM, Android/Termux, and Windows, where it
-is `ob.exe` and wants no bash: nothing installed, no container, no privilege. One command,
-`sdk/install.sh`, puts it in `~/.local/share/a2sdk`.
+have it is the tarball** — Linux on x86-64, AArch64, i386 or armhf, Android/Termux on
+AArch64, and 64-bit Windows, where it is `ob.exe` and wants no bash. On Linux and Termux,
+`sdk/install.sh` puts it in `~/.local/share/a2sdk`; on Windows, unpack the Windows tarball.
 
 The **Docker image** (`minia2-sdk`) is the fallback for a machine where the tarball has no
-build — macOS today — and for CI that already thinks in containers. It is one way of four,
-not the default. Your editor talks to the SDK over LSP either way.
+build — macOS today — and for CI that already thinks in containers. Your editor talks
+to the SDK over LSP either way.
 
 This document covers **installation, editor setup, every feature, and the
 keybindings**. For how the toolchain itself works (`ob run/build/compile`, standalone
@@ -74,16 +74,16 @@ alias obdit='docker run --rm -it -v "$PWD:/work" minia2-sdk'   # interactive ver
 | Command | Does |
 |---------|------|
 | `ob run <File.Mod> [Proc]` | compile + execute (`go run` model) |
-| `ob build <File.Mod> [-o name] [-t linux64\|win64\|a64] [Proc]` | standalone native executable |
-| `ob compile <File.Mod> [-o dir]` | just the `.GofUu` object file |
-| `obit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
+| `ob build <File.Mod> [-o name] [-t linux64\|win64\|a64\|linux32\|arm32] [Proc]` | standalone executable; target library must be present (`ob version` lists it) |
+| `ob compile <File.Mod> [-o dir]` | a native object file (`.GofUu` on Linux x86-64) |
+| `obdit repl` / `ob version` | interactive A2 shell / SDK banner (`ob repl` from the tarball) |
 | `ob lsp [--live]` | the language server (editors spawn this) |
 | `ob dap` | the debug adapter: breakpoints, stepping, and where it trapped (§1f) |
 
 ### 1c. Neovim
 
-Editor-manager-agnostic (works with NVChad / LazyVim / plain config): three standard
-Neovim runtime files. They live in the dotfiles repo
+Editor-manager-agnostic (works with NVChad / LazyVim / plain config): the following
+Neovim runtime files and plugin configuration. They live in the dotfiles repo
 (`github.com/andrqxa-tools/dotfiles`, branch `master`, under
 `Editors/NeoVim/NvChad/`) — copy them into `~/.config/nvim/`:
 
@@ -101,6 +101,8 @@ Neovim runtime files. They live in the dotfiles repo
 - `lua/plugins/init.lua` — `hedyhli/outline.nvim` for the side panel (`gO`), unfiltered by
   symbol kind on purpose: constants, variables and record fields are exactly what one looks
   for in an Oberon module, and aerial.nvim's default `filter_kind` would drop all three.
+- `lua/mappings.lua` — shared `<leader>d…` debugger bindings (§1f). These are user
+  configuration; merge the relevant mappings into your own configuration.
 - `syntax/oberon.vim` — syntax highlighting (keywords/types/builtins; `END` is coloured
   by what it closes). Superseded by the tree-sitter grammar where you have it (§1g), and
   the fallback where you do not.
@@ -253,9 +255,12 @@ dap.configurations.oberon = {
 }
 ```
 
-`<F5>` on an open `.Mod` file compiles it with `--debug` and runs its `Do` (name another
-procedure with `procedure = …`); `<F9>` sets a breakpoint, `<F10>` steps over, `<F12>` steps
-out. A trap stops the program too, and continuing from a trap lets it die — after the trap
+In the dotfiles configuration, `<leader>dc` on an open `.Mod` file starts the session,
+compiles it with `--debug` and runs its `Do` (name another procedure with `procedure = …`).
+`<leader>db` toggles a breakpoint, `<leader>do` steps over, `<leader>dO` steps out,
+`<leader>dr` toggles program output and `<leader>dt` terminates the session. These mappings
+come from `lua/mappings.lua`; the adapter snippet above does not install keymaps.
+A trap stops the program too, and continuing from a trap lets it die — after the trap
 handler there is no stack left to go back to.
 
 Four things are worth knowing:
@@ -308,8 +313,8 @@ the semantic tokens are the only thing that speaks there.
 Helix, Zed and Emacs take the grammar by repository and subdirectory;
 `editors/tree-sitter/tree-sitter.json` declares the scope, the file types and where the
 queries are. `task treesitter` checks that the grammar generates, that its own cases pass,
-and that it still parses every module in `source/` — 768 of 770 today, with the two
-exceptions and the rest of the known limits listed in `editors/tree-sitter/README.md`.
+and that it still parses every module in `source/` — with the known
+exceptions and the rest of the limits listed in `editors/tree-sitter/README.md`.
 
 ---
 
@@ -413,10 +418,12 @@ procedure.
 ## 4. Project-aware resolution
 
 Editing a single file works against the standard library, and a directory of modules works as
-a project -- for both the server and `ob build`, which compile every `*.Mod` beside the one you
-name. For real multi-module code,
-the server resolves your **own** modules too: the file's directory is mounted at
-`/work`, and missing dependencies are compiled on demand from their `.Mod` source
+a project. The server resolves modules beside the open file; CLI commands compile the
+top-level `*.Mod` files in the current directory (`A2_PROJECT` overrides it). Passing a
+source path does not change the CLI project directory. For real multi-module code,
+the server resolves your **own** modules too: with Docker, the file's directory is
+mounted at `/work`; natively, the server reads the host directory. Missing dependencies
+are compiled on demand from their `.Mod` source
 (imports resolve transitively). Diagnostics, hover, completion, references, rename all
 work across the whole project.
 
@@ -441,17 +448,18 @@ export A2_SYMS="$HOME/Projects/A2/a2oberon/target/Linux64/bin"
 
 ## 6. Limitations
 
-- **Target is 64-bit (Unix64/Linux64).** 32-bit-only modules (e.g. CAPO `CubeInt`,
-  `ArrayXd*`, whose source is I386-specific) aren't part of the 64-bit world and will
-  show unresolved-import cascades. Multi-platform support (selectable `-p=`) is future
-  work.
+- **Analysis uses the target the server was built for.** The Linux x86-64 SDK analyses
+  Unix64/Linux64 code; installing a native SDK for another host changes that default.
+  There is no per-workspace target selector. Platform-specific modules and prebuilt
+  symbols must match that server.
 - **On-demand analysis** can fail for modules that don't compile standalone under the
   target (heavy generics/operators); prefer `A2_SYMS` (prebuilt symbols) for those.
-- **Rename** is limited to module-level symbols (safe, unambiguous identity); locals
-  and record/object members are declined until scope-precise identity is added.
+- **Rename** handles module-level symbols across the project and locals/parameters
+  within their scope. Record/object members are declined.
 - **Formatting** normalises to Fox's canonical style (its own indentation), so it
   changes hand-tuned layout.
 - **Debugging** (`ob dap`, §1f) has breakpoints, step-over and step-out, and reads a trapped
   program; but one thread, no step-into, nothing in a module body, and only code the same `ob`
   compiled.
-- GUI modules (window manager / raster) are out of scope of the headless image.
+- The headless library excludes GUI modules. Native SDKs with `lib-gui/` support
+  `ob run/build --gui` for a single canvas window; the full desktop/PET is a separate build.
