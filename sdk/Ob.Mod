@@ -1078,8 +1078,9 @@ BEGIN
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	(* lib is on the path even for a cross build: the backend and the frontend are loaded by name
 	   when the compiler runs, and what runs here is this machine's code whatever is being built *)
-	IF ~AddSearchPath(lib) OR ~AddSearchPath(library) OR ~AddSearchPath(project)
-			OR ~AddVendored() OR ~AddSearchPath(scratch) OR ~SetWorkPath(scratch) THEN
+	(* Fresh objects and symbols must precede leftovers in the project and vendored packages. *)
+	IF ~AddSearchPath(lib) OR ~AddSearchPath(library) OR ~AddSearchPath(scratch)
+			OR ~AddSearchPath(project) OR ~AddVendored() OR ~SetWorkPath(scratch) THEN
 		DiscardScratch(scratch); RETURN
 	END;
 	IF gui & ~AddSearchPath(libGui) THEN DiscardScratch(scratch); RETURN END;
