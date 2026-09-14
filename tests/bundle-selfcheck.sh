@@ -234,6 +234,36 @@ else
 	tail -12 "$results/doc.log" | tr -d '\r' | sed 's/^/          /'
 fi
 
+# 7b. The same verb on an A2 Text. Half of the community sources are saved in the binary format
+#     A2's own editors write -- a header, a font table, then the text -- and `ob compile` has read
+#     it for a while, while `ob doc` opened the file itself at byte 0 and handed the parser the
+#     font table: "missing 'MODULE'" on line 1, no page, no clue. Written here by hand rather than
+#     shipped as a fixture: the format is a header and an offset, and a test that builds it says
+#     what it is testing.
+a2text="$work/a2text"
+mkdir -p "$a2text"
+# F0 01, then the offset of the text (16) little-endian, then 9 bytes standing in for the font
+# table -- the header has to be exactly as long as the offset says.
+printf '\360\001\020\000\000\000\001Syntax10.' > "$a2text/Texted.Mod"
+cat >> "$a2text/Texted.Mod" <<'MOD'
+MODULE Texted;
+	(** A module saved the way the A2 editors save one. *)
+	PROCEDURE Do*;
+	BEGIN
+	END Do;
+END Texted.
+MOD
+s=0; started=$SECONDS
+( cd "$a2text" && timeout 300 "$ob" doc -o out > "$results/a2text.log" 2>&1 ) || s=$?
+_ELAPSED=$((SECONDS - started))
+if [ -f "$a2text/out/Texted.html" ]; then
+	report "ob doc on an A2 Text" "$s" "$results/a2text.log" ''
+else
+	printf '  FAIL  %-30s no out/Texted.html was written\n' "ob doc on an A2 Text"
+	FAILED+=("ob doc on an A2 Text"); fail=$((fail+1))
+	tail -12 "$results/a2text.log" | tr -d '\r' | sed 's/^/          /'
+fi
+
 # 8. The language server -- the reason many would want this tarball, and the verb no editor-less
 #    check had covered. Spoken to as an editor does (LSP over stdio, Content-Length framing),
 #    then shutdown/exit so it leaves of its own accord rather than on a timeout. A server that

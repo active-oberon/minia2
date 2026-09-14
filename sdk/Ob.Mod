@@ -442,13 +442,15 @@ END WriteTraced;
    is generated, and the Documentation backend writes the HTML into the working directory. *)
 PROCEDURE CompileForDocumentation(CONST file, page: ARRAY OF CHAR): BOOLEAN;
 VAR optionReader: Streams.StringReader; options: Compiler.CompilerOptions;
-	handle: Files.File; reader: Files.Reader;
+	handle: Files.File; reader: Streams.Reader;
 	diagnostics: Diagnostics.DiagnosticsList; logBuffer: Streams.Buffer; log: Streams.Writer;
 	importCache: SyntaxTree.ModuleScope; text: ARRAY 256 OF CHAR; compiled: BOOLEAN;
 BEGIN
-	handle := Files.Old(file);
-	IF handle = NIL THEN Die("cannot open the source file"); RETURN FALSE END;
-	Files.OpenReader(reader, handle, 0);
+	(* Source, not Files.Old: half of ocp is saved as an A2 Text, and opening it at byte 0 hands
+	   the parser the font table -- "missing 'MODULE'" on line 1. CompileFile has read it right
+	   since the day ob learned the format; this one was opening the file itself. *)
+	reader := Source(file, handle);
+	IF reader = NIL THEN Die("cannot open the source file"); RETURN FALSE END;
 	text := "-p="; Strings.Append(text, CompilerPlatform);
 	Strings.Append(text, " --symbolFileExtension="); Strings.Append(text, SymbolExtension);
 	Strings.Append(text, " --documentation='"); Strings.Append(text, page); Strings.AppendChar(text, "'");
