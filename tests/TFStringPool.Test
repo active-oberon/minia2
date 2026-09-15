@@ -1,0 +1,188 @@
+# Tests for source/TFStringPool.Mod -- the string pool the PET editor's type system keeps its names
+# in, and the last module of std/text with no test of its own.
+#
+# options --command="System.Free Test;System.Load Test"
+#
+# It is a pool in the plain sense: a string handed to `AddString` is copied into a chain of 1024
+# character buffers and what comes back is the offset it starts at, which is all the caller keeps.
+# `GetString` reads it out again, and `Equal` compares two of them where they lie, without copying
+# either. `TFTypeSys` holds every identifier of every parsed module this way, so a defect here is a
+# wrong name on a symbol rather than a crash -- which is the kind that is found late.
+#
+# This one is characterisation, not repair: the module came out of the reading and the probes
+# without a defect, and the cases are here to keep it that way. What they pin is the arithmetic
+# nobody sees -- the offset a string is given, the byte the terminator takes, and the boundary at
+# 1024 where a string is split over two buffers and the buffer list doubles. `BufSize` is not
+# exported, so 1024 is written out in the cases that need it.
+#
+# One thing deliberately has no case: `GetString` into an array shorter than the string traps with
+# "index out of range" rather than truncating. That is the runtime's bound check doing it, not the
+# module, and the neighbouring `StringPool.GetString` in the same package is written the same way --
+# so it is the convention of the family, and a case asserting a trap would pin the runtime, not this.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the offset that comes back is where the string starts, and a terminator costs a byte
+
+	MODULE Test;
+	IMPORT TFStringPool;
+
+	VAR pool: TFStringPool.StringPool; a, b, c: SIZE;
+
+	BEGIN
+		NEW(pool);
+		ASSERT(pool.end = 0, 1);				(* an empty pool has nothing in it *)
+
+		a := pool.AddString("alpha");
+		ASSERT(a = 0, 2);
+		ASSERT(pool.end = 6, 3);				(* five characters and the terminator *)
+
+		b := pool.AddString("beta");
+		ASSERT(b = 6, 4);						(* the next string starts where the last one ended *)
+		ASSERT(pool.end = 11, 5);
+
+		(*	The pool does not look for what it already holds: the same string twice is stored twice
+			and has two different offsets. Whoever wants one name per string keeps the map. *)
+		c := pool.AddString("alpha");
+		ASSERT(c = 11, 6);
+		ASSERT(c # a, 7)
+	END Test.
+
+positive: a string read back is the string that was put in
+
+	MODULE Test;
+	IMPORT TFStringPool;
+
+	VAR pool: TFStringPool.StringPool; a, b: SIZE; s: ARRAY 64 OF CHAR;
+
+	BEGIN
+		NEW(pool);
+		a := pool.AddString("alpha");
+		b := pool.AddString("beta");
+
+		pool.GetString(a, s);
+		ASSERT(s = "alpha", 1);
+		pool.GetString(b, s);
+		ASSERT(s = "beta", 2);
+
+		(* reading does not consume: the same offset answers the same string again *)
+		pool.GetString(a, s);
+		ASSERT(s = "alpha", 3)
+	END Test.
+
+positive: an empty string is a string, and it takes the one byte it needs
+
+	MODULE Test;
+	IMPORT TFStringPool;
+
+	VAR pool: TFStringPool.StringPool; a, b: SIZE; s: ARRAY 64 OF CHAR;
+
+	BEGIN
+		NEW(pool);
+		a := pool.AddString("");
+		ASSERT(a = 0, 1);
+		ASSERT(pool.end = 1, 2);				(* the terminator alone *)
+
+		s := "not empty";
+		pool.GetString(a, s);
+		ASSERT(s = "", 3);
+
+		(* and it is a string like any other: two of them are equal, and the next one follows it *)
+		b := pool.AddString("");
+		ASSERT(b = 1, 4);
+		ASSERT(pool.Equal(a, b), 5)
+	END Test.
+
+positive: two strings are equal when they read the same, and a prefix is not the whole
+
+	MODULE Test;
+	IMPORT TFStringPool;
+
+	VAR pool: TFStringPool.StringPool; a, b, c, d, e: SIZE;
+
+	BEGIN
+		NEW(pool);
+		a := pool.AddString("alpha");
+		b := pool.AddString("alpha");
+		c := pool.AddString("beta");
+		d := pool.AddString("alph");					(* a prefix of the first *)
+		e := pool.AddString("alphabet");				(* and the first as a prefix *)
+
+		ASSERT(pool.Equal(a, b), 1);
+		ASSERT(pool.Equal(a, a), 2);					(* the same offset, compared with itself *)
+		ASSERT(~pool.Equal(a, c), 3);
+
+		(*	The comparison walks until the characters differ or one of them ends, so a string that
+			ends where the other goes on is not equal to it -- in either order. *)
+		ASSERT(~pool.Equal(a, d), 4);
+		ASSERT(~pool.Equal(d, a), 5);
+		ASSERT(~pool.Equal(a, e), 6);
+		ASSERT(~pool.Equal(e, a), 7)
+	END Test.
+
+positive: a string split over two buffers comes back whole
+
+	MODULE Test;
+	IMPORT TFStringPool;
+
+	VAR pool: TFStringPool.StringPool; a, b, i: SIZE; long, s: ARRAY 2048 OF CHAR;
+
+	BEGIN
+		(*	The pool is a chain of 1024-character buffers and a string is copied into it one
+			character at a time, so a string longer than a buffer -- or one that merely starts near
+			the end of one -- is written across the join. The terminator can land in a buffer of its
+			own, after the last character of the one before. *)
+		NEW(pool);
+		FOR i := 0 TO 1500 DO long[i] := "x" END;
+		long[1501] := 0X;
+
+		a := pool.AddString(long);
+		ASSERT(a = 0, 1);
+		ASSERT(pool.end = 1502, 2);
+
+		pool.GetString(a, s);
+		ASSERT(s = long, 3);
+
+		(* the next string begins in the second buffer and is whole as well *)
+		b := pool.AddString("after the join");
+		pool.GetString(b, s);
+		ASSERT(s = "after the join", 4);
+		ASSERT(pool.Equal(a, b) = FALSE, 5);
+
+		(* and the long one is still there, which is what a growing buffer list has to preserve *)
+		pool.GetString(a, s);
+		ASSERT(s = long, 6)
+	END Test.
+
+positive: the buffer list doubles as often as it has to, and nothing put in is lost
+
+	MODULE Test;
+	IMPORT TFStringPool, Strings;
+
+	CONST Count = 2000;	(** enough to fill several buffers and double the list more than once *)
+
+	VAR pool: TFStringPool.StringPool; offset: ARRAY Count OF SIZE; i: SIZE;
+		number, s: ARRAY 32 OF CHAR;
+
+	BEGIN
+		(*	The list of buffers starts at one entry and doubles when the offset reaches past its end;
+			the buffer itself is made when it is first written to. A string put in before a doubling
+			has to read back after it, which is the whole of what the copy in GrowBufList is for. *)
+		NEW(pool);
+		FOR i := 0 TO Count - 1 DO
+			Strings.IntToStr(i, number);
+			offset[i] := pool.AddString(number)
+		END;
+
+		FOR i := 0 TO Count - 1 DO
+			Strings.IntToStr(i, number);
+			pool.GetString(offset[i], s);
+			ASSERT(s = number, 1)
+		END;
+
+		(* the offsets are handed out in order and never repeat *)
+		FOR i := 1 TO Count - 1 DO
+			ASSERT(offset[i] > offset[i - 1], 2)
+		END;
+		ASSERT(pool.end > 1024, 3)		(* more than one buffer was needed *)
+	END Test.
