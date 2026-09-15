@@ -6528,7 +6528,7 @@ TYPE
 				SaveRegisters();ReleaseUsedRegisters(saved);
 				IF GetProcedure("Int") THEN
 					Emit(Push(position,op));
-					Emit(Push(position,IntermediateCode.Immediate(int32,1)));
+					Emit(Push(position,IntermediateCode.Immediate(sizeType,1)));
 					CallProcedure;
 				END;
 				RestoreRegisters(saved);
@@ -6550,7 +6550,7 @@ TYPE
 				SaveRegisters();ReleaseUsedRegisters(saved);
 				IF GetProcedure("HIntHex") THEN
 					Emit(Push(position,op));
-					Emit(Push(position,IntermediateCode.Immediate(int32,16)));
+					Emit(Push(position,IntermediateCode.Immediate(sizeType,16)));
 					CallProcedure;
 				END;
 				RestoreRegisters(saved);
