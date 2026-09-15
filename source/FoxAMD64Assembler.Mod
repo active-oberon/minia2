@@ -1460,6 +1460,7 @@ TYPE
 						op := symbol; NextSymbol;
 						IF Factor (y, critical,type) THEN
 							IF op = symTimes THEN x := x * y
+							ELSIF y = 0 THEN Error("division by zero"); RETURN FALSE
 							ELSIF op = symDiv THEN x := x DIV y
 							ELSE x := x MOD y
 							END;
@@ -1534,7 +1535,7 @@ TYPE
 							INC (i);
 						END;
 						IF size # bits8 THEN
-							i := (size ) - i MOD (size );
+							i := ((size ) - i MOD (size )) MOD (size ); (* nothing to pad when it already fills the element *)
 							WHILE i # 0 DO emitter.code.PutByte (0); DEC (i) END;
 						END;
 						NextSymbol;
@@ -1578,6 +1579,7 @@ TYPE
 			VAR i: SIZE; buffer: ARRAY 100 OF CHAR; pc: SIZE;
 			BEGIN
 				IF times = 1 THEN RETURN END;
+				IF size > LEN(buffer) THEN Error("too long to repeat"); times := 1; RETURN END;
 
 				pc := (prevPC );
 
@@ -1586,24 +1588,19 @@ TYPE
 					buffer[i] := emitter.code.GetByte (pc); INC(pc);
 					IF (dump # NIL) & (pass = maxPasses) THEN dump.Hex (ORD (buffer[i]), -2); END;
 				END;
-				pc := (prevPC );
 
-				IF times > 1 THEN
-					WHILE times # 1 DO
-						IF fixup # NIL THEN
-							HALT(200);
-							(*!!
-							AddFixup (fixup.adr, pc + fixup.offset - prevPC);
-							*)
-						END;
-						FOR i := 0 TO size - 1 DO
-							emitter.code.PutByteAt (pc, ORD (buffer[i])); INC(pc);
-							IF (dump # NIL) & (pass = maxPasses) THEN dump.Hex (ORD (buffer[i]), -2); END;
-						END;
-						DEC (times);
+				WHILE times # 1 DO
+					IF fixup # NIL THEN
+						HALT(200);
+						(*!!
+						AddFixup (fixup.adr, pc + fixup.offset - prevPC);
+						*)
 					END;
-				ELSE
-					times := 1;
+					FOR i := 0 TO size - 1 DO
+						emitter.code.PutByte (ORD (buffer[i])); (* append: PutByteAt would write over the copy we read *)
+						IF (dump # NIL) & (pass = maxPasses) THEN dump.Hex (ORD (buffer[i]), -2); END;
+					END;
+					DEC (times);
 				END;
 
 				IF (dump # NIL) & (pass = maxPasses) THEN dump.Ln END;
@@ -1765,7 +1762,7 @@ TYPE
 				position := errPos;
 				mnem := InstructionSet.FindMnemonic (ident);
 				IF mnem = InstructionSet.none THEN
-					ErrorSS("unkown instruction",idents);
+					ErrorSS("unknown instruction",idents);
 					RETURN FALSE;
 				END;
 

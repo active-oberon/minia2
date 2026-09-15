@@ -1,0 +1,573 @@
+# Tests for source/FoxAssembler.Mod and source/FoxAMD64Assembler.Mod -- the inline assembler, which
+# is what a `CODE ... END` block in a procedure goes through.
+#
+# options --command="System.Free Test FoxAssemblerTestShared;System.Load Test"
+#
+# Two modules, two halves of one job. `FoxAssembler` is the generic half every target shares: the
+# label list, the constant-expression parser, and the `DB`/`DW`/`DD`/`ALIGN` data directives.
+# `FoxAMD64Assembler` is the x86-64 half -- its own scanner, its own expression parser, operand
+# parsing and the encoder over `FoxAMD64InstructionSet`. Neither had a test. What existed was
+# `task amd64-codegen`, which disassembles what the *code generator* emits; the assembler is the
+# other direction -- bytes a person wrote by hand -- and the runtime uses it: `AMD64.Reals.Mod`,
+# `AMD64.Shortreal.Mod` and the Windows entry points are inline assembly.
+#
+# A case here compiles a module of its own with `Compiler.Compile -p=Unix64` (or `-p=ARM`, which
+# reaches the generic half through the ARM assembler) and reads the bytes back out of the object
+# file. `--textualObjectFile` makes the writer put the object file in words, so the bytes can be
+# read without a reader; the platform is named on the command line, so the suite says the same
+# thing on a host that is not x86-64, and nothing here is ever executed.
+#
+# Two things about that text cost a probe round each. A run of more than eight zero nibbles is left
+# out of it and the next segment carries its own offset -- so the segments have to be placed at
+# their offsets, not concatenated, or `MOV RAX, 42` reads back as a three-byte instruction. And
+# every byte is written low nibble first, so `B8` appears as `8B`. `FoxAssemblerTestShared.Bytes`
+# undoes both, and a case asserts on ordinary hexadecimal.
+#
+# The defects this found are in what nobody writes twice: `TIMES 3 DB 7` emitted one byte, because
+# the repeat wrote its copies over the bytes it had just read; a string that exactly filled its
+# element got a whole element of zeros after it; and three ways of writing a constant -- `4 / 0`,
+# `4 % 0`, `ALIGN 0` -- killed the compiler with an arithmetic trap instead of pointing at the line.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxAssemblerTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "A CODE block compiled for a named platform, and the bytes it came to" *)
+
+	IMPORT Commands, Files, Streams, Strings;
+
+	CONST
+		(**	The section the bytes of a procedure end up in. Unix64 merges the code sections of a
+			module into one; the ARM platform does not merge, so there the procedure keeps its name. *)
+		AMDSection* = "code Probe.@CodeSections";
+		ARMSection* = "code Probe.A";
+
+	TYPE
+		Text* = ARRAY 16384 OF CHAR;
+		Hex* = ARRAY 4096 OF CHAR;
+
+	VAR
+		(** The source of the block being built, line by line. *)
+		body-: ARRAY 8192 OF CHAR;
+		(** What the compiler said the last time something was assembled. *)
+		message-: Text;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** Begin a new block. *)
+	PROCEDURE Start*;
+	BEGIN body := ""
+	END Start;
+
+	(** One line of it. *)
+	PROCEDURE Line* (CONST piece: ARRAY OF CHAR);
+	BEGIN Strings.Append(body, piece); Strings.AppendChar(body, 0AX)
+	END Line;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; reply: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, reply);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Write a file of text. *)
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content);
+		writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** Read a whole file as text; answers how many bytes it had, or -1 if it is not there. *)
+	PROCEDURE Read* (CONST filename: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): SIZE;
+	VAR file: Files.File; reader: Files.Reader; len: SIZE;
+	BEGIN
+		text[0] := 0X;
+		file := Files.Old(filename);
+		IF file = NIL THEN RETURN -1 END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(text, 0, LEN(text) - 1, len);
+		text[len] := 0X;
+		RETURN len
+	END Read;
+
+	(**	The bytes of one section of a textual object file, as hexadecimal.
+
+		The writer leaves out any run of more than eight zero nibbles, so each segment line says how
+		many nibbles it carries and at which nibble of the section they sit; and it writes each byte
+		low nibble first. Both are undone here. *)
+	PROCEDURE Bytes* (CONST text, header: ARRAY OF CHAR; VAR hex: ARRAY OF CHAR): BOOLEAN;
+	VAR position, first, last, size, nibbles, i, count, offset: SIZE; digits: Hex;
+
+		PROCEDURE EndOfLine (from: SIZE): SIZE;
+		BEGIN
+			WHILE (text[from] # 0X) & (text[from] # 0AX) DO INC(from) END;
+			RETURN from
+		END EndOfLine;
+
+		PROCEDURE NextLine;
+		BEGIN
+			position := EndOfLine(position);
+			IF text[position] = 0AX THEN INC(position) END
+		END NextLine;
+
+		PROCEDURE Number (VAR value: SIZE): BOOLEAN;
+		BEGIN
+			WHILE (text[position] = " ") OR (text[position] = 09X) DO INC(position) END;
+			IF (text[position] < "0") OR (text[position] > "9") THEN RETURN FALSE END;
+			value := 0;
+			WHILE (text[position] >= "0") & (text[position] <= "9") DO
+				value := value * 10 + (ORD(text[position]) - ORD("0")); INC(position)
+			END;
+			RETURN TRUE
+		END Number;
+
+	BEGIN
+		position := Strings.Pos(header, text);
+		IF position < 0 THEN RETURN FALSE END;
+
+		(* the last number of the header line is the size of the section, in units of eight bits *)
+		last := EndOfLine(position) - 1;
+		WHILE (last > position) & ((text[last] = " ") OR (text[last] = 0DX)) DO DEC(last) END;
+		first := last;
+		WHILE (first > position) & (text[first - 1] >= "0") & (text[first - 1] <= "9") DO DEC(first) END;
+		IF (text[first] < "0") OR (text[first] > "9") THEN RETURN FALSE END;
+		size := 0;
+		WHILE first <= last DO size := size * 10 + (ORD(text[first]) - ORD("0")); INC(first) END;
+
+		nibbles := size * 2;
+		IF (nibbles + 1 > LEN(digits)) OR (nibbles + 1 > LEN(hex)) THEN RETURN FALSE END;
+		FOR i := 0 TO nibbles - 1 DO digits[i] := "0" END;
+
+		NextLine;
+		(* the alias and fixup lines of the section are indented; the segments follow them *)
+		WHILE text[position] = 09X DO NextLine END;
+
+		(* a segment is "<nibbles> <offset> <hexadecimal>"; a line holding 0 alone ends the section *)
+		WHILE Number(count) & Number(offset) DO
+			WHILE text[position] = " " DO INC(position) END;
+			i := 0;
+			WHILE (i < count) & (offset + i < nibbles) DO
+				digits[offset + i] := text[position]; INC(position); INC(i)
+			END;
+			NextLine
+		END;
+
+		FOR i := 0 TO nibbles DIV 2 - 1 DO
+			hex[2 * i] := digits[2 * i + 1]; hex[2 * i + 1] := digits[2 * i]
+		END;
+		hex[nibbles] := 0X;
+		RETURN nibbles > 0
+	END Bytes;
+
+	(**	Compile the block built so far as a module of its own for `platform`, and answer the bytes
+		of `header`'s section. What the compiler said is left in `message`. *)
+	PROCEDURE Assemble* (CONST platform, header: ARRAY OF CHAR; VAR hex: ARRAY OF CHAR): BOOLEAN;
+	VAR source, argument: ARRAY 8192 OF CHAR; object: Text; result: INTEGER;
+	BEGIN
+		hex[0] := 0X;
+		source := "MODULE Probe; IMPORT SYSTEM;";
+		Strings.AppendChar(source, 0AX);
+		Strings.Append(source, body);
+		Strings.Append(source, "END Probe.");
+		Write("Probe.Mod", source);
+
+		argument := "-p=";
+		Strings.Append(argument, platform);
+		Strings.Append(argument, " --textualObjectFile --objectFileExtension=Got Probe.Mod");
+		result := Run("Compiler.Compile", argument, message);
+		IF result # 0 THEN RETURN FALSE END;
+		IF Read("Probe.Got", object) <= 0 THEN RETURN FALSE END;
+		RETURN Bytes(object, header, hex)
+	END Assemble;
+
+	(** The block as x86-64. *)
+	PROCEDURE AMD64* (VAR hex: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Assemble("Unix64", AMDSection, hex)
+	END AMD64;
+
+	(** The block as ARM -- which is how the generic half is reached. *)
+	PROCEDURE ARM* (VAR hex: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Assemble("ARM", ARMSection, hex)
+	END ARM;
+
+	END FoxAssemblerTestShared.
+
+positive: the operand forms encode as the manual says they do
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV RAX, [RBX]");
+		T.Line("	MOV RAX, [RBX + RCX * 4 + 8]");
+		T.Line("	MOV BYTE [RAX], 1");
+		T.Line("	MOV WORD [RAX], 1");
+		T.Line("	MOV DWORD [RAX], 1");
+		T.Line("	MOV QWORD [RAX], 1");
+		T.Line("	MOV SIL, 1");
+		T.Line("	MOV R8B, 1");
+		T.Line("	SHL EAX, CL");
+		T.Line("	IMUL EAX, EBX, 3");
+		T.Line("	MOVSX EAX, BL");
+		T.Line("	MOVZX EAX, BX");
+		T.Line("	ADDSD XMM0, XMM1");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "488B03"), 2);					(* MOV RAX, [RBX] *)
+		ASSERT(T.Said(hex, "488B448B08"), 3);				(* base, index, scale and displacement *)
+		ASSERT(T.Said(hex, "C60001"), 4);					(* a byte through memory *)
+		ASSERT(T.Said(hex, "66C7000100"), 5);				(* a word, and the operand size prefix *)
+		ASSERT(T.Said(hex, "C70001000000"), 6);				(* a double word *)
+		ASSERT(T.Said(hex, "48C70001000000"), 7);			(* a quad word, and REX.W *)
+		ASSERT(T.Said(hex, "40B601"), 8);					(* SIL exists only with a REX prefix *)
+		ASSERT(T.Said(hex, "41B001"), 9);					(* R8B needs REX.B *)
+		ASSERT(T.Said(hex, "D3E0"), 10);					(* a shift by CL is its own opcode *)
+		ASSERT(T.Said(hex, "6BC303"), 11);					(* the three-operand IMUL *)
+		ASSERT(T.Said(hex, "0FBEC3"), 12);					(* sign extension of a byte *)
+		ASSERT(T.Said(hex, "0FB7C3"), 13);					(* and zero extension of a word *)
+		ASSERT(T.Said(hex, "F20F58C1"), 14)
+	END Test.
+
+positive: an immediate is as wide as the form it is written into, not as wide as its value
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	MOV into a 64-bit register with an immediate is the movabs form: the opcode is followed
+			by eight bytes whatever the number is. A byte or a word of it would be a different
+			instruction, and the bytes after it would be read as the rest of the constant. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV RAX, 42");
+		T.Line("	MOV RCX, 1");
+		T.Line("	MOV EAX, 42");
+		T.Line("	MOV AX, 5");
+		T.Line("	MOV AL, 5");
+		T.Line("	ADD RAX, 42");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "48B82A00000000000000"), 2);
+		ASSERT(T.Said(hex, "48B90100000000000000"), 3);
+		ASSERT(T.Said(hex, "B82A000000"), 4);
+		ASSERT(T.Said(hex, "66B80500"), 5);
+		ASSERT(T.Said(hex, "B005"), 6);
+		ASSERT(T.Said(hex, "48052A000000"), 7)		(* ADD takes a sign-extended 32-bit immediate *)
+	END Test.
+
+positive: a constant is worked out before it is encoded
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	The x86-64 half has an expression parser of its own -- `*`, `/`, `%`, unary minus and
+			`~`, parentheses -- and it reaches the constants of the module the block is written in. *)
+		T.Start;
+		T.Line("CONST K = 7;");
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV ECX, K");
+		T.Line("	MOV EDX, 2 * 3 + 4");
+		T.Line("	MOV ESI, 10H / 4");
+		T.Line("	MOV EDI, 10H % 7");
+		T.Line("	MOV R8D, -5");
+		T.Line("	MOV R9D, ~0");
+		T.Line("	MOV R10D, (1 + 2) * 3");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "B907000000"), 2);
+		ASSERT(T.Said(hex, "BA0A000000"), 3);
+		ASSERT(T.Said(hex, "BE04000000"), 4);
+		ASSERT(T.Said(hex, "BF02000000"), 5);
+		ASSERT(T.Said(hex, "41B8FBFFFFFF"), 6);
+		ASSERT(T.Said(hex, "41B9FFFFFFFF"), 7);
+		ASSERT(T.Said(hex, "41BA09000000"), 8)
+	END Test.
+
+positive: a parameter is addressed by its name and a label by its own
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	Both are the generic half's doing -- the label list, and the lookup of a name in the
+			scope of the procedure the block belongs to -- and both come out as a displacement. *)
+		T.Start;
+		T.Line("PROCEDURE A* (a, b: SIGNED32): SIGNED32; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV EAX, [RBP + a]");
+		T.Line("	ADD EAX, [RBP + b]");
+		T.Line("	CMP EAX, 0");
+		T.Line("	JE done");
+		T.Line("	JMP done");
+		T.Line("done:");
+		T.Line("	NOP");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "8B4518"), 2);			(* the first parameter is the one further from the frame pointer *)
+		ASSERT(T.Said(hex, "034510"), 3);
+		ASSERT(T.Said(hex, "0F8405000000"), 4);		(* a conditional jump over the five bytes of the next one *)
+		ASSERT(T.Said(hex, "E900000000"), 5)		(* and a jump to the very next instruction *)
+	END Test.
+
+positive: TIMES writes the instruction as many times as it says
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	The repeat read the bytes it had just emitted into a buffer and wrote them back with
+			`PutByteAt`, which puts the program counter back where it found it -- so the section
+			never grew and every TIMES, of an instruction or of data, emitted exactly one copy.
+			Nothing in the tree uses it, which is why it could stay broken. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	JMP over");
+		T.Line("	TIMES 3 DB 7");
+		T.Line("	TIMES 2 NOP");
+		T.Line("over:");
+		T.Line("	RET");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "070707"), 2);
+		ASSERT(T.Said(hex, "9090"), 3);
+		ASSERT(T.Said(hex, "E905000000"), 4)		(* and the jump over them knows how long they are *)
+	END Test.
+
+positive: a string that fills its element exactly is not padded
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	Padding to the next element was written as `size - length MOD size`, which is a whole
+			element of zeros when the length is already a multiple of it. A four-character string in
+			a DD took eight bytes, and a table of such strings came out with a hole in every entry. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	JMP over");
+		T.Line("	DD 'abcd'");
+		T.Line("	DD 'abcde'");
+		T.Line("	DB 'hi'");
+		T.Line("over:");
+		T.Line("	RET");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+
+		ASSERT(T.Said(hex, "616263646162636465000000"), 2);
+		ASSERT(T.Said(hex, "6869"), 3);
+		(* four characters, then five and three bytes of padding, then two: fourteen in all *)
+		ASSERT(T.Said(hex, "E90E000000"), 4)
+	END Test.
+
+positive: the x86-64 half reads a string in single quotes only
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	It has a scanner of its own, and that scanner knows the apostrophe and not the quotation
+			mark. The generic half uses the compiler's own scanner, where a string is written the
+			other way round -- so the same directive is spelled differently on either side. Pinned
+			rather than changed: both spellings are in use in the tree. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	JMP over");
+		T.Line(\"	DB "hi""\);
+		T.Line("over:");
+		T.Line("	RET");
+		T.Line("END A;");
+		ASSERT(~T.AMD64(hex), 1);
+		ASSERT(T.Said(T.message, "parse error in expression"), 2)
+	END Test.
+
+positive: a constant divided by zero is a diagnostic, not a dead compiler
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	Both halves worked the constant out with DIV and MOD and neither looked at the divisor,
+			so `4 / 0` in a CODE block took the whole compiler down with an arithmetic trap -- and a
+			trap in the compiler says nothing about which line of which file caused it. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV EAX, 4 / 0");
+		T.Line("END A;");
+		ASSERT(~T.AMD64(hex), 1);
+		ASSERT(T.Said(T.message, "division by zero"), 2);
+
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV EAX, 4 % 0");
+		T.Line("END A;");
+		ASSERT(~T.AMD64(hex), 3);
+		ASSERT(T.Said(T.message, "division by zero"), 4);
+
+		T.Start;
+		T.Line("PROCEDURE A*; CODE");
+		T.Line("	MOV R0, #(4 / 0)");
+		T.Line("END A;");
+		ASSERT(~T.ARM(hex), 5);
+		ASSERT(T.Said(T.message, "division by zero"), 6)
+	END Test.
+
+positive: an instruction nobody has heard of is named in the refusal
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	FROBNICATE EAX");
+		T.Line("END A;");
+		ASSERT(~T.AMD64(hex), 1);
+		ASSERT(T.Said(T.message, "unknown instruction"), 2);
+		ASSERT(T.Said(T.message, "FROBNICATE"), 3);
+
+		(* and an operand shape the instruction does not have is refused with the line in it *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV AL, 300");
+		T.Line("END A;");
+		ASSERT(~T.AMD64(hex), 4);
+		ASSERT(T.Said(T.message, "invalid combination of opcode and operands"), 5)
+	END Test.
+
+positive: the generic half writes the data directives it says it writes
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	This is FoxAssembler's own Data, reached through the ARM assembler: DB, DW, DD, a string
+			in the compiler's own quotation marks, and ALIGN. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE");
+		T.Line("	B over");
+		T.Line("	DB 1, 2, 3");
+		T.Line("	DW 0ABCDH");
+		T.Line("	DD 12345678H");
+		T.Line(\"	DB "hi""\);
+		T.Line("	ALIGN 4");
+		T.Line("over:");
+		T.Line("	MOV R0, #1");
+		T.Line("END A;");
+		ASSERT(T.ARM(hex), 1);
+
+		ASSERT(T.Said(hex, "010203"), 2);
+		ASSERT(T.Said(hex, "CDAB"), 3);				(* the target decides the order of the bytes *)
+		ASSERT(T.Said(hex, "78563412"), 4);
+		ASSERT(T.Said(hex, "686900"), 5);			(* eleven bytes of data, so ALIGN 4 adds one *)
+		ASSERT(T.Said(hex, "0100A0E3"), 6)			(* and the instruction after it is aligned *)
+	END Test.
+
+positive: an alignment of zero is a diagnostic, not an arithmetic trap
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	ALIGN works the padding out as `(-pc) MOD n`, and nobody asked what n was. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE");
+		T.Line("	ALIGN 0");
+		T.Line("END A;");
+		ASSERT(~T.ARM(hex), 1);
+		ASSERT(T.Said(T.message, "alignment must be positive"), 2)
+	END Test.
+
+positive: a data width that is not a whole number of code units is refused
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	Besides DB, DW, DD and DQ the generic half takes `D` and any number of bits, and twelve
+			of them is a width the machinery underneath cannot carry: the pass that only counts
+			asserts that the width divides the code unit, and the pass that writes advances the
+			program counter by `width DIV unit` -- so twelve bits would be written and eight
+			counted, and the next datum would land on top of the last four. It now says so. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE");
+		T.Line("	D12 0FFFH");
+		T.Line("END A;");
+		ASSERT(~T.ARM(hex), 1);
+		ASSERT(T.Said(T.message, "whole number of code units"), 2);
+
+		(* the widths that do divide it are unaffected *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE");
+		T.Line("	B over");
+		T.Line("	D16 0ABCDH");
+		T.Line("over:");
+		T.Line("	MOV R0, #1");
+		T.Line("END A;");
+		ASSERT(T.ARM(hex), 3);
+		ASSERT(T.Said(hex, "CDAB"), 4)
+	END Test.
+
+positive: memory with no size on it is a byte
+
+	MODULE Test;
+	IMPORT T := FoxAssemblerTestShared;
+
+	VAR hex: T.Hex;
+
+	BEGIN
+		(*	`MOV [RAX], 1` has no width anywhere in it -- neither operand carries one -- and this
+			assembler picks the narrowest rather than refusing, which is not what nasm does. Pinned
+			rather than changed: code in the tree is written against it, and a change would be silent
+			in exactly the way the old behaviour is. *)
+		T.Start;
+		T.Line("PROCEDURE A*; CODE {SYSTEM.AMD64}");
+		T.Line("	MOV [RAX], 1");
+		T.Line("END A;");
+		ASSERT(T.AMD64(hex), 1);
+		ASSERT(T.Said(hex, "C60001"), 2)
+	END Test.

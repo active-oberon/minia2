@@ -527,6 +527,7 @@ TYPE
 					IF Factor (y, critical) THEN
 						IF (x.type IN ConstantIntegerOrOffset) & (y.type IN ConstantIntegerOrOffset) THEN
 							IF op = Scanner.Times THEN x.value := x.value * y.value
+							ELSIF y.value = 0 THEN Error(errorPosition, "division by zero"); RETURN FALSE
 							ELSIF op = Scanner.Div THEN x.value := x.value DIV y.value
 							ELSE x.value := x.value MOD y.value
 							END;
@@ -635,6 +636,9 @@ TYPE
 				IF ident[i] # 0X THEN size := -1 END;
 			END;
 			IF size = -1 THEN RETURN FALSE
+			ELSIF (size # 0) & (size MOD code.os.unit # 0) THEN
+				Error(errorPosition, "data width must be a whole number of code units");
+				RETURN TRUE
 			ELSE
 				IF Trace THEN D.String("Data"); D.Ln; END;
 				REPEAT
@@ -681,6 +685,7 @@ TYPE
 						END;
 						
 						IF size = 0 THEN (* align *)
+							IF x.value <= 0 THEN Error(pos, "alignment must be positive"); RETURN TRUE END;
 							PutBitsIfLastPass(0,((-code.pc) MOD SIZE(x.value)) * 8);
 						ELSE
 							PutBitsIfLastPass(x.value,size);
