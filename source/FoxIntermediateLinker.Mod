@@ -8,6 +8,7 @@ IMPORT
 
 CONST
 	DefaultBackend = "AMD";
+	MaxLayoutPasses = 10;
 
 TYPE
 	SectionName* = ObjectFile.SectionName; (*ARRAY 256 OF CHAR; (*! move *)*)
@@ -32,6 +33,7 @@ TYPE
 		originalRestrictions: POINTER TO ARRAY OF ArrangementRestriction;
 		objectFile-: IRObjectFile.ObjectFileFormat;
 		codeUnit: Backend.SizeInBits;
+		system: Global.System;
 
 		PROCEDURE & Init*(diagnostics: Diagnostics.Diagnostics; defaultBackend: Backend.Backend);
 		BEGIN
@@ -48,7 +50,8 @@ TYPE
 			NEW(loadedModules, 128);
 			NEW(objectFile); objectFile.Initialize(diagnostics);
 			isSorted := FALSE;
-			codeUnit := defaultBackend.system.codeUnit;
+			system := defaultBackend.GetSystem(); (* backend.system is only set by Backend.Initialize, which a linker run does not do *)
+			codeUnit := system.codeUnit;
 		END Init;
 
 		PROCEDURE SetInstructionWidth*(unit: Backend.SizeInBits);
@@ -61,11 +64,14 @@ TYPE
 		PROCEDURE PatchStackSize*(CONST typeName: SectionName; size: SIZE);
 		VAR sectionName: SectionName; section: Sections.Section; pooledName: Basic.SegmentedName; op1, op2, op3: IntermediateCode.Operand; instruction: IntermediateCode.Instruction;
 		BEGIN
-			TRACE(size);
 			COPY(typeName, sectionName);
 			Strings.Append(sectionName,".@StackAllocation");
 			Basic.ToSegmentedName(sectionName, pooledName);
 			section := allSections.FindByName(pooledName);
+			IF section = NIL THEN
+				Basic.Error(diagnostics, sectionName, Basic.invalidPosition, "no such section to patch");
+				RETURN
+			END;
 			instruction := section(IntermediateCode.Section).instructions[0];
 			op1 := instruction.op1;
 			op2 := instruction.op2;
@@ -97,11 +103,8 @@ TYPE
 		BEGIN
 			Basic.ToSegmentedName(sectionName, pooledName);
 			section := allSections.FindByName(pooledName);
-			IF section = NIL THEN
-				TRACE(sectionName);
-				RETURN FALSE
-			END; (* nothing to patch *)
-			itype := IntermediateCode.GetType(backend.system, type);
+			IF section = NIL THEN RETURN FALSE END; (* nothing to patch *)
+			itype := IntermediateCode.GetType(system, type);
 			IntermediateCode.InitImmediate(op1,itype, value);
 			IntermediateCode.InitInstruction1(instruction, Basic.invalidPosition,  IntermediateCode.data, op1);
 			EmitAt(section(IntermediateCode.Section),index, instruction);
@@ -116,7 +119,7 @@ TYPE
 			section := allSections.FindByName(pooledName);
 			IF section = NIL THEN RETURN FALSE END; (* nothing to patch *)
 
-			type := IntermediateCode.GetType(backend.system, backend.system.booleanType);
+			type := IntermediateCode.GetType(system, system.booleanType);
 
 			IF value THEN
 				IntermediateCode.InitImmediate(op1, type, 1);
@@ -137,7 +140,7 @@ TYPE
 			section := allSections.FindByName(pooledName);
 			IF section = NIL THEN RETURN FALSE END; (* nothing to patch *)
 			section(IntermediateCode.Section).Reset;
-			type := IntermediateCode.GetType(backend.system, backend.system.characterType);
+			type := IntermediateCode.GetType(system, system.characterType);
 			i := 0;
 			REPEAT
 				char := value[i];
@@ -151,7 +154,7 @@ TYPE
 
 		PROCEDURE LoadModule*(CONST moduleFileName: ARRAY OF CHAR; recursive: BOOLEAN): BOOLEAN;
 		VAR
-			filename, moduleName: SyntaxTree.IdentifierString;
+			moduleName: SyntaxTree.IdentifierString;
 			msg: ARRAY 128 OF CHAR;
 			i: SIZE;
 			module: Sections.Module;
@@ -171,7 +174,7 @@ TYPE
 					IF module = NIL THEN
 						msg := "failed to import IR file ";
 						Strings.Append(msg, moduleFileName);
-						Basic.Error(diagnostics, filename, Basic.invalidPosition, msg);
+						Basic.Error(diagnostics, moduleFileName, Basic.invalidPosition, msg);
 						RETURN FALSE
 					ELSE
 						loadedModules.AddName(moduleName); (* to avoid recursive reloading this must be done before parsing *)
@@ -181,15 +184,19 @@ TYPE
 								IF  ~LoadModule(name, recursive) THEN
 									msg := "failed to import ";
 									Strings.Append(msg, name);
-									Basic.Error(diagnostics, filename, Basic.invalidPosition, msg);
+									Basic.Error(diagnostics, moduleFileName, Basic.invalidPosition, msg);
 									RETURN FALSE
 								END;
 							END;
 						END;
+						FOR i := 0 TO module.imports.Length()-1 DO
+							name := module.imports.GetName(i);
+							IF ~importList.ContainsName(name) THEN importList.AddName(name) END;
+						END;
 						CopySections(module.allSections, allSections);
 
 						IF Trace THEN
-							D.String(">>> IR file successfully parsed: "); D.String(filename); D.Ln;
+							D.String(">>> IR file successfully parsed: "); D.String(moduleFileName); D.Ln;
 							DumpSections(D.Log, allSections);
 						END;
 						isSorted := FALSE; (* sections are not sorted anymore *)
@@ -265,11 +272,14 @@ TYPE
 		*)
 
 		PROCEDURE OperandSection(CONST operand: IntermediateCode.Operand): Sections.Section;
-		VAR section: Sections.Section;
+		VAR section: Sections.Section; name: ARRAY 256 OF CHAR;
 		BEGIN
 			section := allSections.FindByName(operand.symbol.name);
-			IF section = NIL THEN D.String("not found section: "); Basic.WriteSegmentedName(D.Log, operand.symbol.name); D.Ln END;
-			RETURN allSections.FindByName(operand.symbol.name);
+			IF section = NIL THEN
+				Basic.SegmentedNameToString(operand.symbol.name, name);
+				Basic.Error(diagnostics, name, Basic.invalidPosition, "referenced section not found");
+			END;
+			RETURN section;
 		END OperandSection;
 
 		(** mark a section as reachable and do the same recursively for all referenced sections **)
@@ -280,6 +290,7 @@ TYPE
 			procedureName, moduleName: SyntaxTree.IdentifierString;
 			prefix: Basic.SegmentedName;
 		BEGIN
+			IF section = NIL THEN RETURN END; (* OperandSection has already reported it *)
 			IF ~section.isReachable THEN
 				IF Trace THEN D.String(">>> MarkAsReachable "); Basic.WriteSegmentedName(D.Log, section.name); D.Ln END;
 				section.SetReachability(TRUE);
@@ -497,6 +508,7 @@ TYPE
 			result.SetModuleName(desiredName);
 			result.SetPlatformName(platformName);
 			result.SetImports(importList);
+			FOR i := 0 TO loadedModules.Length()-1 DO result.exports.AddName(loadedModules.GetName(i)) END;
 
 			(* add all of the reachable sections from the cumulative section list into the resulting module's section list *)
 			FOR i := 0 TO allSections.Length() - 1 DO
@@ -601,17 +613,15 @@ TYPE
 			FOR i := 0 TO binaryModule.allSections.Length()-1 DO
 				section := binaryModule.allSections.GetSection(i);
 				is := section(IntermediateCode.Section).resolved;
-				IF (is # NIL) & section.IsCode() THEN
-					(*
-					Basic.WriteSegmentedName(D.Log,section.name);
-					D.String(" @ "); D.Int(adr,1); D.Ln;
-					*)
-					backend.CheckCodeAddress(adr);
-					is.SetAlignment(TRUE, adr);
-					IF is.pc > sizes[i] THEN sizes[i] := is.pc END;
-					adr := adr + sizes[i];
+				IF is # NIL THEN
+					IF section.IsCode() THEN
+						backend.CheckCodeAddress(adr);
+						section.SetPositionOrAlignment(TRUE, adr); (* where the next pass puts the new binary section *)
+						IF is.pc > sizes[i] THEN sizes[i] := is.pc END;
+						adr := adr + sizes[i];
+					END;
+					section(IntermediateCode.Section).SetResolved(NIL); (* enable recompilation: GenerateBinary skips a section that still carries binary code *)
 				END;
-				is.Reset; (* enable recompilation *)
 			END;
 		END FixSections;
 
@@ -652,20 +662,24 @@ TYPE
 			backend.SetCodeUnit(codeUnit);
 			binaryModule := backend.ProcessIntermediateCodeModule(intermediateCodeModule); count := 0;
 
-			(* iterative compilation until all sections remain fixed at their position *)
-			NEW(sizes, binaryModule(Sections.Module).allSections.Length());
-			FOR i := 0 TO LEN(sizes)-1 DO sizes[i] := 0 END;
-			REPEAT
-				INC(count);
-				(* fix all section addresses *)
-				FixSections(binaryModule(Sections.Module),sizes^);
-				(* compile *)
-				binaryModule := backend.ProcessIntermediateCodeModule(intermediateCodeModule);
-				(* and repeat if any of the section addresses have to be adapted *)
-			UNTIL ~Conflict(binaryModule(Sections.Module),sizes^) OR (count > 10) ;
-			ASSERT(count <=10);
+			IF binaryModule # NIL THEN
+				(* iterative compilation until all sections remain fixed at their position *)
+				NEW(sizes, binaryModule(Sections.Module).allSections.Length());
+				FOR i := 0 TO LEN(sizes)-1 DO sizes[i] := 0 END;
+				REPEAT
+					INC(count);
+					(* fix all section addresses *)
+					FixSections(binaryModule(Sections.Module),sizes^);
+					(* compile *)
+					binaryModule := backend.ProcessIntermediateCodeModule(intermediateCodeModule);
+					(* and repeat if any of the section addresses have to be adapted *)
+				UNTIL (binaryModule = NIL) OR ~Conflict(binaryModule(Sections.Module),sizes^) OR (count > MaxLayoutPasses)
+			END;
 
-			IF binaryModule = NIL THEN
+			IF (binaryModule # NIL) & (count > MaxLayoutPasses) THEN
+				Basic.Error(diagnostics, desiredName, Basic.invalidPosition, "section addresses do not settle");
+				result := FALSE
+			ELSIF binaryModule = NIL THEN
 				Basic.Error(diagnostics, desiredName,Basic.invalidPosition, "the specified backend cannot process intermediate code");
 				result := FALSE
 			ELSIF backend.error THEN
@@ -792,6 +806,7 @@ TYPE
 		ELSE defaultBackend := Backend.GetBackendByName(DefaultBackend);
 			IF defaultBackend = NIL THEN Error("default backend could not be installed"); result := FALSE END;
 		END;
+		IF result & (defaultBackend = NIL) THEN Error("linking needs a backend"); result := FALSE END;
 
 		IF options.GetString("objectFile",name) THEN
 			IF name = "" THEN objectFileFormat := NIL
@@ -842,9 +857,10 @@ TYPE
 			IF assemblinker.GenerateObjectFile(objectFileFormat, context.out, targetFile)
 			THEN
 				Basic.Information(diagnostics, targetFile, Basic.invalidPosition, "generated.")
-			ELSE error := FALSE
+			ELSE error := TRUE
 			END;
 		END;
+		IF error THEN context.result := Commands.CommandError END;
 	END Link;
 	
 	TYPE 
@@ -998,6 +1014,7 @@ TYPE
 		ELSE defaultBackend := Backend.GetBackendByName(DefaultBackend);
 			IF defaultBackend = NIL THEN Error("default backend could not be installed"); result := FALSE END;
 		END;
+		IF result & (defaultBackend = NIL) THEN Error("linking needs a backend"); result := FALSE END;
 
 		IF options.GetString("objectFile",name) THEN
 			IF name = "" THEN objectFileFormat := NIL

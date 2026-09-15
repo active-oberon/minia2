@@ -1,0 +1,331 @@
+# Tests for source/FoxIntermediateLinker.Mod -- the linker that works on intermediate code rather
+# than on bytes, and the last live module of the "from IR to bytes" group.
+#
+# options --command="System.Free Test FoxIntermediateLinkerTestShared;System.Load Test"
+#
+# The compiler can be told to stop one step early: `--objectFile=Intermediate` writes the sections
+# of a module as intermediate code (`FoxILB`) instead of as machine code. This module reads such
+# files back, marks what is reachable, lets a backend turn the result into machine code, and writes
+# one object file out of however many it read. That is the path the ActiveCells tool chain takes to
+# put several cells into one image, and it is the only way a module can be assembled from IR that
+# somebody else produced.
+#
+# It had no test of any kind, no importer in the tree, and two commands as its whole public face --
+# so nothing ever ran it. It showed: `FoxIntermediateLinker.Link` on any file at all died in the
+# constructor of its own `Linker` (`Trap 11`), because the constructor read `backend.system`, which
+# stays NIL until `Backend.Initialize` -- which a linker run never calls. With that fixed the
+# command ran to the end and wrote an object file in which *every section was empty*: the layout
+# loop calls `BinaryCode.Section.Reset` "to enable recompilation", but `Reset` empties the binary
+# section without detaching it, and the code generator skips any section that still carries one, so
+# the second pass emitted nothing over the first pass it had just thrown away. And the file named no
+# module: the generic writer takes both its `offers` list and its section merging from
+# `module.exports`, which the linker never filled, so a linked file offered nothing and kept every
+# section separate.
+#
+# A case here drives the whole path, because a case can make its own IR file: it writes a module,
+# compiles it with `--objectFile=Intermediate`, and hands the `.Fil` that comes out to the linker.
+# What comes back is read as text (`--textualObjectFile`), so a case asserts on what the file says
+# about itself rather than on a count of bytes.
+#
+# What this suite does NOT claim: the object file the linker writes is not loadable by `Modules`.
+# Every code section comes out at a fixed address -- that is what the layout loop is for, and the
+# ActiveCells image needs it -- and A2's loader refuses a fixed `initcode` section. The last case
+# pins that, so that a later change towards relocatable output is seen rather than assumed.
+
+positive: the helpers these tests are written with
+
+	MODULE FoxIntermediateLinkerTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "IR files to link, and the text of the object file that comes out" *)
+
+	IMPORT Commands, Diagnostics, Files, Streams, Strings, Backend := FoxBackend, Linker := FoxIntermediateLinker;
+
+	CONST
+		(** A module small enough to read in a dump and big enough to have code, data and constants. *)
+		Tiny* = "MODULE Tiny; VAR x*: SIGNED32; PROCEDURE Add* (a, b: SIGNED32): SIGNED32; BEGIN RETURN a + b END Add; BEGIN x := 7 END Tiny.";
+		(** A second module, so that a case can ask what happens to two of them in one file. *)
+		Two* = "MODULE Two; IMPORT Tiny; PROCEDURE Twice* (a: SIGNED32): SIGNED32; BEGIN RETURN Tiny.Add(a, a) END Twice; END Two.";
+
+	TYPE
+		(** Room for a whole textual object file. *)
+		Text* = ARRAY 65536 OF CHAR;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 64 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	(** Write a file of text. *)
+	PROCEDURE Write* (CONST filename, content: ARRAY OF CHAR);
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New(filename);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		writer.String(content);
+		writer.Update;
+		Files.Register(file)
+	END Write;
+
+	(** Read a whole file as text; answers how many bytes it had, or -1 if it is not there. *)
+	PROCEDURE Read* (CONST filename: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): SIZE;
+	VAR file: Files.File; reader: Files.Reader; len: SIZE;
+	BEGIN
+		text[0] := 0X;
+		file := Files.Old(filename);
+		IF file = NIL THEN RETURN -1 END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(text, 0, LEN(text) - 1, len);
+		text[len] := 0X;
+		RETURN len
+	END Read;
+
+	(**	Write a module of `content` under `name` and compile it to intermediate code; answers the
+		name of the `.Fil` the compiler left behind. *)
+	PROCEDURE CompiledToIR* (CONST name, content: ARRAY OF CHAR; VAR filename: ARRAY OF CHAR): BOOLEAN;
+	VAR argument: ARRAY 256 OF CHAR; text: ARRAY 4096 OF CHAR; result: INTEGER;
+	BEGIN
+		COPY(name, filename); Strings.Append(filename, ".Mod");
+		Write(filename, content);
+		argument := "--objectFile=Intermediate --objectFileExtension=Fil ";
+		Strings.Append(argument, filename);
+		result := Run("Compiler.Compile", argument, text);
+		COPY(name, filename); Strings.Append(filename, ".Fil");
+		RETURN (result = 0) & (Files.Old(filename) # NIL)
+	END CompiledToIR;
+
+	(**	The last number of the first line that carries `key`. In an object file that is the size of
+		the section in bits, which is what tells a section with code in it from an empty one. *)
+	PROCEDURE LastNumber* (CONST text, key: ARRAY OF CHAR): SIGNED32;
+	VAR position, last, first: SIZE; value: SIGNED32;
+	BEGIN
+		position := Strings.Pos(key, text);
+		IF position < 0 THEN RETURN -1 END;
+		last := position;
+		WHILE (text[last] # 0X) & (text[last] # 0AX) & (text[last] # 0DX) DO INC(last) END;
+		DEC(last);
+		WHILE (last > position) & ((text[last] = " ") OR (text[last] = 09X)) DO DEC(last) END;
+		first := last;
+		WHILE (first > position) & (text[first - 1] >= "0") & (text[first - 1] <= "9") DO DEC(first) END;
+		IF (text[first] < "0") OR (text[first] > "9") THEN RETURN -1 END;
+		value := 0;
+		WHILE first <= last DO value := value * 10 + (ORD(text[first]) - ORD("0")); INC(first) END;
+		RETURN value
+	END LastNumber;
+
+	(** A linker over a backend that nobody initialised, and the diagnostics it writes into. *)
+	PROCEDURE NewLinker* (VAR out: Streams.StringWriter): Linker.Linker;
+	VAR diagnostics: Diagnostics.StreamDiagnostics; backend: Backend.Backend; linker: Linker.Linker;
+	BEGIN
+		Streams.OpenStringWriter(out, 16 * 1024);
+		NEW(diagnostics, out);
+		backend := Backend.GetBackendByName("AMD");
+		ASSERT(backend # NIL);
+		NEW(linker, diagnostics, backend);
+		RETURN linker
+	END NewLinker;
+
+	END FoxIntermediateLinkerTestShared.
+
+positive: a linker can be built out of a backend that nobody has initialised
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared, Streams, Linker := FoxIntermediateLinker;
+
+	VAR out: Streams.StringWriter; linker: Linker.Linker;
+
+	BEGIN
+		(*	`Backend.Backend.system` is set by `Backend.Initialize`, which the compiler calls and a
+			linker run does not; `GetSystem` is the accessor that answers without it. The constructor
+			read the field, so every use of this module died here before it did anything at all. *)
+		linker := T.NewLinker(out);
+		ASSERT(linker # NIL, 1);
+		ASSERT(linker.backend # NIL, 2);
+		ASSERT(linker.objectFile # NIL, 3)
+	END Test.
+
+positive: what the linker writes carries the code of the module it read
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: T.Text; out: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		ASSERT(T.Run("FoxIntermediateLinker.Link", "--mergeSections --textualObjectFile --objectFileExtension=Got Tiny.Fil", out) = 0, 2);
+		ASSERT(T.Read("Tiny.Got", text) > 0, 3);
+
+		(*	The size in bits is the last number of the section's header line. Every one of them was
+			zero while the layout loop threw the first pass away and the second pass, seeing the
+			binary sections still attached, wrote nothing in their place. *)
+		ASSERT(T.LastNumber(text, "code Tiny.Add") > 0, 4);
+		ASSERT(T.LastNumber(text, "bodycode Tiny.@Body") > 0, 5);
+		ASSERT(T.LastNumber(text, "const Tiny.@ConstSections") > 0, 6)
+	END Test.
+
+positive: the object file says which module it carries
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: T.Text; out: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		ASSERT(T.Run("FoxIntermediateLinker.Link", "--mergeSections --textualObjectFile --objectFileExtension=Got Tiny.Fil", out) = 0, 2);
+		ASSERT(T.Read("Tiny.Got", text) > 0, 3);
+
+		(*	`offers` is what the loader and the static linker look a module up by, and the generic
+			writer takes it from `module.exports`. The linked module exported nothing, so the file
+			offered nothing -- and `mergeSections`, which walks the same list, merged nothing. *)
+		ASSERT(T.Said(text, "offers 1 Tiny"), 4);
+		ASSERT(T.Said(text, "Tiny.@ConstSections"), 5)
+	END Test.
+
+positive: two modules go into one object file and both are named in it
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: T.Text; out: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		ASSERT(T.CompiledToIR("Two", T.Two, filename), 2);
+
+		(*	With `--targetFile` the files are loaded into one linker and written out once, under the
+			name of the target -- this is the shape the ActiveCells tool chain uses. The modules that
+			went in are what the file offers; the name of the target is not a module. *)
+		ASSERT(T.Run("FoxIntermediateLinker.Link", "--mergeSections --textualObjectFile --objectFileExtension=Got --targetFile=Pair Tiny.Fil Two.Fil", out) = 0, 3);
+		ASSERT(T.Read("Pair.Got", text) > 0, 4);
+		ASSERT(T.Said(text, "offers 2 Tiny Two"), 5);
+		ASSERT(T.LastNumber(text, "code Two.Twice") > 0, 6);
+		ASSERT(T.LastNumber(text, "code Tiny.Add") > 0, 7)
+	END Test.
+
+positive: an IR file that is not there is a diagnostic naming it, not a trap
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared, Streams, Linker := FoxIntermediateLinker;
+
+	VAR out: Streams.StringWriter; linker: Linker.Linker; text: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		linker := T.NewLinker(out);
+		ASSERT(~linker.LoadModule("NoSuchModule.Fil", FALSE), 1);
+
+		(*	The name the message carried came from a local that was never assigned, so the reader was
+			told which file failed by a piece of the stack. *)
+		out.Get(text);
+		ASSERT(T.Said(text, "NoSuchModule"), 2)
+	END Test.
+
+positive: a linker with no object file format says so instead of writing one
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared, Streams, Linker := FoxIntermediateLinker;
+
+	VAR out: Streams.StringWriter; linker: Linker.Linker; text: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		linker := T.NewLinker(out);
+		ASSERT(linker.LoadModule("Tiny.Fil", FALSE), 2);
+		linker.MarkReachabilityOfAll(TRUE);
+		ASSERT(~linker.GenerateObjectFile(NIL, NIL, "Tiny"), 3);
+		out.Get(text);
+		ASSERT(T.Said(text, "no object file format"), 4)
+	END Test.
+
+positive: a section that is not there is refused by every patcher the same way
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared, Streams, Linker := FoxIntermediateLinker;
+
+	VAR out: Streams.StringWriter; linker: Linker.Linker; text: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		linker := T.NewLinker(out);
+		ASSERT(linker.LoadModule("Tiny.Fil", FALSE), 2);
+
+		ASSERT(~linker.PatchIntegerValue("Tiny.NoSuchSection", 0, 1, NIL), 3);
+		ASSERT(~linker.PatchBooleanValue("Tiny.NoSuchSection", 0, TRUE), 4);
+		ASSERT(~linker.PatchStringValue("Tiny.NoSuchSection", "text"), 5);
+
+		(*	`PatchStackSize` is the fourth of the family and the only one that used what it had found
+			without looking at it, so an unknown type name was a trap where its three neighbours
+			answered FALSE. It answers nothing -- it is the one with no result -- so it says it in
+			the diagnostics. *)
+		linker.PatchStackSize("Tiny.NoSuchType", 64);
+		out.Get(text);
+		ASSERT(T.Said(text, "no such section"), 6)
+	END Test.
+
+positive: the command refuses to link without a backend
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+
+		(*	An empty backend name means "no backend" to the compiler, which can still check a module
+			without one. A linker cannot: there is nothing to turn the intermediate code into. It
+			read the description of the backend it did not have, and died there. *)
+		ASSERT(T.Run("FoxIntermediateLinker.Link", \"-b="" Tiny.Fil"\, text) # 0, 2);
+		ASSERT(T.Said(text, "linking needs a backend"), 3)
+	END Test.
+
+positive: a failed generation reaches the caller as a result, not only as a message
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+
+		(*	An object file format that is not installed is refused before anything is read. The
+			command never set `context.result` at all, so a script that asked whether the link worked
+			was told it did. *)
+		ASSERT(T.Run("FoxIntermediateLinker.Link", "--objectFile=NoSuchFormat Tiny.Fil", text) # 0, 2);
+		ASSERT(T.Said(text, "object file format"), 3)
+	END Test.
+
+positive: the sections come out at fixed addresses, which is why the loader will not take the file
+
+	MODULE Test;
+	IMPORT T := FoxIntermediateLinkerTestShared;
+
+	VAR text: T.Text; out: ARRAY 4096 OF CHAR; filename: ARRAY 64 OF CHAR;
+
+	BEGIN
+		ASSERT(T.CompiledToIR("Tiny", T.Tiny, filename), 1);
+		ASSERT(T.Run("FoxIntermediateLinker.Link", "--textualObjectFile --objectFileExtension=Got Tiny.Fil", out) = 0, 2);
+		ASSERT(T.Read("Tiny.Got", text) > 0, 3);
+
+		(*	The layout loop walks the code sections in order and gives each one the address after the
+			one before, because the image this module is meant to produce has no loader to place it.
+			The compiler's own object file says `aligned` in the same place, and A2's loader asserts
+			that nothing it preallocates is a fixed `initcode` section -- so an object file from here
+			is for a static link, not for `System.Load`. *)
+		ASSERT(T.Said(text, "code Tiny.Add"), 4);
+		ASSERT(T.Said(text, "fixed"), 5)
+	END Test.

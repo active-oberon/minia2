@@ -516,6 +516,7 @@ TYPE ObjectFileFormat* = OBJECT (Formats.ObjectFileFormat)
 		IF DeveloperVersion THEN
 			IF context.arg.GetString(fileName) THEN
 				backend := Backend.GetBackendByName("TRM");
+				IF backend = NIL THEN context.error.String("the TRM backend is not installed"); context.error.Ln; RETURN END;
 				Files.SplitExtension(fileName, fileName, extension);
 				NEW(objectFile);
 				IF extension # "" THEN objectFile.SetExtension(extension) END;

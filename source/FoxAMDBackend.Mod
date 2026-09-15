@@ -3305,7 +3305,7 @@ TYPE
 		PROCEDURE &InitBackendAMD64;
 		BEGIN
 			InitIntermediateBackend;
-			bits := 32;
+			bits := SIZE OF ADDRESS * 8; (* the same default GetOptions gives it: a backend nobody passed options to still matches the host *)
 			forceFPU := FALSE;
 
 			winAPIRegisters[0] := RCX - RAX;
