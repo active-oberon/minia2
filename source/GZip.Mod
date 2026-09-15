@@ -130,7 +130,6 @@ TYPE
 				writer.RawInt32(crc32);
 				writer.RawInt32(inputsize(SIGNED32));
 				writer.Update();
-				TRACE("deflator", SELF.res);
 			END;
 		END Send;
 		
