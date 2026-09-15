@@ -753,3 +753,115 @@ positive: IndexOfOffset inverts OffsetOfIndex across a multibyte character
 		ASSERT(UTF8Strings.IndexOfOffset(str, -1) = 0);
 		ASSERT(UTF8Strings.IndexOfOffset(str, 99) = 3);
 	END Test.
+
+# -------------------------
+# Input that is not well formed. The module's notes say such a string may cause a run-time
+# exception -- but they also say it may not read outside the array it was given, and the walkers
+# below (Length, Size, OffsetOfIndex, IndexOfOffset) step by the number of bytes a lead byte
+# claims. A byte that cannot start a character claims seven, so the step ran off the end of an
+# ordinary array and over the terminator of a longer one: an index-out-of-range where the module
+# promises none, and a count taken from whatever followed the string in memory.
+# Reported 2026-09-15 from a tokeniser over arbitrary bytes (AOLLamaTritLLM/TritBPE.Mod).
+# -------------------------
+
+positive: a lead byte that promises more than is there does not carry the walk past the terminator
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR str: ARRAY 8 OF CHAR;
+	BEGIN
+		(* C3 is the lead of a two-byte character and the second byte is the terminator *)
+		str[0] := 0C3X; str[1] := 0X; str[2] := 61X; str[3] := 0X;
+		ASSERT(UTF8Strings.Size(str) = 1);
+		ASSERT(UTF8Strings.Length(str) = 1);	(* the 'a' after the terminator is not in the string *)
+		ASSERT(UTF8Strings.OffsetOfIndex(str, 5) = 1);
+		ASSERT(UTF8Strings.IndexOfOffset(str, 5) = 1);
+	END Test.
+
+positive: an array exactly as long as the string it holds
+	MODULE Test;
+	IMPORT UTF8Strings, Strings;
+	VAR src: ARRAY 4 OF CHAR; exact: Strings.String;
+	BEGIN
+		(* Strings.NewString gives an array with no room after the terminator, which is where the
+			step of a truncated character used to land: index out of range on a two-byte array. *)
+		src[0] := 0C3X; src[1] := 0X;
+		exact := Strings.NewString(src);
+		ASSERT(LEN(exact^) = 2);
+		ASSERT(UTF8Strings.Size(exact^) = 1);
+		ASSERT(UTF8Strings.Length(exact^) = 1);
+		ASSERT(UTF8Strings.OffsetOfIndex(exact^, 9) = 1);
+		ASSERT(UTF8Strings.IndexOfOffset(exact^, 9) = 1);
+	END Test.
+
+positive: an array with no terminator in it at all
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR str: ARRAY 2 OF CHAR;
+	BEGIN
+		str[0] := 61X; str[1] := 62X;
+		ASSERT(UTF8Strings.Size(str) = 2);		(* the array ends where the string does not *)
+		ASSERT(UTF8Strings.Length(str) = 2);
+	END Test.
+
+positive: what Length counts on malformed input, against what decodes
+	MODULE Test;
+	IMPORT UTF8Strings;
+
+	VAR str: ARRAY 16 OF CHAR; i: SIZE;
+
+	PROCEDURE Clear;
+	VAR j: SIZE;
+	BEGIN FOR j := 0 TO LEN(str)-1 DO str[j] := 0X END
+	END Clear;
+
+	PROCEDURE Decoded(): SIZE;	(* what a DecodeChar walk gets through *)
+	VAR n, k: SIZE; ucs: UTF8Strings.Char32;
+	BEGIN
+		k := 0; n := 0;
+		WHILE UTF8Strings.DecodeChar(str, k, ucs) & (ucs # 0) DO INC(n) END;
+		RETURN n
+	END Decoded;
+
+	BEGIN
+		(*	Length counts lead bytes and DecodeChar decodes, so on input that is not well formed
+			the two do not agree -- Length answers for every sequence the lead bytes claim, whether
+			or not it is there, which is at least as many as decode. A caller sizing an array by
+			Length gets one that is too long rather than too short, and a caller that needs the
+			true count walks with DecodeChar or refuses the string with Valid. *)
+		Clear; str[0] := 0C3X; str[1] := 61X;					(* truncated two-byte *)
+		ASSERT(UTF8Strings.Length(str) = 1); ASSERT(Decoded() = 0); ASSERT(~UTF8Strings.Valid(str));
+
+		Clear; str[0] := 61X; str[1] := 0BFX; str[2] := 62X;	(* a continuation byte on its own *)
+		ASSERT(UTF8Strings.Length(str) = 2); ASSERT(Decoded() = 1); ASSERT(~UTF8Strings.Valid(str));
+
+		Clear; str[0] := 0C0X; str[1] := 0AFX;					(* overlong: '/' written in two bytes *)
+		ASSERT(UTF8Strings.Length(str) = 1); ASSERT(Decoded() = 0); ASSERT(~UTF8Strings.Valid(str));
+
+		Clear; str[0] := 0E2X; str[1] := 82X;					(* truncated three-byte *)
+		ASSERT(UTF8Strings.Length(str) = 1); ASSERT(Decoded() = 0); ASSERT(~UTF8Strings.Valid(str));
+
+		Clear; str[0] := 0F5X; str[1] := 61X;					(* a lead byte RFC 3629 forbids *)
+		ASSERT(UTF8Strings.Length(str) = 1); ASSERT(Decoded() = 0); ASSERT(~UTF8Strings.Valid(str));
+
+		(* and on well-formed input they agree, which is the point of the comparison *)
+		Clear; str[0] := 61X; str[1] := 0C3X; str[2] := 0A9X; str[3] := 62X;
+		ASSERT(UTF8Strings.Length(str) = 3); ASSERT(Decoded() = 3); ASSERT(UTF8Strings.Valid(str));
+		FOR i := 0 TO 3 DO
+			ASSERT(UTF8Strings.IndexOfOffset(str, UTF8Strings.OffsetOfIndex(str, i)) = i);
+		END;
+	END Test.
+
+positive: SetSize over a string of continuation bytes only
+	MODULE Test;
+	IMPORT UTF8Strings;
+	VAR str: ARRAY 8 OF CHAR;
+	BEGIN
+		(*	SetSize walks back from the last byte to find the one that starts the character it is
+			in. Every byte here is a middle byte, so the walk had nothing to stop it before the
+			start of the array. *)
+		str[0] := 0BFX; str[1] := 0BFX; str[2] := 0BFX; str[3] := 0X;
+		UTF8Strings.SetSize(str, 3);
+		ASSERT(str[0] = 0X);		(* no character is complete, so nothing is kept *)
+		ASSERT(UTF8Strings.Size(str) = 0);
+	END Test.
+

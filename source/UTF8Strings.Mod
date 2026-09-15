@@ -64,7 +64,7 @@ BEGIN
 	RETURN TRUE
 END EncodeChar;
 
-(** Decode one well-formed UTF-8 character at str[i..] and return its UCS-32 value in ucs.  When successful, parameter i is incremented to the start of the next UTF-8 character.  Otherwise, parameter i points to the byte where the error was detected (this will also be the next character in the case of a minimal coding error).  Return TRUE iff decoding succeeds. *)
+(** Decode one well-formed UTF-8 character at str[i..] and return its UCS-32 value in ucs.  When successful, parameter i is incremented to the start of the next UTF-8 character.  Otherwise, parameter i points to the byte where the error was detected (this will also be the next character in the case of a minimal coding error).  Return TRUE iff decoding succeeds.  The terminating 0X decodes successfully as U+0000, so a walk over a 0X-terminated string ends on ucs = 0 and not on a FALSE -- see Valid. *)
 
 PROCEDURE DecodeChar*(CONST str: ARRAY OF CHAR; VAR i: SIZE; VAR ucs: Char32): BOOLEAN;
 VAR len: SIZE; ch, min: Char32;
@@ -113,12 +113,24 @@ BEGIN
 	RETURN FALSE
 END Valid;
 
+(*	Step over the character at str[i].  A lead byte says how many bytes its character takes and a
+	byte that cannot start one says 7, so on a string that is not well formed the step is held
+	inside the array and at the terminator: this module promises never to read outside the array
+	it was given, and a 0X ends the string whatever the byte before it promised. *)
+
+PROCEDURE Step(CONST str: ARRAY OF CHAR; VAR i: SIZE);
+VAR n: SIZE;
+BEGIN
+	n := ORD(CodeLength[ORD(str[i])]);
+	REPEAT INC(i); DEC(n) UNTIL (n <= 0) OR (i >= LEN(str)) OR (str[i] = 0X)
+END Step;
+
 (** Return the size of a string in bytes, excluding the terminating 0X.  Another way of seeing this is that the function returns the byte offset of the terminating 0X. *)
 
 PROCEDURE Size*(CONST str: ARRAY OF CHAR): SIZE;
 VAR i: SIZE;
 BEGIN
-	i := 0; WHILE str[i] # 0X DO INC(i) END;
+	i := 0; WHILE (i < LEN(str)) & (str[i] # 0X) DO INC(i) END;
 	RETURN i
 END Size;
 
@@ -131,7 +143,7 @@ BEGIN
 	IF size > 0 THEN	(* make sure last character is valid *)
 		i := size-1;	(* last byte of last character *)
 		IF str[i] >= 80X THEN	(* starting or middle byte *)
-			WHILE ASH(LONG(ORD(str[i])), -6) = 2 DO DEC(i) END;	(* find starting byte *)
+			WHILE (i > 0) & (ASH(LONG(ORD(str[i])), -6) = 2) DO DEC(i) END;	(* find starting byte *)
 			IF i + ORD(CodeLength[ORD(str[i])]) > size THEN size := i END	(* if not complete, truncate *)
 		END
 	END;
@@ -141,14 +153,11 @@ END SetSize;
 (** Return the byte offset of the UTF-8 character with index idx, counting from 0.  If idx is past the end of the string, return the offset of the terminating 0X, and if idx is negative, return 0.  This is also the definition of an UTF-8 index used by the other procedures. *)
 
 PROCEDURE OffsetOfIndex*(CONST str: ARRAY OF CHAR; idx: SIZE): SIZE;
-VAR i: SIZE; ch: Char32;
+VAR i: SIZE;
 BEGIN
 	i := 0;
-	LOOP	(* find position *)
-		IF idx <= 0 THEN EXIT END;
-		ch := LONG(ORD(str[i]));
-		IF ch = 0 THEN EXIT END;
-		DEC(idx); INC(i, LONG(ORD(CodeLength[ch])))
+	WHILE (idx > 0) & (i < LEN(str)) & (str[i] # 0X) DO
+		DEC(idx); Step(str, i)
 	END;
 	RETURN i
 END OffsetOfIndex;
@@ -156,30 +165,25 @@ END OffsetOfIndex;
 (** Return the index of the UTF-8 character at byte offset ofs, the inverse of OffsetOfIndex.  An offset past the end of the string gives the number of characters in it, and a negative one gives 0.  A tool that holds both a text and its UTF-8 image needs this direction: the image is what a compiler or a language server counts in, the index is what the text is addressed by. *)
 
 PROCEDURE IndexOfOffset*(CONST str: ARRAY OF CHAR; ofs: SIZE): SIZE;
-VAR i, idx: SIZE; ch: Char32;
+VAR i, idx: SIZE;
 BEGIN
 	i := 0; idx := 0;
-	WHILE i < ofs DO
-		ch := LONG(ORD(str[i]));
-		IF ch = 0 THEN RETURN idx END;
-		INC(i, LONG(ORD(CodeLength[ch]))); INC(idx)
+	WHILE (i < ofs) & (i < LEN(str)) & (str[i] # 0X) DO
+		Step(str, i); INC(idx)
 	END;
 	RETURN idx
 END IndexOfOffset;
 
 (** -- String manipulation. -- *)
 
-(** Return the number of UTF-8 characters in str, excluding the terminating 0X. *)
+(** Return the number of UTF-8 characters in str, excluding the terminating 0X.  On a string that is not well formed the answer is what the lead bytes claim rather than what decodes -- a truncated or overlong sequence counts as one character -- so untrusted input belongs through Valid first. *)
 
 PROCEDURE Length*(CONST str: ARRAY OF CHAR): SIZE;
-VAR i, len: SIZE; ch: Char32;
+VAR i, len: SIZE;
 BEGIN
 	i := 0; len := 0;
-	LOOP	(* count characters *)
-		ch := LONG(ORD(str[i]));
-		IF ch = 0 THEN EXIT END;
-		INC(i, LONG(ORD(CodeLength[ch])));
-		INC(len)
+	WHILE (i < LEN(str)) & (str[i] # 0X) DO	(* count characters *)
+		Step(str, i); INC(len)
 	END;
 	RETURN len
 END Length;
@@ -257,7 +261,7 @@ BEGIN
 	IF size > 0 THEN	(* make sure last character is valid *)
 		i := size-1;	(* last byte of last character *)
 		IF str[i] >= 80X THEN	(* starting or middle byte *)
-			WHILE ASH(LONG(ORD(str[i])), -6) = 2 DO DEC(i) END;	(* find starting byte *)
+			WHILE (i > 0) & (ASH(LONG(ORD(str[i])), -6) = 2) DO DEC(i) END;	(* find starting byte *)
 			IF i + ORD(CodeLength[ORD(str[i])]) > size THEN size := i END	(* if not complete, truncate *)
 		END
 	END;
