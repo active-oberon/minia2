@@ -108,8 +108,9 @@ looking at which loader the machine has.
 
 `ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`, `dap`.
 `ob test` takes `*.Test` files, or sources — then it runs the `{TEST}` procedures inside them.
-See [`docs/SDK.md`](docs/SDK.md) for all of them and
-[`docs/IDE.md`](docs/IDE.md) for editor setup.
+See [`docs/SDK.md`](docs/SDK.md) for all of them,
+[`docs/IDE.md`](docs/IDE.md) for editor setup, and [`docs/TESTING.md`](docs/TESTING.md) for how the
+suites in `tests/` are written and run.
 
 **Debugging** is `ob dap` — an ordinary debug adapter, so any editor that speaks the protocol
 drives it with no code of ours in between: breakpoints on a line, stepping, the call stack, and
