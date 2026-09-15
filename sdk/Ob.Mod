@@ -3005,7 +3005,10 @@ BEGIN
 		error.String("this host cannot capture an emulator's output"); error.Char(0AX);
 		RETURN FALSE
 	END;
-	finished := RunProgram(command, arguments, caseLimit, exitCode);
+	(* Short of the parent's own limit on this case: both processes count from about the same
+	   moment, and whoever gives up first kills the other. If that is the parent, the emulator is
+	   left an orphan -- still running the case that did not come back, at a whole core. *)
+	finished := RunProgram(command, arguments, caseLimit - caseLimit DIV 8, exitCode);
 	IF ~finished THEN RETURN FALSE END;
 
 	loaded := FALSE; bad := exitCode # 0;
