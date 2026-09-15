@@ -10,6 +10,8 @@ CONST
 
 	SegmentSize = 1024*8;
 
+	DefaultMode = 420;	(* 644 octal -- the mode tar gives an ordinary file *)
+
 	StreamClosed* = 10; (** error *)
 
 TYPE
@@ -701,13 +703,24 @@ TYPE
 		context.arg.SkipWhitespace; context.arg.String(archivename);
 		context.out.String("Creating "); context.out.String(archivename); context.out.Ln;
 		F := Files.New(archivename); Files.OpenWriter(W, F, 0);
+		(* the header is made here, not only where a file is added: an archive of no files still
+		   has an end to write, and EmptyHeader asserts on the NIL it used to be handed *)
+		NEW(hdr);
 		nofAdded := 0; nofErrors := 0;
 		WHILE context.arg.GetString(fn) DO
 			f := Files.Old(fn);
-			IF f # NIL THEN
+			IF Strings.Length(fn) >= NamSiz THEN
+				(* the name field is NamSiz bytes; a longer name used to be cut in the middle *)
+				INC(nofErrors);
+				context.out.String(fn); context.out.String(" : name too long for a tar header"); context.out.Ln;
+			ELSIF f # NIL THEN
 				Files.OpenReader(r, f, 0); size := f.Length();
 				NEW(hdr); COPY(fn, hdr.name);
 				IntToOctStr(size, hdr.size);
+				(* what tar writes for an ordinary file: a mode that lets it be read again, and
+				   an owner of nobody. Left at zero, the entry extracts as a file nobody may open. *)
+				IntToOctStr(DefaultMode, hdr.mode);
+				IntToOctStr(0, hdr.uid); IntToOctStr(0, hdr.gid); IntToOctStr(0, hdr.mtime);
 				CalcCheckSum(hdr);
 				WriteHeader(W, hdr);
 				i := 0;
@@ -725,7 +738,9 @@ TYPE
 				context.out.String(fn); context.out.String(" not found"); context.out.Ln;
 			END;
 		END;
-		EmptyHeader(hdr); WriteHeader(W, hdr);
+		(* the end of an archive is two empty blocks, not one: a reader that sees only one says
+		   so and treats the file as truncated *)
+		EmptyHeader(hdr); WriteHeader(W, hdr); WriteHeader(W, hdr);
 		W.Update(); Files.Register(F);
 		context.out.String("Added "); context.out.Int(nofAdded, 0); context.out.String(" files to archive ");
 		context.out.String(archivename);

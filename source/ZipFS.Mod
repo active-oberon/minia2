@@ -204,7 +204,12 @@ MODULE ZipFS; (** AUTHOR "ejz"; PURPOSE "mount a zipped file as a file-system"; 
 	BEGIN
 		i := 0;
 		Files.GetList(fs);
-		WHILE (i < LEN(fs)) & ((fs[i].vol = NIL) OR (Files.ReadOnly IN fs[i].vol.flags)) DO
+		(*	A file system without a volume is the usual case on a host system -- UnixFiles has
+			none -- and it was the one this loop skipped, so `localFS` stayed NIL and the first
+			file read out of a mounted archive dereferenced it. Only a volume that says it is
+			read-only disqualifies one, and an archive mounted earlier never qualifies. *)
+		WHILE (i < LEN(fs)) & ((fs[i] IS FileSystem)
+				OR ((fs[i].vol # NIL) & (Files.ReadOnly IN fs[i].vol.flags))) DO
 			INC(i)	(* find a writable file system *)
 		END;
 		IF (i < LEN(fs)) THEN localFS := fs[i] END;

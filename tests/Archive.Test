@@ -1,0 +1,457 @@
+# Tests for the rest of lib/archive -- everything in the package except Zip, which tests/Zip.Test
+# already drives.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test ArchiveTestShared;System.Load Test"
+#
+# `Archives` is the abstract archive and the factory that looks a format up in the configuration;
+# `Unzip` reads a zip file that something else wrote; `ZipFS` mounts one as a file system; `Tar`
+# is a whole tar implementation with three commands; `ZipTool` is the zip command line. Of the six
+# modules in the package only Zip had ever been run by a test.
+#
+# What the cases ask is what a reader of an archive must answer: the entries that are in it, the
+# bytes of each one, and a refusal -- not a trap -- for a file that is not an archive at all.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE ArchiveTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "files, commands and comparisons the archive cases share" *)
+
+	IMPORT Commands, Files, Streams, Strings;
+
+	TYPE
+		(** Room for whatever a command says. *)
+		Text* = ARRAY 8192 OF CHAR;
+
+	(** Write a file of bytes. *)
+	PROCEDURE Make* (CONST name: ARRAY OF CHAR; CONST content: ARRAY OF CHAR; length: SIZE);
+	VAR file: Files.File; writer: Files.Writer; i: SIZE;
+	BEGIN
+		file := Files.New(name);
+		ASSERT(file # NIL);
+		Files.OpenWriter(writer, file, 0);
+		FOR i := 0 TO length - 1 DO writer.Char(content[i]) END;
+		writer.Update;
+		Files.Register(file)
+	END Make;
+
+	(** Write a file of text, without its terminating zero. *)
+	PROCEDURE Write* (CONST name, content: ARRAY OF CHAR);
+	BEGIN Make(name, content, Strings.Length(content))
+	END Write;
+
+	(** Read a whole file; answers how many bytes it had, or -1 if it is not there. *)
+	PROCEDURE Read* (CONST name: ARRAY OF CHAR; VAR content: ARRAY OF CHAR): SIZE;
+	VAR file: Files.File; reader: Files.Reader; length: SIZE;
+	BEGIN
+		content[0] := 0X;
+		file := Files.Old(name);
+		IF file = NIL THEN RETURN -1 END;
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(content, 0, LEN(content) - 1, length);
+		content[length] := 0X;
+		RETURN length
+	END Read;
+
+	(** How long is the file, or -1 if it is not there? *)
+	PROCEDURE Length* (CONST name: ARRAY OF CHAR): Files.Size;
+	VAR file: Files.File;
+	BEGIN
+		file := Files.Old(name);
+		IF file = NIL THEN RETURN -1 END;
+		RETURN file.Length()
+	END Length;
+
+	(** Do the two files hold the same bytes? *)
+	PROCEDURE Same* (CONST one, other: ARRAY OF CHAR): BOOLEAN;
+	VAR a, b: Files.File; ra, rb: Files.Reader; i: Files.Size; x, y: CHAR;
+	BEGIN
+		a := Files.Old(one); b := Files.Old(other);
+		IF (a = NIL) OR (b = NIL) OR (a.Length() # b.Length()) THEN RETURN FALSE END;
+		Files.OpenReader(ra, a, 0); Files.OpenReader(rb, b, 0);
+		FOR i := 1 TO a.Length() DO
+			ra.Char(x); rb.Char(y);
+			IF x # y THEN RETURN FALSE END
+		END;
+		RETURN TRUE
+	END Same;
+
+	(** Does the output hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** A command run over string streams; the result is the command's own `context.result`. *)
+	PROCEDURE Run* (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 8 * 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	END ArchiveTestShared.
+
+positive: a format nobody registered is answered with NIL, not with a trap
+
+	MODULE Test;
+	IMPORT Archives;
+
+	VAR archive: Archives.Archive; name: Archives.StringObject;
+
+	BEGIN
+		(*	`Old` and `New` look the factory up in the configuration under `Archives.<type>` and
+			answer NIL when it is not there. Nothing in the tree calls them, so this is the first
+			time either has run. *)
+		archive := Archives.Old("nosuch.dat", "NoSuchFormat");
+		ASSERT(archive = NIL, 1);
+		archive := Archives.New("nosuch.dat", "NoSuchFormat");
+		ASSERT(archive = NIL, 2);
+
+		(* the name object keeps what it was given, up to the width it has *)
+		NEW(name, "an-archive.tar");
+		ASSERT(name.value = "an-archive.tar", 3)
+	END Test.
+
+positive: a zip this tree wrote is read by the reader that did not write it
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Files, Unzip, Zip, Streams;
+
+	CONST Long = 5000;
+
+	VAR archive: Zip.Archive; zip: Unzip.ZipFile; entry: Unzip.Entry;
+		file: Files.File; rider: Files.Rider; writer: Files.Writer;
+		res: INTEGER; count: SIGNED32; long: ARRAY Long OF CHAR; i: SIZE;
+
+		PROCEDURE Add(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; rider: Files.Rider; res: INTEGER;
+		BEGIN
+			file := Files.Old(name); ASSERT(file # NIL);
+			file.Set(rider, 0);
+			Zip.AddEntry(archive, name, rider, SIGNED32(file.Length()), Zip.DefaultCompression,
+				Zip.DefaultStrategy, res);
+			ASSERT(res = Zip.Ok)
+		END Add;
+
+	BEGIN
+		T.Write("one.txt", "the first file");
+		FOR i := 0 TO Long - 1 DO long[i] := "a" END;
+		T.Make("long.txt", long, Long);
+
+		archive := Zip.CreateArchive("read.zip", res);
+		ASSERT(res = Zip.Ok, 1);
+		Add("one.txt"); Add("long.txt");
+
+		file := Files.Old("read.zip");
+		ASSERT(file # NIL, 2);
+		NEW(zip, file, res);
+		ASSERT(res = Streams.Ok, 3);
+		ASSERT(zip.NoOfEntries() = 2, 4);
+
+		(* the entries are there under their names, with the sizes the writer recorded *)
+		entry := zip.FindEntry("one.txt");
+		ASSERT(entry # NIL, 5);
+		ASSERT(entry.size = 14, 6);
+		ASSERT(zip.FindEntry("absent.txt") = NIL, 7);
+
+		(*	And the bytes come back. `Extract` checks the CRC of what it produced against the one
+			in the entry, so a wrong answer here is a wrong answer twice over. *)
+		file := Files.New("long.out");
+		Files.OpenWriter(writer, file, 0);
+		entry := zip.FindEntry("long.txt");
+		ASSERT(entry # NIL, 8);
+		zip.Extract(entry, writer, res);
+		writer.Update; Files.Register(file);
+		ASSERT(res = Streams.Ok, 9);
+		ASSERT(T.Same("long.txt", "long.out"), 10);
+
+		(* walking the list gives the same two entries *)
+		count := 0; entry := zip.GetFirst();
+		WHILE entry # NIL DO INC(count); entry := zip.GetNext(entry) END;
+		ASSERT(count = 2, 11)
+	END Test.
+
+positive: what is not a zip is refused by the reader, and refused without a trap
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Files, Unzip, Streams;
+
+	VAR zip: Unzip.ZipFile; file: Files.File; res: INTEGER;
+
+	BEGIN
+		T.Write("notazip.txt", "this is not a zip file at all, and it is long enough not to be one");
+		file := Files.Old("notazip.txt");
+		ASSERT(file # NIL, 1);
+		NEW(zip, file, res);
+		ASSERT(res # Streams.Ok, 2);
+
+		(* and a file too short to hold a directory at all *)
+		T.Write("tiny.txt", "no");
+		file := Files.Old("tiny.txt");
+		NEW(zip, file, res);
+		ASSERT(res # Streams.Ok, 3)
+	END Test.
+
+positive: a tar is written, listed and taken out again
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Tar, Files;
+
+	VAR text: T.Text; result: INTEGER;
+
+	BEGIN
+		T.Write("first.txt", "the first file");
+		T.Write("second.txt", "the second file, which is longer");
+
+		result := T.Run("Tar.Create", "round.tar first.txt second.txt", text);
+		ASSERT(result = 0, 1);
+		ASSERT(T.Said(text, "first.txt added"), 2);
+		ASSERT(T.Said(text, "Added 2 files"), 3);
+
+		(*	Every entry is a header block and a whole number of data blocks, and the archive ends
+			in two empty blocks -- that is what tells a reader the end from a truncated file. *)
+		ASSERT(T.Length("round.tar") MOD 512 = 0, 4);
+		ASSERT(T.Length("round.tar") = 6 * 512, 5);		(* two entries, then the two empty blocks *)
+
+		result := T.Run("Tar.List", "round.tar", text);
+		ASSERT(result = 0, 6);
+		ASSERT(T.Said(text, "first.txt"), 7);
+		ASSERT(T.Said(text, "second.txt"), 8);
+		ASSERT(~T.Said(text, "checksum error"), 9);
+
+		(*	Extract writes each entry under its own name; the originals are still there, so it
+			renames them out of the way first and what it wrote is beside them. *)
+		result := T.Run("Tar.Extract", "round.tar", text);
+		ASSERT(result = 0, 10);
+		ASSERT(T.Same("first.txt", "first.txt.Bak"), 11);
+		ASSERT(T.Same("second.txt", "second.txt.Bak"), 12)
+	END Test.
+
+positive: the header a tar entry carries says what tar says it says
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared;
+
+	VAR text: T.Text; result: INTEGER; header: ARRAY 1024 OF CHAR; length: SIZE;
+
+		(* The field at this offset, as far as its first zero -- which is how tar's fields end. *)
+		PROCEDURE Field(offset, width: SIZE; VAR value: ARRAY OF CHAR);
+		VAR i: SIZE;
+		BEGIN
+			i := 0;
+			WHILE (i < width) & (header[offset + i] # 0X) DO value[i] := header[offset + i]; INC(i) END;
+			value[i] := 0X
+		END Field;
+
+	VAR field: ARRAY 32 OF CHAR;
+
+	BEGIN
+		T.Write("header.txt", "0123456789");
+		result := T.Run("Tar.Create", "header.tar header.txt", text);
+		ASSERT(result = 0, 1);
+
+		length := T.Read("header.tar", header);
+		ASSERT(length > 512, 2);
+
+		(* the name is at the front, the size is octal at 124, and the checksum is octal at 148 *)
+		Field(0, 100, field);
+		ASSERT(field = "header.txt", 3);
+		Field(124, 12, field);
+		ASSERT(field = "00000000012", 4);				(* ten bytes, octal, in eleven digits *)
+		Field(148, 8, field);
+		ASSERT(field # "", 5);
+
+		(*	The mode is what lets the file be read again after tar has written it out. An entry
+			with a mode of zero extracts as a file nobody may open. *)
+		Field(100, 8, field);
+		ASSERT(field # "", 6);
+		ASSERT(field = "0000644", 7)
+	END Test.
+
+positive: a name that does not fit the header is refused, not silently cut
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Strings;
+
+	VAR text: T.Text; result: INTEGER; name, argument: ARRAY 256 OF CHAR; i: SIGNED32;
+
+	BEGIN
+		(*	tar's name field is a hundred bytes. The command copied whatever it was given into it,
+			so a longer name was cut in the middle and the archive carried an entry under a name
+			that is not the file's -- and, where the cut fell on a slash, one that a reader takes
+			for a directory. The length is answered before the file is opened, so the case needs
+			no file of that name. *)
+		name := "";
+		FOR i := 0 TO 9 DO Strings.Append(name, "0123456789") END;	(* 100 characters *)
+		Strings.Append(name, ".txt");								(* 104 -- four too many *)
+
+		argument := "long.tar ";
+		Strings.Append(argument, name);
+		result := T.Run("Tar.Create", argument, text);
+		ASSERT(result = 0, 1);
+
+		(* it says so, and it adds nothing *)
+		ASSERT(T.Said(text, "too long"), 2);
+		ASSERT(T.Said(text, "Added 0 files"), 3);
+
+		(* what is left is the two empty blocks that end an archive *)
+		ASSERT(T.Length("long.tar") = 2 * 512, 4)
+	END Test.
+
+positive: an archive of no files at all is still an archive
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared;
+
+	VAR text: T.Text; result: INTEGER;
+
+	BEGIN
+		(*	The header record was made where a file is added, and the end of the archive is written
+			with the same variable -- so a run that added nothing handed NIL to a procedure that
+			asserts on it, and the command took the caller down with it. *)
+		result := T.Run("Tar.Create", "empty.tar", text);
+		ASSERT(result = 0, 1);
+		ASSERT(T.Said(text, "Added 0 files"), 2);
+		ASSERT(T.Length("empty.tar") = 2 * 512, 3);
+
+		(* and a reader says it holds nothing, rather than complaining about it *)
+		result := T.Run("Tar.List", "empty.tar", text);
+		ASSERT(result = 0, 4);
+		ASSERT(~T.Said(text, "checksum error"), 5)
+	END Test.
+
+positive: a zip mounted as a file system is read through Files
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Files, Streams, Zip, ZipFS;
+
+	VAR archive: Zip.Archive; parameters: Files.Parameters; arg: Streams.StringReader;
+		out: Streams.StringWriter; file: Files.File; reader: Files.Reader;
+		res: INTEGER; line: ARRAY 64 OF CHAR; text: ARRAY 256 OF CHAR;
+
+		PROCEDURE Add(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; rider: Files.Rider; res: INTEGER;
+		BEGIN
+			file := Files.Old(name); ASSERT(file # NIL);
+			file.Set(rider, 0);
+			Zip.AddEntry(archive, name, rider, SIGNED32(file.Length()), Zip.DefaultCompression,
+				Zip.DefaultStrategy, res);
+			ASSERT(res = Zip.Ok)
+		END Add;
+
+	BEGIN
+		T.Write("mounted.txt", "read me through a prefix");
+		archive := Zip.CreateArchive("mount.zip", res);
+		ASSERT(res = Zip.Ok, 1);
+		Add("mounted.txt");
+
+		(*	`FSTools.Mount` reaches this through an alias in the configuration; the factory itself
+			takes the file name off the argument stream, so a case can call it directly. *)
+		NEW(arg, 64); arg.Set("mount.zip");
+		Streams.OpenStringWriter(out, 1024);
+		NEW(parameters, NIL, arg, out, out, NIL);
+		COPY("ZIPTEST", parameters.prefix);
+		ZipFS.NewFS(parameters);
+		ASSERT(Files.This("ZIPTEST") # NIL, 2);
+
+		(* the entry is now a file under that prefix, and it reads back what went in *)
+		file := Files.Old("ZIPTEST:mounted.txt");
+		ASSERT(file # NIL, 3);
+		Files.OpenReader(reader, file, 0);
+		reader.Ln(line);
+		ASSERT(line = "read me through a prefix", 4);
+
+		(* something that is not in the archive is not there *)
+		ASSERT(Files.Old("ZIPTEST:absent.txt") = NIL, 5);
+
+		(* a second mount under the same prefix is refused, and says so *)
+		NEW(arg, 64); arg.Set("mount.zip");
+		Streams.OpenStringWriter(out, 1024);
+		NEW(parameters, NIL, arg, out, out, NIL);
+		COPY("ZIPTEST", parameters.prefix);
+		ZipFS.NewFS(parameters);
+		out.Get(text);
+		ASSERT(T.Said(text, "already in use"), 6);
+
+		Files.Remove(Files.This("ZIPTEST"))
+	END Test.
+
+positive: the zip command line adds, lists and extracts
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Files;
+
+	VAR text: T.Text; result: INTEGER;
+
+	BEGIN
+		T.Write("tool.txt", "what the command line put in");
+
+		result := T.Run("ZipTool.Add", "tool.zip tool.txt", text);
+		ASSERT(result = 0, 1);
+		ASSERT(T.Said(text, "Adding tool.txt"), 2);
+		ASSERT(T.Length("tool.zip") > 0, 3);
+
+		result := T.Run("ZipTool.Directory", "tool.zip", text);
+		ASSERT(result = 0, 4);
+		ASSERT(T.Said(text, "tool.txt"), 5);
+		ASSERT(T.Said(text, "1 entry"), 6);
+
+		(* extracting over the file that is there renames it out of the way first *)
+		result := T.Run("ZipTool.Extract", "tool.zip tool.txt", text);
+		ASSERT(result = 0, 7);
+		ASSERT(T.Said(text, "Extracting tool.txt"), 8);
+		ASSERT(T.Length("tool.txt") = 28, 9);
+
+		(* an archive that is not there is a message, not a trap *)
+		result := T.Run("ZipTool.Directory", "nosuch.zip", text);
+		ASSERT(T.Said(text, "nosuch.zip"), 10)
+	END Test.
+
+positive: the unzip command line lists and takes files out
+
+	MODULE Test;
+	IMPORT T := ArchiveTestShared, Files, Zip;
+
+	VAR archive: Zip.Archive; text: T.Text; res, result: INTEGER;
+
+		PROCEDURE Add(CONST name: ARRAY OF CHAR);
+		VAR file: Files.File; rider: Files.Rider; res: INTEGER;
+		BEGIN
+			file := Files.Old(name); ASSERT(file # NIL);
+			file.Set(rider, 0);
+			Zip.AddEntry(archive, name, rider, SIGNED32(file.Length()), Zip.DefaultCompression,
+				Zip.DefaultStrategy, res);
+			ASSERT(res = Zip.Ok)
+		END Add;
+
+	BEGIN
+		T.Write("alpha.txt", "the first of two");
+		T.Write("beta.txt", "the second of two");
+		archive := Zip.CreateArchive("both.zip", res);
+		ASSERT(res = Zip.Ok, 1);
+		Add("alpha.txt"); Add("beta.txt");
+
+		result := T.Run("Unzip.Directory", "both.zip", text);
+		ASSERT(result = 0, 2);
+		ASSERT(T.Said(text, "alpha.txt"), 3);
+		ASSERT(T.Said(text, "beta.txt"), 4);
+
+		(*	Extracting over a file that is there keeps the old one under .Bak unless \o is given,
+			which is what makes the comparison below mean something. *)
+		result := T.Run("Unzip.Extract", "both.zip alpha.txt", text);
+		ASSERT(result = 0, 5);
+		ASSERT(T.Same("alpha.txt", "alpha.txt.Bak"), 6);
+
+		result := T.Run("Unzip.ExtractAll", "\o both.zip", text);
+		ASSERT(result = 0, 7);
+		ASSERT(T.Length("beta.txt") = 17, 8);
+
+		(* an archive that is not there says nothing and traps on nothing *)
+		result := T.Run("Unzip.Directory", "nosuch.zip", text);
+		ASSERT(result = 0, 9)
+	END Test.
