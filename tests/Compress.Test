@@ -196,3 +196,230 @@ positive: a stream another implementation made is read by ours
 		ASSERT(back = "a zlib stream made by another implementation, to be read by ours")
 	END Test.
 
+# -------------------------
+# The rest of the package, which the cases above never touched: gzip as a container, the standalone
+# inflate of RFC 1951, the Burrows-Wheeler compressor and the move-to-front transformation under it.
+# -------------------------
+
+positive: a file through gzip and back is the file
+
+	MODULE Test;
+	IMPORT Files, GZip, Strings;
+	VAR source, packed, back: Files.File; rider: Files.Rider;
+		text, read: ARRAY 8192 OF CHAR; i: SIGNED32; n: SIZE;
+	BEGIN
+		text := "";
+		FOR i := 0 TO 99 DO Strings.Append(text, "a line that repeats and therefore compresses. ") END;
+		n := Strings.Length(text);
+
+		source := Files.New("plain.tmp"); source.Set(rider, 0);
+		rider.file.WriteBytes(rider, text, 0, n);
+		Files.Register(source);
+
+		(*	level 6, the default strategy, and the flush the module's own command uses. The
+			container is what is being tested here, not the ratio. *)
+		packed := Files.New("packed.tmp");
+		GZip.Deflate(Files.Old("plain.tmp"), packed, 6, 0, 0);
+		Files.Register(packed);
+		ASSERT(Files.Old("packed.tmp") # NIL);
+		ASSERT(Files.Old("packed.tmp").Length() < n);	(* it is a compressor, after all *)
+
+		back := Files.New("back.tmp");
+		GZip.Inflate(Files.Old("packed.tmp"), back);
+		Files.Register(back);
+
+		back := Files.Old("back.tmp");
+		ASSERT(back.Length() = n);
+		back.Set(rider, 0); rider.file.ReadBytes(rider, read, 0, n);
+		read[n] := 0X;
+		ASSERT(read = text)
+	END Test.
+
+positive: a gzip stream another implementation made is read by ours
+
+	MODULE Test;
+	IMPORT Files, GZip;
+	CONST
+		(*	gzip.GzipFile from a Python that has nothing to do with this tree, level 6, the time
+			stamp zeroed so the bytes are the same on every run. A round trip cannot tell whether
+			both ends agree on a container nobody else would recognise. *)
+		hex = "1F8B08000000000000FF15CA410E80300804C0AFEC03FC144D374A52A0A178D0D757E73C82F3D5895549319874A23D108FBA98509B83462F290D3F5081467CB5FF2BEE5C1BB8304B0C40000000";
+		length = 64;
+	VAR f, out: Files.File; rider: Files.Rider; blob, back: ARRAY 256 OF CHAR; i, n: SIGNED32;
+
+		PROCEDURE Digit (c: CHAR): SIGNED32;
+		BEGIN
+			IF (c >= "0") & (c <= "9") THEN RETURN ORD(c) - ORD("0") END;
+			RETURN ORD(c) - ORD("A") + 10
+		END Digit;
+
+	BEGIN
+		n := 0; i := 0;
+		WHILE hex[i] # 0X DO
+			blob[n] := CHR(Digit(hex[i]) * 16 + Digit(hex[i+1])); INC(n); INC(i, 2)
+		END;
+		f := Files.New("outside.gz"); f.Set(rider, 0);
+		rider.file.WriteBytes(rider, blob, 0, n);
+		Files.Register(f);
+
+		out := Files.New("outside.txt");
+		GZip.Inflate(Files.Old("outside.gz"), out);
+		Files.Register(out);
+
+		out := Files.Old("outside.txt");
+		ASSERT(out.Length() = length);
+		out.Set(rider, 0); rider.file.ReadBytes(rider, back, 0, length);
+		back[length] := 0X;
+		ASSERT(back = "a gzip stream made by another implementation, to be read by ours")
+	END Test.
+
+positive: the standalone inflate reads a deflate stream with no wrapper on it
+
+	MODULE Test;
+	IMPORT Files, Streams, Inflate;
+	CONST
+		(*	zlib.compressobj(6, DEFLATED, -15) -- RFC 1951 and nothing around it, which is what this
+			module reads. The two bytes of a zlib header and the four of its checksum are exactly
+			what the comment at the top of Inflate.Mod says have to be off. *)
+		hex = "15CA410E80300804C0AFEC03FC144D374A52A0A178D0D757E73C82F3D5895549319874A23D108FBA98509B83462F290D3F5081467CB5FF2BEE5C1B";
+		length = 64;
+	VAR f: Files.File; rider: Files.Rider; in: Files.Reader; r: Inflate.Reader;
+		blob, back: ARRAY 256 OF CHAR; i, n: SIGNED32; read, total: SIZE;
+
+		PROCEDURE Digit (c: CHAR): SIGNED32;
+		BEGIN
+			IF (c >= "0") & (c <= "9") THEN RETURN ORD(c) - ORD("0") END;
+			RETURN ORD(c) - ORD("A") + 10
+		END Digit;
+
+	BEGIN
+		n := 0; i := 0;
+		WHILE hex[i] # 0X DO
+			blob[n] := CHR(Digit(hex[i]) * 16 + Digit(hex[i+1])); INC(n); INC(i, 2)
+		END;
+		f := Files.New("raw.tmp"); f.Set(rider, 0);
+		rider.file.WriteBytes(rider, blob, 0, n);
+		Files.Register(f);
+
+		Files.OpenReader(in, Files.Old("raw.tmp"), 0);
+		Inflate.OpenReader(r, in);
+		total := 0;
+		REPEAT
+			r.Bytes(back, total, length - total, read); INC(total, read)
+		UNTIL (total = length) OR (read = 0);
+		ASSERT(total = length);
+		back[total] := 0X;
+		ASSERT(back = "a gzip stream made by another implementation, to be read by ours")
+	END Test.
+
+positive: the Burrows-Wheeler compressor gives back what it was given
+
+	MODULE Test;
+	IMPORT Streams, BWHCompressor, Strings;
+
+	VAR text, packed, back: ARRAY 8192 OF CHAR;
+
+	PROCEDURE Trip (CONST source: ARRAY OF CHAR; length: SIZE): SIZE;
+	VAR in, mid: Streams.StringReader; out, plain: Streams.StringWriter; n, m: SIZE;
+	BEGIN
+		NEW(in, length + 1); in.SetRaw(source, 0, length);
+		Streams.OpenStringWriter(out, LEN(packed));
+		BWHCompressor.Compress(in, out);
+		out.Update; out.GetRaw(packed, n);
+
+		NEW(mid, n + 1); mid.SetRaw(packed, 0, n);
+		Streams.OpenStringWriter(plain, LEN(back));
+		BWHCompressor.Expand(mid, plain);
+		plain.Update; plain.GetRaw(back, m);
+		RETURN m
+	END Trip;
+
+	VAR i: SIGNED32; length: SIZE;
+
+	BEGIN
+		(* text that compresses *)
+		text := "";
+		FOR i := 0 TO 99 DO Strings.Append(text, "the same line again and again. ") END;
+		length := Strings.Length(text);
+		ASSERT(Trip(text, length) = length, 1);
+		back[length] := 0X;
+		ASSERT(back = text, 2);
+
+		(* and bytes that do not: every value of a byte, in an order it cannot predict *)
+		FOR i := 0 TO 2047 DO text[i] := CHR((i * 37 + 11) MOD 256) END;
+		ASSERT(Trip(text, 2048) = 2048, 3);
+		FOR i := 0 TO 2047 DO ASSERT(back[i] = text[i], 4) END
+	END Test.
+
+positive: move to front says nothing twice
+
+	MODULE Test;
+	IMPORT MoveToFront;
+
+	VAR encoder, decoder: MoveToFront.MTF; i: SIGNED32;
+		source, coded: ARRAY 512 OF CHAR;
+
+	BEGIN
+		(*	The transformation under the Burrows-Wheeler compressor: a character just seen becomes
+			0X, which is what turns a sorted block into a stream of small numbers. Encoder and
+			decoder each keep their own alphabet, so they are two objects and not one. *)
+		NEW(encoder); NEW(decoder);
+		ASSERT(encoder.Encode("a") = CHR(ORD("a")), 1);		(* the first one is where it started *)
+		ASSERT(encoder.Encode("a") = 0X, 2);				(* and now it is at the front *)
+		ASSERT(encoder.Encode("a") = 0X, 3);
+
+		NEW(encoder); NEW(decoder);
+		FOR i := 0 TO 255 DO source[i] := CHR((i * 91 + 7) MOD 256) END;
+		FOR i := 0 TO 255 DO coded[i] := encoder.Encode(source[i]) END;
+		FOR i := 0 TO 255 DO ASSERT(decoder.Decode(coded[i]) = source[i], 5) END
+	END Test.
+
+positive: the file tool compresses and expands, and knows its own files
+
+	MODULE Test;
+	IMPORT Commands, Files, Streams, Strings;
+
+	VAR f: Files.File; rider: Files.Rider; text, back, said: ARRAY 4096 OF CHAR;
+		i: SIGNED32; n: SIZE;
+
+	(** A command run over string streams; the result is the command's own context.result. *)
+	PROCEDURE Run (CONST command, argument: ARRAY OF CHAR; VAR text: ARRAY OF CHAR): INTEGER;
+	VAR context: Commands.Context; arg: Streams.StringReader; out: Streams.StringWriter;
+		result: INTEGER; message: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(arg, LEN(argument)); arg.Set(argument);
+		Streams.OpenStringWriter(out, 4096);
+		NEW(context, NIL, arg, out, out, NIL);
+		Commands.Activate(command, context, {Commands.Wait}, result, message);
+		out.Get(text);
+		RETURN result
+	END Run;
+
+	BEGIN
+		text := "";
+		FOR i := 0 TO 49 DO Strings.Append(text, "a line the tool will squeeze. ") END;
+		n := Strings.Length(text);
+		f := Files.New("tool.tmp"); f.Set(rider, 0);
+		rider.file.WriteBytes(rider, text, 0, n);
+		Files.Register(f);
+
+		(*	The tool writes its own four-byte tag in front of the stream, so it can tell a file of
+			its own from any other -- and the suffix it appends is how it names the result. *)
+		ASSERT(Run("OZip3.Compress", "tool.tmp", said) = 0, 1);
+		ASSERT(Files.Old("tool.tmp.oz3") # NIL, 2);
+		ASSERT(Files.Old("tool.tmp.oz3").Length() < n, 3);
+
+		ASSERT(Run("OZip3.Expand", "tool.tmp.oz3 back.tmp", said) = 0, 4);
+		f := Files.Old("back.tmp");
+		ASSERT(f # NIL, 5);
+		ASSERT(f.Length() = n, 6);
+		f.Set(rider, 0); rider.file.ReadBytes(rider, back, 0, n);
+		back[n] := 0X;
+		ASSERT(back = text, 7);
+
+		(* a file that is not one of its own is refused by the tag and not by the name *)
+		ASSERT(Run("OZip3.Expand", "tool.tmp other.tmp", said) = 0, 8);
+		ASSERT(Strings.Pos("not OZip3 compressed", said) >= 0, 9);
+		ASSERT(Files.Old("other.tmp") = NIL, 10)
+	END Test.
+
