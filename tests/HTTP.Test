@@ -1,0 +1,439 @@
+# Tests for lib/http -- source/WebHTTP.Mod and source/NewHTTPClient.Mod, the two modules a headless
+# program needs to speak HTTP.
+#
+# options --command="System.Free Test HTTPTestShared;System.Load Test"
+#
+# The package had no test at all. It is two halves: `WebHTTP` is the grammar -- a request or a
+# response read out of a `Streams.Reader` into a record, the same record written back to a
+# `Streams.Writer`, and the small pieces around a URL -- and `NewHTTPClient` is a client that opens
+# a TCP connection and fetches. Neither half needs a network to be tested: the grammar runs over
+# string streams, and the client runs against a server this suite starts on the loopback, the way
+# `tests/Sockets.Test` does.
+#
+# Four defects came out of it, all in the half a program writes rather than reads:
+#
+#   * `GetMethodName` answered "UNKOWN" for a method it does not know, and `WriteRequestLine`
+#     refuses to write a request line when the name is "UNKNOWN" -- so the guard never fired and an
+#     unknown method went on the wire as the word UNKOWN.
+#   * `SplitHTTPAdr` copied the path under the bound of the *host* array, so a URL whose path was
+#     longer than the caller's host array was refused as illegal however much room the path had.
+#     With the usual 128-byte host that is any path over 127 characters.
+#   * `GetPath` never terminated the path it copied: what the caller read after it was whatever had
+#     been in its own buffer before the call.
+#   * `NewHTTPClient` wrote its additional request fields as `Name value` -- no colon -- while the
+#     server side of the same package (`SendResponseHeader`) writes `Name: value`. Every header a
+#     caller added was sent as something no server would read as a field.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: the helpers these tests are written with
+
+	MODULE HTTPTestShared;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "HTTP text in and out of string streams, and a server on the loopback" *)
+
+	IMPORT Streams, Strings, TCP, IP;
+
+	TYPE
+		Text* = ARRAY 4096 OF CHAR;
+
+		(**	One HTTP exchange over the loopback. The port is not chosen: TCP.NilPort asks the system
+			for a free one and Open reports which, so two runs at once do not collide -- the reason
+			is written out in tests/Sockets.Test, which found it. *)
+		Server* = OBJECT
+		VAR listener, session: TCP.Connection; res: INTEGER; length: SIZE;
+			request-: Text; reply: Text;
+			ready-, served-: BOOLEAN; port-: UNSIGNED32;
+
+			PROCEDURE &Start* (CONST answer: ARRAY OF CHAR);
+			BEGIN
+				COPY(answer, reply);
+				NEW(listener);
+				listener.Open(TCP.NilPort, IP.NilAdr, TCP.NilPort, res);
+				port := listener.lport;
+				ready := (res = TCP.Ok) & (port # 0)
+			END Start;
+
+			(** Wait until the exchange is over; the request is then readable. *)
+			PROCEDURE AwaitServed*;
+			BEGIN {EXCLUSIVE} AWAIT(served)
+			END AwaitServed;
+
+			PROCEDURE Done;
+			BEGIN {EXCLUSIVE} served := TRUE
+			END Done;
+
+		BEGIN {ACTIVE}
+			IF ready THEN
+				listener.Accept(session, res);
+				IF res = TCP.Ok THEN
+					session.Receive(request, 0, LEN(request) - 1, 1, length, res);
+					request[length] := 0X;
+					session.Send(reply, 0, Strings.Length(reply), TRUE, res);
+					session.Close
+				END;
+				listener.Close
+			END;
+			Done
+		END Server;
+
+	(** Does the text hold this? *)
+	PROCEDURE Said* (CONST text, what: ARRAY OF CHAR): BOOLEAN;
+	BEGIN
+		RETURN Strings.Pos(what, text) >= 0
+	END Said;
+
+	(** Append one line of HTTP: the protocol ends a line with CR LF, and the parsers read it. *)
+	PROCEDURE Line* (VAR text: ARRAY OF CHAR; CONST piece: ARRAY OF CHAR);
+	BEGIN
+		Strings.Append(text, piece);
+		Strings.AppendChar(text, 0DX); Strings.AppendChar(text, 0AX)
+	END Line;
+
+	(** A reader over a piece of text. *)
+	PROCEDURE Reader* (CONST text: ARRAY OF CHAR): Streams.Reader;
+	VAR r: Streams.StringReader;
+	BEGIN
+		NEW(r, LEN(text)); r.Set(text);
+		RETURN r
+	END Reader;
+
+	END HTTPTestShared.
+
+positive: a request line and the fields under it
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, Streams;
+
+	VAR text: T.Text; in: Streams.Reader; header: WebHTTP.RequestHeader; res: INTEGER;
+		value: ARRAY 64 OF CHAR;
+
+	BEGIN
+		text := "";
+		T.Line(text, "GET /index.html HTTP/1.1");
+		T.Line(text, "Host: example.com");
+		T.Line(text, "User-Agent: something");
+		T.Line(text, "Accept: text/html");
+		T.Line(text, "X-Probe: yes");
+		T.Line(text, "");
+		in := T.Reader(text);
+
+		WebHTTP.ParseRequest(in, header, res, NIL);
+		ASSERT(res = WebHTTP.OK, 1);
+		ASSERT(header.method = WebHTTP.GetM, 2);
+		ASSERT(header.uri = "/index.html", 3);
+		ASSERT(header.maj = 1, 4);
+		ASSERT(header.min = 1, 5);
+		ASSERT(header.host = "example.com", 6);
+		ASSERT(header.useragent = "something", 7);
+		ASSERT(header.accept = "text/html", 8);
+
+		(*	A field the record has no room of its own for goes into the list, under a name with the
+			colon taken off -- which is what the writer of one has to put back. *)
+		ASSERT(WebHTTP.HasAdditionalField(header.additionalFields, "X-Probe"), 9);
+		ASSERT(WebHTTP.GetAdditionalFieldValue(header.additionalFields, "X-Probe", value), 10);
+		ASSERT(value = "yes", 11);
+		ASSERT(~WebHTTP.HasAdditionalField(header.additionalFields, "X-Absent"), 12);
+
+		(* and the version test is a comparison, not an equality *)
+		ASSERT(WebHTTP.Version(header, 1, 0), 13);
+		ASSERT(WebHTTP.Version(header, 1, 1), 14);
+		ASSERT(~WebHTTP.Version(header, 1, 2), 15)
+	END Test.
+
+positive: a status line and the fields under it
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, Streams;
+
+	VAR text: T.Text; in: Streams.Reader; header: WebHTTP.ResponseHeader; res: INTEGER;
+		value: ARRAY 64 OF CHAR;
+
+	BEGIN
+		text := "";
+		T.Line(text, "HTTP/1.1 404 Not Found");
+		T.Line(text, "Server: something");
+		T.Line(text, "Content-Type: text/plain");
+		T.Line(text, "Content-Length: 12");
+		T.Line(text, "X-Probe: yes");
+		T.Line(text, "");
+		in := T.Reader(text);
+
+		WebHTTP.ParseReply(in, header, res, NIL);
+		ASSERT(res = WebHTTP.OK, 1);
+		ASSERT(header.statuscode = 404, 2);
+		ASSERT(header.reasonphrase = "Not Found", 3);
+		ASSERT(header.server = "something", 4);
+		ASSERT(header.contenttype = "text/plain", 5);
+		ASSERT(header.contentlength = 12, 6);
+		ASSERT(WebHTTP.GetAdditionalFieldValue(header.additionalFields, "X-Probe", value), 7);
+		ASSERT(value = "yes", 8);
+
+		(*	A reply with no length at all says so with -1 rather than with zero: the client tells the
+			two apart to decide whether to read to the close. *)
+		text := "";
+		T.Line(text, "HTTP/1.0 200 OK");
+		T.Line(text, "");
+		in := T.Reader(text);
+		WebHTTP.ParseReply(in, header, res, NIL);
+		ASSERT(res = WebHTTP.OK, 9);
+		ASSERT(header.statuscode = 200, 10);
+		ASSERT(header.contentlength = -1, 11)
+	END Test.
+
+positive: a field is found whatever case it was written in
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, Streams;
+
+	VAR text: T.Text; in: Streams.Reader; header: WebHTTP.ResponseHeader; res: INTEGER;
+		value: ARRAY 64 OF CHAR;
+
+	BEGIN
+		(*	HTTP field names are case-insensitive, and the parser lower-cases the ones it knows for
+			that reason (the comment in the source says it was the IIS replies that made it). The
+			lookups of the fields it does not know compare the same way. *)
+		text := "";
+		T.Line(text, "HTTP/1.1 200 OK");
+		T.Line(text, "CONTENT-TYPE: text/plain");
+		T.Line(text, "content-length: 3");
+		T.Line(text, "X-Probe: yes");
+		T.Line(text, "");
+		in := T.Reader(text);
+
+		WebHTTP.ParseReply(in, header, res, NIL);
+		ASSERT(header.contenttype = "text/plain", 1);
+		ASSERT(header.contentlength = 3, 2);
+		ASSERT(WebHTTP.GetAdditionalFieldValue(header.additionalFields, "x-probe", value), 3);
+		ASSERT(WebHTTP.GetAdditionalFieldValue(header.additionalFields, "X-PROBE", value), 4);
+		ASSERT(value = "yes", 5)
+	END Test.
+
+positive: every method has a name, and the name gives the method back
+
+	MODULE Test;
+	IMPORT WebHTTP;
+
+	CONST Count = 26;
+
+	VAR codes: ARRAY Count OF SIGNED32; i: SIZE; name: ARRAY 32 OF CHAR; back: SIGNED32;
+
+	BEGIN
+		codes[0] := WebHTTP.GetM; codes[1] := WebHTTP.HeadM; codes[2] := WebHTTP.PutM;
+		codes[3] := WebHTTP.PostM; codes[4] := WebHTTP.OptionsM; codes[5] := WebHTTP.TraceM;
+		codes[6] := WebHTTP.DeleteM; codes[7] := WebHTTP.ConnectM; codes[8] := WebHTTP.PropfindM;
+		codes[9] := WebHTTP.ProppatchM; codes[10] := WebHTTP.MkcolM; codes[11] := WebHTTP.CopyM;
+		codes[12] := WebHTTP.MoveM; codes[13] := WebHTTP.LockM; codes[14] := WebHTTP.UnlockM;
+		codes[15] := WebHTTP.VersionControlM; codes[16] := WebHTTP.ReportM;
+		codes[17] := WebHTTP.CheckoutM; codes[18] := WebHTTP.CheckinM;
+		codes[19] := WebHTTP.UncheckoutM; codes[20] := WebHTTP.MkworkspaceM;
+		codes[21] := WebHTTP.UpdateM; codes[22] := WebHTTP.LabelM; codes[23] := WebHTTP.MergeM;
+		codes[24] := WebHTTP.BaselineControlM; codes[25] := WebHTTP.MkactivityM;
+
+		FOR i := 0 TO Count - 1 DO
+			WebHTTP.GetMethodName(codes[i], name);
+			WebHTTP.GetMethod(name, back);
+			ASSERT(back = codes[i], 1);
+			ASSERT(back # WebHTTP.UnknownM, 2)
+		END;
+
+		(* a word that is not a method is one method: the unknown one *)
+		name := "FROBNICATE";
+		WebHTTP.GetMethod(name, back);
+		ASSERT(back = WebHTTP.UnknownM, 3)
+	END Test.
+
+positive: a method with no name is not written into a request line
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, Streams;
+
+	VAR name: ARRAY 32 OF CHAR; w: Streams.StringWriter; text: T.Text;
+
+	BEGIN
+		(*	WriteRequestLine asks GetMethodName for the name and writes nothing when the answer is
+			"UNKNOWN". GetMethodName answered "UNKOWN", one letter short, so the guard never held and
+			a request line went out with a word no server knows where the method belongs. *)
+		WebHTTP.GetMethodName(WebHTTP.UnknownM, name);
+		ASSERT(name = "UNKNOWN", 1);
+
+		Streams.OpenStringWriter(w, 1024);
+		WebHTTP.WriteRequestLine(w, 1, 1, WebHTTP.UnknownM, "/index.html", "example.com");
+		w.Update; w.Get(text);
+		ASSERT(text = "", 2);
+
+		(* a method it can name is written, with the host under it *)
+		Streams.OpenStringWriter(w, 1024);
+		WebHTTP.WriteRequestLine(w, 1, 1, WebHTTP.GetM, "/index.html", "example.com");
+		w.Update; w.Get(text);
+		ASSERT(T.Said(text, "GET /index.html HTTP/1.1"), 3);
+		ASSERT(T.Said(text, "Host: example.com"), 4)
+	END Test.
+
+positive: a response header written out and read back is the same header
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, Streams;
+
+	VAR out: WebHTTP.ResponseHeader; back: WebHTTP.ResponseHeader; sw: Streams.StringWriter;
+		w: Streams.Writer; in: Streams.Reader; text: T.Text; res: INTEGER; value: ARRAY 64 OF CHAR;
+
+	BEGIN
+		out.maj := 1; out.min := 1;
+		out.statuscode := WebHTTP.OK;
+		out.server := "a2";
+		out.contenttype := "text/plain";
+		out.contentlength := 42;
+		out.location := ""; out.contentlocation := ""; out.transferencoding := "";
+		out.lastmodified := ""; out.additionalFields := NIL;
+		WebHTTP.SetAdditionalFieldValue(out.additionalFields, "X-Probe", "yes");
+
+		Streams.OpenStringWriter(sw, 4096); w := sw;	(* SendResponseHeader takes a VAR of the base type *)
+		WebHTTP.SendResponseHeader(out, w);
+		w.Update; sw.Get(text);
+
+		(*	The writer puts the colon back after the field name the parser took it off -- which is
+			the half the client had wrong. *)
+		ASSERT(T.Said(text, "X-Probe: yes"), 1);
+
+		in := T.Reader(text);
+		WebHTTP.ParseReply(in, back, res, NIL);
+		ASSERT(res = WebHTTP.OK, 2);
+		ASSERT(back.statuscode = out.statuscode, 3);
+		ASSERT(back.reasonphrase = "OK", 4);
+		ASSERT(back.server = out.server, 5);
+		ASSERT(back.contenttype = out.contenttype, 6);
+		ASSERT(back.contentlength = out.contentlength, 7);
+		ASSERT(WebHTTP.GetAdditionalFieldValue(back.additionalFields, "X-Probe", value), 8);
+		ASSERT(value = "yes", 9)
+	END Test.
+
+positive: a URL is taken apart into a host, a port and a path
+
+	MODULE Test;
+	IMPORT WebHTTP, Strings;
+
+	VAR host: ARRAY 128 OF CHAR; path: ARRAY 2048 OF CHAR; port: UNSIGNED32;
+		url: ARRAY 512 OF CHAR; i: SIZE;
+
+	BEGIN
+		ASSERT(WebHTTP.SplitHTTPAdr("http://example.com/index.html", host, path, port), 1);
+		ASSERT(host = "example.com", 2);
+		ASSERT(path = "/index.html", 3);
+		ASSERT(port = WebHTTP.HTTPPort, 4);
+
+		ASSERT(WebHTTP.SplitHTTPAdr("https://example.com/index.html", host, path, port), 5);
+		ASSERT(host = "example.com", 6);
+		ASSERT(port = WebHTTP.HTTPSPort, 7);
+
+		(* a port written in the URL wins over the one the scheme implies *)
+		ASSERT(WebHTTP.SplitHTTPAdr("http://example.com:8080/a", host, path, port), 8);
+		ASSERT(host = "example.com", 9);
+		ASSERT(port = 8080, 10);
+		ASSERT(path = "/a", 11);
+
+		(*	The path was copied under the bound of the *host* array, so a path longer than the host
+			array -- 127 characters with the array the client holds -- was refused as an illegal
+			URL with the path array all but empty. *)
+		url := "http://example.com/";
+		FOR i := 0 TO 200 DO Strings.Append(url, "a") END;
+		ASSERT(WebHTTP.SplitHTTPAdr(url, host, path, port), 12);
+		ASSERT(Strings.Length(path) = 202, 13);
+
+		ASSERT(~WebHTTP.SplitHTTPAdr("notaurl", host, path, port), 14)
+	END Test.
+
+positive: the path of a URL is terminated where it ends
+
+	MODULE Test;
+	IMPORT WebHTTP;
+
+	VAR url: ARRAY 64 OF CHAR; path: ARRAY 256 OF CHAR; i: SIZE;
+
+	BEGIN
+		(*	GetPath copies into the caller's array and used to leave it as it found it after the
+			last byte copied -- so the path read back as the new one followed by whatever was there
+			before. A buffer full of Z is how a caller sees that. *)
+		FOR i := 0 TO LEN(path) - 1 DO path[i] := "Z" END;
+		url := "http://example.com/a/b";
+		WebHTTP.GetPath(url, path);
+		ASSERT(path = "/a/b", 1);
+
+		(* a URL with no path at all is the root *)
+		FOR i := 0 TO LEN(path) - 1 DO path[i] := "Z" END;
+		url := "http://example.com";
+		WebHTTP.GetPath(url, path);
+		ASSERT(path = "/", 2);
+
+		(* and something that is not a URL is its own path *)
+		FOR i := 0 TO LEN(path) - 1 DO path[i] := "Z" END;
+		url := "/already/a/path";
+		WebHTTP.GetPath(url, path);
+		ASSERT(path = "/already/a/path", 3)
+	END Test.
+
+positive: the scheme of a URL is judged by where the colon is, not by what it says
+
+	MODULE Test;
+	IMPORT WebHTTP;
+
+	VAR host: ARRAY 64 OF CHAR; path: ARRAY 64 OF CHAR; port: UNSIGNED32;
+
+	BEGIN
+		(*	SplitHTTPAdr looks for ":" and "//" at the fourth or fifth character and reads the rest
+			as a host: it never compares the scheme with "http". So a scheme of the right shape and
+			the wrong name is taken, and the port it gets is the one the position implies. Pinned
+			rather than changed -- the callers in the tree hand it URLs they built themselves, and a
+			refusal here would be a new way for them to fail. *)
+		ASSERT(WebHTTP.SplitHTTPAdr("abcd://example.com/x", host, path, port), 1);
+		ASSERT(host = "example.com", 2);
+		ASSERT(port = WebHTTP.HTTPPort, 3);
+
+		ASSERT(WebHTTP.SplitHTTPAdr("abcde://example.com/x", host, path, port), 4);
+		ASSERT(port = WebHTTP.HTTPSPort, 5)
+	END Test.
+
+positive: the client fetches over the loopback, and what it sent is a request
+
+	MODULE Test;
+	IMPORT T := HTTPTestShared, WebHTTP, NewHTTPClient, Streams, Strings;
+
+	VAR server: T.Server; connection: NewHTTPClient.HTTPConnection; reply: T.Text;
+		url: ARRAY 128 OF CHAR; number: ARRAY 16 OF CHAR; body: Streams.Reader;
+		res: INTEGER; got: ARRAY 64 OF CHAR; length: SIZE;
+
+	BEGIN
+		reply := "";
+		T.Line(reply, "HTTP/1.0 200 OK");
+		T.Line(reply, "Content-Type: text/plain");
+		T.Line(reply, "Content-Length: 5");
+		T.Line(reply, "");
+		Strings.Append(reply, "hello");
+
+		NEW(server, reply);
+		ASSERT(server.ready, 1);
+
+		url := "http://127.0.0.1:";
+		Strings.IntToStr(server.port, number);
+		Strings.Append(url, number); Strings.Append(url, "/index.html");
+
+		NEW(connection);
+		WebHTTP.SetAdditionalFieldValue(connection.requestHeader.additionalFields, "X-Probe", "yes");
+		connection.Get(url, FALSE, body, res);
+		ASSERT(res = 0, 2);
+		ASSERT(connection.responseHeader.statuscode = 200, 3);
+		ASSERT(connection.responseHeader.contentlength = 5, 4);
+		ASSERT(connection.responseHeader.contenttype = "text/plain", 5);
+
+		ASSERT(body # NIL, 6);
+		body.Bytes(got, 0, 5, length);
+		got[length] := 0X;
+		ASSERT(got = "hello", 7);
+
+		server.AwaitServed;
+		connection.Close;
+
+		(*	And the request the server saw is a request: the client wrote its additional fields with
+			a space where the colon belongs, so a server reading them by name found none of them. *)
+		ASSERT(T.Said(server.request, "GET /index.html HTTP/1.0"), 8);
+		ASSERT(T.Said(server.request, "Host: 127.0.0.1"), 9);
+		ASSERT(T.Said(server.request, "X-Probe: yes"), 10)
+	END Test.

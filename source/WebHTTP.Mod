@@ -495,7 +495,7 @@ BEGIN
 		|MergeM: COPY("MERGE", name);
 		|BaselineControlM: COPY("BASELINE-CONTROL", name);
 		|MkactivityM: COPY("MKACTIVITY", name);
-		ELSE COPY("UNKOWN", name)
+		ELSE COPY("UNKNOWN", name)
 	END;
 END GetMethodName;
 
@@ -556,6 +556,7 @@ BEGIN
 	GetToken(in, s);
 	wellformed:=GetVersion(s, header.maj, header.min);
 	GetToken(in, s); i := 0; GetInt(i, s, header.statuscode); in.Ln(header.reasonphrase);
+	Strings.TrimLeft(header.reasonphrase, " ");	(* Ln takes the rest of the line, the space after the code included *)
 	header.server := ""; header.date := ""; header.contenttype := "";
 	header.contentlength := -1;
 	header.transferencoding := ""; header.additionalFields := NIL;
@@ -809,7 +810,10 @@ BEGIN
 		END;
 		IF i > 0 THEN
 			WHILE  (url[i] # "/") & (url[i] # 0X) DO INC(i) END;
-			IF url[i] # 0X THEN j := 0; REPEAT path[j] := url[i]; INC(i); INC(j) UNTIL url[i] = 0X
+			IF url[i] # 0X THEN
+				j := 0;
+				WHILE (url[i] # 0X) & (j < LEN(path) - 1) DO path[j] := url[i]; INC(i); INC(j) END;
+				path[j] := 0X
 			ELSE path := "/"
 			END
 		ELSE COPY(url, path)
@@ -846,7 +850,7 @@ BEGIN
 	END;
 	j := 0;
 	WHILE (i < LEN(url)) & (url[i] # 0X) DO
-		IF j < LEN(host) - 1 THEN path[j] := url[i] ELSE RETURN FALSE END;
+		IF j < LEN(path) - 1 THEN path[j] := url[i] ELSE RETURN FALSE END;
 		 INC(i); INC(j);
 		 IF i = LEN(url) THEN RETURN FALSE END
 	END;

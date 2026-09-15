@@ -99,7 +99,7 @@ TYPE
 				IF requestHeader.accept # "" THEN w.String("Accept: "); w.String(requestHeader.accept); w.Ln() END;
 				x := requestHeader.additionalFields;
 				WHILE x # NIL DO
-					w.String(x.key);  w.Char(" "); w.String(x.value);w.Ln();
+					w.String(x.key); w.String(": "); w.String(x.value); w.Ln();
 
 					x := x.next
 				END;
