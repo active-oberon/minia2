@@ -99,7 +99,10 @@ positive: the helpers these tests are written with
 	BEGIN
 		COPY(name, filename); Strings.Append(filename, ".Mod");
 		Write(filename, content);
-		argument := "--objectFile=Intermediate --objectFileExtension=Fil ";
+		(*	The platform is named rather than left to the host: the linker's default backend is AMD
+			whatever the machine is, and IR written by another one does not go through it -- A64
+			code carries a link register, which the AMD code generator has no register for. *)
+		argument := "--platform=Unix64 --objectFile=Intermediate --objectFileExtension=Fil ";
 		Strings.Append(argument, filename);
 		result := Run("Compiler.Compile", argument, text);
 		COPY(name, filename); Strings.Append(filename, ".Fil");
