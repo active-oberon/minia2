@@ -130,3 +130,209 @@ positive: complex numbers, where the answer is known by hand
 		ASSERT(NbrRe.Abs(r - 3.0) < 1.0E-5);
 		ASSERT(NbrRe.Abs(a - 1.5707963) < 1.0E-5)
 	END Test.
+
+positive: the integer factorial and power, at their edges
+
+	MODULE Test;
+	IMPORT MathInt, NbrInt;
+	VAR x: NbrInt.Integer;
+	BEGIN
+		(* the values are the ones anybody can check on paper *)
+		ASSERT(MathInt.Factorial(0) = 1, 1);
+		ASSERT(MathInt.Factorial(1) = 1, 2);
+		ASSERT(MathInt.Factorial(5) = 120, 3);
+		ASSERT(MathInt.Factorial(MathInt.MaxFactorial) = 479001600, 4);	(* 12! is the last that fits *)
+
+		(*	Past the last one that fits, and below zero, the answer is a reported error and a
+			number that says so -- not a wrong number quietly. *)
+		ASSERT(MathInt.Factorial(MathInt.MaxFactorial + 1) = MAX(NbrInt.Integer), 5);
+		ASSERT(MathInt.Factorial(-1) = 0, 6);
+
+		ASSERT(MathInt.Power(2, 10) = 1024, 7);
+		ASSERT(MathInt.Power(3, 5) = 243, 8);
+		ASSERT(MathInt.Power(7, 1) = 7, 9);
+		ASSERT(MathInt.Power(5, 0) = 1, 10);
+		ASSERT(MathInt.Power(0, 5) = 0, 11);
+
+		(* an odd power keeps the sign, an even one loses it *)
+		ASSERT(MathInt.Power(-2, 3) = -8, 12);
+		ASSERT(MathInt.Power(-2, 4) = 16, 13);
+
+		(* zero to the zero is the one case with no answer, and a negative exponent has none here *)
+		ASSERT(MathInt.Power(0, 0) = 0, 14);
+		ASSERT(MathInt.Power(2, -1) = 0, 15);
+
+		x := MathInt.Random();
+		ASSERT(x >= 0, 16)
+	END Test.
+
+positive: the rational factorial, binomial and power
+
+	MODULE Test;
+	IMPORT MathRat, NbrRat, NbrInt;
+	VAR r, x: NbrRat.Rational;
+	BEGIN
+		(* the row of Pascal's triangle everybody remembers *)
+		r := MathRat.Binomial(5, 0);
+		ASSERT(NbrRat.Numer(r) = 1, 1); ASSERT(NbrRat.Denom(r) = 1, 2);
+		r := MathRat.Binomial(5, 2);
+		ASSERT(NbrRat.Numer(r) = 10, 3); ASSERT(NbrRat.Denom(r) = 1, 4);
+		r := MathRat.Binomial(5, 5);
+		ASSERT(NbrRat.Numer(r) = 1, 5);
+		r := MathRat.Binomial(10, 5);
+		ASSERT(NbrRat.Numer(r) = 252, 6);
+
+		(* a binomial of half a step is a rational, which is what this module is for *)
+		r := MathRat.Binomial(-1, 2);
+		ASSERT(NbrRat.Numer(r) = 1, 7);
+
+		ASSERT(NbrRat.Numer(MathRat.Factorial(0)) = 1, 8);
+		ASSERT(NbrRat.Numer(MathRat.Factorial(5)) = 120, 9);
+		ASSERT(NbrRat.Denom(MathRat.Factorial(5)) = 1, 10);
+		ASSERT(NbrRat.Numer(MathRat.Factorial(-1)) = 0, 11);
+
+		NbrRat.Set(1, 2, x);
+		r := MathRat.Power(x, 3);
+		ASSERT(NbrRat.Numer(r) = 1, 12); ASSERT(NbrRat.Denom(r) = 8, 13);
+
+		(* a negative exponent turns the fraction over *)
+		r := MathRat.Power(x, -2);
+		ASSERT(NbrRat.Numer(r) = 4, 14); ASSERT(NbrRat.Denom(r) = 1, 15);
+
+		NbrRat.Set(-1, 2, x);
+		r := MathRat.Power(x, 3);
+		ASSERT(NbrRat.Numer(r) = -1, 16); ASSERT(NbrRat.Denom(r) = 8, 17);
+		r := MathRat.Power(x, 2);
+		ASSERT(NbrRat.Numer(r) = 1, 18); ASSERT(NbrRat.Denom(r) = 4, 19);
+
+		NbrRat.Set(3, 4, x);
+		r := MathRat.Power(x, 0);
+		ASSERT(NbrRat.Numer(r) = 1, 20); ASSERT(NbrRat.Denom(r) = 1, 21)
+	END Test.
+
+positive: a truncated series is the polynomial it lists
+
+	MODULE Test;
+	IMPORT MathReSeries, NbrRe;
+	VAR a, b: ARRAY 3 OF NbrRe.Real; one: ARRAY 1 OF NbrRe.Real; y: NbrRe.Real;
+	BEGIN
+		(* 1 + 2x + 3x^2 at x = 2 is 1 + 4 + 12 *)
+		a[0] := 1.0; a[1] := 2.0; a[2] := 3.0;
+		y := MathReSeries.TruncatedPowerSeries(a, 2.0);
+		ASSERT(NbrRe.Abs(y - 17.0) < 1.0E-4, 1);
+
+		(* at zero a polynomial is its own first coefficient *)
+		y := MathReSeries.TruncatedPowerSeries(a, 0.0);
+		ASSERT(NbrRe.Abs(y - 1.0) < 1.0E-6, 2);
+
+		(*	A list of one coefficient is the constant polynomial: Horner's scheme started at the
+			last coefficient and multiplied by x before the loop it never entered, so a single
+			coefficient came back as a[0] + a[0]x. *)
+		one[0] := 5.0;
+		y := MathReSeries.TruncatedPowerSeries(one, 3.0);
+		ASSERT(NbrRe.Abs(y - 5.0) < 1.0E-6, 3);
+
+		(* a ratio of two of them *)
+		b[0] := 1.0; b[1] := 0.0; b[2] := 1.0;			(* 1 + x^2 *)
+		y := MathReSeries.TruncatedRationalFunction(a, b, 2.0);
+		ASSERT(NbrRe.Abs(y - 17.0/5.0) < 1.0E-4, 4)
+	END Test.
+
+positive: a continued fraction of one level is its leading term
+
+	MODULE Test;
+	IMPORT MathReSeries, NbrRe;
+	VAR a, b: ARRAY 2 OF NbrRe.Real; a1, b1: ARRAY 1 OF NbrRe.Real; y: NbrRe.Real;
+	BEGIN
+		(*	b0 + a1 x / b1, with b0 = 1, a1 = 1, b1 = 2 at x = 4: Lentz's recursion gives
+			1 + 4/2 = 3. *)
+		a[0] := 0.0; a[1] := 1.0;
+		b[0] := 1.0; b[1] := 2.0;
+		y := MathReSeries.TruncatedContinuedFraction(a, b, 4.0);
+		ASSERT(NbrRe.Abs(y - 3.0) < 1.0E-4, 1);
+
+		(*	One level and no more is the leading coefficient by itself. The loop was a REPEAT, so
+			it read a[1] and b[1] of arrays that have no element 1 before it looked at the length. *)
+		a1[0] := 0.0; b1[0] := 7.0;
+		y := MathReSeries.TruncatedContinuedFraction(a1, b1, 4.0);
+		ASSERT(NbrRe.Abs(y - 7.0) < 1.0E-4, 2);
+
+		(* arrays of different lengths are refused with a zero, not read past their ends *)
+		y := MathReSeries.TruncatedContinuedFraction(a, b1, 4.0);
+		ASSERT(y = 0.0, 3)
+	END Test.
+
+positive: the complex series are the same procedures over a complex argument
+
+	MODULE Test;
+	IMPORT MathCplxSeries, NbrCplx, NbrRe;
+	VAR a, b: ARRAY 3 OF NbrRe.Real; one, oneb: ARRAY 1 OF NbrRe.Real;
+		z, w: NbrCplx.Complex;
+	BEGIN
+		(* 1 + 2z + 3z^2 at z = i is 1 + 2i - 3 = -2 + 2i *)
+		a[0] := 1.0; a[1] := 2.0; a[2] := 3.0;
+		NbrCplx.Set(0.0, 1.0, z);
+		w := MathCplxSeries.TruncatedPowerSeries(a, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) + 2.0) < 1.0E-5, 11);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w) - 2.0) < 1.0E-5, 12);
+
+		(* a list of one coefficient is that coefficient, wherever it is evaluated *)
+		one[0] := 5.0;
+		w := MathCplxSeries.TruncatedPowerSeries(one, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 5.0) < 1.0E-5, 13);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-5, 14);
+
+		(* and the ratio of two of them, where the denominator is 1 + z^2 = 0 at z = i, is not
+		   asked -- at z = 2 it is an ordinary number *)
+		b[0] := 1.0; b[1] := 0.0; b[2] := 1.0;
+		NbrCplx.Set(2.0, 0.0, z);
+		w := MathCplxSeries.TruncatedRationalFunction(a, b, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 17.0/5.0) < 1.0E-4, 15);
+
+		(* one level of a continued fraction, which used to read past the arrays *)
+		one[0] := 0.0; oneb[0] := 7.0;
+		w := MathCplxSeries.TruncatedContinuedFraction(one, oneb, z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 7.0) < 1.0E-4, 16)
+	END Test.
+
+positive: the complex functions against the identities that define them
+
+	MODULE Test;
+	IMPORT MathCplx, NbrCplx, NbrRe;
+	VAR z, w: NbrCplx.Complex;
+	BEGIN
+		(* the square root of minus four is two i, by the branch cut this module documents *)
+		NbrCplx.Set(-4.0, 0.0, z);
+		w := MathCplx.Sqrt(z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w)) < 1.0E-5, 11);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w) - 2.0) < 1.0E-5, 12);
+
+		(* exp(i pi) = -1, the identity everybody knows *)
+		NbrCplx.Set(0.0, NbrRe.Pi, z);
+		w := MathCplx.Exp(z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) + 1.0) < 1.0E-5, 13);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-5, 14);
+
+		(* ln is what undoes exp, on a number away from the branch cut *)
+		NbrCplx.Set(1.0, 1.0, z);
+		w := MathCplx.Ln(MathCplx.Exp(z));
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 1.0) < 1.0E-4, 15);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w) - 1.0) < 1.0E-4, 16);
+
+		(* sin^2 + cos^2 = 1 holds over the complex numbers too *)
+		w := MathCplx.Sin(z) * MathCplx.Sin(z) + MathCplx.Cos(z) * MathCplx.Cos(z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 1.0) < 1.0E-3, 17);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-3, 18);
+
+		(* an integer power is the product taken that many times *)
+		NbrCplx.Set(0.0, 1.0, z);
+		w := MathCplx.IntPower(z, 4);					(* i to the fourth is one *)
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 1.0) < 1.0E-4, 19);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-4, 20);
+
+		(* and cosh^2 - sinh^2 = 1, which is the hyperbolic half of the same statement *)
+		NbrCplx.Set(0.5, 0.25, z);
+		w := MathCplx.Cosh(z) * MathCplx.Cosh(z) - MathCplx.Sinh(z) * MathCplx.Sinh(z);
+		ASSERT(NbrRe.Abs(NbrCplx.Re(w) - 1.0) < 1.0E-4, 21);
+		ASSERT(NbrRe.Abs(NbrCplx.Im(w)) < 1.0E-4, 22)
+	END Test.

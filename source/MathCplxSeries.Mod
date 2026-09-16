@@ -63,8 +63,12 @@ VAR
 		IF aLen # bLen THEN
 			DataErrors.Error( "Lengths of supplied arrays must be equal." );  f := 0;  RETURN f END;
 		IF b[0] = 0 THEN b[0] := 1/NbrRe.MaxNbr END;
+		(*	A REPEAT read a[1] and b[1] before it asked how long the arrays are: one level is
+			the leading coefficient by itself, and there is no element 1 to read. *)
 		f := b[0];  c := f;  d := 0;  i := 1;
-		REPEAT c := b[i] + a[i] * z / c;  d := 1 / (b[i] + a[i] * z * d);  f := c * d * f;  INC( i ) UNTIL i = aLen;
+		WHILE i < aLen DO
+			c := b[i] + a[i] * z / c;  d := 1 / (b[i] + a[i] * z * d);  f := c * d * f;  INC( i )
+		END;
 		RETURN f
 	END TruncatedContinuedFraction;
 
@@ -83,9 +87,12 @@ VAR
 	PROCEDURE TruncatedPowerSeries*( a: ARRAY OF NbrRe.Real;  z: NbrCplx.Complex ): NbrCplx.Complex;
 	VAR i, len: SIZE;  prod: NbrCplx.Complex;
 	BEGIN
-		len := LEN( a );  prod := a[len - 1] * z;
-		FOR i := len - 2 TO 1 BY -1 DO prod := (a[i] + prod) * z END;
-		prod := a[0] + prod;  RETURN prod
+		(*	Horner's scheme, from the last coefficient down to the first. It used to multiply
+			the last one by z before the loop and add a[0] after it, which is the same answer for
+			two coefficients or more and a[0] + a[0]z for a list of one. *)
+		len := LEN( a );  prod := a[len - 1];
+		FOR i := len - 2 TO 0 BY -1 DO prod := prod * z + a[i] END;
+		RETURN prod
 	END TruncatedPowerSeries;
 
 (**         a0 + a1z + a2z2 + a3z3 + ...
