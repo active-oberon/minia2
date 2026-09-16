@@ -149,3 +149,111 @@ positive: searching a text for a pattern
 		TextUtilities.TextToStr(text, s);
 		ASSERT(s = "three two three two three")
 	END Test.
+
+positive: the old Unicode property readers agree with the data files
+
+	MODULE Test;
+	IMPORT UnicodeProperties, Strings, Files, TextUtilities, Configuration;
+	VAR unicode: UnicodeProperties.UnicodeTxtReader; mirror: UnicodeProperties.BidiMirroringTxtReader;
+		t: Strings.String; p: ARRAY 64 OF CHAR;
+
+		PROCEDURE Open(CONST name: ARRAY OF CHAR; VAR f: Files.File; VAR w: Files.Writer);
+		BEGIN
+			f := Files.New(name); ASSERT(f # NIL, 100);
+			Files.OpenWriter(w, f, 0)
+		END Open;
+
+		PROCEDURE Line(VAR w: Files.Writer; CONST text: ARRAY OF CHAR);
+		BEGIN
+			w.String(text); w.Char(0DX)
+		END Line;
+
+		PROCEDURE Close(VAR f: Files.File; VAR w: Files.Writer);
+		BEGIN
+			w.Update; Files.Register(f)
+		END Close;
+
+		PROCEDURE WriteUnicodeData;
+		VAR f: Files.File; w: Files.Writer;
+		BEGIN
+			Open("UnicodeData.txt", f, w);
+			Line(w, "0020;SPACE;Zs;0;WS;;;;;N;;;;;");
+			Line(w, "0028;LEFT PARENTHESIS;Ps;0;ON;;;;;Y;OPENING PARENTHESIS;;;;");
+			Line(w, "003C;LESS-THAN SIGN;Sm;0;ON;;;;;Y;;;;;");
+			Line(w, "0041;LATIN CAPITAL LETTER A;Lu;0;L;;;;;N;;;;0061;");
+			Line(w, "05D0;HEBREW LETTER ALEF;Lo;0;R;;;;;N;;;;;");
+			Line(w, "0660;ARABIC-INDIC DIGIT ZERO;Nd;0;AN;;0;0;0;N;;;;;");
+			Close(f, w)
+		END WriteUnicodeData;
+
+		PROCEDURE WriteConfiguration;
+		VAR f: Files.File; w: Files.Writer;
+		BEGIN
+			Open("Configuration.XML", f, w);
+			Line(w, '<Configuration><Section name="Codecs"><Section name="Decoder"><Section name="Text">');
+			Line(w, '<Setting name="ISO8859-1" value="TextUtilities.ISO88591DecoderFactory"/>');
+			Line(w, "</Section></Section></Section></Configuration>");
+			Close(f, w);
+			Configuration.Init
+		END WriteConfiguration;
+
+		PROCEDURE WriteBidiMirroring;
+		VAR f: Files.File; w: Files.Writer;
+		BEGIN
+			Open("BidiMirroring.txt", f, w);
+			Line(w, "0028; 0029 # LEFT PARENTHESIS");
+			Line(w, "003C; 003E # LESS-THAN SIGN");
+			Close(f, w)
+		END WriteBidiMirroring;
+
+	BEGIN
+		WriteConfiguration;
+		IF TextUtilities.GetDefaultAttributes() = NIL THEN END;			(* module init registers text decoders *)
+		WriteUnicodeData;
+		WriteBidiMirroring;
+
+		NEW(unicode);
+		NEW(mirror);
+		NEW(t, 16); t^ := "";
+
+		unicode.GetBidiCharacterType(041H, t); ASSERT(t^ = "L", 1);			(* LATIN CAPITAL LETTER A *)
+		unicode.GetBidiCharacterType(05D0H, t); ASSERT(t^ = "R", 2);		(* HEBREW LETTER ALEF *)
+		unicode.GetBidiCharacterType(0660H, t); ASSERT(t^ = "AN", 3);		(* ARABIC-INDIC DIGIT ZERO *)
+		unicode.GetBidiCharacterType(020H, t); ASSERT(t^ = "WS", 4);
+		unicode.GetBidiCharacterType(041H, t); ASSERT(t^ = "L", 5);			(* cache path *)
+
+		ASSERT(unicode.IsMirroredChar(028H), 6);
+		ASSERT(~unicode.IsMirroredChar(041H), 7);
+		ASSERT(unicode.IsWhiteSpaceChar(020H), 8);
+
+		unicode.GetProperty(041H, 1, p); ASSERT(p = "LATIN CAPITAL LETTER A", 9);
+		unicode.GetProperty(05D0H, 1, p); ASSERT(p = "HEBREW LETTER ALEF", 10);
+
+		ASSERT(mirror.GetMirroredChar(028H) = 029H, 11);					(* ( -> ) *)
+		ASSERT(mirror.GetMirroredChar(03CH) = 03EH, 12);					(* < -> > *)
+		ASSERT(mirror.GetMirroredChar(028H) = 029H, 13)					(* cache path *)
+	END Test.
+
+positive: bidirectional controls have printable stand-ins when asked
+
+	MODULE Test;
+	IMPORT UnicodeBidirectionality, Texts;
+	VAR ch: Texts.Char32;
+	BEGIN
+		ch := 200EH;
+		UnicodeBidirectionality.showUnicodeControlCharacters := FALSE;
+		UnicodeBidirectionality.GetDisplayCharacter(ch);
+		ASSERT(ch = 200EH, 1);
+
+		UnicodeBidirectionality.showUnicodeControlCharacters := TRUE;
+		UnicodeBidirectionality.GetDisplayCharacter(ch);
+		ASSERT(ch = 21BEH, 2);
+		ch := 200FH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 21BFH, 3);
+		ch := 202AH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 2308H, 4);
+		ch := 202BH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 2309H, 5);
+		ch := 202DH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 250DH, 6);
+		ch := 202EH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 2511H, 7);
+		ch := 202CH; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 252FH, 8);
+		ch := 041H; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 041H, 9);
+		UnicodeBidirectionality.showUnicodeControlCharacters := FALSE
+	END Test.
