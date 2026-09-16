@@ -257,7 +257,7 @@ TYPE
 			(* read the characters until the end of the line is reached *)
 			REPEAT
 				textReader.ReadCh(thisChar);
-			UNTIL ((thisChar = LF) OR (thisChar = CR));
+			UNTIL (thisChar = LF) OR (thisChar = CR) OR (thisChar = EOT) OR (thisChar = NUL);
 		END NextLine;
 
 	END TxtReader;
@@ -475,22 +475,24 @@ TYPE
 			res : INTEGER;
 		BEGIN
 			sourceInt := -1;
-			i := -1;
+			i := 0;
 
 			(* read the characters that form the code for the source character *)
-			REPEAT
-				INC(i);
+			LOOP
 				textReader.ReadCh(tempChar);
-				sourceString[i] := CHR(tempChar);
-			UNTIL (tempChar = EOT) OR (tempChar = ORD('#')) OR (tempChar = ORD(';'));
-
-			(* if the character was terminated by a ';' it is assumed to be valid and is converted into an integer *)
-			IF (tempChar = ORD(';')) THEN
-				sourceString[i] := CHR(0H);
-				UTF8Strings.HexStrToChar32(sourceString,sourceInt,res);
-			END;
-
-			RETURN sourceInt;
+				IF (tempChar = EOT) OR (tempChar = NUL) OR (tempChar = ORD('#')) OR (tempChar = CR) OR (tempChar = LF) THEN
+					RETURN sourceInt
+				ELSIF (tempChar = ORD(';')) THEN
+					sourceString[i] := CHR(0H);
+					UTF8Strings.HexStrToChar32(sourceString,sourceInt,res);
+					RETURN sourceInt
+				ELSIF i < LEN(sourceString)-1 THEN
+					sourceString[i] := CHR(tempChar);
+					INC(i)
+				ELSE
+					RETURN sourceInt
+				END
+			END
 		END GetSourceChar;
 
 
@@ -504,23 +506,27 @@ TYPE
 			res : INTEGER;
 		BEGIN
 			targetInt := -1;
-			i := -1;
+			i := 0;
 
 			(* read the whitespace *)
 			textReader.ReadCh(tempChar);
 
 			(* read the characters that form the code for the target character *)
-			REPEAT
-				INC(i);
+			LOOP
 				textReader.ReadCh(tempChar);
-				targetString[i] := CHR(tempChar);
-			UNTIL (tempChar = EOT) OR (tempChar = ORD('#')) OR (tempChar = SP);
-
-			(* terminate the result string and convert it into an integer *)
-			targetString[i] := CHR(0H);
-			UTF8Strings.HexStrToChar32(targetString,targetInt,res);
-
-			RETURN targetInt;
+				IF (tempChar = EOT) OR (tempChar = NUL) OR (tempChar = ORD('#')) OR (tempChar = SP) OR (tempChar = CR) OR (tempChar = LF) THEN
+					IF i > 0 THEN
+						targetString[i] := CHR(0H);
+						UTF8Strings.HexStrToChar32(targetString,targetInt,res)
+					END;
+					RETURN targetInt
+				ELSIF i < LEN(targetString)-1 THEN
+					targetString[i] := CHR(tempChar);
+					INC(i)
+				ELSE
+					RETURN targetInt
+				END
+			END
 		END GetTargetChar;
 
 
@@ -540,7 +546,7 @@ TYPE
 				textReader.SetPosition(startPos);
 				REPEAT
 					sChar := GetSourceChar();
-					IF (sChar # char) THEN
+					IF (sChar # char) & (sChar # -1) THEN
 						NextLine;
 					END;
 				UNTIL (sChar = char) OR (sChar = -1);	(* if the char is found or if the end of chars is reached, jump out of the loop *)

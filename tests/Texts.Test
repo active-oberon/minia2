@@ -231,7 +231,8 @@ positive: the old Unicode property readers agree with the data files
 
 		ASSERT(mirror.GetMirroredChar(028H) = 029H, 11);					(* ( -> ) *)
 		ASSERT(mirror.GetMirroredChar(03CH) = 03EH, 12);					(* < -> > *)
-		ASSERT(mirror.GetMirroredChar(028H) = 029H, 13)					(* cache path *)
+		ASSERT(mirror.GetMirroredChar(041H) = 0, 13);					(* not every character has a mirror *)
+		ASSERT(mirror.GetMirroredChar(028H) = 029H, 14)					(* cache path *)
 	END Test.
 
 positive: bidirectional controls have printable stand-ins when asked
