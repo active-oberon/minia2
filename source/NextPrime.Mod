@@ -3,10 +3,12 @@ MODULE NextPrime;
 VAR
 	add, next: ARRAY 11 OF INTEGER;
 
+	(* Calc returns the least prime greater than n; MAX(INTEGER) has no representable successor. *)
 	PROCEDURE Calc*( n: INTEGER ): INTEGER;
 	VAR
 		i, p, j: INTEGER;
 	BEGIN 
+		ASSERT(n < MAX(INTEGER));
 		IF n < 2 THEN  RETURN 2;
 		ELSIF n < 7 THEN
 			i := 8;  p := n - 2;  n := 2;
@@ -18,7 +20,7 @@ VAR
 			INC( j, add[i] );  i := next[i];
 		END;
 		INC( n, j );  p := 7;  j := 0;
-		WHILE p * p <= n DO
+		WHILE p <= n DIV p DO
 			IF n MOD p = 0 THEN
 				INC( n, add[i] );  i := next[i];  p := 7;  j := 0;
 			ELSE

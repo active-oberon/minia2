@@ -1,0 +1,58 @@
+# NextPrime chooses hash table sizes for BWHCompressor. Compression already exercises it,
+# but small payloads never ask for primes near the signed integer limit.
+# These cases check the strict successor against trial division and exercise the upper bound.
+# Squaring the trial divisor overflowed near MAX(INTEGER), and an input at MAX wrapped the
+# candidate below zero. Division keeps the stopping condition in range; the impossible input traps.
+#
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: the first primes are strict successors and negative inputs start at two
+
+	MODULE Test;
+	IMPORT NextPrime;
+	BEGIN
+		ASSERT(NextPrime.Calc(MIN(INTEGER)) = 2, 1);
+		ASSERT(NextPrime.Calc(-1) = 2, 2);
+		ASSERT(NextPrime.Calc(0) = 2, 3);
+		ASSERT(NextPrime.Calc(1) = 2, 4);
+		ASSERT(NextPrime.Calc(2) = 3, 5);
+		ASSERT(NextPrime.Calc(3) = 5, 6);
+		ASSERT(NextPrime.Calc(5) = 7, 7);
+		ASSERT(NextPrime.Calc(7) = 11, 8)
+	END Test.
+
+positive: wheel transitions and prime squares agree with independent trial division
+
+	MODULE Test;
+	IMPORT NextPrime;
+	VAR n, expected, divisor: INTEGER; prime: BOOLEAN;
+	BEGIN
+		FOR n := 2 TO 10000 DO
+			expected := n;
+			REPEAT
+				INC(expected); divisor := 2; prime := TRUE;
+				WHILE prime & (divisor <= expected DIV divisor) DO
+					prime := expected MOD divisor # 0; INC(divisor)
+				END
+			UNTIL prime;
+			ASSERT(NextPrime.Calc(n) = expected, 1)
+		END
+	END Test.
+
+positive: the last representable prime is reachable without overflowing a squared divisor
+
+	MODULE Test;
+	IMPORT NextPrime;
+	BEGIN
+		ASSERT(NextPrime.Calc(2147483629) = 2147483647, 1);
+		ASSERT(NextPrime.Calc(MAX(INTEGER) - 1) = MAX(INTEGER), 2)
+	END Test.
+
+negative: no representable strict successor exists above the largest integer
+
+	MODULE Test;
+	IMPORT NextPrime;
+	VAR result: INTEGER;
+	BEGIN
+		result := NextPrime.Calc(MAX(INTEGER))
+	END Test.
