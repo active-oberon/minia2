@@ -188,6 +188,7 @@ ZipFS.Mod
 Codecs.Mod
 UnicodeProperties.Mod
 ContextualDependency.Mod
+UnicodeBidirectionality.Mod
 AMD64.WMRasterScale.Mod
 WMGraphics.Mod
 TextUtilities.Mod
