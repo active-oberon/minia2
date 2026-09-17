@@ -1,4 +1,4 @@
-# Tests for the number tower of std/math -- the four integer widths, the rationals, the generator.
+# Tests for lib/numbers and the random generator retained from the original std/math suite.
 #
 # options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
 #
@@ -13,6 +13,97 @@
 # negative number since it was written.
 #
 # Each case is positive: it must compile and run its module body without a failing ASSERT.
+#
+# The remaining string helpers and FLOAT64 wrapper had no direct checks. Their cases exercise
+# assignment, concatenation, persistence and binary decomposition: characterization, not repair.
+# Decimal parsing skipped D in NbrRe32 and treated MIN(FLOAT32/64), the negative type bound,
+# as the smallest positive value: both readers returned zero for magnitudes below ten.
+# Negative exponents now underflow through floating-point arithmetic.
+
+positive: numeric strings allocate, concatenate and preserve their operands
+
+	MODULE Test;
+	IMPORT NbrStrings, NbrInt64;
+	VAR a, b, c, empty: NbrStrings.String; n: NbrInt64.Integer;
+	BEGIN
+		a := NIL; b := NIL; empty := NIL;
+		c := a + b; ASSERT(c = NIL, 1);
+		a := "left"; b := "right"; c := a + b;
+		ASSERT(c^ = "leftright", 2); ASSERT(a^ = "left", 3); ASSERT(b^ = "right", 4);
+		c := a + empty; ASSERT(c^ = "left", 5); ASSERT(c # a, 6);
+		c := empty + b; ASSERT(c^ = "right", 7); ASSERT(c # b, 8);
+		c := "[" + a + "]"; ASSERT(c^ = "[left]", 9);
+		a := ""; c := a + b; ASSERT(c^ = "right", 10);
+		a := NbrStrings.Int(-1234567); ASSERT(a^ = "-1,234,567", 11);
+		n := NbrInt64.MinNbr; a := n; ASSERT(a^ = "-9,223,372,036,854,775,808", 12)
+	END Test.
+
+positive: numeric strings retain nil and empty values across consecutive records
+
+	MODULE Test;
+	IMPORT Files, NbrStrings;
+	VAR f: Files.File; w: Files.Writer; r: Files.Reader; a, b: NbrStrings.String;
+	BEGIN
+		f := Files.New("nbrstrings.tmp"); ASSERT(f # NIL, 1); Files.OpenWriter(w, f, 0);
+		a := NIL; NbrStrings.Store(w, a);
+		a := ""; NbrStrings.Store(w, a);
+		a := "long allocation"; a := "x"; NbrStrings.Store(w, a);
+		a := "last"; NbrStrings.Store(w, a); w.Update; Files.Register(f);
+		Files.OpenReader(r, f, 0);
+		NbrStrings.Load(r, b); ASSERT(b = NIL, 2);
+		NbrStrings.Load(r, b); ASSERT(b # NIL, 3); ASSERT(b^ = "", 4);
+		NbrStrings.Load(r, b); ASSERT(b^ = "x", 5);
+		NbrStrings.Load(r, b); ASSERT(b^ = "last", 6)
+	END Test.
+
+positive: double precision decomposition and storage preserve exact binary values
+
+	MODULE Test;
+	IMPORT Files, NbrRe64;
+	VAR f: Files.File; w: Files.Writer; r: Files.Reader; back: NbrRe64.Real;
+	PROCEDURE Check(x: NbrRe64.Real);
+	BEGIN
+		ASSERT(NbrRe64.Re(NbrRe64.Mantissa(x), NbrRe64.Exponent(x)) = x, 1);
+		f := Files.New("nbrreal.tmp"); ASSERT(f # NIL, 2); Files.OpenWriter(w, f, 0);
+		NbrRe64.Store(w, x); w.Update; Files.Register(f);
+		Files.OpenReader(r, f, 0); NbrRe64.Load(r, back); ASSERT(back = x, 3)
+	END Check;
+	BEGIN
+		Check(0); Check(-128); Check(128); Check(-32769); Check(32768);
+		Check(-4294967297); Check(4294967296); Check(0.5); Check(-0.125);
+		Check(1.0000000000000002D0);
+		ASSERT(NbrRe64.IsRe32(0.5), 4); ASSERT(~NbrRe64.IsRe32(1.0000000000000002D0), 5)
+	END Test.
+
+positive: both real readers recognize D and E as decimal exponent markers
+
+	MODULE Test;
+	IMPORT NbrRe32, NbrRe64;
+	VAR a: NbrRe32.Real; b: NbrRe64.Real;
+	BEGIN
+		NbrRe64.StringToRe("1.25D2", b); ASSERT(ABS(b - 125) < 1.0D-10, 1);
+		NbrRe64.StringToRe("-1.25E2", b); ASSERT(ABS(b + 125) < 1.0D-10, 2);
+		NbrRe32.StringToRe("1.25E2", a); ASSERT(ABS(a - 125) < 0.0001, 3);
+		NbrRe32.StringToRe("1.25D2", a); ASSERT(ABS(a - 125) < 0.0001, 4);
+		NbrRe32.StringToRe("2D2", a); ASSERT(ABS(a - 200) < 0.0001, 5);
+		NbrRe32.StringToRe("-1.25D-2", a); ASSERT(ABS(a + 0.0125) < 0.000001, 6)
+	END Test.
+
+positive: a negative decimal exponent keeps double precision
+
+	MODULE Test;
+	IMPORT NbrRe32, NbrRe64;
+	VAR x: NbrRe64.Real; y: NbrRe32.Real;
+	BEGIN
+		NbrRe64.StringToRe("-1.25E-2", x); ASSERT(ABS(x + 0.0125D0) < 1.0D-14, 1);
+		NbrRe64.StringToRe("1D-10", x); ASSERT(ABS(x - 1.0D-10) < 1.0D-23, 2);
+		NbrRe64.StringToRe("0.5", x); ASSERT(ABS(x - 0.5D0) < 1.0D-14, 3);
+		NbrRe32.StringToRe("0.5", y); ASSERT(ABS(y - 0.5) < 0.000001, 4);
+		NbrRe64.StringToRe("1E-400", x); ASSERT(x = 0, 5);
+		NbrRe32.StringToRe("1E-100", y); ASSERT(y = 0, 6);
+		NbrRe64.StringToRe("0", x); ASSERT(x = 0, 7);
+		NbrRe32.StringToRe("0", y); ASSERT(y = 0, 8)
+	END Test.
 
 positive: the four integer widths, and what each one says about itself
 

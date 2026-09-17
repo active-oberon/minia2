@@ -16,7 +16,7 @@ VAR
 	(** Machine epsilon, i.e., e. *)
 	reExp, Epsilon-: Real;
 	(** Machine radix, or base number. *)
-	minExp, maxExp, Radix-: NbrInt8.Integer;
+	maxExp, Radix-: NbrInt8.Integer;
 
 
 (** Basic functions *)
@@ -201,7 +201,7 @@ VAR
 		IF string[i] = CHR( 2DH ) THEN sign := -1;  NbrInt8.Inc( i ) ELSE sign := 1 END;
 		coef := 0;
 		(* Read in that part that is to the left of the decimal point. *)
-		WHILE (string[i] # ".") & (string[i] # "E") & (string[i] # 0X) DO
+		WHILE (string[i] # ".") & (string[i] # "D") & (string[i] # "E") & (string[i] # 0X) DO
 			IF (CHR( 30H ) <= string[i]) & (string[i] <= CHR( 39H )) THEN coef := 10 * coef + LONG( ORD( string[i] ) - 30H )
 			ELSE
 				(* Inadmissible character - it is skipped. *)
@@ -211,7 +211,7 @@ VAR
 		IF string[i] = "." THEN
 			NbrInt8.Inc( i );  divisor := 1;
 			(* Read in that part that is to the right of the decimal point. *)
-			WHILE (string[i] # "E") & (string[i] # 0X) DO
+			WHILE (string[i] # "D") & (string[i] # "E") & (string[i] # 0X) DO
 				IF (CHR( 30H ) <= string[i]) & (string[i] <= CHR( 39H )) THEN
 					divisor := 10 * divisor;  coef := coef + LONG( ORD( string[i] ) - 30H ) / divisor
 				ELSE
@@ -247,7 +247,6 @@ VAR
 		exp := coefExp + exp;
 		(* Compute the integer power. *)
 		IF exp > maxExp THEN x := sign * MaxNbr
-		ELSIF exp < minExp THEN x := 0
 		ELSE  (* Compute the power to a base of 10. *)
 			IF exp > 0 THEN base := 10
 			ELSIF exp < 0 THEN base := 0.1;  exp := -exp
@@ -387,6 +386,6 @@ VAR
 	END EvalEpsilon;
 
 BEGIN
-	EvalEpsilon;  MaxNbr := MAX( FLOAT32 );  MinNbr := MIN( FLOAT32 );  reExp := MinNbr;  StdForm( reExp, minExp );  reExp := MaxNbr;
+	EvalEpsilon;  MaxNbr := MAX( FLOAT32 );  MinNbr := MIN( FLOAT32 );  reExp := MaxNbr;
 	StdForm( reExp, maxExp )
 END NbrRe32.

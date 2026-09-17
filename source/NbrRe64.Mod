@@ -14,7 +14,7 @@ TYPE
 VAR
 	MinNbr-, MaxNbr-,
 	(** Machine epsilon, i.e., e. *)
-	reExp, Epsilon-: Real;  minExp, maxExp: NbrInt16.Integer;
+	reExp, Epsilon-: Real;  maxExp: NbrInt16.Integer;
 	(** Machine radix, or base number. *)
 	Radix-: NbrInt8.Integer;
 
@@ -262,7 +262,6 @@ VAR
 		exp := coefExp + exp;
 		(* Compute the integer power. *)
 		IF exp > maxExp THEN x := sign * MaxNbr
-		ELSIF exp < minExp THEN x := 0
 		ELSE  (* Compute the power to a base of 10. *)
 			IF exp > 0 THEN base := 10
 			ELSIF exp < 0 THEN base := 0.1;  exp := -exp
@@ -413,6 +412,6 @@ VAR
 	END EvalEpsilon;
 
 BEGIN
-	EvalEpsilon;  MaxNbr := MAX( FLOAT64 );  MinNbr := MIN( FLOAT64 );  reExp := MinNbr;  StdForm( reExp, minExp );  reExp := MaxNbr;
+	EvalEpsilon;  MaxNbr := MAX( FLOAT64 );  MinNbr := MIN( FLOAT64 );  reExp := MaxNbr;
 	StdForm( reExp, maxExp )
 END NbrRe64.
