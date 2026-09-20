@@ -29,8 +29,9 @@ standard library compiles for it, modules load at run time, the compiler compile
 device, and the language suites run there — under `qemu-aarch64` in CI (`task
 a64-suites`) and on a real phone, which is where the one defect an emulator cannot show
 was found. The backend, the assembler and the linker support for it are ours
-(`source/FoxA64*.Mod`); `task a64-stdlib` builds the library and `task a64-bundle`
-assembles an SDK whose native target is a64.
+(`source/FoxA64*.Mod`); `task a64-stdlib` builds the library, `task a64-bundle`
+assembles a glibc SDK whose native target is a64, and `task a64-bundle-android`
+assembles the Bionic/Termux SDK.
 
 The two 32-bit targets are for hardware that is on the desk rather than for an audience:
 i386 for an old x86 laptop, armhf for a Raspberry Pi 1, 2 or Zero (a Pi 3/4/5 runs the
@@ -53,12 +54,11 @@ task build-platform PLATFORM=Linux64
 Output lands in `target/<PLATFORM>/`. Launch the desktop with `target/Linux64/a2.sh`
 (needs an X display) or `target/Win64/a2.bat`.
 
-**Building the Windows version:** cross-compile `Win64` from a native Linux
-filesystem. Use a regular Linux installation, a Linux virtual machine, or WSL2.
-When using WSL2, clone or copy the repository into the WSL2 filesystem (for
-example, `~/src/minia2`) before running `task Win64`. Do not build it directly
-from a mounted Windows drive such as `/mnt/c` or `/mnt/d`: the A2 build can fail
-to import symbol files created earlier in the same compilation pass.
+**Building the Windows version:** `task Win64` runs on Windows, and can also be
+cross-built from Linux. If using WSL2, clone or copy the repository into the WSL2
+filesystem (for example, `~/src/minia2`) before running the build. Do not build it
+directly from a mounted Windows drive such as `/mnt/c` or `/mnt/d`: the A2 build
+can fail to import symbol files created earlier in the same compilation pass.
 
 The build drives A2's own `Release.Build` with a package `--exclude` list
 (`MINI_EXCLUDE` in `Taskfile.yml`) then links the static kernel from
@@ -72,13 +72,14 @@ Active Oberon (`sdk/Ob.Mod`) with the compiler and the linker linked into it, so
 is a procedure call and not a process, and an SDK is one binary and a library — no bash,
 no Docker, nothing to install. The shell version stays in the tree as the reference:
 `task ob` holds the two to the same output, down to byte-identical binaries and
-case-by-case identical test runs. Three hosts and three forms of the same payload,
-assembled by the same scripts, so they cannot drift apart:
+case-by-case identical test runs. The native archives are assembled by the same scripts,
+so they cannot drift apart:
 
 ```sh
 task bundle          # target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz  (no Docker)
 task bundle-check    # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle      # the Windows SDK: ob.exe and the library it compiles against
+task a64-stdlib      # prerequisite for both AArch64 bundles
 task a64-bundle      # the AArch64 SDK, native on the device (glibc)
 task a64-bundle-android  # the same against Bionic: Termux without proot
 task bundle32        # the i386 SDK, and its own run.sh against it
@@ -105,6 +106,20 @@ Cygwin or WSL; the AArch64 one runs on the device — a Pi 4/5, an ARM server, a
 under `proot-distro` — and compiles there natively. Termux itself is Bionic, not glibc, so
 it has a tarball of its own (`android-arm64`), and `install.sh` picks between the two by
 looking at which loader the machine has.
+
+Android bundles can be built from Windows with Git Bash and the Android SDK/NDK installed.
+The scripts discover the SDK through `ANDROID_SDK_ROOT`/`ANDROID_HOME` or common install
+locations such as `C:/Android/SDK`, select the NDK host tools (`windows-x86_64`,
+`linux-x86_64` or `darwin-*`), and write `target/A64/bundle-android.tar.gz`.
+The separate APK wrapper is built with:
+
+```sh
+android/build-apk.sh -i target/A64/bundle-android/oberon.img
+```
+
+It produces `target/A64/apk/a2.apk`, an Android launcher application around the same
+A2 image. The tarball is for Termux command-line use and test runs; the APK is for
+starting A2 as a normal Android app through `NativeActivity`.
 
 `ob` verbs: `run`, `build`, `compile`, `test`, `doc`, `lint`, `get`, `repl`, `lsp`, `dap`.
 `ob test` takes `*.Test` files, or sources — then it runs the `{TEST}` procedures inside them.

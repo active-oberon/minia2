@@ -20,6 +20,12 @@ set -eo pipefail
 absolute() {
 	case "$1" in
 		/*) printf '%s\n' "$1" ;;
+		[A-Za-z]:\\*|[A-Za-z]:/*)
+			if command -v cygpath >/dev/null 2>&1; then
+				cygpath -u "$1"
+			else
+				printf '%s\n' "$1"
+			fi ;;
 		*) printf '%s\n' "$PWD/$1" ;;
 	esac
 }
@@ -38,11 +44,22 @@ out="${2:-$root/target/A64/bin}"
 out="$(absolute "$out")"
 
 oberon="$build/oberon"
+[ ! -x "$build/oberon.exe" ] || oberon="$build/oberon.exe"
 [ -x "$oberon" ] || oberon="$build/oberon.exe"
 if [ ! -x "$oberon" ]; then
 	echo "no built runtime in $build; run 'task Linux64' or 'task oberon' first" >&2
 	exit 2
 fi
+HostPath() {
+	if [ "${oberon##*.}" = exe ] && command -v cygpath >/dev/null 2>&1; then
+		cygpath -m "$1"
+	else
+		printf '%s\n' "$1"
+	fi
+}
+rootHost="$(HostPath "$root")"
+buildHost="$(HostPath "$build")"
+outHost="$(HostPath "$out")"
 
 mkdir -p "$out"
 ok=0; failed=()
@@ -54,11 +71,11 @@ while read -r module; do
 		continue
 	fi
 	# </dev/null: the compiler reads standard input, and would eat the rest of the list
-	output=$( (cd "$build" && PWD="$build" "$oberon" do "
+	output=$( (cd "$build" && PWD="$buildHost" "$oberon" do "
 		System.DoFile oberon.cfg ~
-		Files.AddSearchPath $root/source ~
-		Files.AddSearchPath $out ~
-		Compiler.Compile -p=UnixA64 --destPath='$out/' '$root/source/$module' ~
+		Files.AddSearchPath $rootHost/source ~
+		Files.AddSearchPath $outHost ~
+		Compiler.Compile -p=UnixA64 --destPath='$outHost/' '$rootHost/source/$module' ~
 	" </dev/null) 2>&1 | tr -d '\r' ) || true
 	if printf '%s\n' "$output" | grep -q ' done\.'; then
 		ok=$((ok+1))

@@ -38,7 +38,9 @@ task docker                 # the image (docker build, and then a smoke test of 
 task bundle                 # the tarball: target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz
 task bundle-check           # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle             # the Windows SDK: ob.exe and the library it compiles against
+task a64-stdlib             # prerequisite for both AArch64 bundles
 task a64-bundle             # the AArch64 SDK, native on the device
+task a64-bundle-android     # the AArch64 SDK against Bionic, for native Termux
 task bundle32               # the i386 SDK, and the bundle's own run.sh against it
 task bundle-armhf           # the armhf SDK, used under qemu-arm (task arm32-sysroot first)
 ```
@@ -84,6 +86,43 @@ the device. Native Termux needs the separate `android-arm64` archive, built with
 `task a64-bundle-android` against Bionic; the installer selects it automatically.
 On Windows the SDK is `ob.exe` and the same library layout beside it; it
 wants no bash, no Cygwin and no WSL, and `ob.exe build` writes a `.exe` natively.
+
+Android/Termux bundles can be assembled on Linux, macOS or Windows. On Windows, run the
+shell recipes from Git Bash (the `task` targets do this for the AArch64 bundle steps) and
+install the Android SDK/NDK. The scripts discover the SDK through `ANDROID_SDK_ROOT` or
+`ANDROID_HOME`, or from common locations such as `C:/Android/SDK`; they then choose the
+NDK host prebuilt directory for the machine running the build (`windows-x86_64`,
+`linux-x86_64` or `darwin-*`). A typical local build is:
+
+```sh
+task a64-stdlib
+task a64-bundle-android
+```
+
+The result is `target/A64/bundle-android.tar.gz`. Copy it to a phone, unpack it in
+Termux, and run the shipped tests:
+
+```sh
+adb push target/A64/bundle-android.tar.gz /sdcard/Download/
+cp /sdcard/Download/bundle-android.tar.gz ~
+tar xzf bundle-android.tar.gz
+cd a2-a64
+./run.sh --quick
+./run.sh
+```
+
+There is also an Android application wrapper:
+
+```sh
+android/build-apk.sh -i target/A64/bundle-android/oberon.img
+adb install -r target/A64/apk/a2.apk
+adb shell am start -n live.minitok.a2/android.app.NativeActivity
+```
+
+The APK is not the SDK installer. It is a `NativeActivity` package that carries the A2
+image as an asset, builds a small native loader with the NDK, and starts the graphical
+A2-on-Android experiment from the Android launcher. For command-line SDK work and test
+runs, use the Termux tarball.
 
 For a 32-bit machine — an old x86 laptop, a Raspberry Pi 1, 2 or Zero — `task Linux32`
 and `task LinuxARM` build the platform and `task bundle32` / `task bundle-armhf` assemble

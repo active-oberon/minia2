@@ -17,6 +17,7 @@
 set -eo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/android/toolchain.sh"
 image="$root/target/A64/android/oberon.img"
 out="$root/target/A64/apk"
 install=0
@@ -29,30 +30,25 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-if [ -z "$sdk" ]; then
-	for candidate in "$HOME/Android/Sdk" /data/Android/Sdk /opt/android-sdk; do
-		[ -d "$candidate" ] && sdk="$candidate" && break
-	done
-fi
+sdk="$(android_find_sdk || true)"
 [ -d "$sdk" ] || { echo "no Android SDK: set ANDROID_SDK_ROOT" >&2; exit 2; }
 
 # Newest of each, so that this does not name a version that will be gone next month.
-tools="$(ls -d "$sdk"/build-tools/* 2>/dev/null | sort -V | tail -1)"
-platform="$(ls -d "$sdk"/platforms/android-* 2>/dev/null | sort -V | tail -1)"
+tools="$(android_latest_dir "$sdk/build-tools")"
+platform="$(android_latest_dir "$sdk/platforms")"
 [ -n "$tools" ] && [ -n "$platform" ] || { echo "no build-tools or platform in $sdk" >&2; exit 2; }
 
-ndk="${ANDROID_NDK:-${NDK:-}}"
-if [ -z "$ndk" ]; then
-	for candidate in "$HOME/Android/Sdk/ndk" "$sdk/ndk" /opt/android-sdk/ndk; do
-		[ -d "$candidate" ] || continue
-		ndk="$(ls -d "$candidate"/* 2>/dev/null | sort -V | tail -1)"
-		[ -n "$ndk" ] && break
-	done
-fi
-clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
-[ -x "$clang" ] || { echo "no NDK compiler: looked for $clang" >&2; exit 2; }
+ndk="$(android_find_ndk "$sdk" || true)"
+clang="$(android_ndk_tool "$ndk" aarch64-linux-android28-clang || true)"
+[ -n "$clang" ] || { echo "no NDK compiler: looked under ${ndk:-<none>}/toolchains/llvm/prebuilt/<host>/bin" >&2; exit 2; }
 [ -f "$image" ] || { echo "no image at $image (build one with tests/a64-bundle.sh --android)" >&2; exit 2; }
+aapt2="$(android_sdk_tool "$sdk" "build-tools/$(basename "$tools")" aapt2 || true)"
+zipalign="$(android_sdk_tool "$sdk" "build-tools/$(basename "$tools")" zipalign || true)"
+apksigner="$(android_sdk_tool "$sdk" "build-tools/$(basename "$tools")" apksigner || true)"
+adb="$(android_sdk_tool "$sdk" platform-tools adb || command -v adb || true)"
+[ -n "$aapt2" ] || { echo "no aapt2 in $tools" >&2; exit 2; }
+[ -n "$zipalign" ] || { echo "no zipalign in $tools" >&2; exit 2; }
+[ -n "$apksigner" ] || { echo "no apksigner in $tools" >&2; exit 2; }
 
 rm -rf "$out"
 mkdir -p "$out/lib/arm64-v8a" "$out/assets" "$out/res"
@@ -127,7 +123,7 @@ if [ ! -f "$keystore" ]; then
 	echo "made a debug key at ${keystore#$root/}"
 fi
 
-"$tools/aapt2" link \
+"$aapt2" link \
 	-I "$platform/android.jar" \
 	--manifest "$out/AndroidManifest.xml" \
 	-A "$out/assets" \
@@ -136,17 +132,39 @@ fi
 
 # aapt2 does not put the libraries in; they are added to the zip afterwards, uncompressed and
 # aligned, which is what the loader wants when it maps them straight out of the package.
-(cd "$out" && zip -q -r -X -0 unaligned.apk lib)
+if command -v zip >/dev/null 2>&1; then
+	(cd "$out" && zip -q -r -X -0 unaligned.apk lib)
+else
+	python=""
+	for candidate in python3 python py; do
+		if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import zipfile' >/dev/null 2>&1; then
+			python="$candidate"
+			break
+		fi
+	done
+	[ -n "$python" ] || { echo "no zip or python to add native libraries to the APK" >&2; exit 2; }
+	(cd "$out" && "$python" - <<'PY'
+from pathlib import Path
+from zipfile import ZIP_STORED, ZipFile
 
-"$tools/zipalign" -f -p 4 "$out/unaligned.apk" "$out/a2.apk"
-"$tools/apksigner" sign --ks "$keystore" --ks-pass pass:android --key-pass pass:android \
+with ZipFile("unaligned.apk", "a") as apk:
+	for path in sorted(Path("lib").rglob("*")):
+		if path.is_file():
+			apk.write(path, path.as_posix(), compress_type=ZIP_STORED)
+PY
+	)
+fi
+
+"$zipalign" -f -p 4 "$out/unaligned.apk" "$out/a2.apk"
+"$apksigner" sign --ks "$keystore" --ks-pass pass:android --key-pass pass:android \
 	--min-sdk-version 28 "$out/a2.apk"
 rm -f "$out/unaligned.apk" "$out/a2.apk.idsig"
 
 echo "apk: $out/a2.apk ($(du -h "$out/a2.apk" | cut -f1))"
 
 if [ "$install" = 1 ]; then
-	adb install -r "$out/a2.apk"
+	[ -n "$adb" ] || { echo "no adb: add platform-tools to PATH or install it in $sdk" >&2; exit 2; }
+	"$adb" install -r "$out/a2.apk"
 	echo "installed; start it with:"
 	echo "  adb shell am start -n live.minitok.a2/android.app.NativeActivity"
 	echo "  adb logcat -s A2"

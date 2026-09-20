@@ -52,7 +52,7 @@ CONST
 	VKLShift = 160;  VKRShift = 161;   VKLCtrl = 162; VKRCtrl = 163; VKLMenu = 164; VKRMenu = 165;
 	VKLWin = 05BH; VKRWin = 05CH;
 
-	SMCXFullscreen = 16;  SMCYFullscreen = 17;  SMCYScreen = 1;  SMCXScreen = 0;  MODWin = 8;
+	SMCXFullscreen = 16;  SMCYFullscreen = 17;  SMCYScreen = 1;  SMCXScreen = 0;  SMCXPaddedBorder = 92;  MODWin = 8;
 
 	WMHOTKEY = 786;
 
@@ -994,7 +994,8 @@ VAR
 	BEGIN
 		fixedFrameX := User32.GetSystemMetrics( User32.SMCXFixedFrame );
 		fixedFrameY := User32.GetSystemMetrics( User32.SMCYFixedFrame );
-		frameX := User32.GetSystemMetrics( User32.SMCXFrame );  frameY := User32.GetSystemMetrics( User32.SMCYFrame );
+		frameX := User32.GetSystemMetrics( User32.SMCXFrame ) + User32.GetSystemMetrics( SMCXPaddedBorder );
+		frameY := User32.GetSystemMetrics( User32.SMCYFrame ) + User32.GetSystemMetrics( SMCXPaddedBorder );
 		captionY := User32.GetSystemMetrics( User32.SMCYCaption );
 		menuY := User32.GetSystemMetrics( User32.SMCYMenu );  capture := NIL;  hook := NIL;  mouse := NIL;
 		(* winMain := NIL; *) nWindows := 0;  str := "PointCircle";
@@ -1118,8 +1119,8 @@ VAR
 				END;
 			ELSE
 				create.style := {};  x := User32.CWUseDefault;  y := User32.CWUseDefault;
-				COPY( windowClassName, create.className );  border := 0;  h := User32.GetSystemMetrics( SMCYScreen );
-				w := User32.GetSystemMetrics( SMCXScreen );  create.style := create.style + {User32.WSMaximize};
+				COPY( windowClassName, create.className );  border := 0;  h := User32.GetSystemMetrics( SMCYFullscreen );
+				w := User32.GetSystemMetrics( SMCXFullscreen );  create.style := create.style + {User32.WSMaximize};
 				create.x := x;  create.y := y;  create.w := w;  create.h := h + captionY;
 			END;
 

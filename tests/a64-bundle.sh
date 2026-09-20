@@ -28,14 +28,17 @@
 
 set -eo pipefail
 
+root="$(cd "$(dirname "$0")/.." && pwd)"
+. "$root/android/toolchain.sh"
+
 absolute() {
 	case "$1" in
 		/*) printf '%s\n' "$1" ;;
+		[A-Za-z]:\\*|[A-Za-z]:/*) android_posix_path "$1" ;;
 		*) printf '%s\n' "$PWD/$1" ;;
 	esac
 }
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
 out=""
 tar=1
 android=0
@@ -68,11 +71,23 @@ fi
 # The image is the plain runtime: the compiler is not in it, it is loaded from lib/ on the far
 # side, which is the thing that only started working when module loading did.
 oberon="$build/oberon"
+[ ! -x "$build/oberon.exe" ] || oberon="$build/oberon.exe"
 [ -x "$oberon" ] || oberon="$build/oberon.exe"
 if [ ! -x "$oberon" ]; then
 	echo "no host runtime in $build to link the image with; run 'task oberon' first" >&2
 	exit 2
 fi
+HostPath() {
+	if [ "${oberon##*.}" = exe ] && command -v cygpath >/dev/null 2>&1; then
+		cygpath -m "$1"
+	else
+		printf '%s\n' "$1"
+	fi
+}
+rootHost="$(HostPath "$root")"
+buildHost="$(HostPath "$build")"
+objectsHost="$(HostPath "$objects")"
+outHost="$(HostPath "$out")"
 
 rm -rf "$out"
 mkdir -p "$out/lib" "$out/tests"
@@ -82,6 +97,7 @@ mkdir -p "$out/lib" "$out/tests"
 # except Glue's, which are removed first: the compiler writes through a symbolic link, and writing
 # through this one would replace the glibc object in the tree.
 link="$objects"
+linkHost="$objectsHost"
 
 # CompileForA64 <what it is, for the message> <module> ... -- each from source/<module>.Mod, and every
 # one of them has to have produced an object: a set of modules where the first compiles and the second
@@ -99,11 +115,11 @@ CompileForA64() {
 	local sources="" module file entry said
 	for entry in "$@"; do
 		file="${entry%%:*}"
-		sources="$sources '$root/source/$file.Mod'"
+		sources="$sources '$rootHost/source/$file.Mod'"
 	done
-	said=$( (cd "$build" && PWD="$build" "$oberon" do "
+	said=$( (cd "$build" && PWD="$buildHost" "$oberon" do "
 		System.DoFile oberon.cfg ~
-		Compiler.Compile -p=UnixA64 --destPath='$link/'$sources ~
+		Compiler.Compile -p=UnixA64 --destPath='$linkHost/'$sources ~
 	") 2>&1 | tr -d '\r' ) || true
 	for entry in "$@"; do
 		module="${entry##*:}"
@@ -148,12 +164,13 @@ CompileForA64 "the window in it" WMDemo
 
 if [ "$android" = 1 ]; then
 	link="$(mktemp -d)"
+	linkHost="$(HostPath "$link")"
 	trap 'rm -rf "$link"' EXIT
 	ln -s "$objects"/*.SymU8 "$objects"/*.GofU8 "$link"/
 	rm -f "$link/Glue.SymU8" "$link/Glue.GofU8"
-	glue=$( (cd "$build" && PWD="$build" "$oberon" do "
+	glue=$( (cd "$build" && PWD="$buildHost" "$oberon" do "
 		System.DoFile oberon.cfg ~
-		Compiler.Compile -p=UnixA64 --define=UNIX,ARM64,ANDROID --destPath='$link/' '$root/source/Linux.Glue.Mod' ~
+		Compiler.Compile -p=UnixA64 --define=UNIX,ARM64,ANDROID --destPath='$linkHost/' '$rootHost/source/Linux.Glue.Mod' ~
 	") 2>&1 | tr -d '\r' ) || true
 	if [ ! -f "$link/Glue.GofU8" ]; then
 		echo "Glue did not compile for Android:" >&2
@@ -173,10 +190,10 @@ fi
 CompileForA64 DisplayDemo DisplayDemo
 
 modules=$(sed 's/#.*//' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')
-linked=$( (cd "$build" && PWD="$build" "$oberon" do "
+linked=$( (cd "$build" && PWD="$buildHost" "$oberon" do "
 	System.DoFile oberon.cfg ~
-	Files.SetWorkPath $out ~
-	Linker.Link -p=LinuxA64 --path='$link/' --fileName=oberon $modules ~
+	Files.SetWorkPath $outHost ~
+	Linker.Link -p=LinuxA64 --path='$linkHost/' --fileName=oberon $modules ~
 ") 2>&1 | tr -d '\r' ) || true
 printf '%s\n' "$linked" | grep -q 'Link successful' || {
 	echo "the AArch64 image did not link:" >&2
@@ -195,18 +212,11 @@ chmod 755 "$image"
 # Built here rather than by hand on the side, because a bundle that needs a step nobody wrote down
 # is a bundle that works once.
 if [ "$android" = 1 ]; then
-	ndk="${ANDROID_NDK:-${NDK:-}}"
-	if [ -z "$ndk" ]; then
-		# Newest first: the directories sort by version and the last one is the highest.
-		for candidate in "$HOME/Android/Sdk/ndk" /data/Android/Sdk/ndk /opt/android-sdk/ndk; do
-			[ -d "$candidate" ] || continue
-			ndk="$(ls -d "$candidate"/* 2>/dev/null | sort -V | tail -1)"
-			[ -n "$ndk" ] && break
-		done
-	fi
-	clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
-	if [ ! -x "$clang" ]; then
-		echo "no NDK compiler for the Android loader: looked for $clang" >&2
+	sdk="$(android_find_sdk || true)"
+	ndk="$(android_find_ndk "$sdk" || true)"
+	clang="$(android_ndk_tool "$ndk" aarch64-linux-android28-clang || true)"
+	if [ -z "$clang" ]; then
+		echo "no NDK compiler for the Android loader: looked under ${ndk:-<none>}/toolchains/llvm/prebuilt/<host>/bin" >&2
 		echo "set ANDROID_NDK to an NDK directory (an Android bundle cannot be started without it)" >&2
 		exit 2
 	fi
@@ -239,17 +249,18 @@ cp "$root/configs/moduleListLinux.txt" "$out/boot-modules.txt"
 # host compiler and linked last into the boot set without the interactive shell, exactly as the
 # other two hosts do it. The shell version is not shipped -- this SDK needs no shell.
 obwork="$(mktemp -d "${TMPDIR:-/tmp}/a64ob.XXXXXX")"
+obworkHost="$(HostPath "$obwork")"
 cp "$root/sdk/Unix.ObHost.Mod" "$obwork/ObHost.Mod"
 cp "$root/sdk/Ob.Mod" "$obwork/Ob.Mod"
 obboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListLinux.txt" | tr -d '\r' | tr '\n' ' ')"
 # Written into a directory of its own rather than into the object tree: those objects are what
 # a64-stdlib-check.sh compiled and what every count of them means, and the driver is not part of
 # the standard library.
-obsaid=$( (cd "$build" && PWD="$build" "$oberon" do "
+obsaid=$( (cd "$build" && PWD="$buildHost" "$oberon" do "
 	System.DoFile oberon.cfg ~
-	Files.AddSearchPath $link ~
-	Files.AddSearchPath $obwork ~
-	Files.SetWorkPath $obwork ~
+	Files.AddSearchPath $linkHost ~
+	Files.AddSearchPath $obworkHost ~
+	Files.SetWorkPath $obworkHost ~
 	Compiler.Compile -p=UnixA64 ./ObHost.Mod ./Ob.Mod ~
 	Linker.Link -p=LinuxA64 --fileName=ob $obboot Ob ~
 ") 2>&1 | tr -d '\r' ) || true

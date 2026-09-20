@@ -28,9 +28,9 @@
  *	emulator has not been needed yet.
  *
  *	Build (NDK):
- *	  $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang \
+ *	  $NDK/toolchains/llvm/prebuilt/<host>/bin/aarch64-linux-android28-clang \
  *	      -O2 -o a2boot android/a2boot.c
- *	  $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android28-clang \
+ *	  $NDK/toolchains/llvm/prebuilt/<host>/bin/x86_64-linux-android28-clang \
  *	      -O2 -o a2boot android/a2boot.c        (the emulator)
  *	  cc -O2 -o a2boot android/a2boot.c         (glibc, to check the loading)
  *	Run:

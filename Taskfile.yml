@@ -511,8 +511,12 @@ tasks:
             echo '@echo off' > {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'cd /d "%~dp0"' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             # Same as a2.sh: exit 0 is System.Reboot and means start it again, 1 and up means stop.
+            # Do not use `run a2.cfg` here: when the shell reaches EOF it exits successfully, and
+            # StdIOShell reports a successful command as exit 0 -- indistinguishable from Reboot to
+            # this loop. Make the normal shell exit fall through to PowerDown; a real System.Reboot
+            # leaves before that command is reached.
             echo ':a2' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
-            echo 'oberon.exe run a2.cfg' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
+            echo 'oberon.exe do "System.DoFile a2.cfg ~ Shell.Start ~ System.PowerDown ~"' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'if errorlevel 1 goto done' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo 'goto a2' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
             echo ':done' >> {{.BUILD_DIR}}/{{.PLATFORM}}/a2.bat
@@ -1116,7 +1120,7 @@ tasks:
     cmds:
       - |
         set -eo pipefail
-        {{.CURRENT_DIR}}/tests/a64-bundle.sh {{.FLAVOUR}} -o {{.BUILD_DIR}}/A64/{{.OUT}} \
+        bash {{.CURRENT_DIR}}/tests/a64-bundle.sh {{.FLAVOUR}} -o {{.BUILD_DIR}}/A64/{{.OUT}} \
           {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
@@ -1174,7 +1178,7 @@ tasks:
     cmds:
       - |
         set -eo pipefail
-        {{.CURRENT_DIR}}/tests/a64-stdlib-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
+        bash {{.CURRENT_DIR}}/tests/a64-stdlib-check.sh {{.BUILD_DIR}}/{{.HOST}} {{.BUILD_DIR}}/A64/bin || {
           status=$?
           if [ "$status" -eq 2 ]; then
             # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
