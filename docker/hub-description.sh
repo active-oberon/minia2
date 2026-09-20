@@ -47,6 +47,17 @@ description="$(
 			print ""
 			next
 		}
+		/^Android\/Termux bundles can be assembled/ { skip = 1
+			print "Android/Termux tarball/APK commands: docs/SDK.md."
+			print ""
+			next
+		}
+		/^For a 32-bit machine/ { skip = 1
+			print "i386 and armhf native SDK archives are also built by this tree; see docs/SDK.md."
+			print ""
+			next
+		}
+		/^## Projects of more than one module/ { skip = 0 }
 		/^## Use it with Docker/ { skip = 0 }
 		/^## How it works/ { skip = 0 }
 		!skip { print }
