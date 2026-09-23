@@ -409,6 +409,61 @@ positive: HTTP support encodes only the characters that need escaping
 		ASSERT(encoded = "", 3)
 	END Test.
 
+positive: limited HTTP input exposes only the requested body length
+
+	MODULE Test;
+	IMPORT WebHTTP, Streams;
+
+	VAR source: Streams.StringReader; in, limited: Streams.Reader; limiter: WebHTTP.LimitedInStream;
+		got: ARRAY 16 OF CHAR; length: SIZE;
+
+	BEGIN
+		Streams.OpenStringReader(source, "abcdef");
+		in := source;
+		NEW(limiter, in, limited, 3);
+
+		limited.Bytes(got, 0, 3, length);
+		got[length] := 0X;
+		ASSERT(got = "abc", 1);
+		ASSERT(length = 3, 2);
+		ASSERT(limiter.remain = 0, 3);
+
+		limited.Bytes(got, 0, 1, length);
+		ASSERT(length = 0, 4);
+		ASSERT(limited.res = Streams.EOF, 5)
+	END Test.
+
+positive: chunked HTTP input decodes adjacent chunks
+
+	MODULE Test;
+	IMPORT WebHTTP, Streams, Strings;
+
+	VAR source: Streams.StringReader; in, decoded: Streams.Reader; dechunk: WebHTTP.ChunkedInStream;
+		text: ARRAY 128 OF CHAR; got: ARRAY 16 OF CHAR; length: SIZE;
+
+		PROCEDURE Line(CONST piece: ARRAY OF CHAR);
+		BEGIN
+			Strings.Append(text, piece);
+			Strings.AppendChar(text, 0DX); Strings.AppendChar(text, 0AX)
+		END Line;
+
+	BEGIN
+		text := "";
+		Line("3"); Line("abc"); Line("2"); Line("de"); Line("0"); Line("");
+		Streams.OpenStringReader(source, text);
+		in := source;
+		NEW(dechunk, in, decoded);
+
+		decoded.Bytes(got, 0, 5, length);
+		got[length] := 0X;
+		ASSERT(length = 5, 1);
+		ASSERT(got = "abcde", 2);
+
+		decoded.Bytes(got, 0, 1, length);
+		ASSERT(length = 0, 3);
+		ASSERT(decoded.res = Streams.EOF, 4)
+	END Test.
+
 positive: request variables are decoded from the URL and form body
 
 	MODULE Test;
