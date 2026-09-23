@@ -247,3 +247,16 @@ positive: bit manipulation, and the unsigned arithmetic it carries in signed wor
 		ASSERT(BIT.LDIV(1000, -1) = 0);                      (* a small number over a huge one *)
 		ASSERT(BIT.LDIV(8, 2) = 4)
 	END Test.
+
+positive: standard IO provides a command context
+
+	MODULE Test;
+	IMPORT StdIO;
+	BEGIN
+		ASSERT(StdIO.env # NIL);
+		ASSERT(StdIO.env.in # NIL);
+		ASSERT(StdIO.env.arg # NIL);
+		ASSERT(StdIO.env.out # NIL);
+		ASSERT(StdIO.env.error # NIL);
+		ASSERT(~StdIO.Echo)
+	END Test.

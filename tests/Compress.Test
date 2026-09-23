@@ -423,3 +423,44 @@ positive: the file tool compresses and expands, and knows its own files
 		ASSERT(Files.Old("other.tmp") = NIL, 10)
 	END Test.
 
+positive: low level zlib buffers and streams round trip bytes
+
+	MODULE Test;
+	IMPORT ZlibBuffers, ZlibDeflate, ZlibInflate, Strings;
+
+	VAR mem, copy, packed, back: ARRAY 256 OF CHAR; buf: ZlibBuffers.Buffer;
+		ch: CHAR; written, read: SIZE; sourceLen, packedLen: SIGNED32; res: ZlibInflate.Result;
+		code: INTEGER;
+
+	BEGIN
+		mem := "abcdef";
+		ZlibBuffers.Init(buf, mem, 0, 6, 6);
+		ZlibBuffers.Reset(buf);
+		ZlibBuffers.Read(buf, ch); ASSERT(ch = "a", 1);
+		ZlibBuffers.ReadBytes(buf, copy, 0, 2); copy[2] := 0X; ASSERT(copy = "bc", 2);
+		ZlibBuffers.Reread(buf, 2);
+		ZlibBuffers.ReadBytes(buf, copy, 0, 2); copy[2] := 0X; ASSERT(copy = "bc", 3);
+
+		ZlibBuffers.Init(buf, mem, 0, 6, 6);
+		ZlibBuffers.Write(buf, "x");
+		ZlibBuffers.WriteBytes(buf, "yz", 0, 2);
+		ASSERT(mem = "xyzdef", 4);
+		ZlibBuffers.Drain(buf, copy, 0, 2); copy[2] := 0X; ASSERT(copy = "xy", 5);
+		ZlibBuffers.Rewrite(buf);
+
+		ZlibBuffers.Init(buf, mem, 0, 6, 0);
+		ZlibBuffers.Fill(buf, "123", 0, 3);
+		ZlibBuffers.ReadBytes(buf, copy, 0, 3); copy[3] := 0X; ASSERT(copy = "123", 6);
+
+		mem := "the quick brown fox jumps over the quick brown dog";
+		sourceLen := SIGNED32(Strings.Length(mem));
+		ZlibDeflate.Compress(mem, packed, 0, sourceLen, 0, LEN(packed),
+			ZlibDeflate.DefaultCompression, ZlibDeflate.DefaultStrategy, written, code);
+		ASSERT(code = ZlibDeflate.Ok, 7);
+		packedLen := SIGNED32(written);
+		ZlibInflate.Uncompress(packed, back, 0, packedLen, 0, LEN(back), read, res);
+		ASSERT(res.code = ZlibInflate.Ok, 8);
+		ASSERT(read = Strings.Length(mem), 9);
+		back[read] := 0X;
+		ASSERT(back = mem, 10)
+	END Test.

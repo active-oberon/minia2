@@ -1,0 +1,81 @@
+# Tests for lib/numerics/DataErrors -- the file logger used by the numerical routines.
+#
+# options --mayTrap --command="System.Free Test DataErrors;System.Load Test"
+#
+# The math tests reach DataErrors through error paths, but did not name or pin the logger itself.
+# These cases keep the direct contract small: open the log, write errors and warnings, close it, and
+# read back the file a user would inspect.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: plain errors and warnings are written to Error.Log
+
+	MODULE Test;
+	IMPORT DataErrors, Files, Strings;
+
+	VAR text: ARRAY 65536 OF CHAR;
+
+		PROCEDURE ReadLog(VAR content: ARRAY OF CHAR);
+		VAR file: Files.File; reader: Files.Reader; length: SIZE;
+		BEGIN
+			content[0] := 0X;
+			file := Files.Old("Error.Log"); ASSERT(file # NIL, 100);
+			Files.OpenReader(reader, file, 0);
+			reader.Bytes(content, 0, LEN(content) - 1, length);
+			content[length] := 0X
+		END ReadLog;
+
+	BEGIN
+		DataErrors.Open;
+		DataErrors.Error("plain failure");
+		DataErrors.Warning("plain warning");
+		DataErrors.Close;
+
+		ReadLog(text);
+		ASSERT(Strings.Pos("plain failure", text) >= 0, 1);
+		ASSERT(Strings.Pos("plain warning", text) >= 0, 2);
+		ASSERT(Strings.Pos("Stack trace back", text) >= 0, 3)
+	END Test.
+
+positive: typed errors and warnings include the supplied message
+
+	MODULE Test;
+	IMPORT DataErrors, Files, NbrRat, NbrCplx, Strings;
+
+	VAR text: ARRAY 65536 OF CHAR; rat: NbrRat.Rational; z: NbrCplx.Complex;
+
+		PROCEDURE ReadLog(VAR content: ARRAY OF CHAR);
+		VAR file: Files.File; reader: Files.Reader; length: SIZE;
+		BEGIN
+			content[0] := 0X;
+			file := Files.Old("Error.Log"); ASSERT(file # NIL, 100);
+			Files.OpenReader(reader, file, 0);
+			reader.Bytes(content, 0, LEN(content) - 1, length);
+			content[length] := 0X
+		END ReadLog;
+
+	BEGIN
+		NbrRat.Set(1, 2, rat);
+		NbrCplx.Set(3.0, 4.0, z);
+
+		DataErrors.Open;
+		DataErrors.IntError(-42, "integer error");
+		DataErrors.RatError(rat, "rational error");
+		DataErrors.ReError(-1.5, "real error");
+		DataErrors.CplxError(z, "complex error");
+		DataErrors.IntWarning(7, "integer warning");
+		DataErrors.RatWarning(rat, "rational warning");
+		DataErrors.ReWarning(2.5, "real warning");
+		DataErrors.CplxWarning(z, "complex warning");
+		DataErrors.Close;
+
+		ReadLog(text);
+		ASSERT(Strings.Pos("integer error", text) >= 0, 1);
+		ASSERT(Strings.Pos("rational error", text) >= 0, 2);
+		ASSERT(Strings.Pos("real error", text) >= 0, 3);
+		ASSERT(Strings.Pos("complex error", text) >= 0, 4);
+		ASSERT(Strings.Pos("integer warning", text) >= 0, 5);
+		ASSERT(Strings.Pos("rational warning", text) >= 0, 6);
+		ASSERT(Strings.Pos("real warning", text) >= 0, 7);
+		ASSERT(Strings.Pos("complex warning", text) >= 0, 8)
+	END Test.

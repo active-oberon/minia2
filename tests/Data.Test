@@ -313,3 +313,56 @@ positive: a generic sort puts a shuffled array in order
 		GenericSort.QuickSort(array, Before);
 		value := 0; ASSERT(value = 0)
 	END Test.
+
+positive: generic collections keep stack, queue and vector contracts
+
+	MODULE Test;
+	IMPORT Strings, UTF8Strings, C := GenericCollections(Strings.String, UTF8Strings.LessString);
+
+	VAR q: C.Queue; d: C.DEQue; v: C.Vector; i: SIGNED32; s: Strings.String; pos: SIZE;
+
+		PROCEDURE S(CONST value: ARRAY OF CHAR): Strings.String;
+		VAR p: Strings.String;
+		BEGIN NEW(p, LEN(value)); COPY(value, p^); RETURN p
+		END S;
+
+	BEGIN
+		NEW(q);
+		ASSERT(q.Empty()); ASSERT(q.Count() = 0);
+		FOR i := 0 TO C.INITIAL_SIZE DO q.Push(S("item")) END;
+		ASSERT(q.Count() = C.INITIAL_SIZE + 1);
+		q.Push(S("last"));
+		ASSERT(q.Top(s)); ASSERT(s^ = "last");
+		ASSERT(q.Pop(s)); ASSERT(s^ = "last");
+		FOR i := C.INITIAL_SIZE TO 0 BY -1 DO ASSERT(q.Pop(s)); ASSERT(s^ = "item") END;
+		ASSERT(~q.Pop(s)); ASSERT(q.Empty());
+
+		NEW(d);
+		d.Push(S("first"));
+		FOR i := 0 TO C.INITIAL_SIZE DO d.Push(S("item")) END;
+		ASSERT(d.Count() = C.INITIAL_SIZE + 2);
+		ASSERT(d.Top(s)); ASSERT(s^ = "first");
+		ASSERT(d.Pop(s)); ASSERT(s^ = "first");
+		FOR i := 0 TO C.INITIAL_SIZE DO ASSERT(d.Pop(s)); ASSERT(s^ = "item") END;
+		ASSERT(~d.Pop(s)); ASSERT(d.Empty());
+
+		NEW(v);
+		pos := v.Add(S("charlie")); ASSERT(pos = 0);
+		pos := v.Add(S("alpha")); ASSERT(pos = 1);
+		pos := v.Add(S("bravo")); ASSERT(pos = 2);
+		ASSERT(~v.GetSorted());
+		ASSERT(v.IndexOf(S("alpha")) = 1);
+		v.SetSorted(TRUE);
+		ASSERT(v.GetSorted());
+		v.Get(0, s); ASSERT(s^ = "alpha");
+		v.Get(1, s); ASSERT(s^ = "bravo");
+		v.Get(2, s); ASSERT(s^ = "charlie");
+		ASSERT(v.IndexOf(S("bravo")) = 1);
+		ASSERT(v.IndexOf(S("delta")) = -1);
+		v.Set(1, S("delta")); ASSERT(v.IndexOf(S("delta")) = 1);
+		v.Remove(0); ASSERT(v.Count() = 2);
+		v.Get(0, s); ASSERT(s^ = "delta");
+		v.Insert(1, S("echo")); ASSERT(v.Count() = 3);
+		v.Get(1, s); ASSERT(s^ = "echo");
+		v.Reset; ASSERT(v.Empty())
+	END Test.

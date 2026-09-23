@@ -44,6 +44,25 @@ positive: an address written as text and read back
 		ASSERT(IP.IsNilAdr(IP.StrToAdr("")))
 	END Test.
 
+positive: DNS resolves names that never leave this host
+
+	MODULE Test;
+	IMPORT DNS, IP;
+	VAR adr: IP.Adr; res: INTEGER; name: DNS.Name;
+	BEGIN
+		DNS.HostByName("localhost", adr, res);
+		ASSERT(res = DNS.Ok);
+		ASSERT(~IP.IsNilAdr(adr));
+
+		DNS.HostByNumber(IP.NilAdr, name, res);
+		ASSERT(res = DNS.BadName);
+		ASSERT(name = "");
+
+		DNS.GetHostName(name, res);
+		ASSERT(res = DNS.Ok);
+		ASSERT(name # "")
+	END Test.
+
 positive: two ends of a connection over the loopback
 
 	MODULE Test;

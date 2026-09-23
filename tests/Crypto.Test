@@ -261,3 +261,107 @@ positive: ARC4 makes the keystream RFC 6229 prints
 		cipher.Encrypt(block, 0, 16);
 		FOR i := 0 TO 15 DO ASSERT(block[i] = 0X) END
 	END Test.
+
+positive: checksum command writes the digest of a file
+
+	MODULE Test;
+	IMPORT Checksum, Commands, Files, Streams, Strings;
+
+	VAR file: Files.File; rider: Files.Rider; arg: Streams.StringReader; out: Streams.StringWriter;
+		context: Commands.Context; text: ARRAY 256 OF CHAR;
+
+	BEGIN
+		file := Files.New("checksum.txt"); ASSERT(file # NIL, 1);
+		file.Set(rider, 0);
+		rider.file.WriteBytes(rider, "abc", 0, 3);
+		Files.Register(file);
+
+		NEW(arg, 64); arg.Set("checksum.txt");
+		Streams.OpenStringWriter(out, LEN(text));
+		NEW(context, NIL, arg, out, out, NIL);
+		Checksum.MD5(context);
+		out.Get(text);
+		ASSERT(Strings.Pos("900150983cd24fb0d6963f7d28e17f72", text) >= 0, 2);
+		ASSERT(Strings.Pos("checksum.txt", text) >= 0, 3)
+	END Test.
+
+positive: Keccak permutation and sponge expose stable state transitions
+
+	MODULE Test;
+	IMPORT Keccak := CryptoKeccakF1600, Sponge := CryptoKeccakSponge;
+
+	VAR k: Keccak.Instance; s1, s2: Sponge.Instance; in, out, a, b: ARRAY 64 OF CHAR;
+		i: SIZE; same, nonzero: BOOLEAN;
+
+	BEGIN
+		NEW(k);
+		in := "abcdefgh";
+		k.XORBytesInLane(0, 0, 8, in, 0);
+		k.ExtractBytesInLane(0, 0, 8, out, 0);
+		FOR i := 0 TO 7 DO ASSERT(out[i] = in[i], 1) END;
+		k.Permute;
+		k.ExtractBytesInLane(0, 0, 8, out, 0);
+		nonzero := FALSE;
+		FOR i := 0 TO 7 DO IF out[i] # 0X THEN nonzero := TRUE END END;
+		ASSERT(nonzero, 2);
+
+		NEW(s1); NEW(s2);
+		s1.Absorb("abc", 0, 3); s1.Squeeze(a, 0, 32);
+		s2.Absorb("abc", 0, 3); s2.Squeeze(b, 0, 32);
+		same := TRUE; nonzero := FALSE;
+		FOR i := 0 TO 31 DO
+			IF a[i] # b[i] THEN same := FALSE END;
+			IF a[i] # 0X THEN nonzero := TRUE END
+		END;
+		ASSERT(same, 3);
+		ASSERT(nonzero, 4)
+	END Test.
+
+positive: encrypted streams decrypt what their writer wrote
+
+	MODULE Test;
+	IMPORT CryptoStreams, Streams;
+
+	VAR buffer: Streams.Buffer; writer: CryptoStreams.EncryptingWriter;
+		reader: CryptoStreams.DecryptingReader; out: ARRAY 64 OF CHAR; read: SIZE;
+
+	BEGIN
+		NEW(buffer, 64);
+		NEW(writer, buffer.GetWriter(), CryptoStreams.NewCipher("secret"));
+		writer.String("sixteen byte msg"); writer.Update;
+
+		NEW(reader, buffer.GetReader(), CryptoStreams.NewCipher("secret"));
+		reader.Bytes(out, 0, 16, read);
+		ASSERT(read = 16, 1);
+		out[16] := 0X;
+		ASSERT(out = "sixteen byte msg", 2);
+		ASSERT(~writer.CanSetPos(), 3);
+		ASSERT(~reader.CanSetPos(), 4)
+	END Test.
+
+positive: ASN1 decodes a short DER sequence
+
+	MODULE Test;
+	IMPORT ASN1, Streams;
+
+	VAR input: ARRAY 16 OF CHAR; reader: Streams.StringReader; root, child: ASN1.Triplet;
+		length: SIZE;
+
+	BEGIN
+		input[0] := CHR(30H); input[1] := CHR(06H);
+		input[2] := CHR(02H); input[3] := CHR(01H); input[4] := CHR(2AH);
+		input[5] := CHR(04H); input[6] := CHR(01H); input[7] := "a"; input[8] := 0X;
+		Streams.OpenStringReader(reader, input);
+		root := ASN1.Decode(reader, 0, length);
+		ASSERT(root # NIL, 1);
+		ASSERT(root.tag = ASN1.Sequence, 2);
+		ASSERT(root.length = 6, 3);
+		ASSERT(length = 8, 4);
+		child := root.child; ASSERT(child # NIL, 5);
+		ASSERT(child.tag = ASN1.Integer, 6);
+		ASSERT(child.ivalue = 42, 7);
+		child := child.next; ASSERT(child # NIL, 8);
+		ASSERT(child.tag = ASN1.String, 9);
+		ASSERT(child.svalue[0] = "a", 10);
+		ASSERT(child.next = NIL, 11)
+	END Test.

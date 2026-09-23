@@ -1,0 +1,109 @@
+# Tests for the remaining lib/calc modules -- higher derivatives, fractional routines and
+# Mittag-Leffler functions.
+#
+# options --mayTrap --command="System.Free Test;System.Load Test"
+#
+# Calc.Test already pins first and second derivatives plus Gauss integration. These cases add the
+# modules that were still only pulled in indirectly or not named at all.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: third and fourth derivatives of polynomials
+
+	MODULE Test;
+	IMPORT CalcD3, CalcD4, CalcFn, NbrRe;
+
+	VAR f: CalcFn.ReArg;
+
+		PROCEDURE Quartic(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x * x * x
+		END Quartic;
+
+		PROCEDURE Quintic(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN x * x * x * x * x
+		END Quintic;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		f := Quartic;
+		ASSERT(Near(CalcD3.Solve(f, 2.0, CalcD3.Central), 48.0, 1.0), 1);
+		ASSERT(Near(CalcD4.Solve(f, 2.0, CalcD4.Central), 24.0, 2.0), 2);
+
+		f := Quintic;
+		ASSERT(Near(CalcD3.Solve(f, 1.0, CalcD3.Central), 60.0, 2.0), 3);
+		ASSERT(Near(CalcD4.Solve(f, 1.0, CalcD4.Central), 120.0, 8.0), 4)
+	END Test.
+
+positive: fractional integration agrees on a constant
+
+	MODULE Test;
+	IMPORT CalcDiethelm, CalcGrunwald, NbrRe;
+
+	VAR tol, error, result: NbrRe.Real; res: SIGNED32;
+
+		PROCEDURE One(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 1
+		END One;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		error := 0.001;
+		result := CalcGrunwald.SolveI(One, 1.0, 1.0, error, res);
+		ASSERT(res = CalcGrunwald.OKay, 1);
+		ASSERT(Near(result, 1.0, 0.02), 2);
+
+		tol := 0.001;
+		result := CalcDiethelm.SolveI(One, 1.0, 1.0, tol);
+		ASSERT(Near(result, 1.0, 0.02), 3);
+		ASSERT(tol <= 0.001, 4)
+	END Test.
+
+positive: convolution of two constant functions is the interval length
+
+	MODULE Test;
+	IMPORT CalcConvolution, NbrRe;
+
+	VAR soln: ARRAY 8, 2 OF NbrRe.Real;
+
+		PROCEDURE Kernel(x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 1
+		END Kernel;
+
+		PROCEDURE Forcing(u, x: NbrRe.Real): NbrRe.Real;
+		BEGIN RETURN 1
+		END Forcing;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		ASSERT(CalcConvolution.GetArrayDimension(1.0, 1.0, 4) = 5, 1);
+		CalcConvolution.Solve(Kernel, Forcing, 1.0, 1.0, 4, 2, soln);
+		ASSERT(Near(soln[0, 0], 0.0, 0.0001), 2);
+		ASSERT(Near(soln[0, 1], 0.0, 0.0001), 3);
+		ASSERT(Near(soln[4, 0], 1.0, 0.0001), 4);
+		ASSERT(Near(soln[4, 1], 1.0, 0.02), 5)
+	END Test.
+
+positive: Mittag-Leffler E11 is the exponential
+
+	MODULE Test;
+	IMPORT MathMitLef, MathRe, NbrRe;
+
+		PROCEDURE Near(got, want, tolerance: NbrRe.Real): BOOLEAN;
+		BEGIN RETURN NbrRe.Abs(got - want) < tolerance
+		END Near;
+
+	BEGIN
+		ASSERT(Near(MathMitLef.Fn(1.0, 1.0, 0.0), 1.0, 0.0001), 1);
+		ASSERT(Near(MathMitLef.Fn(1.0, 1.0, 1.0), MathRe.Exp(1.0), 0.001), 2);
+		ASSERT(Near(MathMitLef.DFn(1.0, 1.0, 0.0), 1.0, 0.0001), 3);
+		ASSERT(Near(MathMitLef.DFn(1.0, 1.0, 1.0), MathRe.Exp(1.0), 0.001), 4)
+	END Test.

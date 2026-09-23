@@ -1,0 +1,46 @@
+# Tests for lib/numbers/ComplexNumbers -- the operators the compiler imports for built-in
+# COMPLEX32 and COMPLEX64 values.
+#
+# options --mayTrap --command="System.Free Test ComplexNumbers;System.Load Test"
+#
+# MathArrays already asks that complex syntax compiles, and NbrCplx covers the record-based complex
+# type. These cases pin the separate operator module that the semantic checker loads when scalar
+# complex operators appear.
+#
+# Each case is positive: it must compile and run its module body without a failing ASSERT.
+
+positive: complex32 arithmetic follows the hand calculation
+
+	MODULE Test;
+	IMPORT ComplexNumbers;
+	VAR z, w, q: COMPLEX32;
+	BEGIN
+		z := 1.0 + 2.0 * IMAG;
+		w := 3.0 - 4.0 * IMAG;
+
+		q := z + w; ASSERT(RE(q) = 4.0, 1); ASSERT(IM(q) = -2.0, 2);
+		q := z - w; ASSERT(RE(q) = -2.0, 3); ASSERT(IM(q) = 6.0, 4);
+		q := z * w; ASSERT(RE(q) = 11.0, 5); ASSERT(IM(q) = 2.0, 6);
+		q := z / w; ASSERT(ABS(RE(q) + 0.2) < 0.000001, 7); ASSERT(ABS(IM(q) - 0.4) < 0.000001, 8);
+		q := ~z; ASSERT(RE(q) = 1.0, 9); ASSERT(IM(q) = -2.0, 10);
+		ASSERT(ABS(ABS(z) - 2.236068) < 0.00001, 11);
+		ASSERT(z < w, 12); ASSERT(w > z, 13)
+	END Test.
+
+positive: complex64 arithmetic keeps the same contract
+
+	MODULE Test;
+	IMPORT ComplexNumbers;
+	VAR z, w, q: COMPLEX64;
+	BEGIN
+		z := 1.0D0 + 2.0D0 * IMAG;
+		w := 3.0D0 - 4.0D0 * IMAG;
+
+		q := z + w; ASSERT(RE(q) = 4.0D0, 1); ASSERT(IM(q) = -2.0D0, 2);
+		q := z - w; ASSERT(RE(q) = -2.0D0, 3); ASSERT(IM(q) = 6.0D0, 4);
+		q := z * w; ASSERT(RE(q) = 11.0D0, 5); ASSERT(IM(q) = 2.0D0, 6);
+		q := z / w; ASSERT(ABS(RE(q) + 0.2D0) < 0.000000000001D0, 7); ASSERT(ABS(IM(q) - 0.4D0) < 0.000000000001D0, 8);
+		q := ~z; ASSERT(RE(q) = 1.0D0, 9); ASSERT(IM(q) = -2.0D0, 10);
+		ASSERT(ABS(ABS(z) - 2.23606797749979D0) < 0.000000000001D0, 11);
+		ASSERT(z < w, 12); ASSERT(w > z, 13)
+	END Test.
