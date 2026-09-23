@@ -129,7 +129,7 @@ TYPE
 			RETURN NIL
 		END GetVariableByName;
 
-		PROCEDURE WriteEncodedUri*(encUri: ARRAY OF CHAR);
+		PROCEDURE WriteEncodedUri*(VAR encUri: ARRAY OF CHAR);
 		VAR encStr: ARRAY 1024 OF CHAR; p: ANY; var: HTTPVariable; i : SIZE;
 		BEGIN
 			COPY(shortUri, encUri);
@@ -260,4 +260,3 @@ gssapi-data-value   = quoted-string
 version             = "version" EQUAL version-value
 version-value       = 1*DIGIT
 sts-uri             = "sts-uri" EQUAL DQUOTE absoluteURI DQUOTE
-

@@ -391,6 +391,57 @@ positive: the scheme of a URL is judged by where the colon is, not by what it sa
 		ASSERT(port = WebHTTP.HTTPSPort, 5)
 	END Test.
 
+positive: request variables are decoded from the URL and form body
+
+	MODULE Test;
+	IMPORT HTTPSupport, WebHTTP, Streams;
+
+	VAR header: WebHTTP.RequestHeader; body: Streams.StringReader; request: HTTPSupport.HTTPRequest;
+		var: HTTPSupport.HTTPVariable; encoded: ARRAY 4096 OF CHAR;
+
+	BEGIN
+		header.method := WebHTTP.PostM;
+		header.uri := "/submit?name=Ana+Bell&sign=a%2Bb";
+		header.additionalFields := NIL;
+		WebHTTP.SetAdditionalFieldValue(header.additionalFields, "Content-Type", "application/x-www-form-urlencoded");
+		WebHTTP.SetAdditionalFieldValue(header.additionalFields, "Content-Length", "17");
+		Streams.OpenStringReader(body, "city=Kyiv&empty=");
+
+		NEW(request, header, body);
+		ASSERT(request.shortUri = "/submit", 1);
+
+		var := request.GetVariableByName("name"); ASSERT(var # NIL, 2);
+		ASSERT(var.value = "Ana Bell", 3);
+		ASSERT(var.isUrlEncoded, 4);
+
+		var := request.GetVariableByName("sign"); ASSERT(var # NIL, 5);
+		ASSERT(var.value = "a+b", 6);
+
+		var := request.GetVariableByName("city"); ASSERT(var # NIL, 7);
+		ASSERT(var.value = "Kyiv", 8);
+		ASSERT(~var.isUrlEncoded, 9);
+
+		var := request.GetVariableByName("empty"); ASSERT(var # NIL, 10);
+		ASSERT(var.value = "", 11);
+
+		request.WriteEncodedUri(encoded);
+		ASSERT(encoded[0] = "/", 12);
+		ASSERT(encoded[7] = "?", 13);
+		ASSERT(encoded[16] = "%", 14);
+		ASSERT(encoded[17] = "2", 15);
+		ASSERT(encoded[18] = "0", 16);
+		ASSERT(encoded[30] = "%", 17);
+		ASSERT(encoded[31] = "2", 18);
+		ASSERT(encoded[32] = "B", 19);
+		ASSERT(encoded[45] = "e", 20);
+		ASSERT(encoded[50] = "=", 21);
+
+		HTTPSupport.RemoveVariablesFromURI("/submit?a=b", encoded);
+		ASSERT(encoded[0] = "/", 22);
+		ASSERT(encoded[6] = "t", 23);
+		ASSERT(encoded[7] = 0X, 24)
+	END Test.
+
 positive: the client fetches over the loopback, and what it sent is a request
 
 	MODULE Test;
