@@ -477,6 +477,35 @@ positive: sessions are created, remembered and exposed as a request variable
 		HTTPSession.StopLeaseManager
 	END Test.
 
+positive: an existing session is reused from the request variable
+
+	MODULE Test;
+	IMPORT HTTPSession, HTTPSupport, WebHTTP, Strings;
+
+	VAR header: WebHTTP.RequestHeader; first, second: HTTPSupport.HTTPRequest;
+		session, same: HTTPSession.Session; url: ARRAY 128 OF CHAR;
+
+	BEGIN
+		header.method := WebHTTP.GetM;
+		header.uri := "/first";
+		header.additionalFields := NIL;
+		NEW(first, header, NIL);
+		session := HTTPSession.GetSession(first);
+		ASSERT(session # NIL, 1);
+
+		url := "/second?sessionid=";
+		Strings.Append(url, session.sessionId);
+		COPY(url, header.uri);
+		NEW(second, header, NIL);
+
+		same := HTTPSession.GetExistingSession(second);
+		ASSERT(same = session, 2);
+		same := HTTPSession.GetSession(second);
+		ASSERT(same = session, 3);
+
+		HTTPSession.StopLeaseManager
+	END Test.
+
 positive: the client fetches over the loopback, and what it sent is a request
 
 	MODULE Test;
