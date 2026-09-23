@@ -442,6 +442,41 @@ positive: request variables are decoded from the URL and form body
 		ASSERT(encoded[7] = 0X, 24)
 	END Test.
 
+positive: sessions are created, remembered and exposed as a request variable
+
+	MODULE Test;
+	IMPORT HTTPSession, HTTPSupport, WebHTTP;
+
+	VAR header: WebHTTP.RequestHeader; request: HTTPSupport.HTTPRequest;
+		session, same: HTTPSession.Session; var: HTTPSupport.HTTPVariable;
+
+	BEGIN
+		header.method := WebHTTP.GetM;
+		header.uri := "/page";
+		header.additionalFields := NIL;
+		NEW(request, header, NIL);
+
+		ASSERT(HTTPSession.GetExistingSession(request) = NIL, 1);
+		session := HTTPSession.GetSession(request);
+		ASSERT(session # NIL, 2);
+
+		var := request.GetVariableByName(HTTPSession.HTTPVarSessionIdName);
+		ASSERT(var # NIL, 3);
+		ASSERT(var.value = session.sessionId, 4);
+
+		same := HTTPSession.GetExistingSession(request);
+		ASSERT(same = session, 5);
+		same := HTTPSession.GetSession(request);
+		ASSERT(same = session, 6);
+
+		session.AddVariableValue("user", request);
+		ASSERT(session.GetVariableValue("user") = request, 7);
+		session.RemoveVariable("user");
+		ASSERT(session.GetVariableValue("user") = NIL, 8);
+
+		HTTPSession.StopLeaseManager
+	END Test.
+
 positive: the client fetches over the loopback, and what it sent is a request
 
 	MODULE Test;
