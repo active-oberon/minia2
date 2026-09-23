@@ -391,6 +391,24 @@ positive: the scheme of a URL is judged by where the colon is, not by what it sa
 		ASSERT(port = WebHTTP.HTTPSPort, 5)
 	END Test.
 
+positive: HTTP support encodes only the characters that need escaping
+
+	MODULE Test;
+	IMPORT HTTPSupport;
+
+	VAR encoded: ARRAY 128 OF CHAR;
+
+	BEGIN
+		HTTPSupport.HTTPEncode("azAZ09-_.!~*'()", encoded);
+		ASSERT(encoded = "azAZ09-_.!~*'()", 1);
+
+		HTTPSupport.HTTPEncode("a b+c/%", encoded);
+		ASSERT(encoded = "a%20b%2Bc%2F%25", 2);
+
+		HTTPSupport.HTTPEncode("", encoded);
+		ASSERT(encoded = "", 3)
+	END Test.
+
 positive: request variables are decoded from the URL and form body
 
 	MODULE Test;
