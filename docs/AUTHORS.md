@@ -69,6 +69,7 @@ not carry it.
 | `andre` | Andre Fischer | — | the 2024 SVN map: `andref@inf.ethz.ch`. Not to be confused with `adf`, which is Alan D. Freed |
 | `morozova` | Oleksii Morozov | — | the same map, across three servers (`highdim.com`, `ethz.ch`, `inf.ethz.ch`) |
 | `sergundo` | Sergey Durmanov | — | the same map; the correspondent our upstream patches go to |
+| `kemet` | Sergey Zorin (Сергей Зорин) | — | Andrii Puhachenko, 2026-09-22: identified `kemet` as Сергей Зорин |
 
 Signed in full already: **Patrick Hunziker** (183), **Timothée Martiel** (45), **Matthias Frei** (33),
 **Luc Blaeser** (27), **Simon L. Keel** (24). **BohdanT** (50) is Bohdan Troshchynskyi, the A2DB
