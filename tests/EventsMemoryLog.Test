@@ -1,0 +1,35 @@
+# The in-memory event log receives dispatched events and resumes after clearing.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: dispatched events are stored in order and clear resets the log
+
+	MODULE Test;
+	IMPORT Events, EventsMemoryLog, EventsUtils, Objects;
+	VAR log: EventsUtils.EventContainer; wrapper: EventsUtils.EventWrapper;
+		count, cleared: SIZE; full: BOOLEAN; attempts: SIGNED32;
+
+		PROCEDURE AwaitCount(expected: SIZE);
+		BEGIN
+			attempts := 0;
+			REPEAT
+				wrapper := log.GetEvents(count, full, cleared);
+				IF count >= expected THEN RETURN END;
+				Objects.Sleep(10); INC(attempts)
+			UNTIL attempts = 200;
+			ASSERT(count >= expected, 1)
+		END AwaitCount;
+	BEGIN
+		log := EventsMemoryLog.GetEvents(); ASSERT(log # NIL, 2);
+		EventsMemoryLog.Clear;
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "first", FALSE);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "second", FALSE);
+		AwaitCount(2);
+		ASSERT(wrapper.events[0].message = "first", 3);
+		ASSERT(wrapper.events[1].message = "second", 4);
+		EventsMemoryLog.Clear;
+		wrapper := log.GetEvents(count, full, cleared);
+		ASSERT(count = 0, 5);
+		Events.AddEvent("Test", Events.Information, 0, 0, 0, "third", FALSE);
+		AwaitCount(1);
+		ASSERT(wrapper.events[0].message = "third", 6)
+	END Test.

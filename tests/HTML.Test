@@ -1,0 +1,25 @@
+# HTMLScanner and HTMLParser on a nested document.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: nested HTML elements and attributes survive parsing
+
+	MODULE Test;
+	IMPORT HTMLScanner, HTMLParser, XML, XMLObjects, Streams, Strings;
+	VAR reader: Streams.StringReader; scanner: HTMLScanner.Scanner;
+		parser: HTMLParser.Parser; document: XML.Document;
+		root, body, paragraph: XML.Element; children: XMLObjects.Enumerator;
+		item: ANY; value: Strings.String;
+	BEGIN
+		Streams.OpenStringReader(reader, "<html><body><p title='hello'>text</p></body></html>");
+		NEW(scanner, reader); NEW(parser, scanner);
+		document := parser.Parse(); ASSERT(document # NIL, 1);
+		root := document.GetRoot(); ASSERT(root # NIL, 2);
+		value := root.GetName(); ASSERT(value^ = "HTML", 3);
+		children := root.GetContents(); ASSERT(children.HasMoreElements(), 4);
+		item := children.GetNext(); ASSERT(item IS XML.Element, 5);
+		body := item(XML.Element); value := body.GetName(); ASSERT(value^ = "BODY", 6);
+		children := body.GetContents(); ASSERT(children.HasMoreElements(), 7);
+		item := children.GetNext(); ASSERT(item IS XML.Element, 8);
+		paragraph := item(XML.Element); value := paragraph.GetName(); ASSERT(value^ = "P", 9);
+		value := paragraph.GetAttributeValue("title"); ASSERT(value^ = "hello", 10)
+	END Test.

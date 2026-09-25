@@ -1,0 +1,33 @@
+# Reading bounded memory through the Streams.Reader interface.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a memory reader respects destination offsets and input length
+
+	MODULE Test;
+	IMPORT MemoryReader, Streams;
+	VAR reader: MemoryReader.Reader; data: ARRAY 8 OF CHAR;
+		got: ARRAY 8 OF CHAR; length: SIZE;
+	BEGIN
+		data := "abcde";
+		NEW(reader, ADDRESSOF(data[0]), 5);
+		reader.Bytes(got, 2, 3, length);
+		ASSERT(length = 3, 1);
+		ASSERT(got[2] = "a"); ASSERT(got[3] = "b"); ASSERT(got[4] = "c");
+		reader.Bytes(got, 0, 4, length);
+		ASSERT(length = 2, 2);
+		ASSERT(got[0] = "d"); ASSERT(got[1] = "e");
+		reader.Bytes(got, 0, 1, length);
+		ASSERT(length = 0, 3); ASSERT(reader.res = Streams.EOF, 4)
+	END Test.
+
+positive: an empty memory range is immediately exhausted
+
+	MODULE Test;
+	IMPORT MemoryReader, Streams;
+	VAR reader: MemoryReader.Reader; data: ARRAY 1 OF CHAR;
+		got: ARRAY 1 OF CHAR; length: SIZE;
+	BEGIN
+		NEW(reader, ADDRESSOF(data[0]), 0);
+		reader.Bytes(got, 0, 1, length);
+		ASSERT(length = 0, 1); ASSERT(reader.res = Streams.EOF, 2)
+	END Test.

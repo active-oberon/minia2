@@ -1,0 +1,54 @@
+# Persistence and append behavior for lib/data-legacy/DataIO.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: primitive records survive reopening and appending
+
+	MODULE Test;
+	IMPORT DataIO, NbrInt, NbrStrings;
+	VAR f: DataIO.File; n: NbrInt.Integer; s: NbrStrings.String;
+	BEGIN
+		f := DataIO.Open("dataio-roundtrip"); ASSERT(f # NIL, 1);
+		f.W.Integer(-1234567);
+		s := NIL; f.W.PtrString(s);
+		s := "first"; f.W.PtrString(s);
+		DataIO.Close(f);
+
+		f := DataIO.Open("dataio-roundtrip"); ASSERT(f # NIL, 2);
+		f.R.Integer(n); ASSERT(n = -1234567, 3);
+		f.R.PtrString(s); ASSERT(s = NIL, 4);
+		f.R.PtrString(s); ASSERT(s^ = "first", 5);
+		f.W.Integer(42);
+		s := "last"; f.W.PtrString(s);
+		DataIO.Close(f);
+
+		f := DataIO.Open("dataio-roundtrip"); ASSERT(f # NIL, 6);
+		f.R.Integer(n); ASSERT(n = -1234567, 7);
+		f.R.PtrString(s); ASSERT(s = NIL, 8);
+		f.R.PtrString(s); ASSERT(s^ = "first", 9);
+		f.R.Integer(n); ASSERT(n = 42, 10);
+		f.R.PtrString(s); ASSERT(s^ = "last", 11);
+		DataIO.Close(f)
+	END Test.
+
+positive: registered objects retain their type and data after reopening
+
+	MODULE Test;
+	IMPORT DataIO, DataQueues, Data;
+	VAR f: DataIO.File; queue, loaded: DataQueues.Queue; datum: Data.Datum;
+		obj: OBJECT; key: Data.Key; word: Data.Word;
+	BEGIN
+		NEW(queue); NEW(datum);
+		Data.WordToKey("saved", key); datum.SetKey(key);
+		queue.Push(datum);
+		f := DataIO.Open("dataio-objects"); ASSERT(f # NIL, 1);
+		DataQueues.Store(f.W, queue);
+		DataIO.Close(f);
+
+		f := DataIO.Open("dataio-objects"); ASSERT(f # NIL, 2);
+		DataQueues.Load(f.R, loaded);
+		ASSERT(loaded # NIL, 3); ASSERT(loaded.len = 1, 4);
+		loaded.Pop(obj); ASSERT(obj IS Data.Datum, 5);
+		obj(Data.Datum).GetKey(key); Data.KeyToWord(key, word);
+		ASSERT(word = "saved", 6);
+		DataIO.Close(f)
+	END Test.

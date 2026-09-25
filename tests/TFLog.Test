@@ -1,0 +1,22 @@
+# File output from the shared log utility.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: text and numbers reach the log file in order
+
+	MODULE Test;
+	IMPORT TFLog, Files, Strings;
+	VAR log: TFLog.Log; file: Files.File; reader: Files.Reader;
+		content: ARRAY 256 OF CHAR; length: SIZE;
+	BEGIN
+		NEW(log, "coverage");
+		log.SetLogToOut(FALSE);
+		log.SetLogFile("tflog-coverage.txt");
+		log.String("value="); log.Int(-42, 0); log.Ln;
+		log.String("hex="); log.Hex(0ABH, -2); log.Ln;
+		log.Close;
+		file := Files.Old("tflog-coverage.txt"); ASSERT(file # NIL, 1);
+		Files.OpenReader(reader, file, 0);
+		reader.Bytes(content, 0, LEN(content) - 1, length); content[length] := 0X;
+		ASSERT(Strings.Pos("value=-42", content) >= 0, 2);
+		ASSERT(Strings.Pos("hex=AB", content) >= 0, 3)
+	END Test.

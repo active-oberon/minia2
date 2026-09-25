@@ -1,0 +1,34 @@
+# Move-to-front encoding and decoding preserve every byte and stream state.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: all byte values round trip in forward and reverse order
+
+	MODULE Test;
+	IMPORT MoveToFront;
+	VAR encoder, decoder: MoveToFront.MTF; i: SIGNED32; code, value: CHAR;
+	BEGIN
+		NEW(encoder); NEW(decoder);
+		FOR i := 0 TO 255 DO
+			value := CHR(i); code := encoder.Encode(value);
+			ASSERT(decoder.Decode(code) = value, 1)
+		END;
+		FOR i := 255 TO 0 BY -1 DO
+			value := CHR(i); code := encoder.Encode(value);
+			ASSERT(decoder.Decode(code) = value, 2)
+		END
+	END Test.
+
+positive: the front byte encodes as zero and state is per instance
+
+	MODULE Test;
+	IMPORT MoveToFront;
+	VAR first, second, decoder: MoveToFront.MTF;
+	BEGIN
+		NEW(first); NEW(second); NEW(decoder);
+		ASSERT(first.Encode(0X) = 0X, 1);
+		ASSERT(first.Encode("A") = CHR(65), 2);
+		ASSERT(first.Encode("A") = 0X, 3);
+		ASSERT(second.Encode("A") = CHR(65), 4);
+		ASSERT(decoder.Decode(CHR(65)) = "A", 5);
+		ASSERT(decoder.Decode(0X) = "A", 6)
+	END Test.

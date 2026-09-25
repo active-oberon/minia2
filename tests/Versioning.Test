@@ -1,0 +1,38 @@
+# Versioned file names and log writers preserve their purpose and extension.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: tagging preserves the stem and extension with separate or shared buffers
+
+	MODULE Test;
+	IMPORT Files, Strings, Versioning;
+	VAR source, tagged, stem, extension: Files.FileName;
+	BEGIN
+		source := "report.txt";
+		Versioning.TagFileName(source, tagged);
+		ASSERT(source = "report.txt", 1);
+		Files.SplitExtension(tagged, stem, extension);
+		ASSERT(extension = "txt", 2);
+		ASSERT(Strings.Pos("report_", stem) = 0, 3);
+		ASSERT(Strings.Length(stem) = Strings.Length("report") + 16, 4);
+		Versioning.TagFileName(source, source);
+		Files.SplitExtension(source, stem, extension);
+		ASSERT(extension = "txt", 5);
+		ASSERT(Strings.Pos("report_", stem) = 0, 6)
+	END Test.
+
+positive: a new log writer creates a tagged file with its heading
+
+	MODULE Test;
+	IMPORT Files, Streams, Strings, Versioning;
+	VAR filename: Files.FileName; writer: Streams.Writer; file: Files.File;
+		reader: Files.Reader; heading: ARRAY 128 OF CHAR;
+	BEGIN
+		filename := "versioning-log.txt";
+		writer := Versioning.NewLogWriter(filename, "Test", "sample");
+		ASSERT(writer # NIL, 1);
+		ASSERT(Strings.Pos("versioning-log_", filename) = 0, 2);
+		writer.Update;
+		file := Files.Old(filename); ASSERT(file # NIL, 3);
+		NEW(reader, file, 0); reader.Ln(heading);
+		ASSERT(heading = "Test:sample", 4)
+	END Test.
