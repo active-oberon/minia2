@@ -2684,6 +2684,7 @@ BEGIN
 	ASSERT(text # NIL);
 	nofReplacements := 0;
 	stringLen := UCS32StrLength(string);
+	IF stringLen = 0 THEN RETURN END;
 	byLen := UCS32StrLength(by);
 	text.AcquireWrite;
 	pos := Pos(string, 0, text);

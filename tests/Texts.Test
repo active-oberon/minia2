@@ -258,3 +258,38 @@ positive: bidirectional controls have printable stand-ins when asked
 		ch := 041H; UnicodeBidirectionality.GetDisplayCharacter(ch); ASSERT(ch = 041H, 9);
 		UnicodeBidirectionality.showUnicodeControlCharacters := FALSE
 	END Test.
+
+positive: replacing an empty pattern leaves the text unchanged
+
+	MODULE Test;
+	IMPORT Texts, TextUtilities;
+	VAR text: Texts.Text; empty, replacement: ARRAY 4 OF Texts.Char32;
+		value: ARRAY 32 OF CHAR; count: SIZE;
+	BEGIN
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "hello"); text.ReleaseWrite;
+		empty[0] := 0; replacement[0] := ORD("x"); replacement[1] := 0;
+		TextUtilities.Replace(empty, replacement, text, count);
+		ASSERT(count = 0, 1);
+		TextUtilities.TextToStr(text, value); ASSERT(value = "hello", 2)
+	END Test.
+
+positive: Unicode search respects direction and text boundaries
+
+	MODULE Test;
+	IMPORT Texts, TextUtilities;
+	VAR text: Texts.Text; pattern: ARRAY 3 OF Texts.Char32;
+	BEGIN
+		NEW(text);
+		text.AcquireWrite; text.InsertUTF8(0, "a😀b😀"); text.ReleaseWrite;
+		pattern[0] := 1F600H; pattern[1] := 0;
+		text.AcquireRead;
+		ASSERT(TextUtilities.Pos(pattern, 0, text) = 1, 1);
+		ASSERT(TextUtilities.Pos(pattern, 2, text) = 3, 2);
+		ASSERT(TextUtilities.Pos(pattern, 4, text) = -1, 3);
+		ASSERT(TextUtilities.GenericPos(pattern, 3, text, FALSE, TRUE) = 3, 4);
+		ASSERT(TextUtilities.GenericPos(pattern, 2, text, FALSE, TRUE) = 1, 5);
+		pattern[0] := ORD("c");
+		ASSERT(TextUtilities.GenericPos(pattern, 3, text, FALSE, TRUE) = -1, 6);
+		text.ReleaseRead
+	END Test.
