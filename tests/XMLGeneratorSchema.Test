@@ -1,0 +1,51 @@
+# Generator schema loading handles absent, malformed, and empty schemas.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a missing generator schema returns nil
+
+	MODULE Test;
+	IMPORT XMLGeneratorSchema;
+	BEGIN
+		ASSERT(XMLGeneratorSchema.OpenGeneratorSchema("missing-generator-schema.xgs") = NIL, 1)
+	END Test.
+
+positive: an empty generator schema returns nil without trapping
+
+	MODULE Test;
+	IMPORT Files, XMLGeneratorSchema;
+	VAR file: Files.File;
+	BEGIN
+		file := Files.New("empty-generator-schema.xgs"); ASSERT(file # NIL, 1);
+		Files.Register(file);
+		ASSERT(XMLGeneratorSchema.OpenGeneratorSchema("empty-generator-schema.xgs") = NIL, 2)
+	END Test.
+
+positive: an empty valid generator schema opens a registry
+
+	MODULE Test;
+	IMPORT Files, XMLGeneratorSchema;
+	VAR file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New("valid-generator-schema.xgs"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("<generator-schema/>"); writer.Update; Files.Register(file);
+		ASSERT(XMLGeneratorSchema.OpenGeneratorSchema("valid-generator-schema.xgs") # NIL, 2)
+	END Test.
+
+positive: a generator schema registers an element factory
+
+	MODULE Test;
+	IMPORT Files, Models, XML, XMLGeneratorSchema;
+	VAR file: Files.File; writer: Files.Writer; registry: XML.ElementRegistry;
+		item: XML.Element;
+	BEGIN
+		file := Files.New("mapped-generator-schema.xgs"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("<generator-schema><item generator='Models.GenBoolean'/></generator-schema>");
+		writer.Update; Files.Register(file);
+		registry := XMLGeneratorSchema.OpenGeneratorSchema("mapped-generator-schema.xgs");
+		ASSERT(registry # NIL, 2);
+		item := registry.InstantiateElement("item");
+		ASSERT(item # NIL, 3);
+		ASSERT(item IS Models.Boolean, 4)
+	END Test.

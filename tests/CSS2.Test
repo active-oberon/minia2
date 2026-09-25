@@ -1,0 +1,56 @@
+# CSS scanning and parsing, including an unavailable import.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a basic rule becomes a stylesheet rule set
+
+	MODULE Test;
+	IMPORT CSS2, CSS2Scanner, CSS2Parser, Files, XMLObjects;
+	VAR file: Files.File; writer: Files.Writer; scanner: CSS2Scanner.Scanner;
+		parser: CSS2Parser.Parser; sheet: CSS2.StyleSheet;
+		rules: XMLObjects.Enumerator; rule: ANY;
+	BEGIN
+		file := Files.New(""); Files.OpenWriter(writer, file, 0);
+		writer.String("p { color: #f00; }"); writer.Update;
+		NEW(scanner, file); NEW(parser, scanner);
+		sheet := parser.Parse(); ASSERT(sheet # NIL, 1);
+		rules := sheet.GetRuleSets(); ASSERT(rules.HasMoreElements(), 2);
+		rule := rules.GetNext(); ASSERT(rule IS CSS2.RuleSet, 3);
+		ASSERT(~rules.HasMoreElements(), 4)
+	END Test.
+
+positive: a missing imported stylesheet leaves following rules available
+
+	MODULE Test;
+	IMPORT CSS2, CSS2Scanner, CSS2Parser, Files, XMLObjects;
+	VAR file: Files.File; writer: Files.Writer; scanner: CSS2Scanner.Scanner;
+		parser: CSS2Parser.Parser; sheet: CSS2.StyleSheet;
+		rules: XMLObjects.Enumerator;
+	BEGIN
+		file := Files.New(""); Files.OpenWriter(writer, file, 0);
+		writer.String('@import "missing-css-coverage.css"; p { color: #f00; }'); writer.Update;
+		NEW(scanner, file); NEW(parser, scanner);
+		sheet := parser.Parse(); ASSERT(sheet # NIL, 1);
+		rules := sheet.GetRuleSets(); ASSERT(rules.HasMoreElements(), 2);
+		ASSERT(rules.GetNext() IS CSS2.RuleSet, 3)
+	END Test.
+
+positive: an available imported stylesheet contributes its rules
+
+	MODULE Test;
+	IMPORT CSS2, CSS2Scanner, CSS2Parser, Files, XMLObjects;
+	VAR file: Files.File; writer: Files.Writer; scanner: CSS2Scanner.Scanner;
+		parser: CSS2Parser.Parser; sheet: CSS2.StyleSheet;
+		rules: XMLObjects.Enumerator;
+	BEGIN
+		file := Files.New("imported-css-coverage.css"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("p { color: red; }"); writer.Update; Files.Register(file);
+		file := Files.New(""); Files.OpenWriter(writer, file, 0);
+		writer.String('@import "imported-css-coverage.css"; div { color: blue; }'); writer.Update;
+		NEW(scanner, file); NEW(parser, scanner);
+		sheet := parser.Parse(); ASSERT(sheet # NIL, 2);
+		rules := sheet.GetRuleSets();
+		ASSERT(rules.HasMoreElements(), 3); ASSERT(rules.GetNext() IS CSS2.RuleSet, 4);
+		ASSERT(rules.HasMoreElements(), 5); ASSERT(rules.GetNext() IS CSS2.RuleSet, 6);
+		ASSERT(~rules.HasMoreElements(), 7)
+	END Test.

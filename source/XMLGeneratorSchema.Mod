@@ -16,7 +16,9 @@ BEGIN
 	NEW(reader, xgsFile, 0);
 	NEW(scanner, reader); NEW(parser, scanner);
 	doc := parser.Parse();
+	IF doc = NIL THEN RETURN NIL END;
 	root := doc.GetRoot();
+	IF root = NIL THEN RETURN NIL END;
 	name := root.GetName();
 	IF name^ = "generator-schema" THEN
 		contents := root.GetContents();

@@ -86,6 +86,7 @@ TYPE
 				NEW(newScanner, file);
 				NEW(newParser, newScanner); newParser.reportError := reportError;
 				importedStyleSheet := newParser.Parse()
+			ELSE NEW(importedStyleSheet)
 			END;
 			scanner.Scan();
 			IF scanner.sym # Scanner.Ident THEN
