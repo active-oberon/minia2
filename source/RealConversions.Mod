@@ -45,7 +45,9 @@ VAR
 		PROCEDURE Digit( ch: CHAR;  fraction: BOOLEAN );
 		BEGIN
 			any := TRUE;
-			IF count < BigDigits THEN
+			IF (count = 0) & (ch = "0") THEN
+				IF fraction THEN DEC(exp10) END
+			ELSIF count < BigDigits THEN
 				digits[count] := ch;  INC( count );
 				IF fraction THEN  DEC( exp10 )  END
 			ELSE
@@ -113,7 +115,9 @@ VAR
 		PROCEDURE Digit( ch: CHAR;  fraction: BOOLEAN );
 		BEGIN
 			any := TRUE;
-			IF count < BigDigits THEN
+			IF (count = 0) & (ch = "0") THEN
+				IF fraction THEN DEC(exp10) END
+			ELSIF count < BigDigits THEN
 				digits[count] := ch;  INC( count );
 				IF fraction THEN  DEC( exp10 )  END
 			ELSE
@@ -740,4 +744,3 @@ VAR
 BEGIN
 	InitHL
 END RealConversions.
-

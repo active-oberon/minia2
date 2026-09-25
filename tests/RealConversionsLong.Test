@@ -1,0 +1,45 @@
+# Leading zeros do not consume the significant-digit budget.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a long integer with leading zeros converts to its value
+
+	MODULE Test;
+	IMPORT RealConversions;
+	VAR input: ARRAY 128 OF CHAR; value: FLOAT64; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 69 DO input[i] := "0" END;
+		input[70] := "1"; input[71] := 0X;
+		ASSERT(RealConversions.StringToReal(input, value), 1);
+		ASSERT(value = 1.0, 2)
+	END Test.
+
+positive: streaming a long integer with leading zeros keeps the final digit
+
+	MODULE Test;
+	IMPORT RealConversions;
+	VAR input: ARRAY 128 OF CHAR; value: FLOAT64; position, i: SIGNED32;
+
+		PROCEDURE Next(): CHAR;
+		BEGIN
+			INC(position); RETURN input[position]
+		END Next;
+	BEGIN
+		FOR i := 0 TO 69 DO input[i] := "0" END;
+		input[70] := "1"; input[71] := 0X;
+		position := 0;
+		ASSERT(RealConversions.ScanReal(input[0], Next, value), 1);
+		ASSERT(value = 1.0, 2)
+	END Test.
+
+positive: leading fractional zeros retain their decimal scale
+
+	MODULE Test;
+	IMPORT RealConversions;
+	VAR input: ARRAY 128 OF CHAR; value: FLOAT64; i: SIGNED32;
+	BEGIN
+		input[0] := "0"; input[1] := ".";
+		FOR i := 2 TO 71 DO input[i] := "0" END;
+		input[72] := "1"; input[73] := 0X;
+		ASSERT(RealConversions.StringToReal(input, value), 1);
+		ASSERT((value > 0.0) & (value < 1.0D-70), 2)
+	END Test.
