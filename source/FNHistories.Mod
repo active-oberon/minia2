@@ -62,10 +62,12 @@ TYPE
 
 		(** turn history back as many steps as necessairy to make item the current one. return FALSE if item cannot be found *)
 		PROCEDURE BackTo*(item : ANY) : BOOLEAN;
+		VAR p: HistoryItem;
 		BEGIN
-			WHILE current # NIL DO
-				IF current.item = item THEN RETURN TRUE END;
-				current := current.previous
+			p := current;
+			WHILE p # NIL DO
+				IF p.item = item THEN current := p; RETURN TRUE END;
+				p := p.previous
 			END;
 			RETURN FALSE
 		END BackTo;
@@ -83,10 +85,12 @@ TYPE
 
 		(** turn history forward as many steps as necessairy to make item the current one. return FALSE if item cannot be found *)
 		PROCEDURE ForwardTo*(item : ANY) : BOOLEAN;
+		VAR p: HistoryItem;
 		BEGIN
-			WHILE current # NIL DO
-				IF current.item = item THEN RETURN TRUE END;
-				current := current.next
+			p := current;
+			WHILE p # NIL DO
+				IF p.item = item THEN current := p; RETURN TRUE END;
+				p := p.next
 			END;
 			RETURN FALSE
 		END ForwardTo;

@@ -1,0 +1,97 @@
+# Object attributes retain flags and data across growth and removal.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: set include get and clear retain the expected values
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; obj, data: Item; value: Attributes.Attribute;
+	BEGIN
+		NEW(attrs); NEW(obj); NEW(data);
+		attrs.Set(obj, {1}, data);
+		attrs.Include(obj, 3);
+		value := attrs.Get(obj);
+		ASSERT(value.flags = {1, 3}, 1);
+		ASSERT(value.data = data, 2);
+		attrs.Clear;
+		ASSERT(attrs.GetFlags(obj) = {}, 3);
+		ASSERT(attrs.GetData(obj) = NIL, 4);
+		attrs.Include(obj, 2);
+		ASSERT(attrs.GetFlags(obj) = {2}, 5)
+	END Test.
+
+positive: attributes grow beyond their initial capacity
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; items: ARRAY 20 OF Item; i: SIGNED32;
+	BEGIN
+		NEW(attrs);
+		FOR i := 0 TO LEN(items) - 1 DO
+			NEW(items[i]); attrs.SetFlags(items[i], {1})
+		END;
+		FOR i := 0 TO LEN(items) - 1 DO
+			ASSERT(attrs.GetFlags(items[i]) = {1}, 1)
+		END
+	END Test.
+
+positive: removing a middle entry leaves later entries available
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; a, b, c: Item;
+	BEGIN
+		NEW(attrs); NEW(a); NEW(b); NEW(c);
+		attrs.SetFlags(a, {1}); attrs.SetFlags(b, {2}); attrs.SetFlags(c, {3});
+		attrs.SetFlags(b, {});
+		ASSERT(attrs.GetFlags(a) = {1}, 1);
+		ASSERT(attrs.GetFlags(b) = {}, 2);
+		ASSERT(attrs.GetFlags(c) = {3}, 3)
+	END Test.
+
+positive: removing a flag preserves the associated data
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; obj, data: Item;
+	BEGIN
+		NEW(attrs); NEW(obj); NEW(data);
+		attrs.Set(obj, {1}, data);
+		attrs.Exclude(obj, 1);
+		ASSERT(attrs.GetFlags(obj) = {}, 1);
+		ASSERT(attrs.GetData(obj) = data, 2)
+	END Test.
+
+positive: setting absent data to nil changes nothing
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; obj: Item;
+	BEGIN
+		NEW(attrs); NEW(obj);
+		attrs.SetData(obj, NIL);
+		ASSERT(attrs.GetFlags(obj) = {}, 1);
+		ASSERT(attrs.GetData(obj) = NIL, 2)
+	END Test.
+
+positive: each setter can clear its own value without clearing the other
+
+	MODULE Test;
+	IMPORT Attributes;
+	TYPE Item = OBJECT END Item;
+	VAR attrs: Attributes.Attributes; obj, data: Item;
+	BEGIN
+		NEW(attrs); NEW(obj); NEW(data);
+		attrs.Set(obj, {1}, data);
+		attrs.SetFlags(obj, {});
+		ASSERT(attrs.GetFlags(obj) = {}, 1);
+		ASSERT(attrs.GetData(obj) = data, 2);
+		attrs.SetFlags(obj, {2}); attrs.SetData(obj, NIL);
+		ASSERT(attrs.GetFlags(obj) = {2}, 3);
+		ASSERT(attrs.GetData(obj) = NIL, 4)
+	END Test.

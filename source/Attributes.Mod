@@ -47,6 +47,7 @@ TYPE
 			ELSIF (nofAttributes >= LEN(attributes)) THEN
 				NEW(newAttributes, 2 * LEN(attributes));
 				FOR i := 0 TO nofAttributes - 1 DO newAttributes[i] := attributes[i]; END;
+				attributes := newAttributes;
 			END;
 		END ResizeArrayIfNecessary;
 
@@ -71,17 +72,13 @@ TYPE
 			index := hint;
 			IF (index = Invalid) THEN index := GetIndexOf(object); END;
 			ASSERT(index # Invalid);
-			IF (index = nofAttributes - 1) THEN
-				attributes[index].object := NIL;
-				attributes[index].flags := {};
-				attributes[index].data := NIL;
-			ELSE
-				ASSERT(attributes[nofAttributes-1].object = NIL);
-				FOR i := index TO nofAttributes-2 DO
-					attributes[i] := attributes[i + 1];
-				END;
+			FOR i := index TO nofAttributes-2 DO
+				attributes[i] := attributes[i + 1];
 			END;
 			DEC(nofAttributes);
+			attributes[nofAttributes].object := NIL;
+			attributes[nofAttributes].flags := {};
+			attributes[nofAttributes].data := NIL;
 		END RemoveObject;
 
 		(* Return index of node, <Invalid> if not found *)
@@ -147,9 +144,9 @@ TYPE
 			ASSERT(object # NIL);
 			index := GetIndexOf(object);
 			IF (index # Invalid) THEN
-				IF (flags # {}) THEN
+				IF (flags # {}) OR (attributes[index].data # NIL) THEN
 					attributes[index].flags := flags;
-				ELSIF (attributes[index].data = NIL) THEN
+				ELSE
 					RemoveObject(object, index);
 				END;
 			ELSIF (flags # {}) THEN
@@ -178,7 +175,7 @@ TYPE
 			index := GetIndexOf(object);
 			IF (index # Invalid) THEN
 				EXCL(attributes[index].flags, flag);
-				IF (attributes[index].flags = {}) THEN RemoveObject(object, index); END;
+				IF (attributes[index].flags = {}) & (attributes[index].data = NIL) THEN RemoveObject(object, index); END;
 			END;
 		END Exclude;
 
@@ -200,12 +197,12 @@ TYPE
 			ASSERT(object # NIL);
 			index := GetIndexOf(object);
 			IF (index # Invalid) THEN
-				IF (data # NIL) THEN
+				IF (data # NIL) OR (attributes[index].flags # {}) THEN
 					attributes[index].data := data;
-				ELSIF (attributes[index].flags = {}) THEN
+				ELSE
 					RemoveObject(object, index);
 				END;
-			ELSE
+			ELSIF (data # NIL) THEN
 				AddObject(object, {}, data);
 			END;
 		END SetData;

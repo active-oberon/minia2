@@ -1,0 +1,41 @@
+# History navigation and failed searches.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: history moves in both directions and discards a future branch
+
+	MODULE Test;
+	IMPORT FNHistories;
+	TYPE Item = OBJECT END Item;
+	VAR history: FNHistories.History; first, second, third, branch: Item;
+	BEGIN
+		NEW(history); NEW(first); NEW(second); NEW(third); NEW(branch);
+		ASSERT(history.IsEmpty(), 1);
+		ASSERT(~history.Back(), 2); ASSERT(~history.Forward(), 3);
+		history.Insert(first); history.Insert(second); history.Insert(third);
+		ASSERT(history.Back(), 4); ASSERT(history.GetCurrent() = second, 5);
+		ASSERT(history.Back(), 6); ASSERT(history.GetCurrent() = first, 7);
+		ASSERT(~history.Back(), 8);
+		ASSERT(history.ForwardTo(third), 9); ASSERT(history.GetCurrent() = third, 10);
+		ASSERT(history.BackTo(first), 11);
+		history.Insert(branch);
+		ASSERT(history.GetCurrent() = branch, 12);
+		ASSERT(~history.Forward(), 13); ASSERT(~history.ForwardTo(third), 14)
+	END Test.
+
+positive: a missing item leaves the current history position intact
+
+	MODULE Test;
+	IMPORT FNHistories;
+	TYPE Item = OBJECT END Item;
+	VAR history: FNHistories.History; first, second, missing: Item;
+	BEGIN
+		NEW(history); NEW(first); NEW(second); NEW(missing);
+		history.Insert(first); history.Insert(second);
+		ASSERT(~history.BackTo(missing), 1);
+		ASSERT(history.GetCurrent() = second, 2);
+		ASSERT(history.Back(), 3);
+		ASSERT(~history.ForwardTo(missing), 4);
+		ASSERT(history.GetCurrent() = first, 5);
+		ASSERT(history.Forward(), 6);
+		ASSERT(history.GetCurrent() = second, 7)
+	END Test.
