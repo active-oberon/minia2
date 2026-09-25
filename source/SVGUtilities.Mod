@@ -71,40 +71,55 @@ BEGIN
 	SkipWhiteSpace(i, s);
 END SkipCommaWhiteSpace;
 
+(* AppendNumberChar grows the token buffer only when a long number needs it. *)
+PROCEDURE AppendNumberChar(VAR buffer: Strings.String; VAR count: SIZE; ch: CHAR);
+VAR grown: Strings.String; j: SIZE;
+BEGIN
+	IF count = LEN(buffer) - 1 THEN
+		NEW(grown, 2 * LEN(buffer));
+		FOR j := 0 TO count - 1 DO grown[j] := buffer[j] END;
+		buffer := grown
+	END;
+	buffer[count] := ch; INC(count)
+END AppendNumberChar;
+
 (* Convert the substring beginning at position i in str into a real value. Leading whitespace is ignored.
 	After the conversion i points to the first character after the real value. *)
 PROCEDURE StrToFloatPos*(VAR str: ARRAY OF CHAR; VAR val: FLOAT64; VAR i: SIZE);
-VAR noStr: ARRAY 32 OF CHAR;
+VAR noStr: Strings.String;
 	count: SIZE;
 BEGIN
+	NEW(noStr, 32);
 	WHILE (str[i] # 0X) & (str[i] <= " ") DO INC(i) END;
 
 	count := 0;
 	IF str[i] = "-" THEN
-		noStr[count] := str[i]; INC(count); INC(i);
+		AppendNumberChar(noStr, count, str[i]); INC(i);
 		WHILE (str[i] # 0X) & (str[i] <= " ") DO INC(i) END
 	END;
 	IF str[i] = "+" THEN
 		 INC(i);
 		WHILE (str[i] # 0X) & (str[i] <= " ") DO INC(i) END
 	END;
-	WHILE (str[i] >= "0") & (str[i] <= "9") DO noStr[count] := str[i]; INC(count); INC(i) END;
+	WHILE (str[i] >= "0") & (str[i] <= "9") DO AppendNumberChar(noStr, count, str[i]); INC(i) END;
 
 	IF str[i] = "." THEN
-		noStr[count] := str[i]; INC(count); INC(i);
-		WHILE (str[i] >= "0") & (str[i] <= "9") DO noStr[count] := str[i]; INC(count); INC(i) END;
+		AppendNumberChar(noStr, count, str[i]); INC(i);
+		WHILE (str[i] >= "0") & (str[i] <= "9") DO AppendNumberChar(noStr, count, str[i]); INC(i) END;
 	END;
 
 	IF (str[i] = "D") OR (str[i] ="E") OR (str[i] = "d") OR (str[i] ="e") THEN
-		noStr[count] := CAP(str[i]); INC(count); INC(i);
+		AppendNumberChar(noStr, count, CAP(str[i])); INC(i);
 		IF str[i] = "-" THEN
-			noStr[count] := str[i]; INC(count); INC(i);
+			AppendNumberChar(noStr, count, str[i]); INC(i);
+		ELSIF str[i] = "+" THEN
+			INC(i)
 		END;
-		WHILE (str[i] >= "0") & (str[i] <= "9") DO noStr[count] := str[i]; INC(count); INC(i) END;
+		WHILE (str[i] >= "0") & (str[i] <= "9") DO AppendNumberChar(noStr, count, str[i]); INC(i) END;
 	END;
 
 	noStr[count] := 0X;
-	Strings.StrToFloat(noStr, val)
+	Strings.StrToFloat(noStr^, val)
 END StrToFloatPos;
 
 END SVGUtilities.

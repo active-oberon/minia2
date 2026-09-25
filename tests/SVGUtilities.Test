@@ -1,0 +1,28 @@
+# SVG numeric parsing advances past signs, exponents, and long input.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a positive exponent advances to the next separator
+
+	MODULE Test;
+	IMPORT SVGUtilities;
+	VAR input: ARRAY 32 OF CHAR; value: FLOAT64; index: SIZE;
+	BEGIN
+		input := "1.25e+3,2"; index := 0;
+		SVGUtilities.StrToFloatPos(input, value, index);
+		ASSERT(value = 1250.0, 1);
+		ASSERT(input[index] = ",", 2)
+	END Test.
+
+positive: a long valid number does not overflow the scan buffer
+
+	MODULE Test;
+	IMPORT SVGUtilities;
+	VAR input: ARRAY 128 OF CHAR; value: FLOAT64; index, j: SIZE;
+	BEGIN
+		FOR j := 0 TO 69 DO input[j] := "0" END;
+		input[70] := "1"; input[71] := 0X;
+		index := 0;
+		SVGUtilities.StrToFloatPos(input, value, index);
+		ASSERT(value = 1.0, 1);
+		ASSERT(input[index] = 0X, 2)
+	END Test.

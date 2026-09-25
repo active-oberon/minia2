@@ -1,0 +1,31 @@
+# SVG affine transforms compose in order and handle singular inverses.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: translation and scale compose and invert
+
+	MODULE Test;
+	IMPORT SVGMatrix;
+	VAR matrix, inverse: SVGMatrix.Matrix; point, result: SVGMatrix.Point;
+	BEGIN
+		NEW(matrix); matrix.SetIdentity;
+		matrix := matrix.Translate(10.0, -3.0);
+		matrix := matrix.Scale(2.0, 4.0);
+		point.x := 3.0; point.y := 2.0;
+		result := matrix.Transform(point);
+		ASSERT((result.x = 16.0) & (result.y = 5.0), 1);
+		inverse := matrix.Invert();
+		point := inverse.Transform(result);
+		ASSERT((point.x = 3.0) & (point.y = 2.0), 2)
+	END Test.
+
+positive: singular inverse is a zero matrix
+
+	MODULE Test;
+	IMPORT SVGMatrix;
+	VAR matrix, inverse: SVGMatrix.Matrix;
+	BEGIN
+		NEW(matrix); matrix.Set(1.0, 2.0, 2.0, 4.0, 5.0, 6.0);
+		inverse := matrix.Invert();
+		ASSERT((inverse.a = 0.0) & (inverse.b = 0.0) & (inverse.c = 0.0), 1);
+		ASSERT((inverse.d = 0.0) & (inverse.e = 0.0) & (inverse.f = 0.0), 2)
+	END Test.

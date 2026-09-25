@@ -1,0 +1,54 @@
+# SVG color names and hex forms follow their documented RGB values.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: named darkgoldenrod has the standard RGB components
+
+	MODULE Test;
+	IMPORT SVGColors, Strings;
+	VAR color: SVGColors.Color; r, g, b, a: SIGNED16;
+	BEGIN
+		ASSERT(SVGColors.Parse(Strings.NewString("darkgoldenrod"), color), 1);
+		SVGColors.Split(color, r, g, b, a);
+		ASSERT(r = 184, 2); ASSERT(g = 134, 3);
+		ASSERT(b = 11, 4); ASSERT(a = 255, 5)
+	END Test.
+
+positive: short and full hexadecimal colors expand to opaque RGBA
+
+	MODULE Test;
+	IMPORT SVGColors, Strings;
+	VAR color: SVGColors.Color; r, g, b, a: SIGNED16;
+	BEGIN
+		ASSERT(SVGColors.Parse(Strings.NewString("#abc"), color), 1);
+		SVGColors.Split(color, r, g, b, a);
+		ASSERT(r = 170, 2); ASSERT(g = 187, 3);
+		ASSERT(b = 204, 4); ASSERT(a = 255, 5);
+		ASSERT(SVGColors.Parse(Strings.NewString("#123456"), color), 6);
+		SVGColors.Split(color, r, g, b, a);
+		ASSERT(r = 18, 7); ASSERT(g = 52, 8);
+		ASSERT(b = 86, 9); ASSERT(a = 255, 10)
+	END Test.
+
+positive: unsupported hexadecimal lengths are rejected
+
+	MODULE Test;
+	IMPORT SVGColors, Strings;
+	VAR color: SVGColors.Color;
+	BEGIN
+		ASSERT(~SVGColors.Parse(Strings.NewString("#12"), color), 1);
+		ASSERT(~SVGColors.Parse(Strings.NewString("#1234"), color), 2)
+	END Test.
+
+positive: numeric RGB converts to the expected pixel channels
+
+	MODULE Test;
+	IMPORT Raster, SVGColors, Strings;
+	VAR color: SVGColors.Color; pixel: Raster.Pixel;
+	BEGIN
+		ASSERT(SVGColors.Parse(Strings.NewString("rgb(12, 34, 56)"), color), 1);
+		SVGColors.ColorToPixel(color, pixel);
+		ASSERT(pixel[0] = CHR(56), 2);
+		ASSERT(pixel[1] = CHR(34), 3);
+		ASSERT(pixel[2] = CHR(12), 4);
+		ASSERT(pixel[3] = CHR(255), 5)
+	END Test.

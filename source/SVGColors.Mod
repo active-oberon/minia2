@@ -27,7 +27,7 @@ CONST
 	Cyan*					= 000FFFFFFH;
 	Darkblue*				= 000008BFFH;
 	Darkcyan*				= 0008B8BFFH;
-	Darkgoldenrod*			= 0008B8BFFH;
+	Darkgoldenrod*			= SIGNED32(0B8860BFFH);
 	Darkgray*				= SIGNED32(0A9A9A9FFH);
 	Darkgreen*				= 0006400FFH;
 	Darkgrey*				= SIGNED32(0A9A9A9FFH);
@@ -163,6 +163,7 @@ VAR res: INTEGER; i: SIZE; r, g, b: SIGNED32;
 BEGIN
 	IF value[0]='#' THEN
 		value := Strings.Substring2(1,value^);
+		IF (Strings.Length(value^) # 3) & (Strings.Length(value^) # 6) THEN RETURN FALSE END;
 		Strings.HexStrToInt(value^, color, res);
 		IF res # Strings.Ok THEN RETURN FALSE END;
 		IF Strings.Length(value^)=3 THEN
