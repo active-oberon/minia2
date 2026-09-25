@@ -43,10 +43,17 @@ CONST
 
 				in1 := Open( LoaderFilename, cc.error );
 				in2 := Open( inputname, cc.error );
-				IF (in1 = NIL) OR (in2 = NIL) THEN  RETURN  END;
+				IF (in1 = NIL) OR (in2 = NIL) THEN cc.result := Commands.CommandError; RETURN END;
 
-				size := in1.Length();  Files.OpenReader( r, in1, 0 );
-				out := NewFile( outputname, cc.out );  Files.OpenWriter( w, out, 0 );
+				size := in1.Length();
+				IF size > StartPos THEN
+					cc.error.String("Loader exceeds 16 KB"); cc.error.Ln;
+					cc.result := Commands.CommandError; RETURN
+				END;
+				Files.OpenReader( r, in1, 0 );
+				out := NewFile( outputname, cc.out );
+				IF out = NIL THEN cc.result := Commands.CommandError; RETURN END;
+				Files.OpenWriter( w, out, 0 );
 
 				FOR i := 1 TO size DO  r.Char( c ); w.Char( c )  END;
 
@@ -58,6 +65,7 @@ CONST
 				w.Update;  Files.Register( out );
 				cc.out.String( outputname );  cc.out.String( " created" ); cc.out.Ln;
 		ELSE
+			cc.result := Commands.CommandParseError;
 			cc.error.String( "usage: UnixBinary.Build  StaticallyLinkedBinary  ->  Program ~" );  cc.error.Ln
 		END;
 		cc.error.Update;
@@ -69,4 +77,3 @@ END UnixBinary.
    System.Free  UnixBinary ~
 
    UnixBinary.Build  oberon.bin -> A2Core ~
-

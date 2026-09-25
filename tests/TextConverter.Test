@@ -1,0 +1,49 @@
+# Conversion commands report input failures and preserve valid text.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a missing input file makes conversion fail
+
+	MODULE Test;
+	IMPORT Commands, Streams, Strings, TextConverter;
+	VAR arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context; message: ARRAY 256 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, "missing-conversion-input.txt");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		TextConverter.UTF8(context);
+		output.Get(message);
+		ASSERT(context.result = Commands.CommandError, 1);
+		ASSERT(Strings.Pos("failed to load", message) >= 0, 2)
+	END Test.
+
+positive: converting an existing text file to UTF8 succeeds
+
+	MODULE Test;
+	IMPORT Commands, Configuration, Files, Streams, TextConverter;
+	VAR file: Files.File; writer: Files.Writer; reader: Files.Reader;
+		arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context; ch: CHAR;
+	BEGIN
+		file := Files.New("Configuration.XML"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("<Config><Section name='Codecs'>");
+		writer.String("<Section name='Encoder'><Section name='Text'>");
+		writer.String("<Setting name='UTF-8' value='TextUtilities.UTF8EncoderFactory'/>");
+		writer.String("</Section></Section><Section name='Decoder'><Section name='Text'>");
+		writer.String("<Setting name='UTF-8' value='TextUtilities.UTF8DecoderFactory'/>");
+		writer.String("</Section></Section></Section></Config>");
+		writer.Update; Files.Register(file); Configuration.Init;
+		file := Files.New("conversion-input.txt"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("hello"); writer.Update; Files.Register(file);
+		Streams.OpenStringReader(arg, "conversion-input.txt");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		TextConverter.UTF8(context);
+		ASSERT(context.result = Commands.Ok, 2);
+		file := Files.Old("conversion-input.txt"); ASSERT(file # NIL, 3);
+		NEW(reader, file, 0); reader.Char(ch); ASSERT(ch = "h", 4);
+		reader.Char(ch); ASSERT(ch = "e", 5);
+		reader.Char(ch); ASSERT(ch = "l", 6)
+	END Test.

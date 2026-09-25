@@ -1,0 +1,39 @@
+# Binary input is emitted as correctly ordered Oberon writes.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: full words and short tails preserve every byte
+
+	MODULE Test;
+	IMPORT BinToCode, Commands, Files, Streams, Strings;
+	VAR f: Files.File; w: Files.Writer; arg: Streams.StringReader;
+		out: Streams.StringWriter; context: Commands.Context;
+		result: ARRAY 1024 OF CHAR;
+	BEGIN
+		f := Files.New("bin-to-code.bin"); ASSERT(f # NIL, 1);
+		Files.OpenWriter(w, f, 0);
+		w.Char(01X); w.Char(0ABX); w.Char(0FFX); w.Char(080X);
+		w.Char(012X); w.Char(034X); w.Char(056X);
+		w.Update; Files.Register(f);
+		Streams.OpenStringReader(arg, "bin-to-code.bin");
+		Streams.OpenStringWriter(out, 1024);
+		NEW(context, NIL, arg, out, out, NIL);
+		BinToCode.Convert(context); out.Get(result);
+		ASSERT(Strings.Pos("SYSTEM.PUT32(a, 080FFAB01H); INC (a, 4);", result) >= 0, 2);
+		ASSERT(Strings.Pos("SYSTEM.PUT16(a, 03412H); INC (a, 2);", result) >= 0, 3);
+		ASSERT(Strings.Pos("SYSTEM.PUT8(a, 056H); INC (a);", result) >= 0, 4)
+	END Test.
+
+positive: a missing binary file reports command failure
+
+	MODULE Test;
+	IMPORT BinToCode, Commands, Streams, Strings;
+	VAR arg: Streams.StringReader; out: Streams.StringWriter;
+		context: Commands.Context; result: ARRAY 256 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(arg, "missing-binary.bin");
+		Streams.OpenStringWriter(out, 256);
+		NEW(context, NIL, arg, out, out, NIL);
+		BinToCode.Convert(context); out.Get(result);
+		ASSERT(context.result = Commands.CommandError, 1);
+		ASSERT(Strings.Pos("Failed to open file missing-binary.bin", result) >= 0, 2)
+	END Test.

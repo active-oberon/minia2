@@ -46,6 +46,7 @@ BEGIN
 		context.error.String ("Failed to open file ");
 		context.error.String (fileName);
 		context.error.Ln;
+		context.result := Commands.CommandError;
 		RETURN;
 	END;
 

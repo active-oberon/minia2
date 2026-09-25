@@ -28,17 +28,19 @@ BEGIN w.Char (':'); Byte (w, 0); Byte (w, 0); Byte (w, 0); Byte (w, 1); Byte (w,
 END EndOfFileRecord;
 
 PROCEDURE ConvertFile* (r: Streams.Reader; w: Streams.Writer; offset, maxlen: SIZE);
-VAR len, extadr: SIZE; c: CHAR; data: POINTER TO ARRAY  OF CHAR;
+VAR len, extadr, recordSize: SIZE; c: CHAR; data: POINTER TO ARRAY  OF CHAR;
 BEGIN
+	ASSERT((maxlen >= 1) & (maxlen <= 255));
 	NEW(data,maxlen+1);
 	extadr := offset DIV 10000H;
 	IF extadr # 0 THEN ExtendedAddressRecord (w, extadr); END;
 
 	REPEAT
 		len := 0;
+		recordSize := MIN(maxlen, 10000H - offset MOD 10000H);
 		LOOP
 			r.Char (c); IF r.res # Files.Ok THEN EXIT END;
-			data[len] := c; INC (len); IF len = maxlen THEN EXIT END;
+			data[len] := c; INC (len); IF len = recordSize THEN EXIT END;
 		END;
 
 		IF len # 0 THEN DataRecord (w, data^, len, offset) END;
@@ -64,6 +66,10 @@ BEGIN
 	context.arg.SkipWhitespace; context.arg.String (dest);
 	IF ~context.arg.GetSize (offset, TRUE) THEN offset := 0 END;
 	IF ~context.arg.GetSize (maxlen, TRUE) THEN maxlen := 255 END;
+	IF (maxlen < 1) OR (maxlen > 255) THEN
+		context.error.String("record length must be 1..255"); context.error.Ln;
+		context.result := Commands.CommandError; RETURN
+	END;
 
 	src := Files.Old (source);
 	IF src = NIL THEN
@@ -72,7 +78,7 @@ BEGIN
 	END;
 
 	dst := Files.New (dest);
-	IF src = NIL THEN
+	IF dst = NIL THEN
 		context.error.String ("failed to open hex file '"); context.error.String (dest); context.error.Char ("'"); context.error.Ln;
 		context.result := Commands.CommandError; RETURN;
 	END;

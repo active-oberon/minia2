@@ -1,0 +1,83 @@
+# Unix binaries place the program after the fixed-size loader area.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: a binary contains loader padding and program at the expected offset
+
+	MODULE Test;
+	IMPORT Commands, Files, Streams, UnixBinary;
+	VAR file: Files.File; writer: Files.Writer; reader: Files.Reader;
+		arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context; ch: CHAR;
+	BEGIN
+		file := Files.New("OberonLoader"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("LD"); writer.Update; Files.Register(file);
+		file := Files.New("program.bin"); ASSERT(file # NIL, 2);
+		Files.OpenWriter(writer, file, 0);
+		writer.String("ABC"); writer.Update; Files.Register(file);
+		Streams.OpenStringReader(arg, "program.bin -> output.bin");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		UnixBinary.Build(context);
+		ASSERT(context.result = Commands.Ok, 3);
+		file := Files.Old("output.bin"); ASSERT(file # NIL, 4);
+		ASSERT(file.Length() = 16387, 5);
+		NEW(reader, file, 0); reader.Char(ch); ASSERT(ch = "L", 6);
+		reader.Char(ch); ASSERT(ch = "D", 7);
+		reader.Char(ch); ASSERT(ch = "#", 8);
+		reader.SetPos(16384); reader.Char(ch); ASSERT(ch = "A", 9);
+		reader.Char(ch); ASSERT(ch = "B", 10);
+		reader.Char(ch); ASSERT(ch = "C", 11)
+	END Test.
+
+positive: a missing loader fails without creating an output file
+
+	MODULE Test;
+	IMPORT Commands, Files, Streams, UnixBinary;
+	VAR arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context;
+	BEGIN
+		Streams.OpenStringReader(arg, "missing-program.bin -> missing-output.bin");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		UnixBinary.Build(context);
+		ASSERT(context.result = Commands.CommandError, 1);
+		ASSERT(Files.Old("missing-output.bin") = NIL, 2)
+	END Test.
+
+positive: an oversized loader is rejected before writing output
+
+	MODULE Test;
+	IMPORT Commands, Files, Streams, UnixBinary;
+	VAR file: Files.File; writer: Files.Writer; i: SIGNED32;
+		arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context;
+	BEGIN
+		file := Files.New("OberonLoader"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		FOR i := 1 TO 16385 DO writer.Char("L") END;
+		writer.Update; Files.Register(file);
+		file := Files.New("program.bin"); ASSERT(file # NIL, 2);
+		Files.OpenWriter(writer, file, 0);
+		writer.Char("P"); writer.Update; Files.Register(file);
+		Streams.OpenStringReader(arg, "program.bin -> oversized-output.bin");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		UnixBinary.Build(context);
+		ASSERT(context.result = Commands.CommandError, 3);
+		ASSERT(Files.Old("oversized-output.bin") = NIL, 4)
+	END Test.
+
+positive: invalid build arguments report a parse error
+
+	MODULE Test;
+	IMPORT Commands, Streams, UnixBinary;
+	VAR arg: Streams.StringReader; output: Streams.StringWriter;
+		context: Commands.Context;
+	BEGIN
+		Streams.OpenStringReader(arg, "program.bin output.bin");
+		Streams.OpenStringWriter(output, 256);
+		NEW(context, NIL, arg, output, output, NIL);
+		UnixBinary.Build(context);
+		ASSERT(context.result = Commands.CommandParseError, 1)
+	END Test.

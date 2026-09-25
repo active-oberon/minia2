@@ -1,0 +1,64 @@
+# Intel HEX records must not cross a 64 KiB address boundary.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: data records split before the extended address changes
+
+	MODULE Test;
+	IMPORT Bin2Hex, Files, Streams, Strings;
+	VAR input: Files.Reader; output: Streams.StringWriter;
+		encoded: ARRAY 256 OF CHAR; file: Files.File; writer: Files.Writer;
+	BEGIN
+		file := Files.New("bin2hex-boundary.bin"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0);
+		writer.Char(01X); writer.Char(02X); writer.Update; Files.Register(file);
+		Files.OpenReader(input, file, 0);
+		Streams.OpenStringWriter(output, 256);
+		Bin2Hex.ConvertFile(input, output, 0FFFFH, 2);
+		output.Get(encoded);
+		ASSERT(Strings.Pos(":01FFFF000100", encoded) >= 0, 2);
+		ASSERT(Strings.Pos(":020000040001F9", encoded) >= 0, 3);
+		ASSERT(Strings.Pos(":0100000002FD", encoded) >= 0, 4);
+		ASSERT(Strings.Pos(":00000001FF", encoded) >= 0, 5)
+	END Test.
+
+positive: invalid record lengths are rejected by the command
+
+	MODULE Test;
+	IMPORT Bin2Hex, Commands, Files, Streams;
+	VAR file: Files.File; writer: Files.Writer; arg: Streams.StringReader;
+		out: Streams.StringWriter; context: Commands.Context;
+	BEGIN
+		file := Files.New("bin2hex-input.bin"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0); writer.Char(01X);
+		writer.Update; Files.Register(file);
+		Streams.OpenStringReader(arg, "bin2hex-input.bin bin2hex-output.hex 0 256");
+		Streams.OpenStringWriter(out, 256);
+		NEW(context, NIL, arg, out, out, NIL);
+		Bin2Hex.Convert(context);
+		ASSERT(context.result = Commands.CommandError, 2);
+		ASSERT(Files.Old("bin2hex-output.hex") = NIL, 3);
+		Streams.OpenStringReader(arg, "bin2hex-input.bin bin2hex-zero.hex 0 0");
+		NEW(context, NIL, arg, out, out, NIL);
+		Bin2Hex.Convert(context);
+		ASSERT(context.result = Commands.CommandError, 4);
+		ASSERT(Files.Old("bin2hex-zero.hex") = NIL, 5)
+	END Test.
+
+positive: an unavailable output directory reports command failure
+
+	MODULE Test;
+	IMPORT Bin2Hex, Commands, Files, Streams, Strings;
+	VAR file: Files.File; writer: Files.Writer; arg: Streams.StringReader;
+		out: Streams.StringWriter; context: Commands.Context;
+		message: ARRAY 256 OF CHAR;
+	BEGIN
+		file := Files.New("bin2hex-input.bin"); ASSERT(file # NIL, 1);
+		Files.OpenWriter(writer, file, 0); writer.Char(01X);
+		writer.Update; Files.Register(file);
+		Streams.OpenStringReader(arg, "bin2hex-input.bin absent-bin2hex-dir/out.hex");
+		Streams.OpenStringWriter(out, 256);
+		NEW(context, NIL, arg, out, out, NIL);
+		Bin2Hex.Convert(context); out.Get(message);
+		ASSERT(context.result = Commands.CommandError, 2);
+		ASSERT(Strings.Pos("failed to open hex file", message) >= 0, 3)
+	END Test.
