@@ -192,6 +192,8 @@ UnicodeBidirectionality.Mod
 AMD64.WMRasterScale.Mod
 WMGraphics.Mod
 TextUtilities.Mod
+Types.Mod
+Models.Mod
 CompilerInterface.Mod
 HostClipboard.Mod
 Tar.Mod
@@ -293,6 +295,7 @@ TFTPFS.Mod
 FTPFS.Mod
 WebFTPServer.Mod
 XModem.Mod
+TextConverter.Mod
 TaskScheduler.Mod
 DES.Mod
 IDCT.Mod
@@ -328,6 +331,9 @@ SSHPackets.Mod
 TFStringPool.Mod
 OGGUtilities.Mod
 OGGVorbisPlayer.Mod
+SVGUtilities.Mod
+SVGColors.Mod
+SVGMatrix.Mod
 MailStorage.Mod
 IsoImages.Mod
 ReleaseThreadPool.Mod

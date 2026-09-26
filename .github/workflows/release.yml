@@ -38,6 +38,8 @@ jobs:
           A64_REQUIRE: "1"
         run: |
           tests/a64-runtime-check.sh target/Linux64 target/A64/bin
+          tests/gen-a64-stdlib.sh
+          git diff --exit-code -- configs/moduleListA64.txt
           task a64-stdlib
       # The SDK for a 64-bit ARM machine -- a Pi 4/5, an ARM server, a phone under Termux. There
       # a64 is not a cross target: the compiler runs on the device.

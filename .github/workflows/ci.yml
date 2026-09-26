@@ -80,6 +80,8 @@ jobs:
         env:
           A64_REQUIRE: "1"
         run: |
+          tests/gen-a64-stdlib.sh
+          git diff --exit-code -- configs/moduleListA64.txt
           task a64-stdlib
           task a64-selfhost
       - name: AArch64 tarball SDK (assembled here, not first at release time)
