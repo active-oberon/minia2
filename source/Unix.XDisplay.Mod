@@ -404,8 +404,12 @@ TYPE
 					foreground := X11.BlackPixel( xdisp, screen );
 					background := X11.WhitePixel( xdisp, screen );
 					root := X11.DefaultRootWindow( xdisp );
-					primary := X11.CreateSimpleWindow( xdisp, root, 0, 0,
-											     			screenw - 16, screenh - 32, 0,
+					gW := screenw - 16;  gH := screenh - 32;
+					IF relWidth # -1 THEN gW := relWidth * gW DIV 100 ELSE gW := absWidth END;
+					IF relHeight # -1 THEN gH := relHeight * gH DIV 100 ELSE gH := absHeight END;
+					IF gW MOD 8 # 0 THEN DEC( gW, gW MOD 8 ) END;
+					(* Size the window before mapping so the window manager does not maximize it first. *)
+					primary := X11.CreateSimpleWindow( xdisp, root, 0, 0, gW, gH, 0,
 														foreground, background );
 					(*	Ask the server to keep the pixels while nobody is looking at them. This display
 						has no copy of the screen -- it draws straight into the window with PutImage and
@@ -433,18 +437,6 @@ TYPE
 					UNTIL (event.typ = X11.Expose) & (event.window = primary);
 					(* adjust to physical window size *)
 					X11.GetGeometry( xdisp, primary, gRoot, gX, gY, gW, gH, gBW, gD );
-					IF relWidth # -1 THEN
-						gW := relWidth * gW DIV 100;
-					ELSE
-						gW := absWidth;
-					END;
-					IF relHeight # -1 THEN
-						gH := relHeight * gH DIV 100;
-					ELSE
-						gH := absHeight;
-					END;
-					IF gW MOD 8 # 0 THEN  DEC( gW, gW MOD 8 )  END;
-					X11.ResizeWindow( xdisp, primary, gW, gH );
 					width := gW;  height := gH;
 					offscreen := height;
 
