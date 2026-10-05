@@ -29,7 +29,7 @@ rm -rf "$work"; mkdir -p "$work"
 output=$( (cd "$build" && PWD="$build" AOSPATH="$work:$build" timeout 180 "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath '$work' ~
-	Compiler.Compile '$root/source/WMDemo.Mod' ~
+	Compiler.Compile '$root/applications/desktop/source/WMDemo.Mod' ~
 	WMDemo.Check ~
 	WMBackdrop.SetBackdropImage nebula_nord.png ? ? ? ? ~
 	WMBackdrop.SetBackdropImage wp_teal_peaks.jpg ? ? ? ? ~

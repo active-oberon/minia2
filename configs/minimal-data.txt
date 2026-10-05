@@ -1,0 +1,20 @@
+# Data needed by the hosted core, compiler, and PET.
+# Other assets live in applications/assets/data and travel in desktop.zip.
+Release.Tool
+Configuration.XML
+Auto.dsk
+WMIcons.tar
+PETIcons.tar
+ModuleTreesIcons.tar
+ComponentStyle.XML
+DefaultTextStyles.XML
+HotKeys.XML
+Macros.XML
+SyntaxHighlighter.XML
+Errors.XML
+NotoSans*.ttf
+NotoSerif*.ttf
+JetBrainsMono*.ttf
+NotoFontsOFL.txt
+JetBrainsMonoOFL.txt
+*.Scn.Fnt

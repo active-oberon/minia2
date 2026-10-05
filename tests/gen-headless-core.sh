@@ -116,6 +116,13 @@ generate() {
 		         sources=(); for f in source/*.Mod; do case "$f" in source/Windows.*) ;; *) sources+=("$f") ;; esac; done ;;
 		*) echo "unknown platform: $platform (linux64, win64, armhf)" >&2; return 2 ;;
 	esac
+	# Application modules were moved out of source/; include them in the import graph.
+	for f in applications/*/source/*.Mod; do
+		if [ "$platform" = armhf ]; then
+			case "$f" in */Windows.*) continue ;; esac
+		fi
+		sources+=("$f")
+	done
 	if [ ! -d "$bin" ]; then
 		case "$platform" in
 			linux64) task=Linux64 ;; win64) task=Win64 ;; armhf) task=LinuxARM ;; *) task="$platform" ;;

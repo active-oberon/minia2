@@ -119,7 +119,7 @@ mkdir -p "$objects"
 output=$( (cd "$build" && PWD="$build" AOSPATH="$objects:$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath '$objects' ~
-	Compiler.Compile '$root/source/WMDemo.Mod' '$root/tests/DecoderDrive.Mod' ~
+	Compiler.Compile '$root/applications/desktop/source/WMDemo.Mod' '$root/tests/DecoderDrive.Mod' ~
 	WMDemo.Screen ~
 	WindowManager.Install ~
 	DecoderDrive.Decode Abx '$work/amd64.hex' '$work/amd64.ours' ~

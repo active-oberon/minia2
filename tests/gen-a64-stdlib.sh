@@ -28,7 +28,7 @@ ordered=$(cd "$root" && AOSPATH="$root/data" "$oberon" Release.Build --list --ex
 # everything WMGraphics needs, and none of that is in the payload.
 graph="$(mktemp)"
 (cd "$root" && AOSPATH="$root/data" "$oberon" DependencyWalker.Walk --define=UNIX,AMD64 \
-	--fileExtension=".GofUu" source/*.Mod 2>/dev/null) | tr -d '\r' | grep "\.GofUu:" > "$graph"
+	--fileExtension=".GofUu" source/*.Mod applications/*/source/*.Mod 2>/dev/null) | tr -d '\r' | grep "\.GofUu:" > "$graph"
 
 printf '%s\n' "$ordered" | python3 -c '
 import sys, glob, re, os

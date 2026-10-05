@@ -39,7 +39,7 @@ tree-sitter query queries/highlights.scm "$root/source/DAP.Mod" >/dev/null 2>"$o
 	echo "[FAIL] queries/highlights.scm does not compile against the grammar" >&2; exit 1; }
 
 known="RasterPixelFormats.Mod TVDriver.Mod"
-failed=$(tree-sitter parse --quiet --stat "$root"/source/*.Mod 2>/dev/null | awk '/ERROR/ {print $1}' | xargs -r -n1 basename | sort || true)
+failed=$(tree-sitter parse --quiet --stat "$root"/source/*.Mod "$root"/applications/*/source/*.Mod 2>/dev/null | awk '/ERROR/ {print $1}' | xargs -r -n1 basename | sort || true)
 unexpected=""
 for f in $failed; do
 	case " $known " in *" $f "*) ;; *) unexpected="$unexpected $f" ;; esac
@@ -47,6 +47,6 @@ done
 [ -z "$unexpected" ] || {
 	echo "[FAIL] modules that used to parse no longer do:$unexpected" >&2; exit 1; }
 
-total=$(ls "$root"/source/*.Mod | wc -l | tr -d ' ')
+total=$(ls "$root"/source/*.Mod "$root"/applications/*/source/*.Mod | wc -l | tr -d ' ')
 count=$(echo "$failed" | grep -c . || true)
 echo "[PASS] the grammar parses $((total - count))/$total library modules (known failures: $known)"

@@ -69,7 +69,7 @@ roots="$(tr -d '\r' < "$root/configs/oberon_modules_win.txt" | grep -v '^[[:spac
 ( cd "$work" && "$oberon" do "
 	Files.AddSearchPath $build/bin~
 	Files.AddSearchPath $winbin~
-	Linker.Link --fileFormat=PE64CUI --fileName=oberon.exe --extension=GofWw --displacement=401000H --icon=$root/data/A2.ico
+	Linker.Link --fileFormat=PE64CUI --fileName=oberon.exe --extension=GofWw --displacement=401000H --icon=$root/applications/assets/data/A2.ico
 	$roots
 	~
 " ) > "$work/link.log" 2>&1 || true

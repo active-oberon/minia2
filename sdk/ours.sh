@@ -40,7 +40,7 @@ fi
 new=0; changed=0; same=0
 newlist=""; changedlist=""
 
-for f in "$root"/source/*.Mod; do
+for f in "$root"/source/*.Mod "$root"/applications/*/source/*.Mod; do
 	b="$(basename "$f")"
 	origin=""
 	for r in "${roots[@]}"; do

@@ -36,7 +36,7 @@ expected="$root/tests/display-expected.txt"
 # The runtime reads its working directory from $PWD rather than from getcwd().
 output=$( (cd "$build" && PWD="$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
-	Compiler.Compile '$root/source/DisplayDemo.Mod' ~
+	Compiler.Compile '$root/applications/desktop/source/DisplayDemo.Mod' ~
 	DisplayDemo.Ascii ~
 	DisplayDemo.Check ~
 ") 2>&1 | tr -d '\r' ) || true

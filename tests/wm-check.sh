@@ -65,7 +65,7 @@ mkdir -p "$objects"
 output=$( (cd "$build" && PWD="$build" AOSPATH="$objects:$build" "$oberon" do "
 	System.DoFile oberon.cfg ~
 	Files.SetWorkPath '$objects' ~
-	Compiler.Compile '$root/source/Raster.Mod' '$root/source/WindowManager.Mod' '$root/source/WMDemo.Mod' ~
+	Compiler.Compile '$root/source/Raster.Mod' '$root/applications/core/source/WindowManager.Mod' '$root/applications/desktop/source/WMDemo.Mod' ~
 	WMDemo.Check ~
 ") 2>&1 | tr -d '\r' ) || true
 

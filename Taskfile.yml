@@ -132,6 +132,12 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}/{{.PLATFORM}}/work
       - cp -r {{.SRC}} {{.BUILD_DIR}}/{{.PLATFORM}}/
       - cp -r {{.DATA}} {{.BUILD_DIR}}/{{.PLATFORM}}/
+      # Release.Build still compiles a flat source/data tree; assemble it in target/.
+      - cp -r {{.CURRENT_DIR}}/applications/core/source/. {{.BUILD_DIR}}/{{.PLATFORM}}/source/
+      - cp -r {{.CURRENT_DIR}}/applications/desktop/source/. {{.BUILD_DIR}}/{{.PLATFORM}}/source/
+      - cp -r {{.CURRENT_DIR}}/applications/perfmon/source/. {{.BUILD_DIR}}/{{.PLATFORM}}/source/
+      - cp -r {{.CURRENT_DIR}}/applications/system-tools/source/. {{.BUILD_DIR}}/{{.PLATFORM}}/source/
+      - cp -r {{.CURRENT_DIR}}/applications/assets/data/. {{.BUILD_DIR}}/{{.PLATFORM}}/data/
 
   generate-module-list:
     desc: Generate raw module list (used internally)
@@ -180,12 +186,14 @@ tasks:
       - task: set-platform-env
         vars: { PLATFORM: "{{.HOST}}" }
       - generate-module-list
+      - task: prepare-workspace
+        vars: { PLATFORM: "{{.HOST}}" }
     cmds:
       - |
         source {{.PLATFORM_ENV}}
         module_files=""
         while read -r module; do
-          module_files="$module_files source/$module"
+          module_files="$module_files {{.BUILD_DIR}}/{{.HOST}}/source/$module"
         done < <(sort -u {{.BUILD_DIR}}/{{.HOST}}/.modules)
         {{.TOOL}} DependencyWalker.Walk $DEFINES --fileExtension=.$EXTENSION $module_files {{.DEPENDENCY_WALKER}} | tr -d '\r' | grep "^.*\\.$EXTENSION:" > {{.BUILD_DIR}}/{{.HOST}}/.dependencies
         echo "FoxArrayBase.$EXTENSION: source/ComplexNumbers.$EXTENSION" >> {{.BUILD_DIR}}/{{.HOST}}/.dependencies
@@ -202,12 +210,14 @@ tasks:
     deps:
       - task: set-platform-env
         vars: { PLATFORM: "{{.HOST}}" }
+      - task: prepare-workspace
+        vars: { PLATFORM: "{{.HOST}}" }
     cmds:
       - |
         source {{.PLATFORM_ENV}}
-        {{.TOOL}} Compiler.Compile $COMPILEOPTIONS --destPath="{{.BUILD_DIR}}/{{.HOST}}/bin/" --objectFileExtension=$EXTENSION --symbolFileExtension=$SYMBOLFILEEXCEPTION {{.SRC}}/{{.MODULE}}
+        {{.TOOL}} Compiler.Compile $COMPILEOPTIONS --destPath="{{.BUILD_DIR}}/{{.HOST}}/bin/" --objectFileExtension=$EXTENSION --symbolFileExtension=$SYMBOLFILEEXCEPTION {{.BUILD_DIR}}/{{.HOST}}/source/{{.MODULE}}
     sources:
-      - "source/{{.MODULE}}.Mod"
+      - "{{.BUILD_DIR}}/{{.HOST}}/source/{{.MODULE}}.Mod"
     generates:
       - "{{.MODULE}}.$EXTENSION"
 
@@ -560,6 +570,15 @@ tasks:
         rm -f {{.BUILD_DIR}}/{{.PLATFORM}}/combined.txt
         rm -f {{.PLATFORM_ENV}}
 
+  minimal:
+    desc: Build a minimal desktop with PET and installable application ZIPs
+    vars:
+      PLATFORM: '{{.PLATFORM | default .HOST}}'
+    cmds:
+      - task: build-platform
+        vars:
+          PLATFORM: '{{.PLATFORM}}'
+      - python {{.CURRENT_DIR}}/applications/manage.py build --platform {{.PLATFORM}} --build {{.BUILD_DIR}}/{{.PLATFORM}} --output {{.BUILD_DIR}}/{{.PLATFORM}}-minimal
   # Individual platform build tasks (minia2 targets: Linux64 + Win64 only)
   Linux64:
     desc: Build Linux64 platform
