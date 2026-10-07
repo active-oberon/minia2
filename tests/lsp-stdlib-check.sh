@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Go-to-definition into a standard-library module, with the SDK run natively.
+# Go-to-definition into a standard-library module and through a project module.
 #
 # The server is handed the host path of a source tree in initializationOptions.stdlibSrc. It used
 # to look for that tree at /libsrc only -- a mount that exists inside the image and nowhere else --
@@ -87,7 +87,8 @@ stream = b"".join(frame(m) for m in [
      "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": char}}},
 ])
 
-p = subprocess.run([ob, "lsp", "--live"], input=stream, capture_output=True, timeout=300)
+p = subprocess.run([ob, "lsp", "--live"], input=stream, capture_output=True,
+                   env=dict(os.environ, TMPDIR=work), timeout=300)
 answer = None
 for part in p.stdout.decode(errors="replace").split("Content-Length:"):
     body = part.split("\r\n\r\n", 1)[-1]
@@ -117,4 +118,58 @@ if got != want:
     sys.exit(1)
 
 print("[PASS] the jump lands in the tree stdlibSrc names (line %d)" % first["range"]["start"]["line"])
+
+# A project module that imports the standard library must be prepared on demand:
+# only Main is opened, so Child cannot get its symbols from an earlier didOpen.
+project = os.path.join(work, "proj")
+child = os.path.join(project, "LspProjectChild.Mod")
+main = os.path.join(project, "LspProjectMain.Mod")
+with open(child, "w") as f:
+    f.write('MODULE LspProjectChild; IMPORT Strings; VAR greeting*: ARRAY 32 OF CHAR; '
+            'BEGIN greeting := "hello"; Strings.Append(greeting, "!") END LspProjectChild.\n')
+with open(main, "w") as f:
+    f.write('MODULE LspProjectMain; IMPORT LspProjectChild; '
+            'VAR greeting*: ARRAY 32 OF CHAR; '
+            'BEGIN greeting := LspProjectChild.greeting END LspProjectMain.\n')
+source = open(main).read()
+off = source.index("LspProjectChild.greeting") + len("LspProjectChild.")
+line = source[:off].count("\n")
+char = off - (source.rfind("\n", 0, off) + 1)
+uri = "file://" + main
+stream = b"".join(frame(m) for m in [
+    {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+     "params": {"processId": None, "rootUri": "file://" + project, "capabilities": {}}},
+    {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+    {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+     "params": {"textDocument": {"uri": uri, "languageId": "oberon", "version": 1,
+                                 "text": source}}},
+    {"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition",
+     "params": {"textDocument": {"uri": uri},
+                "position": {"line": line, "character": char}}},
+])
+p = subprocess.run([ob, "lsp", "--live"], input=stream, cwd=project,
+                   capture_output=True, env=dict(os.environ, TMPDIR=work, A2_PROJECT=project),
+                   timeout=300)
+answer = None
+diagnostics = None
+for part in p.stdout.decode(errors="replace").split("Content-Length:"):
+    try:
+        m = json.loads(part.split("\r\n\r\n", 1)[1])
+    except (IndexError, ValueError):
+        continue
+    if m.get("method") == "textDocument/publishDiagnostics":
+        diagnostics = m["params"]["diagnostics"]
+    if m.get("id") == 2:
+        answer = m
+
+if diagnostics is None or diagnostics or answer is None or not answer.get("result"):
+    print("[FAIL] project import through Strings: diagnostics=%r definition=%r" %
+          (diagnostics, answer), file=sys.stderr)
+    sys.exit(1)
+result = answer["result"]
+first = result if isinstance(result, dict) else result[0]
+if first["uri"] != "file://" + child:
+    print("[FAIL] project definition landed in %s" % first["uri"], file=sys.stderr)
+    sys.exit(1)
+print("[PASS] project module importing Strings resolves on first open")
 PY

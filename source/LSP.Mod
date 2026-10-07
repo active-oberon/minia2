@@ -830,7 +830,7 @@ VAR
 	BEGIN
 		reader := FoxBasic.GetFileReader(modFile); IF reader = NIL THEN RETURN END;
 		NEW(diag); NEW(logbuf, 128); log := logbuf.GetWriter();
-		Options(" --destPath=./", opt);
+		Options("", opt);
 		Streams.OpenStringReader(optR, opt);
 		IF ~Compiler.GetOptions(optR, log, diag, opts) THEN RETURN END;
 		opts.objectFile := NIL;   (* symbolFile.Export still runs -> writes <M>.SymUu *)
