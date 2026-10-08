@@ -1,0 +1,175 @@
+# Tests for signed long arithmetic and binary serialization with fixed expectations.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: truncated and negative binary lengths reject without allocating declared storage
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers, Streams;
+	VAR w: Streams.StringWriter; r: Streams.StringReader; buf: ARRAY 1024 OF CHAR; size: SIZE; number, expected: B.BigNumber;
+	BEGIN
+		NEW(w, 32); w.RawInt32(MAX(SIGNED32)); w.Update; size := w.Pos(); w.Get(buf);
+		NEW(r, 32); r.SetRaw(buf, 0, size); B.FileRead(r, number); ASSERT(number = NIL);
+		w.RawInt32(-1); w.Update; size := w.Pos(); w.Get(buf); r.SetRaw(buf, 0, size);
+		B.FileRead(r, number); ASSERT(number = NIL);
+		r.SetRaw(buf, 0, 0); B.FileRead(r, number); ASSERT(number = NIL);
+		B.AssignInt(expected, 1); expected.Shift(2048); expected.Dec;
+		NEW(w, 1024); B.FileWrite(w, expected); w.Update; size := w.Pos(); w.Get(buf);
+		NEW(r, 1024); r.SetRaw(buf, 0, size); B.FileRead(r, number); ASSERT(number # NIL); ASSERT(number.EQ(expected))
+	END Test.
+
+positive: division by multiword all-ones divisors handles equal low words without a borrow
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR divisor, numerator, two, quotient, remainder: B.BigNumber; bits: SIGNED32;
+	BEGIN
+		B.AssignInt(two, 2);
+		FOR bits := 33 TO 128 DO
+			B.AssignInt(divisor, 1); divisor.Shift(bits); divisor.Dec;
+			numerator := B.Mul(divisor, two); B.Div2(numerator, divisor, quotient, remainder);
+			ASSERT(quotient.EQ(two)); ASSERT(remainder.IsZero())
+		END
+	END Test.
+
+positive: masking preserves small values and includes the requested last bit
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR value, expected, one: B.BigNumber; bits: SIGNED32;
+	BEGIN
+		B.AssignInt(one, 1); B.AssignInt(value, 1); value.Shift(400); B.Copy(one, value);
+		value.Mask(255); ASSERT(value.EQ(one));
+		FOR bits := 0 TO 80 DO
+			B.AssignInt(value, 1); value.Shift(100); value.Dec; value.Mask(bits);
+			B.AssignInt(expected, 1); expected.Shift(bits+1); expected.Dec; ASSERT(value.EQ(expected))
+		END;
+		B.AssignInt(value, 0); value.Mask(1000); ASSERT(value.IsZero())
+	END Test.
+
+positive: signed arithmetic agrees with machine integers over a small exhaustive range
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b, c, expected: B.BigNumber; i, j: SIGNED32;
+	BEGIN
+		FOR i := -12 TO 12 DO
+			FOR j := -12 TO 12 DO
+				B.AssignInt(a, i); B.AssignInt(b, j);
+				c := B.Add(a, b); B.AssignInt(expected, i+j); ASSERT(c.EQ(expected));
+				c := B.Sub(a, b); B.AssignInt(expected, i-j); ASSERT(c.EQ(expected));
+				c := B.Mul(a, b); B.AssignInt(expected, i*j); ASSERT(c.EQ(expected));
+				ASSERT(a.GEQ(b) = (i >= j)); ASSERT(a.GT(b) = (i > j)); ASSERT(a.NEQ(b) = (i # j))
+			END
+		END
+	END Test.
+
+positive: floor division retains a nonnegative remainder for negative dividends
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b, q, r, expected: B.BigNumber; i, j: SIGNED32;
+	BEGIN
+		FOR i := -15 TO 15 DO
+			FOR j := 1 TO 9 DO
+				B.AssignInt(a, i); B.AssignInt(b, j); B.Div2(a, b, q, r);
+				B.AssignInt(expected, i DIV j); ASSERT(q.EQ(expected));
+				B.AssignInt(expected, i MOD j); ASSERT(r.EQ(expected));
+				q := B.Div(a, b); B.AssignInt(expected, i DIV j); ASSERT(q.EQ(expected));
+				r := B.Mod(a, b); B.AssignInt(expected, i MOD j); ASSERT(r.EQ(expected))
+			END
+		END
+	END Test.
+
+positive: copying preserves sign and replaces the destination sign
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b: B.BigNumber;
+	BEGIN
+		B.AssignInt(a, -7); B.Copy(a, b); ASSERT(b.EQ(a)); ASSERT(b.neg);
+		b.Inc; B.AssignInt(a, -6); ASSERT(b.EQ(a));
+		B.AssignInt(a, 3); B.Copy(a, b); ASSERT(b.EQ(a)); ASSERT(~b.neg);
+		B.AssignInt(a, 0); B.Copy(a, b); ASSERT(b.IsZero()); ASSERT(~b.neg)
+	END Test.
+
+positive: carries borrows and shifts cross word boundaries
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, expected: B.BigNumber;
+	BEGIN
+		B.AssignHex(a, "FFFFFFFF", 8); a.Inc;
+		B.AssignHex(expected, "100000000", 9); ASSERT(a.EQ(expected));
+		a.Dec; B.AssignHex(expected, "FFFFFFFF", 8); ASSERT(a.EQ(expected));
+		B.AssignInt(a, 1); a.Shift(65); ASSERT(a.BitSize() = 66); ASSERT(a.BitSet(65)); ASSERT(~a.BitSet(64));
+		a.Shift(-64); B.AssignInt(expected, 2); ASSERT(a.EQ(expected));
+		a.Shift(-1); B.AssignInt(expected, 1); ASSERT(a.EQ(expected));
+		a.Shift(-1); ASSERT(a.IsZero());
+		B.AssignInt(a, 1); a.Shift(-65); ASSERT(a.IsZero()); ASSERT(a.BitSize() = 0);
+		B.AssignInt(a, -1); a.Inc; ASSERT(a.IsZero()); ASSERT(~a.neg);
+		a.Dec; B.AssignInt(expected, -1); ASSERT(a.EQ(expected));
+		a.Negate; B.AssignInt(expected, 1); ASSERT(a.EQ(expected))
+	END Test.
+
+positive: binary encoding is big endian and respects offsets and untouched bytes
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b: B.BigNumber; buf: ARRAY 16 OF CHAR; i: SIZE;
+	BEGIN
+		B.AssignHex(a, "123456789ABCDEF0", 16);
+		FOR i := 0 TO 15 DO buf[i] := "!" END;
+		B.GetBinaryValue(a, buf, 3);
+		ASSERT(buf[2] = "!"); ASSERT(buf[3] = 12X); ASSERT(buf[4] = 34X);
+		ASSERT(buf[9] = 0DEX); ASSERT(buf[10] = 0F0X); ASSERT(buf[11] = "!");
+		B.AssignBin(b, buf, 3, 8); ASSERT(a.EQ(b));
+		B.AssignBin(b, buf, 0, 0); ASSERT(b.IsZero())
+	END Test.
+
+positive: modular operations match fixed arithmetic results
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b, m, result, expected: B.BigNumber;
+	BEGIN
+		B.AssignInt(a, 4); B.AssignInt(b, 13); B.AssignInt(m, 497);
+		result := B.ModExp(a, b, m); B.AssignInt(expected, 445); ASSERT(result.EQ(expected));
+		result := B.ModMul(a, b, m); B.AssignInt(expected, 52); ASSERT(result.EQ(expected));
+		B.AssignInt(a, 3); B.AssignInt(b, 5); result := B.Exp(a, b);
+		B.AssignInt(expected, 243); ASSERT(result.EQ(expected));
+		B.AssignInt(a, 48); B.AssignInt(b, 18); result := B.GCD(a, b);
+		B.AssignInt(expected, 6); ASSERT(result.EQ(expected));
+		B.AssignInt(a, 17); B.AssignInt(m, 3120); result := B.ModInverse(a, m);
+		B.AssignInt(expected, 2753); ASSERT(result.EQ(expected));
+		B.AssignInt(a, 6); B.AssignInt(m, 9); result := B.ModInverse(a, m); ASSERT(result.IsZero())
+	END Test.
+
+positive: binary stream serialization preserves digits and does not mutate its input
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers, Streams;
+	VAR a, b, expected: B.BigNumber; w: Streams.StringWriter; r: Streams.StringReader; buf: ARRAY 64 OF CHAR;
+	BEGIN
+		B.AssignHex(a, "123456789ABCDEF0", 16); B.Copy(a, expected);
+		Streams.OpenStringWriter(w, 64); B.FileWrite(w, a); w.Update;
+		ASSERT(a.EQ(expected)); ASSERT(w.Pos() = 12); w.Get(buf);
+		NEW(r, 64); r.SetRaw(buf, 0, 12); B.FileRead(r, b); ASSERT(b.EQ(expected));
+		B.AssignInt(a, 0); Streams.OpenStringWriter(w, 64); B.FileWrite(w, a); w.Update;
+		ASSERT(w.Pos() = 4); w.Get(buf); r.SetRaw(buf, 0, 4); B.FileRead(r, b); ASSERT(b.IsZero())
+	END Test.
+
+negative: division by zero is rejected
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a, b, q: B.BigNumber;
+	BEGIN B.AssignInt(a, 1); B.AssignInt(b, 0); q := B.Div(a, b)
+	END Test.
+
+negative: invalid hexadecimal input is rejected
+
+	MODULE Test;
+	IMPORT B := CryptoBigNumbers;
+	VAR a: B.BigNumber;
+	BEGIN B.AssignHex(a, "xyz", 3)
+	END Test.

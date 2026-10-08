@@ -1,0 +1,180 @@
+# Tests for SSH payload bytes, cursor movement and received packet framing.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: big numbers round trip zero sign padding and multiword payloads
+
+	MODULE Test;
+	IMPORT SSHPackets, B := CryptoBigNumbers;
+	VAR p: SSHPackets.Packet; zero, high, large, back: B.BigNumber;
+	BEGIN
+		NEW(p, SSHPackets.DHInit, 256); B.AssignInt(zero, 0); B.AssignInt(high, 128);
+		B.AssignInt(large, 1); large.Shift(127); large.Inc;
+		p.AppBigNumber(zero); p.AppBigNumber(high); p.AppBigNumber(large); p.SetPos(1);
+		back := p.GetBigNumber(); ASSERT(back.IsZero()); back := p.GetBigNumber(); ASSERT(back.EQ(high));
+		back := p.GetBigNumber(); ASSERT(back.EQ(large)); ASSERT(p.pos = p.len);
+		p.IncPos(-1); ASSERT(p.GetChar() = 1X); ASSERT(p.pos = p.len)
+	END Test.
+
+positive: diagnostics can display the end of data sentinel without reading absent fields
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	BEGIN
+		SSHPackets.emptyPacket.Show; ASSERT(SSHPackets.emptyPacket.type = SSHPackets.Data)
+	END Test.
+
+positive: integer payloads use network byte order including signed values
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet;
+	BEGIN
+		NEW(p, SSHPackets.ChannelOpen, 32); ASSERT(p.type = SSHPackets.ChannelOpen); ASSERT(p.len = 1);
+		p.AppInteger(12345678H); p.AppInteger(-1); p.AppInteger(0);
+		ASSERT(p.len = 13); ASSERT(p.buf[1] = 12X); ASSERT(p.buf[2] = 34X);
+		ASSERT(p.buf[3] = 56X); ASSERT(p.buf[4] = 78X); ASSERT(p.buf[5] = 0FFX);
+		p.SetPos(1); ASSERT(p.GetInteger() = 12345678H); ASSERT(p.GetInteger() = -1);
+		ASSERT(p.GetInteger() = 0); ASSERT(p.pos = p.len);
+		p.SetPos(0); ASSERT(p.GetChar() = SSHPackets.ChannelOpen); p.IncPos(4); ASSERT(p.pos = 5)
+	END Test.
+
+positive: strings and offset arrays retain lengths and embedded zero bytes
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; src, dst: ARRAY 8 OF CHAR; str: ARRAY 32 OF CHAR; n: SIZE;
+	BEGIN
+		NEW(p, SSHPackets.Data, 128);
+		p.AppString("hello"); p.AppString("");
+		src[0] := "!"; src[1] := "a"; src[2] := 0X; src[3] := 0FFX; src[4] := "z";
+		p.AppArray(src, 1, 4); p.AppChar("?");
+		p.SetPos(1); p.GetString(str); ASSERT(str = "hello");
+		p.GetString(str); ASSERT(str = ""); p.GetArray(dst, n);
+		ASSERT(n = 4); ASSERT(dst[0] = "a"); ASSERT(dst[1] = 0X);
+		ASSERT(dst[2] = 0FFX); ASSERT(dst[3] = "z"); ASSERT(p.GetChar() = "?"); ASSERT(p.pos = p.len)
+	END Test.
+
+positive: blob information includes its length prefix and skips only that blob
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; start, size: SIZE;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppString("abc"); p.AppString(""); p.AppChar("!");
+		p.SetPos(1); p.GetBlobInfo(start, size); ASSERT(start = 1); ASSERT(size = 7); ASSERT(p.pos = 8);
+		p.GetBlobInfo(start, size); ASSERT(start = 8); ASSERT(size = 4);
+		ASSERT(p.GetChar() = "!"); ASSERT(p.pos = p.len)
+	END Test.
+
+positive: received payload starts after the five byte transport header and is copied
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; raw: ARRAY 16 OF CHAR; i: SIZE;
+	BEGIN
+		FOR i := 0 TO 4 DO raw[i] := 0FFX END;
+		raw[5] := SSHPackets.ServiceAccept; raw[6] := "a"; raw[7] := "b";
+		p := SSHPackets.MakeReceivedPacket(raw, 3); raw[6] := "x";
+		ASSERT(p.type = SSHPackets.ServiceAccept); ASSERT(p.len = 3); ASSERT(p.pos = 1);
+		ASSERT(p.GetChar() = "a"); ASSERT(p.GetChar() = "b"); ASSERT(p.pos = 3);
+		ASSERT(SSHPackets.emptyPacket # NIL); ASSERT(SSHPackets.emptyPacket.type = SSHPackets.Data)
+	END Test.
+
+negative: character reads stop at the logical payload end
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; c: CHAR;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.SetPos(p.len); c := p.GetChar()
+	END Test.
+
+negative: integer reads reject truncated payloads despite spare buffer capacity
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; value: SIGNED32;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppChar(1X); p.SetPos(1); value := p.GetInteger()
+	END Test.
+
+negative: negative array lengths cannot move the cursor backwards
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; data: ARRAY 8 OF CHAR; n: SIZE;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppInteger(-1); p.SetPos(1); p.GetArray(data, n)
+	END Test.
+
+negative: blob lengths cannot skip beyond the logical payload
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; start, n: SIZE;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppInteger(20); p.SetPos(1); p.GetBlobInfo(start, n)
+	END Test.
+
+negative: string reads reject bytes beyond the logical payload
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; data: ARRAY 32 OF CHAR;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppInteger(8); p.AppChar('a'); p.SetPos(1); p.GetString(data)
+	END Test.
+
+negative: big number reads reject bytes beyond the logical payload
+
+	MODULE Test;
+	IMPORT SSHPackets, CryptoBigNumbers;
+	VAR p: SSHPackets.Packet; number: CryptoBigNumbers.BigNumber;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppInteger(8); p.AppChar(1X); p.SetPos(1); number := p.GetBigNumber()
+	END Test.
+
+negative: absolute cursor moves cannot pass the logical payload
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.SetPos(p.len+1)
+	END Test.
+
+negative: relative cursor moves cannot precede the logical payload
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.IncPos(-1)
+	END Test.
+
+negative: negative appended array lengths are rejected
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; data: ARRAY 8 OF CHAR;
+	BEGIN
+		NEW(p, SSHPackets.Ignore, 32); p.AppArray(data, 0, -1)
+	END Test.
+
+negative: received packets reject a missing payload
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; data: ARRAY 5 OF CHAR;
+	BEGIN
+		p := SSHPackets.MakeReceivedPacket(data, 0)
+	END Test.
+
+negative: received packets reject data missing from the transport buffer
+
+	MODULE Test;
+	IMPORT SSHPackets;
+	VAR p: SSHPackets.Packet; data: ARRAY 16 OF CHAR;
+	BEGIN
+		p := SSHPackets.MakeReceivedPacket(data, 12)
+	END Test.

@@ -1,0 +1,37 @@
+# Tests for mounted relative filesystem path forwarding and missing mount roots.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: relative mounts forward file creation lookup rename delete and directories
+
+	MODULE Test;
+	IMPORT RelativeFileSystem, Files, Streams;
+	VAR c: Files.Parameters; args: Streams.StringReader; out: Streams.StringWriter;
+		fs: Files.FileSystem; f: Files.File; w: Files.Writer; r: Files.Reader; text: ARRAY 32 OF CHAR; res: INTEGER;
+	BEGIN
+		Files.CreateDirectory("relative-root.tmp", res); ASSERT(res = 0, 1);
+		Streams.OpenStringReader(args, "relative-root.tmp/"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+		c.prefix := "RELTEST"; RelativeFileSystem.NewFS(c); fs := Files.This("RELTEST"); ASSERT(fs # NIL, 2);
+		f := Files.New("RELTEST:item.txt"); ASSERT(f # NIL, 3); Files.OpenWriter(w, f, 0); w.String("payload"); w.Update; Files.Register(f);
+		f := Files.Old("relative-root.tmp/item.txt"); ASSERT(f # NIL, 4); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "payload", 5);
+		ASSERT(Files.Old("RELTEST:/item.txt") # NIL, 6);
+		ASSERT(fs.FileKey("RELTEST:item.txt") = f.fs.FileKey("relative-root.tmp/item.txt"), 7);
+		Files.Rename("RELTEST:item.txt", "RELTEST:renamed.txt", res); ASSERT(res = 0, 8);
+		ASSERT(Files.Old("RELTEST:item.txt") = NIL, 9); ASSERT(Files.Old("relative-root.tmp/renamed.txt") # NIL, 10);
+		Files.CreateDirectory("RELTEST:sub", res); ASSERT(res = 0, 11);
+		Files.RemoveDirectory("RELTEST:sub", FALSE, res); ASSERT(res = 0, 12);
+		Files.Delete("RELTEST:renamed.txt", res); ASSERT(res = 0, 13);
+		Files.Remove(fs); ASSERT(Files.This("RELTEST") = NIL, 14); Files.RemoveDirectory("relative-root.tmp", FALSE, res); ASSERT(res = 0, 15)
+	END Test.
+
+positive: missing root and unknown filesystem prefixes do not mount a relative filesystem
+
+	MODULE Test;
+	IMPORT RelativeFileSystem, Files, Streams, Strings;
+	VAR c: Files.Parameters; args: Streams.StringReader; out: Streams.StringWriter; text: ARRAY 256 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(args, "relative-nonexistent-root.tmp"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+		c.prefix := "RELMISSING"; RelativeFileSystem.NewFS(c); ASSERT(Files.This("RELMISSING") = NIL, 16);
+		out.Update; out.Get(text); ASSERT(Strings.Pos("does not contain", text) >= 0, 17);
+		args.Set("RELUNKNOWN:path"); RelativeFileSystem.NewFS(c); ASSERT(Files.This("RELMISSING") = NIL, 18);
+		ASSERT(c.result # 0, 19); out.Update; out.Get(text); ASSERT(Strings.Pos("could not be found", text) >= 0, 20)
+	END Test.

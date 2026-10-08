@@ -1,0 +1,71 @@
+# Tests for file expansion, service registration/removal and host installation without a listener.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: plain text and single ampersands pass through unchanged
+
+	MODULE Test;
+	IMPORT Plugin := WebSSMPPlugin, Files, Streams, WebHTTP;
+	VAR f: Files.File; fw: Files.Writer; out: Streams.StringWriter; w: Streams.Writer;
+		request: WebHTTP.RequestHeader; text: ARRAY 256 OF CHAR;
+	BEGIN
+		f := Files.New("ssmp-plain.tmp"); Files.OpenWriter(fw, f, 0); fw.String("a & b &"); fw.Update;
+		Streams.OpenStringWriter(out, 256); w := out; Plugin.WriteFile(request, w, f); out.Get(text);
+		ASSERT(text = "a & b &")
+	END Test.
+
+positive: installed plugins expand GET pages and HEAD responses omit page bodies
+
+	MODULE Test;
+	IMPORT Plugin := WebSSMPPlugin, Server := WebHTTPServer, Files, Streams, WebHTTP, Commands, Strings;
+	VAR host: Server.Host; f: Files.File; fw: Files.Writer; args, input: Streams.StringReader;
+		out: Streams.StringWriter; reader: Streams.Reader; writer: Streams.Writer; context: Commands.Context;
+		request: WebHTTP.RequestHeader; reply: WebHTTP.ResponseHeader; text: ARRAY 4096 OF CHAR; res: INTEGER;
+	PROCEDURE Render(VAR req: WebHTTP.RequestHeader; VAR src: Streams.Reader; VAR dst: Streams.Writer);
+	BEGIN dst.String("expanded-marker")
+	END Render;
+	BEGIN
+		f := Files.New("ssmp-page.ssmp"); Files.OpenWriter(fw, f, 0); fw.String("&&Render"); fw.Update; Files.Register(f);
+		NEW(host, "ssmp.example.test"); host.SetPrefix("."); Server.AddHost(host); Plugin.RegisterMethod("Render", Render);
+		Streams.OpenStringReader(args, "ssmp.example.test"); NEW(out, 4096); NEW(context, NIL, args, out, out, NIL);
+		Plugin.Install(context); out.Update; out.Get(text); ASSERT(Strings.Pos("added to ssmp.example.test", text) >= 0);
+		Streams.OpenStringReader(input, ""); reader := input; writer := out;
+		request.uri := "/ssmp-page.ssmp"; request.method := WebHTTP.GetM; request.maj := 1; request.min := 0;
+		host.Handle(request, reply, reader, writer, FALSE); out.Update; out.Get(text);
+		ASSERT(reply.statuscode = WebHTTP.OK); ASSERT(Strings.Pos("expanded-marker", text) >= 0);
+		request.method := WebHTTP.HeadM; host.Handle(request, reply, reader, writer, FALSE); out.Update; out.Get(text);
+		ASSERT(reply.statuscode = WebHTTP.OK); ASSERT(Strings.Pos("expanded-marker", text) < 0);
+		args.Set("missing.example.test"); Plugin.Install(context); out.Update; out.Get(text); ASSERT(Strings.Pos("not found", text) >= 0);
+		Plugin.UnregisterMethod("Render"); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: a registered service receives request and streams and disappears after removal
+
+	MODULE Test;
+	IMPORT Plugin := WebSSMPPlugin, Files, Streams, WebHTTP;
+	VAR f: Files.File; fw: Files.Writer; out: Streams.StringWriter; w: Streams.Writer;
+		request: WebHTTP.RequestHeader; text: ARRAY 512 OF CHAR; calls: SIGNED32;
+	PROCEDURE Render(VAR req: WebHTTP.RequestHeader; VAR input: Streams.Reader; VAR output: Streams.Writer);
+	BEGIN INC(calls); ASSERT(req.uri = "/page.ssmp"); output.String("rendered")
+	END Render;
+	BEGIN
+		f := Files.New("ssmp-service.tmp"); Files.OpenWriter(fw, f, 0); fw.String("before &&Render after"); fw.Update;
+		request.uri := "/page.ssmp"; Plugin.RegisterMethod("Render", Render);
+		Streams.OpenStringWriter(out, 512); w := out; Plugin.WriteFile(request, w, f); out.Get(text);
+		ASSERT(calls = 1); ASSERT(text = "before rendered after");
+		Plugin.UnregisterMethod("Render"); Plugin.UnregisterMethod("Render");
+		Plugin.WriteFile(request, w, f); out.Get(text); ASSERT(calls = 1);
+		ASSERT(text = "before <B>Service not available (Render)</B> after")
+	END Test.
+
+positive: empty files and missing service names produce bounded output
+
+	MODULE Test;
+	IMPORT Plugin := WebSSMPPlugin, Files, Streams, WebHTTP;
+	VAR f: Files.File; fw: Files.Writer; out: Streams.StringWriter; w: Streams.Writer;
+		request: WebHTTP.RequestHeader; text: ARRAY 256 OF CHAR;
+	BEGIN
+		f := Files.New("ssmp-empty.tmp"); Streams.OpenStringWriter(out, 256); w := out;
+		Plugin.WriteFile(request, w, f); out.Get(text); ASSERT(text = "");
+		Files.OpenWriter(fw, f, 0); fw.String("&&unknown"); fw.Update;
+		Plugin.WriteFile(request, w, f); out.Get(text); ASSERT(text = "<B>Service not available (unknown)</B>")
+	END Test.

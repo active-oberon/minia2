@@ -1,0 +1,65 @@
+# Tests for RAM volume blocks, allocation and invalid addresses without mounting a filesystem.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: ram volumes copy block data and keep unwritten blocks zero
+
+	MODULE Test;
+	IMPORT RAMVolumes, Files, Streams;
+	VAR c: Files.Parameters; r: Streams.StringReader; w: Streams.StringWriter;
+		v: Files.Volume; src, dst: ARRAY 513 OF CHAR; i: SIZE; adr: Files.Address;
+	BEGIN
+		Streams.OpenStringReader(r, "4 512"); NEW(w, 256); NEW(c, NIL, r, w, w, NIL); RAMVolumes.New(c);
+		v := c.vol; ASSERT(v IS RAMVolumes.Volume); ASSERT(v.size = 4); ASSERT(v.blockSize = 512);
+		FOR i := 0 TO 512 DO dst[i] := "!" END;
+		v.GetBlock(4, dst); FOR i := 0 TO 511 DO ASSERT(dst[i] = 0X) END; ASSERT(dst[512] = "!");
+		FOR i := 0 TO 511 DO src[i] := CHR(i MOD 256) END;
+		v.PutBlock(2, src); src[0] := "x"; v.GetBlock(2, dst);
+		FOR i := 0 TO 511 DO ASSERT(dst[i] = CHR(i MOD 256)) END;
+		v.GetBlock(3, dst); FOR i := 0 TO 511 DO ASSERT(dst[i] = 0X) END;
+		ASSERT(v.Available() = 4); v.AllocBlock(0, adr); ASSERT(adr > 0); ASSERT(v.Marked(adr));
+		ASSERT(v.Available() = 3); v.FreeBlock(adr); ASSERT(~v.Marked(adr)); ASSERT(v.Available() = 4);
+		v.Finalize; ASSERT(v.size = 0); ASSERT(v.blockSize = 0)
+	END Test.
+
+positive: invalid creation parameters report an error and return no volume
+
+	MODULE Test;
+	IMPORT RAMVolumes, Files, Streams, Strings;
+	VAR c: Files.Parameters; r: Streams.StringReader; w: Streams.StringWriter; msg: ARRAY 256 OF CHAR;
+		PROCEDURE Check(CONST args: ARRAY OF CHAR);
+		BEGIN
+			Streams.OpenStringReader(r, args); NEW(w, 256); NEW(c, NIL, r, w, w, NIL); RAMVolumes.New(c);
+			ASSERT(c.vol = NIL); w.Update; w.Get(msg); ASSERT(Strings.Pos("bad parameters", msg) >= 0)
+		END Check;
+	BEGIN Check(""); Check("4"); Check("0 512"); Check("4 0")
+	END Test.
+
+negative: block zero is not a volume address
+
+	MODULE Test;
+	IMPORT RAMVolumes, Files, Streams;
+	VAR c: Files.Parameters; r: Streams.StringReader; w: Streams.StringWriter; buf: ARRAY 512 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(r, "4 512"); NEW(w, 256); NEW(c, NIL, r, w, w, NIL); RAMVolumes.New(c);
+		c.vol.GetBlock(0, buf)
+	END Test.
+
+negative: writing beyond the last block is rejected
+
+	MODULE Test;
+	IMPORT RAMVolumes, Files, Streams;
+	VAR c: Files.Parameters; r: Streams.StringReader; w: Streams.StringWriter; buf: ARRAY 512 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(r, "4 512"); NEW(w, 256); NEW(c, NIL, r, w, w, NIL); RAMVolumes.New(c);
+		c.vol.PutBlock(5, buf)
+	END Test.
+
+negative: short block buffers are rejected before copying
+
+	MODULE Test;
+	IMPORT RAMVolumes, Files, Streams;
+	VAR c: Files.Parameters; r: Streams.StringReader; w: Streams.StringWriter; buf: ARRAY 511 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(r, "4 512"); NEW(w, 256); NEW(c, NIL, r, w, w, NIL); RAMVolumes.New(c);
+		c.vol.GetBlock(2, buf)
+	END Test.

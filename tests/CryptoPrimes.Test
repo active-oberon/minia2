@@ -1,0 +1,37 @@
+# Tests for small prime boundaries, trial division and generated prime invariants.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: trial division recognizes small primes including two and rejects zero and one
+
+	MODULE Test;
+	IMPORT P := CryptoPrimes, B := CryptoBigNumbers;
+	VAR n: B.BigNumber; i, j: SIGNED32; prime: BOOLEAN;
+	BEGIN
+		FOR i := 0 TO 200 DO
+			prime := i >= 2;
+			FOR j := 2 TO i-1 DO IF i MOD j = 0 THEN prime := FALSE END END;
+			B.AssignInt(n, i); ASSERT(P.IsPrime(n, 4, TRUE) = prime)
+		END
+	END Test.
+
+positive: default iteration counts also work for small integers
+
+	MODULE Test;
+	IMPORT P := CryptoPrimes, B := CryptoBigNumbers;
+	VAR n: B.BigNumber;
+	BEGIN
+		B.AssignInt(n, 101); ASSERT(P.IsPrime(n, 0, TRUE));
+		B.AssignInt(n, 100); ASSERT(~P.IsPrime(n, 0, TRUE));
+		B.AssignInt(n, 1); ASSERT(~P.IsPrime(n, 0, TRUE))
+	END Test.
+
+positive: generated primes have the requested bit width and pass an independent trial check
+
+	MODULE Test;
+	IMPORT P := CryptoPrimes, B := CryptoBigNumbers;
+	VAR n: B.BigNumber; i: SIGNED32;
+	BEGIN
+		n := P.NewPrime(100, FALSE); ASSERT(n.BitSize() = 100); ASSERT(n.BitSet(0));
+		FOR i := 2 TO 1000 DO ASSERT(B.ModWord(n, i) # 0) END;
+		ASSERT(P.IsPrime(n, 27, TRUE))
+	END Test.

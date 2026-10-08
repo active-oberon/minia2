@@ -1,0 +1,215 @@
+# Tests for RSA arithmetic and OpenSSH public key serialization using small fixed primes.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: verification preserves leading zero bytes in a sixteen byte digest
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, signature: B.BigNumber; pub, priv: RSA.Key; digest: ARRAY 16 OF CHAR; i, zeros: SIGNED32;
+	BEGIN
+		B.AssignInt(p, 1); p.Shift(61); p.Dec; B.AssignInt(q, 1); q.Shift(127); q.Dec;
+		B.AssignInt(e, 65537); RSA.MakeKeys(p, q, e, "verify owner", pub, priv);
+		FOR i := 0 TO 15 DO digest[i] := CHR(128+i) END;
+		FOR zeros := 0 TO 16 DO
+			signature := priv.Sign(digest, 16); ASSERT(pub.Verify(digest, 16, signature));
+			IF zeros < 16 THEN digest[zeros] := 0X END
+		END
+	END Test.
+
+positive: verification compares every requested digest byte and rejects altered signatures
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, signature, bad: B.BigNumber; pub, priv: RSA.Key; digest: ARRAY 20 OF CHAR; i: SIGNED32;
+	BEGIN
+		B.AssignInt(p, 1); p.Shift(61); p.Dec; B.AssignInt(q, 1); q.Shift(127); q.Dec;
+		B.AssignInt(e, 65537); RSA.MakeKeys(p, q, e, "verify owner", pub, priv);
+		FOR i := 0 TO 19 DO digest[i] := CHR(128+i) END;
+		signature := priv.Sign(digest, 20); ASSERT(pub.Verify(digest, 20, signature));
+		digest[19] := CHR(ORD(digest[19])+1); ASSERT(~pub.Verify(digest, 20, signature));
+		digest[19] := CHR(ORD(digest[19])-1); B.Copy(signature, bad); bad.Inc; ASSERT(~pub.Verify(digest, 20, bad));
+		p := pub.modulus; B.Copy(p, bad); ASSERT(~pub.Verify(digest, 20, bad)); bad.Inc; ASSERT(~pub.Verify(digest, 20, bad));
+		B.AssignInt(bad, -1); ASSERT(~pub.Verify(digest, 20, bad)); ASSERT(~pub.Verify(digest, 20, NIL))
+	END Test.
+
+positive: verification rejects lengths outside the digest buffer without trapping
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR e, n, signature: B.BigNumber; key: RSA.Key; digest: ARRAY 16 OF CHAR; empty: ARRAY 0 OF CHAR;
+	BEGIN
+		B.AssignInt(e, 17); B.AssignInt(n, 3233); B.AssignInt(signature, 0); key := RSA.PubKey(e, n);
+		ASSERT(~key.Verify(digest, -1, signature)); ASSERT(~key.Verify(digest, 0, signature));
+		ASSERT(~key.Verify(digest, 15, signature)); ASSERT(~key.Verify(digest, 17, signature));
+		ASSERT(~key.Verify(empty, 16, signature))
+	END Test.
+
+positive: verification rejects uninitialized and invalid public key components
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR e, n, signature: B.BigNumber; key: RSA.Key; digest: ARRAY 16 OF CHAR;
+	BEGIN
+		B.AssignInt(signature, 0); NEW(key); ASSERT(~key.Verify(digest, 16, signature));
+		B.AssignInt(e, 0); B.AssignInt(n, 3233); key := RSA.PubKey(e, n); ASSERT(~key.Verify(digest, 16, signature));
+		B.AssignInt(e, -17); key := RSA.PubKey(e, n); ASSERT(~key.Verify(digest, 16, signature));
+		B.AssignInt(e, 17); B.AssignInt(n, 0); key := RSA.PubKey(e, n); ASSERT(~key.Verify(digest, 16, signature));
+		B.AssignInt(n, -3233); key := RSA.PubKey(e, n); ASSERT(~key.Verify(digest, 16, signature))
+	END Test.
+
+negative: public keys cannot sign
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR e, n, signature: B.BigNumber; key: RSA.Key; digest: ARRAY 16 OF CHAR;
+	BEGIN
+		B.AssignInt(e, 17); B.AssignInt(n, 3233); key := RSA.PubKey(e, n); signature := key.Sign(digest, 16)
+	END Test.
+
+negative: private keys cannot verify
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, signature: B.BigNumber; pub, priv: RSA.Key; digest: ARRAY 16 OF CHAR;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17); RSA.MakeKeys(p, q, e, "verify owner", pub, priv);
+		B.AssignInt(signature, 0); ASSERT(priv.Verify(digest, 16, signature))
+	END Test.
+
+positive: generated keys encrypt and decrypt the textbook RSA example
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, msg, cipher, back, expected: B.BigNumber; pub, priv: RSA.Key;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17);
+		RSA.MakeKeys(p, q, e, "test owner", pub, priv);
+		ASSERT(~pub.private); ASSERT(priv.private); ASSERT(pub.name = "test owner"); ASSERT(priv.name = pub.name);
+		B.AssignInt(expected, 3233); ASSERT(pub.modulus.EQ(expected)); ASSERT(priv.modulus.EQ(expected));
+		B.AssignInt(expected, 2753); ASSERT(priv.exponent.EQ(expected));
+		B.AssignInt(msg, 65); cipher := pub.Encrypt(msg); B.AssignInt(expected, 2790); ASSERT(cipher.EQ(expected));
+		back := priv.Decrypt(cipher); ASSERT(back.EQ(msg));
+		B.AssignInt(msg, 0); cipher := pub.Encrypt(msg); back := priv.Decrypt(cipher); ASSERT(back.IsZero());
+		B.AssignInt(msg, 3232); cipher := pub.Encrypt(msg); back := priv.Decrypt(cipher); ASSERT(back.EQ(msg))
+	END Test.
+
+positive: public key construction copies its inputs and survives OpenSSH serialization
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams;
+	VAR e, n, expected: B.BigNumber; key, loaded: RSA.Key;
+		w: Streams.StringWriter; r: Streams.StringReader; text: ARRAY 4096 OF CHAR;
+	BEGIN
+		B.AssignInt(e, 17); B.AssignInt(n, 3233); key := RSA.PubKey(e, n);
+		e.Inc; n.Inc; B.AssignInt(expected, 17); ASSERT(key.exponent.EQ(expected));
+		B.AssignInt(expected, 3233); ASSERT(key.modulus.EQ(expected));
+		Streams.OpenStringWriter(w, 4096); RSA.StorePublicKey(w, key); w.Update; w.Get(text);
+		Streams.OpenStringReader(r, text); loaded := RSA.LoadPublicKey(r);
+		ASSERT(~loaded.private); ASSERT(loaded.exponent.EQ(key.exponent)); ASSERT(loaded.modulus.EQ(key.modulus))
+	END Test.
+
+negative: public keys cannot decrypt
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR e, n, msg, result: B.BigNumber; key: RSA.Key;
+	BEGIN
+		B.AssignInt(e, 17); B.AssignInt(n, 3233); B.AssignInt(msg, 65);
+		key := RSA.PubKey(e, n); result := key.Decrypt(msg)
+	END Test.
+
+positive: encrypted private key serialization preserves keys and rejects a wrong passphrase
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams;
+	VAR p, q, e, msg, cipher, back: B.BigNumber; pub, priv, loaded: RSA.Key;
+		first, second: RSA.Certificate;
+		w: Streams.StringWriter; r: Streams.StringReader; buf: ARRAY 4096 OF CHAR; size: SIZE;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17); RSA.MakeKeys(p, q, e, "test owner", pub, priv);
+		NEW(first); first.authority := "first authority"; B.AssignInt(first.signature, 65);
+		NEW(second); second.authority := "second-authority"; B.AssignInt(second.signature, 1234);
+		first.next := second; priv.certificates := first;
+		NEW(w, 4096); RSA.StorePrivateKey(w, priv, "test passphrase"); w.Update; size := w.Pos(); w.Get(buf);
+		NEW(r, 4096); r.SetRaw(buf, 0, size); loaded := RSA.LoadPrivateKey(r, "test passphrase"); ASSERT(loaded # NIL);
+		ASSERT(loaded.private); ASSERT(loaded.name = priv.name); ASSERT(loaded.size = priv.size);
+		ASSERT(loaded.modulus.EQ(priv.modulus)); ASSERT(loaded.exponent.EQ(priv.exponent));
+		ASSERT(loaded.certificates # NIL); ASSERT(loaded.certificates.authority = first.authority);
+		ASSERT(loaded.certificates.signature.EQ(first.signature)); ASSERT(loaded.certificates.next # NIL);
+		ASSERT(loaded.certificates.next.authority = second.authority); ASSERT(loaded.certificates.next.signature.EQ(second.signature));
+		ASSERT(loaded.certificates.next.next = NIL);
+		B.AssignInt(msg, 65); cipher := pub.Encrypt(msg); back := loaded.Decrypt(cipher); ASSERT(back.EQ(msg));
+		r.SetRaw(buf, 0, size); ASSERT(RSA.LoadPrivateKey(r, "wrong passphrase") = NIL);
+		r.SetRaw(buf, 0, size - 3); ASSERT(RSA.LoadPrivateKey(r, "test passphrase") = NIL)
+	END Test.
+
+positive: signing uses the private exponent and agrees with modular arithmetic
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, msg, signature, expected: B.BigNumber; pub, priv: RSA.Key; digest: ARRAY 1 OF CHAR;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17); RSA.MakeKeys(p, q, e, "test owner", pub, priv);
+		digest[0] := "A"; signature := priv.Sign(digest, 1); B.AssignInt(msg, 65);
+		expected := B.ModExp(msg, priv.exponent, priv.modulus); ASSERT(signature.EQ(expected));
+		expected := pub.Encrypt(signature); ASSERT(expected.EQ(msg))
+	END Test.
+
+negative: equal RSA primes are rejected
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, e: B.BigNumber; pub, priv: RSA.Key;
+	BEGIN B.AssignInt(p, 61); B.AssignInt(e, 17); RSA.MakeKeys(p, p, e, "invalid", pub, priv)
+	END Test.
+
+positive: generated keys retain exponent and prime values when caller inputs change
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR p, q, e, msg, cipher, back, expected: B.BigNumber; pub, priv: RSA.Key;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17); RSA.MakeKeys(p, q, e, "copy owner", pub, priv);
+		p.Inc; q.Inc; e.Inc; B.AssignInt(expected, 17); ASSERT(pub.exponent.EQ(expected));
+		B.AssignInt(msg, 65); cipher := pub.Encrypt(msg); B.AssignInt(expected, 2790); ASSERT(cipher.EQ(expected));
+		back := priv.Decrypt(cipher); ASSERT(back.EQ(msg))
+	END Test.
+
+negative: public keys cannot be serialized as private keys
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams;
+	VAR e, n: B.BigNumber; key: RSA.Key; w: Streams.StringWriter;
+	BEGIN
+		B.AssignInt(e, 17); B.AssignInt(n, 3233); key := RSA.PubKey(e, n);
+		NEW(w, 4096); RSA.StorePrivateKey(w, key, "passphrase")
+	END Test.
+
+negative: private keys cannot be serialized as public keys
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams;
+	VAR p, q, e: B.BigNumber; pub, priv: RSA.Key; w: Streams.StringWriter;
+	BEGIN
+		B.AssignInt(p, 61); B.AssignInt(q, 53); B.AssignInt(e, 17); RSA.MakeKeys(p, q, e, "guard owner", pub, priv);
+		NEW(w, 4096); RSA.StorePublicKey(w, priv)
+	END Test.
+
+negative: public key loading rejects a different textual key type
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams;
+	VAR r: Streams.StringReader; key: RSA.Key;
+	BEGIN
+		NEW(r, 256); r.Set("ssh-dss irrelevant"); key := RSA.LoadPublicKey(r)
+	END Test.
+
+negative: public key extraction rejects a different binary key type
+
+	MODULE Test;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers, Streams, U := CryptoUtils, Base64;
+	VAR r: Streams.StringReader; key: RSA.Key; buf, encoded: ARRAY 256 OF CHAR; len: SIZE;
+	BEGIN
+		U.PutString(buf, len, "ssh-dss"); Base64.Encode(buf, len, encoded);
+		NEW(r, 256); r.Set(encoded); key := RSA.ExtractPublicKey(r)
+	END Test.

@@ -1,0 +1,98 @@
+# Tests for mail metadata, recipients, headers and SMTP body escaping.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: new messages have empty metadata and independent sender fields
+
+	MODULE Test;
+	IMPORT Mail;
+	VAR m, other: Mail.Message; name, address, subject: ARRAY 128 OF CHAR; date: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(m); NEW(other);
+		m.GetFrom(name, address); ASSERT(name = ""); ASSERT(address = "");
+		m.GetSender(name, address); ASSERT(name = ""); ASSERT(address = "");
+		m.GetSubject(subject); ASSERT(subject = "");
+		m.GetDate(date); ASSERT(date = "");
+		m.SetFrom("Author", "author@example.test");
+		m.SetSender("Sender", "sender@example.test");
+		m.SetSubject("first"); m.SetSubject("replacement");
+		m.SetDate("Thu, 8 Oct 2026 12:00:00 +0000");
+		m.GetFrom(name, address); ASSERT(name = "Author"); ASSERT(address = "author@example.test");
+		m.GetSender(name, address); ASSERT(name = "Sender"); ASSERT(address = "sender@example.test");
+		m.GetSubject(subject); ASSERT(subject = "replacement");
+		m.GetDate(date); ASSERT(date = "Thu, 8 Oct 2026 12:00:00 +0000");
+		other.GetSubject(subject); ASSERT(subject = "");
+		m.SetFrom("", ""); m.GetFrom(name, address); ASSERT(name = ""); ASSERT(address = "")
+	END Test.
+
+positive: recipient lists retain order and stay separate while growing
+
+	MODULE Test;
+	IMPORT Mail, Strings;
+	VAR m: Mail.Message; i: SIGNED32; name, address, expected: ARRAY 128 OF CHAR;
+	BEGIN
+		NEW(m);
+		ASSERT(m.GetNofTo() = 0); ASSERT(m.GetNofCc() = 0);
+		ASSERT(m.GetNofReplyTo() = 0); ASSERT(m.GetNofBcc() = 0); ASSERT(m.GetNofHeaders() = 0);
+		FOR i := 0 TO 63 DO
+			Strings.IntToStr(i, name); m.AddTo(name, "to@example.test")
+		END;
+		m.AddCc("Copy", "cc@example.test"); m.AddReplyTo("Reply", "reply@example.test");
+		m.AddBcc("Blind", "bcc@example.test");
+		ASSERT(m.GetNofTo() = 64); ASSERT(m.GetNofCc() = 1); ASSERT(m.GetNofReplyTo() = 1);
+		FOR i := 0 TO 63 DO
+			m.GetTo(i, name, address); Strings.IntToStr(i, expected);
+			ASSERT(name = expected); ASSERT(address = "to@example.test")
+		END;
+		m.GetCc(0, name, address); ASSERT(name = "Copy"); ASSERT(address = "cc@example.test");
+		m.GetReplyTo(0, name, address); ASSERT(name = "Reply"); ASSERT(address = "reply@example.test");
+		ASSERT(m.GetNofBcc() = 1); m.GetBcc(0, name, address); ASSERT(name = "Blind"); ASSERT(address = "bcc@example.test");
+		m.AddTo("", ""); m.GetTo(64, name, address); ASSERT(name = ""); ASSERT(address = "")
+	END Test.
+
+positive: headers retain duplicates and copy the supplied data
+
+	MODULE Test;
+	IMPORT Mail;
+	VAR m: Mail.Message; id, content: ARRAY 128 OF CHAR;
+	BEGIN
+		NEW(m); id := "X-Test"; content := "first"; m.AddHeader(id, content);
+		id := "changed"; content := "changed";
+		m.AddHeader("X-Test", "second"); m.AddHeader("", "");
+		ASSERT(m.GetNofHeaders() = 3);
+		m.GetHeader(0, id, content); ASSERT(id = "X-Test"); ASSERT(content = "first");
+		m.GetHeader(1, id, content); ASSERT(id = "X-Test"); ASSERT(content = "second");
+		m.GetHeader(2, id, content); ASSERT(id = ""); ASSERT(content = "")
+	END Test.
+
+positive: body lines preserve text and escape each leading dot once
+
+	MODULE Test;
+	IMPORT Mail;
+	VAR m: Mail.Message; line: Mail.Line; text: ARRAY 32 OF CHAR;
+	BEGIN
+		NEW(m); ASSERT(m.GetNofLines() = 0);
+		text := "plain"; m.AddLine(text); text := "changed";
+		m.AddLine("."); m.AddLine("..two"); m.AddLine("inside.dot"); m.AddLine("");
+		ASSERT(m.GetNofLines() = 5);
+		m.GetLine(0, line); ASSERT(line.data^ = "plain");
+		m.GetLine(1, line); ASSERT(line.data^ = "..");
+		m.GetLine(2, line); ASSERT(line.data^ = "...two");
+		m.GetLine(3, line); ASSERT(line.data^ = "inside.dot");
+		m.GetLine(4, line); ASSERT(line # NIL); ASSERT(line.data = NIL)
+	END Test.
+
+negative: recipient index cannot equal the count
+
+	MODULE Test;
+	IMPORT Mail;
+	VAR m: Mail.Message; name, address: ARRAY 128 OF CHAR;
+	BEGIN NEW(m); m.AddTo("Author", "a@example.test"); m.GetTo(1, name, address)
+	END Test.
+
+negative: body line index cannot be negative
+
+	MODULE Test;
+	IMPORT Mail;
+	VAR m: Mail.Message; line: Mail.Line;
+	BEGIN NEW(m); m.AddLine("body"); m.GetLine(-1, line)
+	END Test.

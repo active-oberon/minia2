@@ -1,0 +1,43 @@
+# Tests for DSA verification with fixed arithmetic and public key serialization.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: a fixed DSA signature verifies only the matching digest and parameters are copied
+
+	MODULE Test;
+	IMPORT DSA := CryptoDSA, B := CryptoBigNumbers;
+	VAR p, q, g, y, r, s, expected: B.BigNumber; key: DSA.Key; sig: DSA.Signature; digest: ARRAY 1 OF CHAR;
+	BEGIN
+		B.AssignInt(p, 23); B.AssignInt(q, 11); B.AssignInt(g, 4); B.AssignInt(y, 18);
+		key := DSA.PubKey(p, q, g, y); p.Inc; q.Inc; g.Inc; y.Inc;
+		B.AssignInt(expected, 23); ASSERT(key.p.EQ(expected)); B.AssignInt(expected, 11); ASSERT(key.q.EQ(expected));
+		B.AssignInt(r, 5); B.AssignInt(s, 1); NEW(sig, r, s); r.Inc; s.Inc;
+		digest[0] := 9X; ASSERT(key.Verify(digest, 1, sig)); digest[0] := 0AX; ASSERT(~key.Verify(digest, 1, sig))
+	END Test.
+
+positive: signature scalars must be inside the open interval from zero to q
+
+	MODULE Test;
+	IMPORT DSA := CryptoDSA, B := CryptoBigNumbers;
+	VAR p, q, g, y, r, s: B.BigNumber; key: DSA.Key; sig: DSA.Signature; digest: ARRAY 1 OF CHAR;
+		PROCEDURE Check(a, b: SIGNED32);
+		BEGIN B.AssignInt(r, a); B.AssignInt(s, b); NEW(sig, r, s); ASSERT(~key.Verify(digest, 1, sig))
+		END Check;
+	BEGIN
+		B.AssignInt(p, 23); B.AssignInt(q, 11); B.AssignInt(g, 4); B.AssignInt(y, 18);
+		key := DSA.PubKey(p, q, g, y); digest[0] := 9X;
+		Check(1, 0); Check(0, 1); Check(11, 1); Check(1, 11); Check(-1, 1); Check(1, -1)
+	END Test.
+
+positive: public key serialization preserves all four group parameters
+
+	MODULE Test;
+	IMPORT DSA := CryptoDSA, B := CryptoBigNumbers, Streams;
+	VAR p, q, g, y: B.BigNumber; key, loaded: DSA.Key; w: Streams.StringWriter; r: Streams.StringReader;
+		text: ARRAY 4096 OF CHAR; algorithm: ARRAY 32 OF CHAR;
+	BEGIN
+		B.AssignInt(p, 23); B.AssignInt(q, 11); B.AssignInt(g, 4); B.AssignInt(y, 18); key := DSA.PubKey(p, q, g, y);
+		NEW(w, 4096); DSA.StorePublicKey(w, key); w.Update; w.Get(text);
+		Streams.OpenStringReader(r, text); r.String(algorithm); ASSERT(algorithm = "ssh-dss");
+		r.SkipWhitespace; loaded := DSA.LoadPublicKey(r); ASSERT(~loaded.private);
+		ASSERT(loaded.p.EQ(key.p)); ASSERT(loaded.q.EQ(key.q)); ASSERT(loaded.g.EQ(key.g)); ASSERT(loaded.y.EQ(key.y))
+	END Test.

@@ -27,6 +27,7 @@ TYPE
 		VAR name, ext: Files.FileName; f: Files.File; newuri : ARRAY 4096 OF CHAR;
 		BEGIN
 			HTTPSupport.RemoveVariablesFromURI(request.uri, newuri);
+			IF newuri = "" THEN RETURN FALSE END;
 			IF (request.method IN {WebHTTP.GetM, WebHTTP.PostM, WebHTTP.HeadM}) THEN
 				IF (newuri[Strings.Length(newuri)-1] = "/") THEN (* check for default webpage "index.dxp" *)
 					COPY(host.prefix, name); Strings.Append(name, newuri);
@@ -410,7 +411,7 @@ TYPE
 		transformationDepth: SIGNED16;  w: Streams.Writer) : BOOLEAN;
 	VAR enum, resultEnum: XMLObjects.Enumerator; pChild, pResultChild: ANY; elem: XML.Element;
 		child, newChild, resultChild: XML.Content; errormsg: ARRAY 256 OF CHAR; wasTransformed: BOOLEAN;
-		elemName : Strings.String; container, snapshot, resultContainer: XML.Container;
+		elemName : Strings.String; container, resultContainer: XML.Container;
 	BEGIN
 		IF ((n # NIL) & (n IS XML.Element) & (transformationDepth > MaxTransformationDepth)) THEN
 			elem := n(XML.Element); elemName := elem.GetName();
@@ -435,12 +436,11 @@ TYPE
 
 			IF ((n # NIL) & (n IS XML.Container)) THEN (* transformation result of PreTransform could be not a container *)
 				container := n(XML.Container);
-				(* no modification while iteration allowed, extract first the contents into a snapshot *)
-				ExtractContentsOfContainer(container, snapshot);
-				enum := snapshot.GetContents();
+				enum := container.GetContents();
 				WHILE (enum.HasMoreElements()) DO
 					pChild := enum.GetNext(); child := pChild(XML.Content); newChild := child;
 					IF (~TransformXMLTree(file, newChild, request, transformationDepth, w)) THEN RETURN FALSE END;
+					container.RemoveContent(child);
 					IF (newChild # NIL) THEN
 						IF ((newChild IS XML.Container) & (~(newChild IS XML.Element))) THEN (* avoid nested containers *)
 							resultContainer := newChild(XML.Container);
@@ -478,25 +478,6 @@ TYPE
 		NEW(sw, LEN(msg)); w := sw; elem.Write(w, NIL, 0);
 		sw.Get(msg); KernelLog.String(msg); KernelLog.Ln
 	END Log;
-
-	PROCEDURE ExtractContentsOfContainer(input: XML.Container; VAR output: XML.Container);
-	VAR e: XMLObjects.Enumerator; p : ANY; child: XML.Content;
-	BEGIN
-		NEW(output);
-		(* first copy contents to output *)
-		e := input.GetContents();
-		WHILE (e.HasMoreElements()) DO
-			p := e.GetNext(); child := p(XML.Content);
-			output.AddContent(child);
-		END;
-
-		(* then remove contents from input *)
-		e := output.GetContents();
-		WHILE (e.HasMoreElements()) DO
-			p := e.GetNext(); child := p(XML.Content);
-			input.RemoveContent(child);
-		END
-	END ExtractContentsOfContainer;
 
 	PROCEDURE IsActive(n : XML.Element) : BOOLEAN;
 	VAR module, obj: Strings.String;
@@ -866,6 +847,7 @@ TYPE
 			ReadRegisteredModules
 		END;
 
+		context.arg.SkipWhitespace;
 		REPEAT
 			context.arg.String(host); Strings.Trim(host, " ");
 			hl := WebHTTPServer.FindHosts(host);
@@ -887,8 +869,9 @@ TYPE
 				END
 			ELSE
 				context.error.String("Host '"); context.error.String(host); context.error.String("' not present."); context.error.Ln
-			END
-		UNTIL ((context.arg.res # Streams.Ok) OR (Strings.Length(host) = 0));
+			END;
+			context.arg.SkipWhitespace
+		UNTIL ((context.arg.res # Streams.Ok) OR (context.arg.Peek() = 0X) OR (Strings.Length(host) = 0));
 		UnlockServingHosts;
 	END Install;
 
@@ -919,6 +902,7 @@ TYPE
 	BEGIN
 		IF dynamicPagePlugin # NIL THEN
 			LockServingHosts;
+			context.arg.SkipWhitespace;
 			REPEAT
 				context.arg.String(host); Strings.Trim(host, " ");
 				hl := WebHTTPServer.FindHosts(host);
@@ -930,8 +914,9 @@ TYPE
 					END
 				ELSE
 					context.error.String("Host '"); context.error.String(host); context.error.String("' not present."); context.error.Ln
-				END
-			UNTIL ((context.arg.res # Streams.Ok) OR (Strings.Length(host) = 0));
+				END;
+				context.arg.SkipWhitespace
+			UNTIL ((context.arg.res # Streams.Ok) OR (context.arg.Peek() = 0X) OR (Strings.Length(host) = 0));
 			UnlockServingHosts
 		ELSE
 			context.error.String(PluginName); context.error.String(" is not installed"); context.error.Ln

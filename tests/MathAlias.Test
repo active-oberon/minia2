@@ -1,0 +1,13 @@
+# Tests for the legacy Math facade delegating every export to Math32.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: legacy math aliases preserve the Math32 results
+
+	MODULE Test;
+	IMPORT Math, Math32;
+	BEGIN
+		ASSERT(Math.e = Math32.e); ASSERT(Math.pi = Math32.pi); ASSERT(Math.ln2 = Math32.ln2);
+		ASSERT(Math.sin(0.5) = Math32.sin(0.5)); ASSERT(Math.cos(0.5) = Math32.cos(0.5));
+		ASSERT(Math.arctan2(1.0, -1.0) = Math32.arctan2(1.0, -1.0)); ASSERT(Math.arctan(0.5) = Math32.arctan(0.5));
+		ASSERT(Math.sqrt(9.0) = 3.0); ASSERT(Math.ln(2.0) = Math32.ln(2.0)); ASSERT(Math.exp(1.0) = Math32.exp(1.0))
+	END Test.

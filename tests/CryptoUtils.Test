@@ -1,0 +1,113 @@
+# Tests for binary protocol primitives and endian conversion with nonzero offsets.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: hexadecimal conversions preserve offsets and every byte value
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR bytes, back: ARRAY 258 OF CHAR; hex: ARRAY 518 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 257 DO bytes[i] := 0AAX; back[i] := 0BBX END;
+		FOR i := 0 TO 517 DO hex[i] := '#' END;
+		FOR i := 0 TO 255 DO bytes[i+1] := CHR(i) END;
+		U.Bin2Hex(bytes, 1, hex, 3, 256); U.Hex2Bin(hex, 3, back, 1, 256);
+		FOR i := 1 TO 256 DO ASSERT(bytes[i] = back[i]) END;
+		ASSERT(back[0] = 0BBX); ASSERT(back[257] = 0BBX); ASSERT(hex[2] = '#'); ASSERT(hex[515] = '#');
+		U.Hex2Bin("xxaBcD", 2, back, 1, 2); ASSERT(back[1] = 0ABX); ASSERT(back[2] = 0CDX)
+	END Test.
+
+positive: integer and set encodings round trip sign bits in both byte orders
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR buf: ARRAY 12 OF CHAR; values: ARRAY 5 OF SIGNED32; i: SIGNED32;
+	BEGIN
+		values[0] := 0; values[1] := 1; values[2] := -1; values[3] := SIGNED32(080000000H); values[4] := 012345678H;
+		FOR i := 0 TO 4 DO
+			U.IntToBufferBE(values[i], buf, 3); ASSERT(U.IntFromBufferBE(buf, 3) = values[i]);
+			ASSERT(U.GetInt(buf, 3) = values[i]); U.SetToBufferBE(SET32(values[i]), buf, 3);
+			ASSERT(U.SetFromBufferBE(buf, 3) = SET32(values[i]));
+			U.IntToBufferLE(values[i], buf, 3); ASSERT(U.IntFromBufferLE(buf, 3) = values[i]);
+			U.SetToBufferLE(SET32(values[i]), buf, 3); ASSERT(U.SetFromBufferLE(buf, 3) = SET32(values[i]))
+		END
+	END Test.
+
+positive: packet fields and hexadecimal initialization buffers preserve their cursor
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR buf: ARRAY 128 OF CHAR; text: ARRAY 32 OF CHAR; p, q, n: SIZE; ch: CHAR; init: U.InitBuffer;
+	BEGIN
+		p := 3; U.PutChar(buf, p, 0ABX); U.PutLength(buf, p, 012345678H); U.PutString(buf, p, "value");
+		U.PutArray(buf, p, "xxabc", 2, 3); q := 3; U.GetChar(buf, q, ch); ASSERT(ch = 0ABX);
+		U.GetLength(buf, q, n); ASSERT(n = 012345678H); U.GetString(buf, q, text); ASSERT(text = "value");
+		U.GetString(buf, q, text); ASSERT(text = "abc"); ASSERT(q = p);
+		NEW(init, 128); init.Add("  0 7fffffff"); init.Add("aBcD FFFFFFFF");
+		ASSERT(init.GetInt() = 0); ASSERT(init.GetInt() = 07FFFFFFFH); ASSERT(init.GetInt() = 0ABCDH);
+		ASSERT(init.GetSet() = {0..31})
+	END Test.
+
+positive: big number packet encoding handles zero and a leading sign bit
+
+	MODULE Test;
+	IMPORT U := CryptoUtils, B := CryptoBigNumbers;
+	VAR buf: ARRAY 128 OF CHAR; p, q: SIZE; n, back: B.BigNumber;
+	BEGIN
+		p := 2; B.AssignInt(n, 0); U.PutBigNumber(buf, p, n); ASSERT(p = 6);
+		ASSERT(U.GetInt(buf, 2) = 0); q := 2; U.GetBigNumber(buf, q, back); ASSERT(back.IsZero()); ASSERT(q = p);
+		B.AssignInt(n, 128); U.PutBigNumber(buf, p, n); ASSERT(U.GetInt(buf, 6) = 2);
+		ASSERT(buf[10] = 0X); ASSERT(buf[11] = 080X); U.GetBigNumber(buf, q, back); ASSERT(back.EQ(n)); ASSERT(q = p)
+	END Test.
+
+negative: invalid hexadecimal digits are rejected
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR buf: ARRAY 2 OF CHAR;
+	BEGIN U.Hex2Bin("0g", 0, buf, 0, 1)
+	END Test.
+
+positive: block conversions preserve offsets and explicit word byte order
+
+	MODULE Test;
+	IMPORT U := CryptoUtils, SYSTEM;
+	VAR src, back: ARRAY 16 OF CHAR; block: ARRAY 8 OF SYSTEM.BYTE; word: SIGNED32; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 15 DO src[i] := CHR(128+i); back[i] := '#' END;
+		U.BufferToBlockBE(src, 3, block); SYSTEM.GET(ADDRESSOF(block[0]), word); ASSERT(word = SIGNED32(083848586H));
+		U.BlockToBufferBE(block, back, 4); FOR i := 0 TO 7 DO ASSERT(back[i+4] = src[i+3]) END;
+		ASSERT(back[3] = '#'); ASSERT(back[12] = '#');
+		U.BufferToBlockLE(src, 3, block); SYSTEM.GET(ADDRESSOF(block[0]), word); ASSERT(word = SIGNED32(086858483H));
+		U.BlockToBufferLE(block, back, 4); FOR i := 0 TO 7 DO ASSERT(back[i+4] = src[i+3]) END
+	END Test.
+
+positive: XOR blocks operate in place and applying the same mask restores data
+
+	MODULE Test;
+	IMPORT U := CryptoUtils, SYSTEM;
+	VAR block, mask, original: ARRAY 8 OF SYSTEM.BYTE; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 7 DO block[i] := SYSTEM.VAL(SYSTEM.BYTE, CHR(i)); original[i] := block[i]; mask[i] := 15 END;
+		U.XORBlock(block, mask); FOR i := 0 TO 7 DO ASSERT(block[i] = 15-i); ASSERT(mask[i] = 15) END;
+		U.XORBlock(block, mask); FOR i := 0 TO 7 DO ASSERT(block[i] = original[i]) END
+	END Test.
+
+positive: random byte output changes only the requested slice including an empty slice
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR buf: ARRAY 20 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 19 DO buf[i] := '#' END;
+		U.RandomBytes(buf, 3, 0); FOR i := 0 TO 19 DO ASSERT(buf[i] = '#') END;
+		U.RandomBytes(buf, 3, 12);
+		FOR i := 0 TO 2 DO ASSERT(buf[i] = '#') END; FOR i := 15 TO 19 DO ASSERT(buf[i] = '#') END
+	END Test.
+
+negative: truncated hexadecimal input is rejected
+
+	MODULE Test;
+	IMPORT U := CryptoUtils;
+	VAR buf: ARRAY 2 OF CHAR;
+	BEGIN U.Hex2Bin("0", 0, buf, 0, 1)
+	END Test.

@@ -1,0 +1,66 @@
+# Tests for compression command round trips, default filenames, backups and rejected inputs.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: empty input round trips without producing phantom bytes
+
+	MODULE Test;
+	IMPORT OZip3, Files, Streams, Commands;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; f: Files.File;
+	BEGIN
+		f := Files.New("ozip-empty.tmp"); Files.Register(f);
+		NEW(args, 256); args.Set("ozip-empty.tmp ozip-empty-packed.tmp"); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL);
+		OZip3.Compress(c); f := Files.Old("ozip-empty-packed.tmp"); ASSERT(f # NIL); ASSERT(f.Length() >= 4);
+		args.Set("ozip-empty-packed.tmp ozip-empty-expanded.tmp"); OZip3.Expand(c);
+		f := Files.Old("ozip-empty-expanded.tmp"); ASSERT(f # NIL); ASSERT(f.Length() = 0)
+	END Test.
+
+positive: explicit compression and expansion paths round trip binary data
+
+	MODULE Test;
+	IMPORT OZip3, Files, Streams, Commands;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		f: Files.File; w: Files.Writer; r: Files.Reader; src, back: ARRAY 5123 OF CHAR; i, len: SIZE; tag: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 5122 DO src[i] := CHR(i MOD 256) END;
+		f := Files.New("ozip-source.tmp"); Files.OpenWriter(w, f, 0); w.Bytes(src, 0, 5123); w.Update; Files.Register(f);
+		NEW(args, 256); args.Set("ozip-source.tmp ozip-packed.tmp"); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL);
+		OZip3.Compress(c); f := Files.Old("ozip-packed.tmp"); ASSERT(f # NIL); Files.OpenReader(r, f, 0);
+		r.RawInt32(tag); ASSERT(tag = SIGNED32(0FEFD3F39H));
+		args.Set("ozip-packed.tmp ozip-expanded.tmp"); OZip3.Expand(c); f := Files.Old("ozip-expanded.tmp"); ASSERT(f # NIL);
+		ASSERT(f.Length() = 5123); Files.OpenReader(r, f, 0); r.Bytes(back, 0, 5123, len); ASSERT(len = 5123);
+		FOR i := 0 TO 5122 DO ASSERT(back[i] = src[i]) END
+	END Test.
+
+positive: default expansion restores the original name and keeps an overwritten file as a backup
+
+	MODULE Test;
+	IMPORT OZip3, Files, Streams, Commands;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		f: Files.File; w: Files.Writer; r: Files.Reader; text: ARRAY 32 OF CHAR; res: INTEGER;
+	BEGIN
+		Files.Delete("ozip-default.tmp.Bak", res);
+		f := Files.New("ozip-default.tmp"); Files.OpenWriter(w, f, 0); w.String("original"); w.Update; Files.Register(f);
+		NEW(args, 256); args.Set("ozip-default.tmp"); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL);
+		OZip3.Compress(c); ASSERT(Files.Old("ozip-default.tmp.oz3") # NIL);
+		f := Files.New("ozip-default.tmp"); Files.OpenWriter(w, f, 0); w.String("changed"); w.Update; Files.Register(f);
+		args.Set("ozip-default.tmp.oz3"); OZip3.Expand(c);
+		f := Files.Old("ozip-default.tmp"); ASSERT(f # NIL); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "original");
+		f := Files.Old("ozip-default.tmp.Bak"); ASSERT(f # NIL); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "changed")
+	END Test.
+
+positive: missing arguments files and invalid tags report errors without replacing output
+
+	MODULE Test;
+	IMPORT OZip3, Files, Streams, Commands, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		f: Files.File; w: Files.Writer; r: Files.Reader; text: ARRAY 4096 OF CHAR;
+	BEGIN
+		NEW(args, 256); args.Set(""); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL); OZip3.Compress(c); OZip3.Expand(c);
+		args.Set("ozip-nonexistent.tmp"); OZip3.Compress(c); args.Set("ozip-nonexistent.tmp"); OZip3.Expand(c);
+		f := Files.New("ozip-invalid.tmp"); Files.OpenWriter(w, f, 0); w.String("plain text"); w.Update; Files.Register(f);
+		f := Files.New("ozip-protected.tmp"); Files.OpenWriter(w, f, 0); w.String("protected"); w.Update; Files.Register(f);
+		args.Set("ozip-invalid.tmp ozip-protected.tmp"); OZip3.Expand(c);
+		out.Update; out.Get(text); ASSERT(Strings.Pos("usage:", text) >= 0); ASSERT(Strings.Pos("file not found", text) >= 0);
+		ASSERT(Strings.Pos("not OZip3 compressed", text) >= 0);
+		f := Files.Old("ozip-protected.tmp"); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "protected")
+	END Test.

@@ -1,7 +1,7 @@
 MODULE HTTPSession; (** AUTHOR "Luc Blaeser/cs"; PURPOSE "HTTP Session Management";
 	code parts from CSHTTPSupport of "cs" *)
 
-IMPORT HTTPSupport, WebHTTP, MD5 := CryptoMD5, CryptoUtils, IP, Random, Dates, Strings, TFClasses, Kernel, Modules, KernelLog;
+IMPORT HTTPSupport, WebHTTP, MD5 := CryptoMD5, CryptoUtils, IP, Random, Dates, Strings, TFClasses, Objects, Modules, KernelLog;
 
 CONST
 	(** variable name for the sesiion id in the HTTP request *)
@@ -95,16 +95,29 @@ TYPE
 
 	(* checks whether certain session have to be freed *)
 	LeaseManager = OBJECT
-		VAR timer: Kernel.Timer; i, j: SIZE; pSession, pHandler: ANY; s: Session;
-			expiredSessions: TFClasses.List; alive, dead: BOOLEAN; expObj: ExpirationHandlerObject;
+		VAR timer: Objects.Timer; i, j: SIZE; pSession, pHandler: ANY; s: Session;
+			expiredSessions: TFClasses.List; alive, dead, elapsed: BOOLEAN; expObj: ExpirationHandlerObject;
+
+		PROCEDURE &Init;
+		BEGIN NEW(timer); NEW(expiredSessions); alive := TRUE
+		END Init;
 
 		PROCEDURE Kill*;
-		BEGIN
-			BEGIN {EXCLUSIVE}
-				alive := FALSE;
-			END;
-			timer.Wakeup;
+		BEGIN {EXCLUSIVE}
+			alive := FALSE
 		END Kill;
+
+		PROCEDURE Wakeup;
+		BEGIN {EXCLUSIVE} elapsed := TRUE
+		END Wakeup;
+
+		PROCEDURE Pause;
+		BEGIN {EXCLUSIVE}
+			IF alive THEN
+				elapsed := FALSE; Objects.SetTimeout(timer, Wakeup, LeaseManagerInterval);
+				AWAIT(elapsed OR ~alive); Objects.CancelTimeout(timer)
+			END
+		END Pause;
 
 		PROCEDURE SetDead;
 		BEGIN {EXCLUSIVE}
@@ -118,7 +131,6 @@ TYPE
 
 	BEGIN {ACTIVE}
 		KernelLog.String("Session.LeaseManager started."); KernelLog.Ln;
-		NEW(timer); NEW(expiredSessions); alive := TRUE; (*terminated := FALSE;*)
 		WHILE (alive) DO
 			(* Session.LeaseManager looks for expired sessions *)
 
@@ -154,7 +166,7 @@ TYPE
 			END;
 
 			(* Session.LeaseManager suspends. *)
-			timer.Sleep(LeaseManagerInterval)
+			Pause
 		END;
 		(* Session.LeaseManager terminated. *)
 		SetDead
@@ -281,10 +293,17 @@ VAR
 	END RemoveExpirationHandler;
 
 	PROCEDURE StopLeaseManager*;
+	VAR stopping: LeaseManager;
 	BEGIN
-		IF (leaseManager # NIL) THEN
-			leaseManager.Kill;
-			leaseManager.WaitDead;
+		BEGIN {EXCLUSIVE}
+			stopping := leaseManager;
+			IF stopping # NIL THEN stopping.Kill END
+		END;
+		IF stopping # NIL THEN
+			stopping.WaitDead;
+			BEGIN {EXCLUSIVE}
+				IF leaseManager = stopping THEN leaseManager := NIL END
+			END
 		END
 	END StopLeaseManager;
 

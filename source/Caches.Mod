@@ -106,7 +106,7 @@ TYPE
 *)
 				buf.dev.Transfer(Disks.Write, buf.block, num, buf.data^, 0, res);
 				IF res # Disks.Ok THEN ReportError(buf.dev, buf.block, num, res) END;
-				ReleaseDirty(buf); INC(count)
+				ReleaseDirty(buf, res = Disks.Ok); INC(count)
 			END;
 			IF Trace & (count # 0) THEN
 				KernelLog.Enter; KernelLog.String("Caches: "); KernelLog.String(buf.dev.name);
@@ -135,11 +135,11 @@ TYPE
 
 		(* Release a dirty buffer on the lru list after synchronization. *)
 
-		PROCEDURE ReleaseDirty(buffer: Buffer);
+		PROCEDURE ReleaseDirty(buffer: Buffer; written: BOOLEAN);
 		BEGIN {EXCLUSIVE}
 			ASSERT(buffer.state * {LockedBit, DirtyBit} = {LockedBit, DirtyBit});
-			buffer.state := buffer.state - {LockedBit, DirtyBit};
-			INC(lruClean)
+			EXCL(buffer.state, LockedBit);
+			IF written THEN EXCL(buffer.state, DirtyBit); INC(lruClean) END
 		END ReleaseDirty;
 
 		(* Wait until a periodic synchronize is due. *)

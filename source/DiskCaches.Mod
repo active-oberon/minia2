@@ -40,6 +40,7 @@ IMPORT SYSTEM, Disks;
 		PROCEDURE Transfer* (op: SIGNED32; block, num: SIGNED32; VAR data: ARRAY OF CHAR; ofs: SIZE; VAR res: INTEGER);
 		VAR globalIndex, lineIndex, lineOfs, lineFirstBlock, lineBlocks: SIGNED32;
 		BEGIN
+			res := Disks.Ok;
 			WHILE num > 0 DO
 				globalIndex := block DIV blocksPerCacheLine; (* global index *)
 				lineIndex := globalIndex MOD NumberCacheLines; (* (local) line index *)
@@ -50,14 +51,17 @@ IMPORT SYSTEM, Disks;
 				IF (lines[lineIndex].globalIndex # globalIndex) THEN (* cacheline present *)
 					IF op = Disks.Read THEN (* read to cache *)
 						transfer(op, lineFirstBlock, blocksPerCacheLine, lines[lineIndex].data^, 0, res); (* assumes that lineFirstBlock is a valid block *)
+						IF res # Disks.Ok THEN RETURN END;
 						lines[lineIndex].globalIndex := globalIndex;
 					END;
-				ELSIF op = Disks.Write THEN (* write to present cacheline *)
-					SYSTEM.MOVE(ADDRESS OF data[ofs], ADDRESS OF lines[lineIndex].data[lineOfs*BlockSize], lineBlocks*BlockSize);
 				END;
 
 				IF op = Disks.Write THEN (* always write through*)
 					transfer(op, block, lineBlocks, data, ofs, res);
+					IF res # Disks.Ok THEN lines[lineIndex].globalIndex := -1; RETURN END;
+					IF lines[lineIndex].globalIndex = globalIndex THEN
+						SYSTEM.MOVE(ADDRESS OF data[ofs], ADDRESS OF lines[lineIndex].data[lineOfs*BlockSize], lineBlocks*BlockSize)
+					END;
 				ELSE (* read from cache *)
 					SYSTEM.MOVE(ADDRESS OF lines[lineIndex].data[lineOfs*BlockSize], ADDRESS OF data[ofs], lineBlocks*BlockSize);
 				END;

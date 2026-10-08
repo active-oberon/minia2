@@ -13,7 +13,6 @@ CONST
 
 TYPE
 	Number = B.BigNumber;
-	Buffer = ARRAY 16 OF CHAR;
 
 	Certificate* = OBJECT
 		VAR
@@ -47,19 +46,15 @@ TYPE
 
 
 			PROCEDURE Verify*( CONST digest: ARRAY OF CHAR;  dlen: SIZE;  signature: Number ): BOOLEAN;
-			VAR
-				msg: Number;
-				i, l: SIZE;
-				buf: Buffer;
+			VAR msg, expected: Number;
 			BEGIN
-				ASSERT(  ~private & (dlen >= 16) );
+				ASSERT(~private);
+				IF (dlen < 16) OR (dlen > LEN(digest)) OR (signature = NIL)
+						OR (modulus = NIL) OR (exponent = NIL) THEN RETURN FALSE END;
+				IF exponent.neg OR exponent.IsZero() OR signature.neg OR (B.Cmp(signature, modulus) >= 0) THEN RETURN FALSE END;
 				msg := B.ModExp( signature, exponent, modulus );
-				l := msg.len;
-				FOR i := 0 TO 3 DO  l2n( msg.d[l - 1 - i], buf, 4*i )  END;
-				FOR i := 0 TO 15 DO
-					IF buf[i] # digest[i] THEN  RETURN FALSE  END;
-				END;
-				RETURN TRUE
+				B.AssignBin(expected, digest, 0, dlen);
+				RETURN msg.EQ(expected)
 			END Verify;
 
 
@@ -85,19 +80,6 @@ VAR
 	one, two: Number;	(* constants *)
 
 
-	(* converts SIGNED32 to ARRAY OF CHAR; big endian order *)
-	PROCEDURE l2n( l: UNSIGNED32;  VAR buf: Buffer;  pos: SIZE );
-	VAR i: SIZE;
-	BEGIN
-		i := pos + 3;
-		WHILE i >= pos DO
-			buf[i] := CHR( l MOD 256 );
-			l := l DIV 256;
-			DEC( i )
-		END
-	END l2n;
-
-
 	(** Generate public and private keys out of the large primes p and q, using the specified public exponent e.
 		The private key's exponent will be enrypted with IDEA and key passwd *)
 	PROCEDURE MakeKeys*( p, q, e: Number;  CONST name: ARRAY OF CHAR;   VAR pub, priv: Key );
@@ -114,7 +96,7 @@ VAR
 
 		NEW( pub);
 		pub.modulus := n;
-		pub.exponent := e;
+		B.Copy(e, pub.exponent);
 		pub.size := n.len*32;
 		pub.private := FALSE;
 
@@ -238,9 +220,11 @@ VAR
 		l := NIL;
 		r.String( s );
 		WHILE s # "EOC" DO
+			IF r.res # Streams.Ok THEN RETURN NIL END;
 			NEW( c );
 			COPY( s, c.authority );
 			B.FileRead( r, c.signature );
+			IF (r.res # Streams.Ok) OR (c.signature = NIL) THEN RETURN NIL END;
 			IF l = NIL THEN  k.certificates := c  ELSE  l.next := c  END;
 			l := c;
 			r.String( s )
@@ -289,7 +273,7 @@ VAR
 
 		c := k.certificates;
 		WHILE c # NIL DO
-			w.String( c.authority );
+			w.Char('"'); w.String( c.authority ); w.Char('"');
 			B.FileWrite( w, c.signature );
 			c := c.next;
 		END;

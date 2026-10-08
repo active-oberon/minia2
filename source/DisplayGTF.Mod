@@ -262,8 +262,8 @@ BEGIN
 	t.vSyncPol := '+'
 END GTFCalcTimings;
 
-PROCEDURE VesaConf(mode, width, height, depth, hz: SIGNED32; VAR conf: ARRAY OF CHAR);
-VAR mode1: SIGNED32; flags: SET; t: GTFTimings; valstr : ARRAY 10 OF CHAR; cr : ARRAY 2 OF CHAR;
+PROCEDURE VesaConf(mode, width, height, depth, hz: SIGNED32; VAR conf: ARRAY OF CHAR): BOOLEAN;
+VAR mode1: SIGNED32; flags: SET; t: GTFTimings; clock: FLOAT64; valstr : ARRAY 10 OF CHAR; cr : ARRAY 2 OF CHAR;
 
 	PROCEDURE HexByte(x: SIGNED32);
 	VAR s: ARRAY 3 OF CHAR;
@@ -281,18 +281,27 @@ VAR mode1: SIGNED32; flags: SET; t: GTFTimings; valstr : ARRAY 10 OF CHAR; cr : 
 
 	PROCEDURE HexDWord(x: SIGNED32);
 	BEGIN
-		HexWord(x MOD 10000H); HexWord(x DIV 10000H)
+		HexWord(x MOD 10000H); HexWord(LSH(x, -16) MOD 10000H)
 	END HexDWord;
 
 BEGIN
+	IF hz > 0 THEN
+		GTFCalcTimings(width, height, hz, GTFLockVF, FALSE, FALSE, t);
+		clock := FLOAT64(hz) * t.h.hTotal * t.v.vTotal;
+		IF (t.h.hTotal <= width) OR (t.h.hTotal > 0FFFFH) OR (t.v.vTotal <= height) OR (t.v.vTotal > 0FFFFH)
+				OR (t.h.hSyncStart < width) OR (t.h.hSyncEnd > t.h.hTotal)
+				OR (t.h.hSyncEnd <= t.h.hSyncStart)
+				OR (t.v.vSyncStart < height) OR (t.v.vSyncEnd > t.v.vTotal)
+				OR (t.v.vSyncEnd <= t.v.vSyncStart)
+				OR (clock <= 0) OR (clock > MAX(UNSIGNED32)) THEN RETURN FALSE END
+	END;
 	cr[0] := 0DX; cr[1] := 0X;
 	Strings.Append(conf, cr);
 	Strings.Append(conf, 'Init="');
 	IF hz > 0 THEN	(* VESA 3.0 - set refresh rate *)
-		mode1 := mode + 4800H;
-		GTFCalcTimings(width, height, hz, GTFLockVF, FALSE, FALSE, t);
+		mode1 := SIGNED32(SET32(mode) + SET32(4800H));
 		Strings.Append(conf, "b80b4fbb0000ba"); HexWord(mode1);	(* mov ax, 4F0BH; mov bx, 0; mov dx, mode *)
-		Strings.Append(conf, "66b9"); HexDWord(hz * t.h.hTotal * t.v.vTotal);	(* mov ecx, val *)
+		Strings.Append(conf, "66b9"); HexDWord(SIGNED32(UNSIGNED32(ENTIERH(clock))));	(* mov ecx, val *)
 		Strings.Append(conf, "cd1026c705"); HexWord(t.h.hTotal);	(* int 10H; mov [es:di], val *)
 		Strings.Append(conf, "26c74502"); HexWord(t.h.hSyncStart);	(* mov [es:di+2], val *)
 		Strings.Append(conf, "26c74504"); HexWord(t.h.hSyncEnd);	(* mov [es:di+4], val *)
@@ -308,7 +317,7 @@ BEGIN
 		Strings.Append(conf, cr);
 
 	ELSE	(* VESA 2.0 *)
-		mode1 := mode + 4000H	(* enable framebuffer *)
+		mode1 := SIGNED32(SET32(mode) + SET32(4000H))	(* enable framebuffer *)
 	END;
 	Strings.Append(conf, "b8024fbb"); HexWord(mode1);	(* mov ax, 4F02H; mov bx, mode1 *)
 	Strings.Append(conf, "cd10b8014fb9"); HexWord(mode);	(* int 10H; mov ax, 4F01H; mov cx, mode *)
@@ -349,6 +358,7 @@ BEGIN
 	END;
 	Strings.Append(conf, cr);
 *)
+	RETURN TRUE
 END VesaConf;
 
 (* NOTE: use f=0 to obtain the string required for setting
@@ -356,14 +366,32 @@ END VesaConf;
 PROCEDURE Mode*(context : Commands.Context);	(* mode (in decimal) DWidth DHeight Frequency *)
 VAR display: ARRAY 512 OF CHAR;
 	m, w, h, d, f: SIGNED32;
+
+	(* ReadInteger checks a complete decimal token before constructing display configuration. *)
+	PROCEDURE ReadInteger(VAR value: SIGNED32): BOOLEAN;
+	VAR token: ARRAY 16 OF CHAR; pos: SIZE; res: INTEGER;
+	BEGIN
+		IF ~context.arg.GetString(token) OR (Strings.Length(token) = LEN(token)-1) THEN RETURN FALSE END;
+		pos := 0;
+		RETURN Strings.TryScanInt32At(pos, token, 10, value, res) & (token[pos] = 0X)
+	END ReadInteger;
 BEGIN
-	context.arg.SkipWhitespace; context.arg.Int32(m, FALSE); context.out.Int(m, 5);
-	context.arg.SkipWhitespace; context.arg.Int32(w, FALSE); context.out.Int(w, 5);
-	context.arg.SkipWhitespace; context.arg.Int32(h, FALSE); context.out.Int(h, 5);
-	context.arg.SkipWhitespace; context.arg.Int32(d, FALSE); context.out.Int(d, 5);
-	context.arg.SkipWhitespace; context.arg.Int32(f, FALSE); context.out.Int(f, 5);
+	context.result := Commands.Ok;
+	IF ~ReadInteger(m) OR ~ReadInteger(w) OR ~ReadInteger(h) OR ~ReadInteger(d) OR ~ReadInteger(f) THEN
+		context.result := Commands.CommandParseError;
+		context.error.String("usage: DisplayGTF.Mode mode width height depth frequency"); context.error.Ln; context.error.Update; RETURN
+	END;
+	IF (m < 0) OR (m > 0FFFFH) OR (w <= 0) OR (w > 0FFFFH) OR (h <= 0) OR (h > 0FFFFH)
+			OR (d <= 0) OR (d > 64) OR (f < 0) OR (f > 655) THEN
+		context.result := Commands.CommandError;
+		context.error.String("invalid display parameters"); context.error.Ln; context.error.Update; RETURN
+	END;
 	display[0] := 0X;
-	VesaConf(m, w, h, d, f, display);
+	IF ~VesaConf(m, w, h, d, f, display) THEN
+		context.result := Commands.CommandError;
+		context.error.String("display timings exceed the VESA fields"); context.error.Ln; context.error.Update; RETURN
+	END;
+	context.out.Int(m, 5); context.out.Int(w, 5); context.out.Int(h, 5); context.out.Int(d, 5); context.out.Int(f, 5);
 	context.out.String(display);
 END Mode;
 
@@ -405,5 +433,3 @@ Use the [Grow] Button to verify!!!!!
 Execute Partitions.SetConfig appearing in the configuration text.
 
 That's all.
-
-

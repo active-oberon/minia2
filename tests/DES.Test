@@ -1,0 +1,46 @@
+# Tests for the VNC DES implementation, whose key bytes have reversed bit order.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: VNC key bit order produces the existing DES known answer at nonzero offsets
+
+	MODULE Test;
+	IMPORT D := DES, U := CryptoUtils;
+	VAR c: D.DES; key: ARRAY 8 OF CHAR; plain, cipher, back: ARRAY 12 OF CHAR; hex: ARRAY 17 OF CHAR; i: SIZE;
+	BEGIN
+		NEW(c); U.Hex2Bin("80C4A2E691D5B3F7", 0, key, 0, 8); c.SetKey(key);
+		FOR i := 0 TO 11 DO plain[i] := "!"; cipher[i] := "!"; back[i] := "!" END;
+		U.Hex2Bin("4E6F772069732074", 0, plain, 1, 8); c.Encrypt(plain, 1, cipher, 2);
+		U.Bin2Hex(cipher, 2, hex, 0, 8); ASSERT(hex = "3FA40E8A984D4815");
+		ASSERT(cipher[1] = "!"); ASSERT(cipher[10] = "!");
+		c.Decrypt(cipher, 2, back, 3); FOR i := 0 TO 7 DO ASSERT(back[3+i] = plain[1+i]) END;
+		ASSERT(back[2] = "!"); ASSERT(back[11] = "!");
+		c.Encrypt(plain, 1, plain, 1); c.Decrypt(plain, 1, plain, 1);
+		FOR i := 0 TO 7 DO ASSERT(plain[1+i] = back[3+i]) END
+	END Test.
+
+positive: logical right shifts do not sign extend negative words
+
+	MODULE Test;
+	IMPORT D := DES;
+	VAR c: D.DES;
+	BEGIN
+		NEW(c); ASSERT(c.RotateRight(-1, 1) = 7FFFFFFFH);
+		ASSERT(c.RotateRight(SIGNED32(80000000H), 31) = 1);
+		ASSERT(c.RotateRight(12345678H, 4) = 1234567H); ASSERT(c.RotateRight(-1, 0) = -1)
+	END Test.
+
+negative: keys shorter than eight bytes are rejected
+
+	MODULE Test;
+	IMPORT D := DES;
+	VAR c: D.DES; key: ARRAY 7 OF CHAR;
+	BEGIN NEW(c); c.SetKey(key)
+	END Test.
+
+negative: an output buffer must fit the encrypted block at its offset
+
+	MODULE Test;
+	IMPORT D := DES;
+	VAR c: D.DES; key, plain, cipher: ARRAY 8 OF CHAR;
+	BEGIN NEW(c); c.SetKey(key); c.Encrypt(plain, 0, cipher, 1)
+	END Test.

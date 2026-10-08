@@ -1,0 +1,53 @@
+# Tests for clipboard fallback and installed delegates without a host desktop.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: absent clipboard handlers report unavailable without changing the text
+
+	MODULE Test;
+	IMPORT HostClipboard, Texts;
+	VAR text: Texts.Text; res: INTEGER;
+	BEGIN
+		NEW(text); HostClipboard.SetHandlers(NIL, NIL);
+		text.AcquireWrite; text.InsertUTF8(0, "keep"); HostClipboard.Get(text, res);
+		ASSERT(res = HostClipboard.ClipboardNotAvailable); ASSERT(text.GetLength() = 4); text.ReleaseWrite;
+		text.AcquireRead; HostClipboard.Put(text, res);
+		ASSERT(res = HostClipboard.ClipboardNotAvailable); ASSERT(text.GetLength() = 4); text.ReleaseRead
+	END Test.
+
+positive: installed handlers receive locked text and can be removed independently
+
+	MODULE Test;
+	IMPORT HostClipboard, Texts;
+	VAR text: Texts.Text; res: INTEGER; gets, puts: SIGNED32;
+		PROCEDURE Get(text: Texts.Text);
+		BEGIN ASSERT(text.HasWriteLock()); text.InsertUTF8(text.GetLength(), "paste"); INC(gets)
+		END Get;
+		PROCEDURE Put(text: Texts.Text);
+		BEGIN ASSERT(text.HasReadLock()); ASSERT(text.GetLength() = 5); INC(puts)
+		END Put;
+	BEGIN
+		NEW(text); HostClipboard.SetHandlers(Get, Put);
+		text.AcquireWrite; HostClipboard.Get(text, res); ASSERT(res = HostClipboard.Ok); text.ReleaseWrite;
+		text.AcquireRead; HostClipboard.Put(text, res); ASSERT(res = HostClipboard.Ok); text.ReleaseRead;
+		ASSERT(gets = 1); ASSERT(puts = 1);
+		HostClipboard.SetHandlers(NIL, Put);
+		text.AcquireWrite; HostClipboard.Get(text, res); ASSERT(res = HostClipboard.ClipboardNotAvailable); text.ReleaseWrite;
+		text.AcquireRead; HostClipboard.Put(text, res); ASSERT(res = HostClipboard.Ok); text.ReleaseRead;
+		ASSERT(gets = 1); ASSERT(puts = 2); HostClipboard.SetHandlers(NIL, NIL)
+	END Test.
+
+negative: clipboard get requires a write lock
+
+	MODULE Test;
+	IMPORT HostClipboard, Texts;
+	VAR text: Texts.Text; res: INTEGER;
+	BEGIN NEW(text); HostClipboard.Get(text, res)
+	END Test.
+
+negative: clipboard put requires a read lock
+
+	MODULE Test;
+	IMPORT HostClipboard, Texts;
+	VAR text: Texts.Text; res: INTEGER;
+	BEGIN NEW(text); HostClipboard.Put(text, res)
+	END Test.

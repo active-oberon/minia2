@@ -1,0 +1,134 @@
+# Tests for legacy PKCS1 block framing, fixed-width RSA output and malformed input rejection.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: the fixed RSA keys used for block-format tests
+
+	MODULE PKCS1Fixture;
+	IMPORT RSA := CryptoRSA, B := CryptoBigNumbers;
+	VAR pub*, priv*: RSA.Key; p, q, e: B.BigNumber;
+	BEGIN
+		B.AssignInt(p, 1); p.Shift(61); p.Dec; B.AssignInt(q, 1); q.Shift(31); q.Dec;
+		B.AssignInt(e, 65537); RSA.MakeKeys(p, q, e, "PKCS1 test", pub, priv);
+		ASSERT(pub.modulus.BitSize() = 92)
+	END PKCS1Fixture.
+
+positive: every supported block type round trips one byte without changing surrounding bytes
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture;
+	VAR src: ARRAY 4 OF CHAR; cipher: ARRAY 20 OF CHAR; back: ARRAY 4 OF CHAR; n, len: SIZE; kind, i: SIGNED32;
+	BEGIN
+		src := "xAy";
+		FOR kind := 0 TO 2 DO
+			FOR i := 0 TO 19 DO cipher[i] := '#' END; FOR i := 0 TO 3 DO back[i] := '!' END;
+			IF kind = 2 THEN PKCS1.Encrypt(src, 1, 1, K.pub, kind, cipher, 3, n)
+			ELSE PKCS1.Encrypt(src, 1, 1, K.priv, kind, cipher, 3, n) END; ASSERT(n = 12);
+			ASSERT(cipher[2] = '#'); ASSERT(cipher[15] = '#');
+			IF kind = 2 THEN PKCS1.Decrypt(cipher, 3, n, K.priv, kind, back, 1, len)
+			ELSE PKCS1.Decrypt(cipher, 3, n, K.pub, kind, back, 1, len) END; ASSERT(len = 1); ASSERT(back[1] = 'A');
+			ASSERT(back[0] = '!'); ASSERT(back[2] = '!'); ASSERT(back[3] = '!')
+		END
+	END Test.
+
+positive: encrypted integer output is left padded to the modulus width
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture, B := CryptoBigNumbers, RSA := CryptoRSA;
+	VAR src: ARRAY 1 OF CHAR; out: ARRAY 16 OF CHAR; p, q, e: B.BigNumber; identity, public: RSA.Key; n: SIZE; i: SIGNED32;
+	BEGIN
+		B.AssignInt(p, 1); p.Shift(61); p.Dec; B.AssignInt(q, 1); q.Shift(31); q.Dec;
+		B.AssignInt(e, 1); RSA.MakeKeys(p, q, e, "identity", public, identity); src[0] := 'A';
+		FOR i := 0 TO 15 DO out[i] := '#' END;
+		PKCS1.Encrypt(src, 0, 1, identity, 0, out, 2, n); ASSERT(n = 12);
+		FOR i := 2 TO 12 DO ASSERT(out[i] = 0X) END; ASSERT(out[13] = 'A'); ASSERT(out[1] = '#'); ASSERT(out[14] = '#')
+	END Test.
+
+positive: invalid encryption ranges and block types report failure without writing output
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture;
+	VAR src: ARRAY 4 OF CHAR; out: ARRAY 16 OF CHAR; n: SIZE; i: SIGNED32;
+	BEGIN
+		src := "abc"; FOR i := 0 TO 15 DO out[i] := '#' END;
+		PKCS1.Encrypt(src, 0, 1, K.pub, 3, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, -1, 1, K.pub, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, -1, K.pub, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, 2, K.pub, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 4, 1, K.pub, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, 1, K.pub, 2, out, -1, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, 1, K.pub, 2, out, 5, n); ASSERT(n = 0);
+		FOR i := 0 TO 15 DO ASSERT(out[i] = '#') END
+	END Test.
+
+positive: malformed decrypted blocks and ciphertext bounds fail without writing plaintext
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture, B := CryptoBigNumbers, RSA := CryptoRSA;
+	VAR src: ARRAY 12 OF CHAR; out: ARRAY 4 OF CHAR; e: B.BigNumber; identity: RSA.Key; n: SIZE; i: SIGNED32;
+	BEGIN
+		B.AssignInt(e, 1); identity := RSA.PubKey(e, K.pub.modulus);
+		FOR i := 0 TO 3 DO out[i] := '#' END;
+		FOR i := 0 TO 11 DO src[i] := 1X END; src[0] := 0X; src[1] := 2X;
+		PKCS1.Decrypt(src, 0, 12, K.priv, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, -1, 12, K.priv, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 1, 12, K.priv, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 0, 11, K.priv, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 0, 12, K.priv, 3, out, 0, n); ASSERT(n = 0);
+		FOR i := 0 TO 3 DO ASSERT(out[i] = '#') END
+	END Test.
+
+positive: block parsing rejects short padding missing separators bad headers and insufficient output
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture, B := CryptoBigNumbers, RSA := CryptoRSA;
+	VAR src: ARRAY 12 OF CHAR; out: ARRAY 4 OF CHAR; e: B.BigNumber; identity: RSA.Key; n: SIZE; i: SIGNED32;
+	PROCEDURE Valid;
+	BEGIN
+		src[0] := 0X; src[1] := 1X; FOR i := 2 TO 9 DO src[i] := 0FFX END; src[10] := 0X; src[11] := 'A';
+		FOR i := 0 TO 3 DO out[i] := '#' END
+	END Valid;
+	PROCEDURE Reject;
+	BEGIN
+		PKCS1.Decrypt(src, 0, 12, identity, 1, out, 0, n); ASSERT(n = 0);
+		FOR i := 0 TO 3 DO ASSERT(out[i] = '#') END
+	END Reject;
+	BEGIN
+		B.AssignInt(e, 1); identity := RSA.PubKey(e, K.pub.modulus);
+		Valid; PKCS1.Decrypt(src, 0, 12, identity, 1, out, 0, n); ASSERT(n = 1); ASSERT(out[0] = 'A');
+		Valid; src[8] := 0X; Reject;
+		Valid; src[10] := 0FFX; src[11] := 0FFX; Reject;
+		Valid; src[6] := 1X; Reject;
+		Valid; src[0] := 1X; Reject;
+		Valid; src[1] := 2X; Reject;
+		Valid; PKCS1.Decrypt(src, 0, 12, identity, 1, out, -1, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 0, 12, identity, 1, out, 4, n); ASSERT(n = 0);
+		FOR i := 0 TO 3 DO ASSERT(out[i] = '#') END
+	END Test.
+
+positive: modulus byte length is independent of the big number word count
+
+	MODULE Test;
+	IMPORT PKCS1, B := CryptoBigNumbers, RSA := CryptoRSA;
+	VAR modulus, exponent: B.BigNumber; key: RSA.Key; src: ARRAY 1 OF CHAR; out: ARRAY 20 OF CHAR; n: SIZE; i: SIGNED32;
+	BEGIN
+		B.AssignInt(modulus, 1); modulus.Shift(100); modulus.Inc; B.AssignInt(exponent, 1); key := RSA.PubKey(exponent, modulus);
+		src[0] := 'A'; FOR i := 0 TO 19 DO out[i] := '#' END;
+		PKCS1.Encrypt(src, 0, 1, key, 2, out, 2, n); ASSERT(n = 13);
+		ASSERT(out[2] = 0X); ASSERT(out[3] = 2X); ASSERT(out[13] = 0X); ASSERT(out[14] = 'A');
+		FOR i := 4 TO 12 DO ASSERT(out[i] # 0X) END; ASSERT(out[1] = '#'); ASSERT(out[15] = '#')
+	END Test.
+
+positive: block types match their public or private key operation
+
+	MODULE Test;
+	IMPORT PKCS1, K := PKCS1Fixture;
+	VAR src: ARRAY 12 OF CHAR; out: ARRAY 16 OF CHAR; n: SIZE; i: SIGNED32;
+	BEGIN
+		src[0] := 'A'; FOR i := 0 TO 15 DO out[i] := '#' END;
+		PKCS1.Encrypt(src, 0, 1, K.pub, 1, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, 1, K.priv, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 0, 12, K.pub, 2, out, 0, n); ASSERT(n = 0);
+		PKCS1.Decrypt(src, 0, 12, K.priv, 1, out, 0, n); ASSERT(n = 0);
+		PKCS1.Encrypt(src, 0, 0, K.priv, 0, out, 0, n); ASSERT(n = 0);
+		FOR i := 0 TO 15 DO ASSERT(out[i] = '#') END
+	END Test.

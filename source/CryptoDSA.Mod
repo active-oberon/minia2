@@ -50,6 +50,7 @@ TYPE
 				u, v, w, t1, t2: Number;
 			BEGIN
 				ASSERT( ~private );
+				IF sig.r.IsZero() OR sig.s.IsZero() OR sig.r.neg OR sig.s.neg THEN RETURN FALSE END;
 				IF B.Cmp( sig.r, q ) >= 0 THEN  RETURN FALSE  END;
 				IF B.Cmp( sig.s, q ) >= 0 THEN  RETURN FALSE  END;
 				(* w = inv( s ) mod q *)

@@ -185,7 +185,12 @@ TYPE
 		timer : Kernel.Timer;
 		avg : SIGNED32;
 		alive : BOOLEAN;
+		dead : BOOLEAN;
 		logCounter: SIGNED32;
+
+		PROCEDURE &Init;
+		BEGIN NEW(timer); alive := TRUE
+		END Init;
 
 		PROCEDURE Hit;
 		BEGIN {EXCLUSIVE}
@@ -208,17 +213,18 @@ TYPE
 		END Update;
 
 		PROCEDURE Kill;
-		BEGIN
+		BEGIN {EXCLUSIVE}
 			alive := FALSE;
-			timer.Wakeup
+			timer.Wakeup;
+			AWAIT(dead)
 		END Kill;
 
 	BEGIN {ACTIVE}
-		NEW(timer); alive := TRUE;
 		WHILE alive DO
 			timer.Sleep(1000);
 			Update
 		END;
+		BEGIN {EXCLUSIVE} dead := TRUE END
 	END Statistics;
 
 	HostList* = OBJECT
@@ -648,15 +654,14 @@ BEGIN {EXCLUSIVE}
 END ShowHosts;
 
 PROCEDURE Cleanup;
-VAR t: Kernel.Timer; msg : ARRAY 32 OF CHAR; ignore : INTEGER;
+VAR msg : ARRAY 32 OF CHAR; ignore : INTEGER;
 BEGIN
 	hitStat.Kill;
 	StopHTTP(msg, ignore);
 	StopHTTPS(msg, ignore);
 	hosts := NIL; defaultHost := NIL;
 	FlushW3CLog;
-	IF Log THEN log.Close END;
-	NEW(t); t.Sleep(100) (* avoid trap in Statistics; replace with Kernel.AwaitDeath *)
+	IF Log THEN log.Close END
 END Cleanup;
 
 BEGIN

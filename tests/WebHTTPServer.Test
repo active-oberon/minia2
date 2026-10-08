@@ -1,0 +1,87 @@
+# Tests for host registration, response defaults and in-memory HTTP server tools.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: immediate repeated unload waits for the statistics activity to stop
+
+	MODULE Test;
+	IMPORT Modules;
+	VAR module: Modules.Module; res: INTEGER; msg: ARRAY 256 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 31 DO
+			module := Modules.ThisModule("WebHTTPServer", res, msg); ASSERT(module # NIL); ASSERT(res = 0);
+			Modules.FreeModule("WebHTTPServer", res, msg); ASSERT(res = 0); module := NIL
+		END
+	END Test.
+
+positive: virtual hosts retain configuration and support wildcard lookup and removal
+
+	MODULE Test;
+	IMPORT S := WebHTTPServer;
+	VAR a, b: S.Host; list: S.HostList; res: INTEGER; count: SIGNED32;
+	BEGIN
+		NEW(a, "first.example.test"); NEW(b, "second.example.test");
+		ASSERT(a.prefix = ""); ASSERT(a.default = "index.html"); ASSERT(a.error = "error.html");
+		a.SetPrefix("root/"); a.SetDefault("home.htm"); a.SetError("missing.htm");
+		ASSERT(a.prefix = "root/"); ASSERT(a.default = "home.htm"); ASSERT(a.error = "missing.htm");
+		S.AddHost(a); S.AddHost(b); list := S.FindHosts("first.example.test"); ASSERT(list.host = a); ASSERT(list.next = NIL);
+		list := S.FindHosts("*.example.test");
+		WHILE list # NIL DO ASSERT((list.host = a) OR (list.host = b)); INC(count); list := list.next END;
+		ASSERT(count = 2); ASSERT(S.FindHosts("missing.example.test") = NIL); ASSERT(S.FindHosts("") # NIL);
+		S.RemoveHost(a.name, res); ASSERT(res = S.Ok); ASSERT(S.FindHosts(a.name) = NIL);
+		S.RemoveHost(a.name, res); ASSERT(res # S.Ok); S.RemoveHost(b.name, res); ASSERT(res = S.Ok)
+	END Test.
+
+positive: response defaults clear reused metadata and inherit the request version
+
+	MODULE Test;
+	IMPORT S := WebHTTPServer, WebHTTP;
+	VAR request: WebHTTP.RequestHeader; response: WebHTTP.ResponseHeader;
+	BEGIN
+		request.maj := 1; request.min := 0; response.location := "stale"; response.contenttype := "stale";
+		response.transferencoding := "stale"; response.contentlength := 123; response.lastmodified := "stale";
+		S.GetDefaultResponseHeader(request, response);
+		ASSERT(response.maj = 1); ASSERT(response.min = 0); ASSERT(response.statuscode = WebHTTP.OK);
+		ASSERT(response.server = S.ServerVersion); ASSERT(response.date # "");
+		ASSERT(response.location = ""); ASSERT(response.contenttype = ""); ASSERT(response.transferencoding = "");
+		ASSERT(response.contentlength = -1); ASSERT(response.lastmodified = ""); ASSERT(response.additionalFields = NIL)
+	END Test.
+
+positive: SendData preserves binary bytes across more than one transfer buffer
+
+	MODULE Test;
+	IMPORT S := WebHTTPServer, Streams;
+	VAR r: Streams.StringReader; w: Streams.StringWriter; src, dst: ARRAY 20001 OF CHAR; i: SIZE;
+	BEGIN
+		FOR i := 0 TO 19999 DO src[i] := CHR(i MOD 256) END;
+		NEW(r, 20000); r.SetRaw(src, 0, 20000); NEW(w, 20001); S.SendData(r, w); w.Update;
+		ASSERT(w.Pos() = 20000); w.Get(dst); FOR i := 0 TO 19999 DO ASSERT(dst[i] = src[i]) END
+	END Test.
+
+positive: host commands add list and remove hosts without opening a listener
+
+	MODULE Test;
+	IMPORT Tools := WebHTTPServerTools, S := WebHTTPServer, Commands, Streams, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 2048 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(args, "tools.example.test"); NEW(out, 2048); NEW(c, NIL, args, out, out, NIL);
+		Tools.AddHost(c); ASSERT(S.FindHosts("tools.example.test") # NIL);
+		Tools.ListHosts(c); out.Update; out.Get(text); ASSERT(Strings.Pos("tools.example.test", text) >= 0);
+		args.Set("tools.example.test"); Tools.RemoveHost(c); ASSERT(S.FindHosts("tools.example.test") = NIL);
+		Tools.Stop(c)
+	END Test.
+
+positive: URI statistics count matching requests and ignore different hosts and paths
+
+	MODULE Test;
+	IMPORT Stats := WebHTTPServerStatistics, S := WebHTTPServer, WebHTTP, Commands, Streams, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		request: WebHTTP.RequestHeader; response: WebHTTP.ResponseHeader; text: ARRAY 2048 OF CHAR;
+	BEGIN
+		Streams.OpenStringReader(args, "stats.example.test /index.html"); NEW(out, 2048); NEW(c, NIL, args, out, out, NIL);
+		Stats.AddURI(c); ASSERT(S.listener # NIL);
+		request.host := "stats.example.test"; request.uri := "/index.html";
+		S.listener(request, response); S.listener(request, response);
+		request.uri := "/other.html"; S.listener(request, response);
+		request.uri := "/index.html"; request.host := "other.example.test"; S.listener(request, response);
+		Stats.Show(c); out.Update; out.Get(text); ASSERT(Strings.Pos("stats.example.test/index.html: 2", text) >= 0)
+	END Test.

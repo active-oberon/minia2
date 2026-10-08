@@ -1,0 +1,49 @@
+# Tests for startup command ordering, skipped entries and isolated configuration files.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: an isolated startup command fixture records calls and creates configuration
+
+	MODULE AutostartTestShared;
+	IMPORT Commands, Files, Configuration;
+	VAR calls*: SIGNED32; seen*: ARRAY 8, 32 OF CHAR;
+	PROCEDURE Record*(context: Commands.Context);
+	BEGIN
+		ASSERT(calls < LEN(seen)); ASSERT(context.arg.GetString(seen[calls])); INC(calls)
+	END Record;
+	PROCEDURE Reject*(context: Commands.Context);
+	BEGIN context.result := Commands.CommandError
+	END Reject;
+	PROCEDURE Configure*(CONST xml: ARRAY OF CHAR);
+	VAR f: Files.File; w: Files.Writer; res: INTEGER;
+	BEGIN
+		f := Files.New("MyConfiguration.XML"); Files.OpenWriter(w, f, 0); w.String(xml); w.Update; Files.Register(f);
+		Configuration.Init; ASSERT(Configuration.config # NIL);
+		Files.Delete("MyConfiguration.XML", res); ASSERT(res = 0); calls := 0
+	END Configure;
+	END AutostartTestShared.
+
+positive: startup commands retain order and continue after a failed command
+
+	MODULE Test;
+	IMPORT H := AutostartTestShared, Autostart;
+	BEGIN
+		H.Configure('<Config><Section name="Autostart"><Setting value="AutostartTestShared.Record first"/><Setting value="AutostartTestShared.Reject"/><Setting value="AutostartTestShared.Record second"/></Section></Config>');
+		Autostart.Run; ASSERT(H.calls = 2); ASSERT(H.seen[0] = "first"); ASSERT(H.seen[1] = "second")
+	END Test.
+
+positive: text comments and entries without a command do not execute anything
+
+	MODULE Test;
+	IMPORT H := AutostartTestShared, Autostart;
+	BEGIN
+		H.Configure('<Config><Section name="Autostart">text<!-- comment --><Setting value=""/><Setting name="no command"/><Setting value="AutostartTestShared.Record retained"/></Section></Config>');
+		Autostart.Run; ASSERT(H.calls = 1); ASSERT(H.seen[0] = "retained")
+	END Test.
+
+positive: a configuration without a startup section performs no commands
+
+	MODULE Test;
+	IMPORT H := AutostartTestShared, Autostart;
+	BEGIN
+		H.Configure('<Config/>'); Autostart.Run; ASSERT(H.calls = 0)
+	END Test.

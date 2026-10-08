@@ -1,0 +1,36 @@
+# Tests for protocol command formatting and error paths that require no remote service.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: SMTP commands and raw lines retain CRLF boundaries
+
+	MODULE Test;
+	IMPORT SMTPClient, Streams;
+	VAR session: SMTPClient.SMTPSession; w: Streams.StringWriter; text: ARRAY 256 OF CHAR; res: INTEGER;
+	BEGIN
+		NEW(session); ASSERT(~session.GetSendReady(), 1); session.Close; session.Close;
+		NEW(w, 256); session.w := w; session.SendCommand("HELO", "example.test", res); ASSERT(res = SMTPClient.Ok, 2);
+		session.SendRawLine("Subject: example"); w.Update; ASSERT(w.Pos() = 37, 3); w.Get(text);
+		ASSERT(text[17] = 0DX, 4); ASSERT(text[18] = 0AX, 5);
+		ASSERT(text[35] = 0DX, 6); ASSERT(text[36] = 0AX, 7)
+	END Test.
+
+positive: missing print files are rejected before contacting a printer
+
+	MODULE Test;
+	IMPORT RAWPrinter, LPR;
+	VAR res: INTEGER;
+	BEGIN
+		RAWPrinter.PrintFile("unused.example.test", "missing-raw-print-file", res); ASSERT(res = -1);
+		LPR.PrintFile("missing-lpr-print-file", res); ASSERT(res = -1)
+	END Test.
+
+positive: bandwidth send commands require a hostname before opening a connection
+
+	MODULE Test;
+	IMPORT IPBandwidth, Commands, Streams;
+	VAR args: Streams.StringReader; w: Streams.StringWriter; c: Commands.Context;
+	BEGIN
+		Streams.OpenStringReader(args, ""); NEW(w, 256); NEW(c, NIL, args, w, w, NIL);
+		IPBandwidth.SendTCP(c); ASSERT(c.result = Commands.CommandParseError);
+		args.Set(""); c.result := Commands.Ok; IPBandwidth.SendUDP(c); ASSERT(c.result = Commands.CommandParseError)
+	END Test.

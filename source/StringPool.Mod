@@ -237,6 +237,7 @@ VAR
 		FOR i := 0 TO poolIndexSize DO poolIndex[i] := -1 END;
 		str := "";
 		AddToPool(i, str);
+		poolIndex[Hash(str)] := i;
 	END Init;
 
 BEGIN

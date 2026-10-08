@@ -1,0 +1,185 @@
+# Tests for sequencer properties, handler capacity, copied messages and ordered requests.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: property notification fixture checks callback values against stored values
+
+	MODULE SequencerTestShared;
+	IMPORT S := A2Sequencers;
+	TYPE Sink* = OBJECT
+		VAR calls*: ARRAY 5 OF SIGNED32;
+		PROCEDURE Boolean*(p: S.Boolean; value: BOOLEAN);
+		BEGIN ASSERT(p.Get() = value); INC(calls[0]) END Boolean;
+		PROCEDURE Integer*(p: S.Integer; value: INTEGER);
+		BEGIN ASSERT(p.Get() = value); INC(calls[1]) END Integer;
+		PROCEDURE Real*(p: S.Real; value: FLOAT32);
+		BEGIN ASSERT(p.Get() = value); INC(calls[2]) END Real;
+		PROCEDURE Set*(p: S.Set; value: SET);
+		BEGIN ASSERT(p.Get() = value); INC(calls[3]) END Set;
+		PROCEDURE String*(p: S.String; CONST value: ARRAY OF CHAR);
+		VAR stored: ARRAY 64 OF CHAR;
+		BEGIN p.Get(stored); ASSERT(stored = value); INC(calls[4]) END String;
+	END Sink;
+	END SequencerTestShared.
+
+positive: setting an unchanged property does not notify and callbacks may read the property
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; b: S.Boolean; n: S.Integer; r: S.Real; set: S.Set; text: S.String; stored: ARRAY 64 OF CHAR;
+	BEGIN
+		NEW(sink); NEW(b, FALSE); b.AddHandler(sink.Boolean); b.Set(FALSE); b.Set(TRUE); b.Set(TRUE);
+		ASSERT(b.Get()); ASSERT(sink.calls[0] = 1);
+		NEW(n, 2); n.AddHandler(sink.Integer); n.Set(2); n.Inc(3); n.Inc(0); n.Dec(1); n.Dec(0); n.Set(4);
+		ASSERT(n.Get() = 4); ASSERT(sink.calls[1] = 2);
+		NEW(r, 1.5); r.AddHandler(sink.Real); r.Set(1.5); r.Set(-2.5); r.Set(-2.5);
+		ASSERT(r.Get() = -2.5); ASSERT(sink.calls[2] = 1);
+		NEW(set, {}); set.AddHandler(sink.Set); set.Incl(1); set.Incl(1); set.Excl(2); set.Excl(1); set.Set({});
+		ASSERT(set.Get() = {}); ASSERT(sink.calls[3] = 2);
+		NEW(text, "first", 32); text.AddHandler(sink.String); text.Set("first"); text.Set("second"); text.Set("second");
+		text.Get(stored); ASSERT(stored = "second"); ASSERT(sink.calls[4] = 1)
+	END Test.
+
+positive: queued typed messages preserve each payload before a request barrier
+
+	MODULE Test;
+	IMPORT S := A2Sequencers;
+	VAR seq: S.Sequencer; calls: SIGNED32; text: ARRAY 32 OF CHAR;
+	PROCEDURE Plain;
+	BEGIN INC(calls) END Plain;
+	PROCEDURE Boolean(value: BOOLEAN);
+	BEGIN ASSERT(value); INC(calls) END Boolean;
+	PROCEDURE Real(value: FLOAT32);
+	BEGIN ASSERT(value = -1.5); INC(calls) END Real;
+	PROCEDURE Set(value: SET);
+	BEGIN ASSERT(value = {0, 31}); INC(calls) END Set;
+	PROCEDURE String(CONST value: ARRAY OF CHAR);
+	BEGIN ASSERT(value = "copied-message"); INC(calls) END String;
+	PROCEDURE Pair(first, second: INTEGER);
+	BEGIN ASSERT(first = -5); ASSERT(second = 7); INC(calls) END Pair;
+	PROCEDURE Done(): BOOLEAN;
+	BEGIN RETURN calls = 6 END Done;
+	BEGIN
+		NEW(seq); seq.AddMessage(Plain); seq.AddBooleanMessage(TRUE, Boolean);
+		seq.AddRealMessage(-1.5, Real); seq.AddSetMessage({0, 31}, Set);
+		text := "copied-message"; seq.AddStringMessage(text, String); text := "changed";
+		seq.AddIntegerIntegerMessage(-5, 7, Pair); ASSERT(seq.AddRequestBoolean(Done)); seq.Stop
+	END Test.
+
+positive: delayed requests wait for their deadline and cancellation removes queued work
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, Kernel;
+	VAR seq: S.Sequencer; canceled: S.ProcedureMessage; request: S.IntegerRequest;
+		calls: SIGNED32; deadline: SIGNED32;
+	PROCEDURE Unexpected;
+	BEGIN HALT(99) END Unexpected;
+	PROCEDURE Cancel;
+	BEGIN seq.Remove(canceled); seq.Remove(canceled); seq.Remove(NIL) END Cancel;
+	PROCEDURE Reached(value: INTEGER);
+	BEGIN ASSERT(value = 7); ASSERT(Kernel.GetTicks() - deadline >= 0); INC(calls) END Reached;
+	PROCEDURE Count(): INTEGER;
+	BEGIN RETURN calls END Count;
+	BEGIN
+		NEW(seq); NEW(canceled, Unexpected); seq.Add(canceled, S.Delay(10000));
+		seq.AddMessage(Cancel); ASSERT(seq.AddRequestInteger(Count) = 0);
+		deadline := S.Delay(20); NEW(request, 7, Reached); seq.Add(request, deadline);
+		ASSERT(seq.AddRequestInteger(Count) = 1); seq.Stop
+	END Test.
+
+positive: boolean properties notify all ten registered handlers
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.Boolean; i: SIGNED32;
+	BEGIN
+		NEW(sink); NEW(p, FALSE);
+		FOR i := 0 TO 9 DO p.AddHandler(sink.Boolean) END;
+		p.Set(TRUE); ASSERT(sink.calls[0] = 10)
+	END Test.
+
+positive: integer properties notify all ten registered handlers
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.Integer; i: SIGNED32;
+	BEGIN
+		NEW(sink); NEW(p, 0);
+		FOR i := 0 TO 9 DO p.AddHandler(sink.Integer) END;
+		p.Set(1); ASSERT(sink.calls[1] = 10)
+	END Test.
+
+positive: real properties notify all ten registered handlers
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.Real; i: SIGNED32;
+	BEGIN
+		NEW(sink); NEW(p, 0.0);
+		FOR i := 0 TO 9 DO p.AddHandler(sink.Real) END;
+		p.Set(1.0); ASSERT(sink.calls[2] = 10)
+	END Test.
+
+positive: set properties notify all ten registered handlers
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.Set; i: SIGNED32;
+	BEGIN
+		NEW(sink); NEW(p, {});
+		FOR i := 0 TO 9 DO p.AddHandler(sink.Set) END;
+		p.Set({1}); ASSERT(sink.calls[3] = 10)
+	END Test.
+
+positive: string properties notify all ten registered handlers
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.String; i: SIGNED32;
+	BEGIN
+		NEW(sink); NEW(p, "first", 32);
+		FOR i := 0 TO 9 DO p.AddHandler(sink.String) END;
+		p.Set("second"); ASSERT(sink.calls[4] = 10)
+	END Test.
+
+negative: an eleventh handler is rejected at registration
+
+	MODULE Test;
+	IMPORT S := A2Sequencers, H := SequencerTestShared;
+	VAR sink: H.Sink; p: S.Boolean; i: SIGNED32;
+	BEGIN NEW(sink); NEW(p, FALSE); FOR i := 0 TO 10 DO p.AddHandler(sink.Boolean) END
+	END Test.
+
+positive: string messages copy the full payload including empty strings
+
+	MODULE Test;
+	IMPORT S := A2Sequencers;
+	VAR message: S.StringMessage; source, received: ARRAY 32 OF CHAR; calls: SIGNED32;
+	PROCEDURE Receive(CONST value: ARRAY OF CHAR);
+	BEGIN COPY(value, received); INC(calls) END Receive;
+	BEGIN
+		source := "message"; NEW(message, source, Receive); source := "changed";
+		message.Handle; ASSERT(received = "message"); ASSERT(calls = 1);
+		NEW(message, "", Receive); message.Handle; ASSERT(received = ""); ASSERT(calls = 2)
+	END Test.
+
+positive: queued messages finish in insertion order before a synchronous request returns
+
+	MODULE Test;
+	IMPORT S := A2Sequencers;
+	VAR seq: S.Sequencer; n: SIGNED32;
+	PROCEDURE Add(value: INTEGER);
+	BEGIN ASSERT(seq.SequencerCalledThis()); n := 10*n+value END Add;
+	PROCEDURE Get(): INTEGER;
+	BEGIN ASSERT(seq.SequencerCalledThis()); RETURN n END Get;
+	PROCEDURE Is(value: INTEGER): BOOLEAN;
+	BEGIN RETURN n = value END Is;
+	PROCEDURE Real(): FLOAT32;
+	BEGIN RETURN 1.5 END Real;
+	PROCEDURE Scale(value: FLOAT32): INTEGER;
+	BEGIN RETURN ENTIER(value*2) END Scale;
+	BEGIN
+		NEW(seq); ASSERT(~seq.SequencerCalledThis());
+		seq.AddIntegerMessage(1, Add); seq.AddIntegerMessage(2, Add); seq.AddIntegerRequest(3, Add);
+		ASSERT(seq.AddRequestInteger(Get) = 123); ASSERT(seq.AddIntegerRequestBoolean(123, Is));
+		ASSERT(seq.AddRequestReal(Real) = 1.5); ASSERT(seq.AddRealRequestInteger(2.5, Scale) = 5); seq.Stop
+	END Test.

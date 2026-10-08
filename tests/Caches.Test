@@ -1,0 +1,67 @@
+# Tests for LRU block buffers and explicit synchronization using a memory-only disk.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test CachesFixture;System.Load Test"
+
+positive: the memory disk used by these tests
+
+	MODULE CachesFixture;
+	IMPORT Disks;
+	TYPE Disk* = OBJECT(Disks.Device)
+	VAR writes*: SIGNED32; fail*: BOOLEAN; data*: ARRAY 2048 OF CHAR;
+		PROCEDURE &Init*;
+		BEGIN Disks.InitDevice(SELF); blockSize := 256; SetName("memory-cache-test")
+		END Init;
+		PROCEDURE Transfer*(op, block, num: SIGNED32; VAR buf: ARRAY OF CHAR; ofs: SIZE; VAR res: INTEGER);
+		VAR i: SIZE;
+		BEGIN
+			ASSERT(op = Disks.Write); ASSERT(num = 2); INC(writes);
+			IF fail THEN res := Disks.Unsupported; RETURN END;
+			FOR i := 0 TO num*256-1 DO data[block*256+i] := buf[ofs+i] END;
+			res := Disks.Ok
+		END Transfer;
+	END Disk;
+	END CachesFixture.
+
+positive: clean buffers are reused by device and block and evicted in LRU order
+
+	MODULE Test;
+	IMPORT Caches, F := CachesFixture;
+	VAR cache: Caches.Cache; disk, other: F.Disk; a, b: Caches.Buffer; valid: BOOLEAN;
+	BEGIN
+		NEW(disk); NEW(other); NEW(cache, 512, 1, 2); ASSERT(cache.blockSize = 512);
+		cache.Acquire(disk, 0, a, valid); ASSERT(~valid); ASSERT(LEN(a.data) = 512); a.data[0] := "a";
+		cache.Release(a, FALSE, FALSE);
+		cache.Acquire(disk, 0, b, valid); ASSERT(valid); ASSERT(b = a); ASSERT(b.data[0] = "a");
+		cache.Release(b, FALSE, FALSE);
+		cache.Acquire(other, 0, b, valid); ASSERT(~valid); cache.Release(b, FALSE, FALSE);
+		cache.Acquire(disk, 1, b, valid); ASSERT(~valid); cache.Release(b, FALSE, FALSE);
+		cache.Acquire(disk, 0, b, valid); ASSERT(~valid); cache.Release(b, FALSE, FALSE);
+		cache.Synchronize; ASSERT(disk.writes = 0); ASSERT(other.writes = 0)
+	END Test.
+
+positive: dirty buffers are written once and clean synchronization does nothing
+
+	MODULE Test;
+	IMPORT Caches, F := CachesFixture;
+	VAR cache: Caches.Cache; disk: F.Disk; b: Caches.Buffer; valid: BOOLEAN; i: SIZE;
+	BEGIN
+		NEW(disk); NEW(cache, 512, 1, 2);
+		cache.Acquire(disk, 2, b, valid); ASSERT(~valid);
+		FOR i := 0 TO 511 DO b.data[i] := CHR(i MOD 256) END;
+		cache.Release(b, TRUE, FALSE); cache.Synchronize; ASSERT(disk.writes = 1);
+		FOR i := 0 TO 511 DO ASSERT(disk.data[512+i] = CHR(i MOD 256)) END;
+		cache.Synchronize; ASSERT(disk.writes = 1);
+		cache.Acquire(disk, 2, b, valid); ASSERT(valid); cache.Release(b, FALSE, FALSE)
+	END Test.
+
+positive: a failed synchronization keeps the buffer dirty for retry
+
+	MODULE Test;
+	IMPORT Caches, F := CachesFixture;
+	VAR cache: Caches.Cache; disk: F.Disk; b: Caches.Buffer; valid: BOOLEAN;
+	BEGIN
+		NEW(disk); NEW(cache, 512, 1, 2); cache.Acquire(disk, 0, b, valid);
+		b.data[0] := "k"; cache.Release(b, TRUE, FALSE);
+		disk.fail := TRUE; cache.Synchronize; ASSERT(disk.writes = 1);
+		disk.fail := FALSE; cache.Synchronize; ASSERT(disk.writes = 2); ASSERT(disk.data[0] = "k");
+		cache.Synchronize; ASSERT(disk.writes = 2)
+	END Test.

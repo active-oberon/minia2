@@ -147,6 +147,7 @@ VAR
 	PROCEDURE PutBigNumber*( VAR buf: ARRAY OF CHAR;  VAR pos: SIZE;  b: B.BigNumber );
 	VAR i, j: SIZE; len: SIGNED32;  x: UNSIGNED32;  tmp: ARRAY 2048 OF CHAR;
 	BEGIN
+		IF b.IsZero() THEN PutLength(buf, pos, 0); RETURN END;
 		len := 0;
 		FOR i := b.len - 1 TO 0 BY -1 DO
 			(* store 'digits' in network byte order (big endian) *)

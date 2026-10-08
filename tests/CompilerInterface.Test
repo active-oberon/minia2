@@ -1,0 +1,82 @@
+# Tests for compiler registration, lookup, dispatch and removal.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: registration supports case insensitive extensions and exact compiler names
+
+	MODULE Test;
+	IMPORT CI := CompilerInterface, Texts, Streams, Diagnostics, Files, Commands, Strings;
+	VAR first, second: CI.Compiler;
+		filename: ARRAY 128 OF CHAR; out: Streams.StringWriter; context: Commands.Context; text: ARRAY 1024 OF CHAR;
+		PROCEDURE Compile(t: Texts.Text; CONST source: ARRAY OF CHAR; pos: SIGNED32; CONST pc, opt: ARRAY OF CHAR;
+			log: Streams.Writer; diagnostics: Diagnostics.Diagnostics; VAR error: BOOLEAN);
+		BEGIN error := FALSE
+		END Compile;
+	BEGIN
+		NEW(out, 1024); NEW(context, NIL, NIL, out, out, NIL); CI.Show(context); out.Update; out.Get(text);
+		ASSERT(Strings.Pos("No compilers registered.", text) >= 0);
+		CI.Register("TestA", "first compiler", "abc", Compile);
+		CI.Register("TestB", "second compiler", "xyz", Compile);
+		first := CI.GetCompilerByName("TestA"); second := CI.GetCompilerByName("TestB");
+		ASSERT(first # NIL); ASSERT(second # NIL); ASSERT(first # second);
+		ASSERT(first.description = "first compiler"); ASSERT(first.fileExtension = "ABC");
+		ASSERT(CI.GetCompiler("AbC") = first); ASSERT(CI.GetCompiler("xyz") = second);
+		ASSERT(CI.GetCompilerByName("testa") = NIL); ASSERT(CI.GetCompiler("missing") = NIL);
+		ASSERT(CI.GetCompilerByFilename("Module.abc") = first);
+		ASSERT(CI.GetCompilerByFilename("Module.ABC.Bak") = first);
+		ASSERT(CI.GetCompilerByFilename("abc.Module.abc") = first);
+		ASSERT(CI.GetCompilerByFilename("fooabc.Module.abc") = first);
+		filename := "directory.abc"; Strings.AppendChar(filename, Files.PathDelimiter); Strings.Append(filename, "Module.txt");
+		ASSERT(CI.GetCompilerByFilename(filename) = NIL);
+		filename := "abc"; Strings.AppendChar(filename, Files.PathDelimiter); Strings.Append(filename, "Module.ABC.Bak");
+		ASSERT(CI.GetCompilerByFilename(filename) = first);
+		CI.Show(context); out.Update; out.Get(text);
+		ASSERT(Strings.Pos("TestA (first compiler)", text) >= 0); ASSERT(Strings.Pos("File Extension: ABC", text) >= 0);
+		ASSERT(Strings.Pos("TestB (second compiler)", text) >= 0);
+		ASSERT(CI.GetCompilerByFilename("abc") = NIL); ASSERT(CI.GetCompilerByFilename("Module.txt") = NIL);
+		CI.Register("TestA", "replacement", "new", Compile);
+		ASSERT(CI.GetCompilerByName("TestA") = first); ASSERT(first.description = "first compiler");
+		CI.Unregister("TestA"); ASSERT(CI.GetCompilerByName("TestA") = NIL);
+		ASSERT(CI.GetCompilerByName("TestB") = second);
+		CI.Unregister("absent"); CI.Unregister("TestB"); CI.Unregister("TestB");
+		ASSERT(CI.GetCompilerByName("TestB") = NIL)
+	END Test.
+
+positive: compilation forwards the document options position and diagnostics
+
+	MODULE Test;
+	IMPORT CI := CompilerInterface, Texts, Streams, Diagnostics;
+	VAR c: CI.Compiler; text: Texts.Text; w: Streams.StringWriter; d: Diagnostics.DiagnosticsList;
+		error, called: BOOLEAN;
+		PROCEDURE Compile(t: Texts.Text; CONST source: ARRAY OF CHAR; pos: SIGNED32; CONST pc, opt: ARRAY OF CHAR;
+			log: Streams.Writer; diagnostics: Diagnostics.Diagnostics; VAR error: BOOLEAN);
+		BEGIN
+			ASSERT(t = text); ASSERT(source = "Test.Mod"); ASSERT(pos = 7);
+			ASSERT(pc = "Unix64"); ASSERT(opt = "--test"); ASSERT(log = w); ASSERT(diagnostics = d);
+			called := TRUE; error := FALSE
+		END Compile;
+	BEGIN
+		NEW(text); NEW(w, 256); NEW(d); NEW(c, "Direct", "direct compiler", "MOD", Compile);
+		error := TRUE; c.CompileText(text, "Test.Mod", 7, "Unix64", "--test", w, d, error);
+		ASSERT(called); ASSERT(~error); ASSERT(d.nofErrors = 0)
+	END Test.
+
+positive: an unset compiler delegate reports a diagnostic
+
+	MODULE Test;
+	IMPORT CI := CompilerInterface, Texts, Streams, Diagnostics;
+	VAR c: CI.Compiler; text: Texts.Text; w: Streams.StringWriter; d: Diagnostics.DiagnosticsList;
+		error: BOOLEAN; entries: Diagnostics.EntryArray;
+	BEGIN
+		NEW(text); NEW(w, 256); NEW(d); NEW(c, "Unset", "no delegate", "MOD", NIL);
+		c.CompileText(text, "Test.Mod", 0, "", "", w, d, error);
+		ASSERT(d.nofErrors = 1); entries := d.GetEntries();
+		ASSERT(entries[0].message = "Text compile procedure not set"); ASSERT(error);
+		error := FALSE; c.CompileText(text, "Test.Mod", 0, "", "", NIL, NIL, error); ASSERT(error)
+	END Test.
+
+negative: registry rejects a missing compiler delegate
+
+	MODULE Test;
+	IMPORT CI := CompilerInterface;
+	BEGIN CI.Register("Invalid", "missing delegate", "bad", NIL)
+	END Test.

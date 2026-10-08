@@ -5,7 +5,7 @@ MODULE CompilerInterface; (** AUTHOR "staubesv"; PURPOSE "Generic compiler inter
  *)
 
 IMPORT
-	KernelLog, Streams, Commands, Strings, Texts, Diagnostics;
+	KernelLog, Streams, Commands, Strings, Texts, Diagnostics, Files;
 
 CONST
 
@@ -40,8 +40,9 @@ TYPE
 			trap := TRUE;
 			IF (compileText # NIL) THEN
 				compileText(t, source, pos, pc, opt, log, diagnostics, error);
-			ELSIF (diagnostics # NIL) THEN
-				diagnostics.Error(source, Streams.Invalid, "Text compile procedure not set");
+			ELSE
+				error := TRUE;
+				IF diagnostics # NIL THEN diagnostics.Error(source, Streams.Invalid, "Text compile procedure not set") END;
 			END;
 			trap := FALSE;   (* the runtime sets no such variable: the body has to clear what it raised *)
 		FINALLY
@@ -103,14 +104,15 @@ END GetCompilerByName;
 	if the file extension the compiler requires is part of the filename, e.g. Module.Mod.Bak for the file extension .Mod
 	Returns NIL if no appropriate compiler found *)
 PROCEDURE GetCompilerByFilename*(filename : ARRAY OF CHAR) : Compiler;
-VAR c : Compiler; pos : SIZE;
+VAR c : Compiler; pos : SIZE; path, name: Files.FileName; pattern: ARRAY 32 OF CHAR;
 BEGIN {EXCLUSIVE}
-	Strings.UpperCase(filename);
+	Files.SplitPath(filename, path, name); Strings.UpperCase(name);
 	c := compilers;
 	LOOP
 		IF (c = NIL) THEN EXIT; END;
-		pos := Strings.Pos(c.fileExtension, filename);
-		IF (pos > 0) & (filename[pos-1] = ".") THEN
+		pattern := "."; Strings.Append(pattern, c.fileExtension);
+		pos := Strings.Pos(pattern, name);
+		IF pos >= 0 THEN
 			EXIT;
 		END;
 		c := c.next;

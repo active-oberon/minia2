@@ -1,0 +1,125 @@
+# Tests for decoder storage, tables, prediction state and bounded byte utilities.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: array comparison checks the requested binary prefix and rejects oversized lengths
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; a, b: ARRAY 4 OF CHAR;
+	BEGIN
+		NEW(u); a[0] := 0X; a[1] := 0FFX; a[2] := "a"; a[3] := "b"; b := a;
+		ASSERT(u.CompareCharArrays(a, b, 0)); ASSERT(u.CompareCharArrays(a, b, 4));
+		b[3] := "c"; ASSERT(u.CompareCharArrays(a, b, 3)); ASSERT(~u.CompareCharArrays(a, b, 4));
+		ASSERT(~u.CompareCharArrays(a, b, 5))
+	END Test.
+
+positive: negative comparison lengths are rejected
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; a, b: ARRAY 4 OF CHAR;
+	BEGIN NEW(u); ASSERT(~u.CompareCharArrays(a, b, -1))
+	END Test.
+
+positive: memory fill preserves surrounding bytes and accepts empty end ranges
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; data: D.PointerToArrayOfCHAR; i: SIGNED32;
+	BEGIN
+		NEW(u); NEW(data, 8); FOR i := 0 TO 7 DO data[i] := "a" END;
+		u.MemSet(data, 2, "b", 3); ASSERT(data[1] = "a"); ASSERT(data[2] = "b");
+		ASSERT(data[4] = "b"); ASSERT(data[5] = "a");
+		u.MemSet(data, 8, "c", 0); u.MemSet(data, 0, "c", 0); ASSERT(data[0] = "a");
+		NEW(data, 0); u.MemSet(data, 0, "c", 0)
+	END Test.
+
+positive: oversized memory fills are clipped without overflowing length arithmetic
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; data: D.PointerToArrayOfCHAR; i: SIGNED32;
+	BEGIN
+		NEW(u); NEW(data, 8); FOR i := 0 TO 7 DO data[i] := "a" END;
+		u.MemSet(data, 6, "b", MAX(SIGNED32)); ASSERT(data[5] = "a"); ASSERT(data[6] = "b"); ASSERT(data[7] = "b")
+	END Test.
+
+negative: negative memory fill lengths are rejected before writing
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; data: D.PointerToArrayOfCHAR;
+	BEGIN NEW(u); NEW(data, 8); u.MemSet(data, 0, "b", -1)
+	END Test.
+
+negative: memory fill offsets cannot exceed the array
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR u: D.MyUtils; data: D.PointerToArrayOfCHAR;
+	BEGIN NEW(u); NEW(data, 8); u.MemSet(data, 9, "b", 0)
+	END Test.
+
+positive: postprocessing levels enable each stage in order and can disable them again
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR opt: D.DecoderOptions; level: SIGNED32;
+	BEGIN
+		NEW(opt, 32, 16); ASSERT(opt.xDim = 32); ASSERT(opt.yDim = 16);
+		ASSERT(opt.displayYSize = 512); ASSERT(opt.displayCSize = 128); ASSERT(opt.deringC);
+		FOR level := 0 TO 8 DO
+			opt.SetPostProcessLevel(level);
+			ASSERT(opt.deblockYH = (level >= 1)); ASSERT(opt.deblockYV = (level >= 2));
+			ASSERT(opt.deringY = (level >= 3)); ASSERT(opt.deblockCH = (level >= 4));
+			ASSERT(opt.deblockCV = (level >= 5)); ASSERT(opt.deringC = (level >= 6))
+		END;
+		opt.SetPostProcessLevel(0); ASSERT(~opt.deblockYH & ~opt.deringC)
+	END Test.
+
+positive: scan tables are independent permutations and retain quantization defaults
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR tables, other: D.MP4Tables; i: SIGNED32;
+	PROCEDURE Permutation(a: D.PointerToArrayOfLONGINT);
+	VAR used: ARRAY 64 OF BOOLEAN; i: SIGNED32;
+	BEGIN
+		ASSERT(LEN(a) = 64);
+		FOR i := 0 TO 63 DO ASSERT((a[i] >= 0) & (a[i] < 64)); ASSERT(~used[a[i]]); used[a[i]] := TRUE END
+	END Permutation;
+	BEGIN
+		NEW(tables); NEW(other); Permutation(tables.zigZagScan);
+		Permutation(tables.alternateHorizontalScan); Permutation(tables.alternateVerticalScan);
+		ASSERT(tables.zigZagScan[2] = 8); ASSERT(tables.alternateHorizontalScan[2] = 2);
+		ASSERT(tables.alternateVerticalScan[2] = 16); ASSERT(tables.intraQuantMatrix[0] = 8);
+		ASSERT(tables.intraQuantMatrix[63] = 45); ASSERT(tables.nonIntraQuantMatrix[63] = 33);
+		tables.zigZagScan[0] := 63; ASSERT(other.zigZagScan[0] = 0)
+	END Test.
+
+positive: frame allocation and prediction setup retain component offsets and clipping limits
+
+	MODULE Test;
+	IMPORT D := DivXTypes;
+	VAR opt: D.DecoderOptions; buffers: D.MP4Buffers; state: D.MP4State; i: SIGNED32;
+	BEGIN
+		NEW(opt, 32, 16); NEW(buffers, opt); NEW(state);
+		ASSERT(buffers.displayBufferSize = 768); ASSERT(LEN(buffers.displayBuffer) = 768);
+		ASSERT(LEN(buffers.edgedRefBuffer) = buffers.edgedRefBufferSize);
+		ASSERT(LEN(buffers.edgedForBuffer) = buffers.edgedRefBufferSize);
+		ASSERT(buffers.edgedRefBuffer # buffers.edgedForBuffer);
+		ASSERT(state.hdr.quantPrecision = 5); ASSERT(state.hdr.bitsPerPixel = 8);
+		state.hdr.width := 32; state.hdr.height := 16; state.hdr.FinishHeader;
+		ASSERT(state.hdr.mbXSize = 2); ASSERT(state.hdr.mbYSize = 1); ASSERT(state.hdr.mbASize = 2);
+		state.SetUpState(buffers); ASSERT(state.mbWidth = 2); ASSERT(state.mbHeight = 1);
+		ASSERT(state.frameRef = buffers.edgedRefBuffer); ASSERT(state.frameFor = buffers.edgedForBuffer);
+		ASSERT(state.frameRefBaseOffset[0] = 96*32+32); ASSERT(state.edgedRefBaseOffset[1] = 96*80);
+		ASSERT(state.edgedRefBaseOffset[2] = 96*80+48*40);
+		ASSERT(state.displayFrameBaseOffset[0] = 0); ASSERT(state.displayFrameBaseOffset[1] = 512);
+		ASSERT(state.displayFrameBaseOffset[2] = 640);
+		FOR i := -512 TO 511 DO ASSERT(state.clp[i+512] = MIN(255, MAX(-256, i))) END;
+		ASSERT(state.coeffPred.dcStoreLum[0][D.DecMbc*2] = 1024);
+		ASSERT(state.coeffPred.dcStoreLum[D.DecMbr*2][0] = 1024);
+		ASSERT(state.coeffPred.dcStoreLum[1][1] = 0); ASSERT(state.modeMap[0][2] = D.Intra);
+		ASSERT(state.modeMap[1][0] = D.Intra); ASSERT(state.modeMap[1][3] = D.Intra)
+	END Test.

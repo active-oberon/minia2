@@ -84,12 +84,12 @@ TYPE
 
 		PROCEDURE Changed (value: BOOLEAN);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO handlers[i] (SELF, value); INC (i) END;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO handlers[i] (SELF, value); INC (i) END;
 		END Changed;
 
 		PROCEDURE AddHandler* (handler: BooleanHandler);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO INC (i) END; handlers[i] := handler;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO INC (i) END; ASSERT(i < LEN(handlers)); handlers[i] := handler;
 		END AddHandler;
 
 	END Boolean;
@@ -125,12 +125,12 @@ TYPE
 
 		PROCEDURE Changed (value: INTEGER);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO handlers[i] (SELF, value); INC (i) END;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO handlers[i] (SELF, value); INC (i) END;
 		END Changed;
 
 		PROCEDURE AddHandler* (handler: IntegerHandler);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO INC (i) END; handlers[i] := handler;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO INC (i) END; ASSERT(i < LEN(handlers)); handlers[i] := handler;
 		END AddHandler;
 
 	END Integer;
@@ -156,12 +156,12 @@ TYPE
 
 		PROCEDURE Changed (value: FLOAT32);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO handlers[i] (SELF, value); INC (i) END;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO handlers[i] (SELF, value); INC (i) END;
 		END Changed;
 
 		PROCEDURE AddHandler* (handler: RealHandler);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO INC (i) END; handlers[i] := handler;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO INC (i) END; ASSERT(i < LEN(handlers)); handlers[i] := handler;
 		END AddHandler;
 
 	END Real;
@@ -197,12 +197,12 @@ TYPE
 
 		PROCEDURE Changed (value: SET);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO handlers[i] (SELF, value); INC (i) END;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO handlers[i] (SELF, value); INC (i) END;
 		END Changed;
 
 		PROCEDURE AddHandler* (handler: SetHandler);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO INC (i) END; handlers[i] := handler;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO INC (i) END; ASSERT(i < LEN(handlers)); handlers[i] := handler;
 		END AddHandler;
 
 	END Set;
@@ -227,12 +227,12 @@ TYPE
 
 		PROCEDURE Changed (CONST value: ARRAY OF CHAR);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO handlers[i] (SELF, value); INC (i) END;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO handlers[i] (SELF, value); INC (i) END;
 		END Changed;
 
 		PROCEDURE AddHandler* (handler: StringHandler);
 		VAR i: SIZE;
-		BEGIN i := 0; WHILE handlers[i] # NIL DO INC (i) END; handlers[i] := handler;
+		BEGIN i := 0; WHILE (i < LEN(handlers)) & (handlers[i] # NIL) DO INC (i) END; ASSERT(i < LEN(handlers)); handlers[i] := handler;
 		END AddHandler;
 
 	END String;
@@ -350,7 +350,7 @@ TYPE
 		BEGIN
 			InitMessage; length := 0;
 			WHILE value[length] # 0X DO INC (length); END;
-			NEW (SELF.value, length); COPY (value, SELF.value^); SELF.procedure := procedure;
+			NEW (SELF.value, length+1); COPY (value, SELF.value^); SELF.procedure := procedure;
 		END InitStringMessage;
 
 		PROCEDURE Handle*;

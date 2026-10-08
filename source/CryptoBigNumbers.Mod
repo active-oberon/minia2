@@ -36,10 +36,13 @@ TYPE
 				PROCEDURE Mask*( bits: SIZE );
 				VAR w, b: SIZE;
 				BEGIN
-					w := bits DIV 32;  b := bits MOD 32;  len := w;
-					IF b # 0 THEN  INC( len );
-						d[w] := UNSIGNED32(  SET32( d[w] ) * SET32( {0..b} ) )
-					END
+					ASSERT(bits >= 0);
+					w := bits DIV 32; b := bits MOD 32;
+					IF w < len THEN
+						len := w+1; d[w] := UNSIGNED32(SET32(d[w]) * SET32({0..b}));
+						fixlen(d, len)
+					END;
+					IF len = 0 THEN neg := FALSE END
 				END Mask;
 
 
@@ -93,6 +96,7 @@ TYPE
 							IF d[len] # 0 THEN  INC( len )  END;
 						END
 					ELSE
+						IF w >= len THEN len := 0; neg := FALSE; RETURN END;
 						IF w > 0 THEN
 							FOR i := 0 TO len - w - 1 DO  d[i] := d[i + w]  END;
 							DEC( len, w )
@@ -103,9 +107,10 @@ TYPE
 								IF i < l - 1 THEN  b := d[i + 1]  ELSE  b := 0  END;
 								d[i] := LSH( a, -bits ) + LSH( b, 32 - bits )
 							END;
-							IF d[l - 1] = 0 THEN  DEC( len )  END;
+							fixlen(d, len);
 						END
 					END;
+					IF len = 0 THEN neg := FALSE END;
 				END Shift;
 
 
@@ -384,8 +389,8 @@ VAR
 	PROCEDURE Copy*( VAR a, b: BigNumber );   (** b := a *)
 	BEGIN
 		ASSERT( (a # NIL) & (ADDRESSOF( a ) # ADDRESSOF( b )) );
-		IF (b = NIL) OR (LEN( b.d^ ) < a.len) THEN  NEW( b, a.len*32 )  END;
-		copy( a.d, b.d, a.len );  b.len := a.len
+		IF (b = NIL) OR (b.d = NIL) OR (LEN( b.d^ ) < a.len) THEN NEW(b, MAX(32, a.len*32)) END;
+		copy( a.d, b.d, a.len ); b.len := a.len; b.neg := a.neg
 	END Copy;
 
 	PROCEDURE Invert( x: BNdigit ): BNdigit;
@@ -632,6 +637,7 @@ VAR
 			RecycleBuffer( sd )
 		END;
 		IF q.len = 0 THEN  q.neg := FALSE  ELSE  q.neg := a.neg  END;
+		r.neg := FALSE;
 		IF (r.len # 0) & a.neg THEN  q.Dec;  r := Sub( b, r )  END;
 	END Div2;
 
@@ -864,9 +870,15 @@ VAR
 	VAR i, j, v: INTEGER;
 	BEGIN
 		r.RawInt32( j );
-		NEW( b, 32 * j );
+		IF (r.res # Streams.Ok) OR (j < 0) THEN b := NIL; RETURN END;
+		NEW( b, 32 );
 		b.len := j;
-		FOR i := 0 TO j - 1 DO  r.RawInt32( v ); b.d[ i ] := v  END
+		FOR i := 0 TO j - 1 DO
+			r.RawInt32( v );
+			IF r.res # Streams.Ok THEN b := NIL; RETURN END;
+			IF i = LEN(b.d^) THEN adjust(b.d, i, MIN(j, 2*i)) END;
+			b.d[ i ] := v
+		END
 	END FileRead;
 
 	PROCEDURE FileWrite*( w: Streams.Writer;  b: BigNumber );
@@ -874,7 +886,7 @@ VAR
 	BEGIN
 		j := INTEGER( b.len );
 		w.RawInt32( j );
-		FOR i := 0 TO j - 1 DO  w.RawInt32( v ); b.d[ i ] := v  END
+		FOR i := 0 TO j - 1 DO v := SIGNED32(b.d[i]); w.RawInt32(v) END
 	END FileWrite;
 
 

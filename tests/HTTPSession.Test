@@ -1,0 +1,53 @@
+# Tests for lease-manager shutdown/restart, expiration callbacks and bounded session state.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: immediate repeated starts and stops leave no lease activity running
+
+	MODULE Test;
+	IMPORT H := HTTPSession;
+	VAR i: SIGNED32;
+	BEGIN
+		H.StopLeaseManager; H.StopLeaseManager;
+		FOR i := 0 TO 63 DO H.StartLeaseManager; H.StartLeaseManager; H.StopLeaseManager; H.StopLeaseManager END
+	END Test.
+
+positive: restarted lease managers expire sessions and notify registered handlers
+
+	MODULE Test;
+	IMPORT H := HTTPSession, HTTPSupport, WebHTTP;
+	TYPE Probe = OBJECT
+		VAR calls: SIGNED32; expected: H.Session;
+		PROCEDURE Expired(session: H.Session);
+		BEGIN {EXCLUSIVE} ASSERT(session = expected); INC(calls)
+		END Expired;
+		PROCEDURE Wait(count: SIGNED32);
+		BEGIN {EXCLUSIVE} AWAIT(calls = count)
+		END Wait;
+	END Probe;
+	VAR probe: Probe; header: WebHTTP.RequestHeader; request: HTTPSupport.HTTPRequest; session: H.Session; i: SIGNED32;
+	BEGIN
+		H.StopLeaseManager; NEW(probe); H.AddExpirationHandler(probe.Expired);
+		header.method := WebHTTP.GetM; header.uri := "/session";
+		FOR i := 1 TO 2 DO
+			NEW(request, header, NIL); session := H.GetSession(request); probe.expected := session; session.leaseTime := 0;
+			H.StartLeaseManager; probe.Wait(i); H.StopLeaseManager;
+			ASSERT(H.GetExistingSession(request) = NIL)
+		END;
+		H.RemoveExpirationHandler(probe.Expired); H.RemoveExpirationHandler(probe.Expired)
+	END Test.
+
+positive: session variables replace existing values and lifetime growth stops at the cap
+
+	MODULE Test;
+	IMPORT H := HTTPSession;
+	VAR session, first, second: H.Session; i: SIGNED32;
+	BEGIN
+		H.StopLeaseManager; NEW(session, "fixed-id"); NEW(first, "first"); NEW(second, "second");
+		ASSERT(session.leaseTime = 5.0); ASSERT(session.GetVariableByName("missing") = NIL);
+		session.AddVariableValue("name", first); session.AddVariableValue("name", second);
+		ASSERT(session.sessionVariables.GetCount() = 1); ASSERT(session.GetVariableValue("name") = second);
+		session.AddVariableValue("name", NIL); ASSERT(session.GetVariableByName("name") # NIL);
+		ASSERT(session.GetVariableValue("name") = NIL); session.RemoveVariable("name"); session.RemoveVariable("name");
+		ASSERT(session.sessionVariables.GetCount() = 0);
+		FOR i := 0 TO 20 DO session.IncreaseLifeTime END; ASSERT(session.leaseTime = 15.0)
+	END Test.

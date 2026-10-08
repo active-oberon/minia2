@@ -1,0 +1,60 @@
+# Tests for generated VESA configuration strings; no display mode is applied.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: default refresh generates the expected VESA framebuffer command
+
+	MODULE Test;
+	IMPORT DisplayGTF, Streams, Commands, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(args, 128); args.Set("279 1024 768 16 0"); NEW(out, 1024); NEW(c, NIL, args, out, out, NIL);
+		DisplayGTF.Mode(c); out.Update; out.Get(text); ASSERT(c.result = Commands.Ok);
+		ASSERT(Strings.Pos('Init="b8024fbb1741cd10b8014fb91701cd10268b4d28268b552a"', text) >= 0);
+		ASSERT(Strings.Pos('DWidth="1024"', text) >= 0); ASSERT(Strings.Pos('DHeight="768"', text) >= 0);
+		ASSERT(Strings.Pos('DDepth="16"', text) >= 0)
+	END Test.
+
+positive: explicit refresh reproduces the documented 1024 by 768 timing bytes
+
+	MODULE Test;
+	IMPORT DisplayGTF, Streams, Commands, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(args, 128); args.Set("279 1024 768 16 80"); NEW(out, 1024); NEW(c, NIL, args, out, out, NIL);
+		DisplayGTF.Mode(c); out.Update; out.Get(text); ASSERT(c.result = Commands.Ok);
+		ASSERT(Strings.Pos("b80b4fbb0000ba174966b9009e3e05cd1026c7055805", text) >= 0);
+		ASSERT(Strings.Pos("26c74502380426c74504a80426c745062403", text) >= 0);
+		ASSERT(Strings.Pos("26c74508010326c7450a040326c6450c042666894d0d26c74511401f", text) >= 0);
+		ASSERT(Strings.Pos("b8024fbb1749cd10b8014fb91701cd10", text) >= 0)
+	END Test.
+
+positive: incomplete malformed and unrepresentable parameters produce no configuration
+
+	MODULE Test;
+	IMPORT DisplayGTF, Streams, Commands, Strings;
+	PROCEDURE Rejected(CONST input: ARRAY OF CHAR);
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(args, 128); args.Set(input); NEW(out, 1024); NEW(c, NIL, args, out, out, NIL);
+		DisplayGTF.Mode(c); out.Update; out.Get(text); ASSERT(c.result # Commands.Ok);
+		ASSERT(Strings.Pos('Init="', text) < 0)
+	END Rejected;
+	BEGIN
+		Rejected(""); Rejected("279 1024 768 16"); Rejected("279 1024 768 16 invalid");
+		Rejected("-1 1024 768 16 0"); Rejected("65536 1024 768 16 0"); Rejected("279 0 768 16 60");
+		Rejected("279 1024 -1 16 60"); Rejected("279 1024 768 0 60"); Rejected("279 1024 768 16 -1");
+		Rejected("279 1024 768 16 2147483647"); Rejected("279 65535 65535 16 655")
+	END Test.
+
+positive: mode flags are combined without carry and pixel clocks retain their unsigned high bit
+
+	MODULE Test;
+	IMPORT DisplayGTF, Streams, Commands, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 1024 OF CHAR;
+	BEGIN
+		NEW(args, 128); args.Set("65535 1024 768 16 0"); NEW(out, 1024); NEW(c, NIL, args, out, out, NIL);
+		DisplayGTF.Mode(c); out.Update; out.Get(text); ASSERT(c.result = Commands.Ok);
+		ASSERT(Strings.Pos("b8024fbbffff", text) >= 0);
+		args.Set("279 3840 2160 32 240"); DisplayGTF.Mode(c); out.Update; out.Get(text); ASSERT(c.result = Commands.Ok);
+		ASSERT(Strings.Pos("66b9006b0ec2", text) >= 0)
+	END Test.

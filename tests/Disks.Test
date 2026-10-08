@@ -1,0 +1,85 @@
+# Tests for block device defaults, partition discovery and open/close bookkeeping in memory.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test DisksFixture;System.Load Test"
+
+positive: the memory device used by these tests
+
+	MODULE DisksFixture;
+	IMPORT Disks;
+	TYPE Device* = OBJECT(Disks.Device)
+	VAR sector*: ARRAY 512 OF CHAR; blocks*, reads*: SIGNED32; failRead*: BOOLEAN;
+		PROCEDURE &Init*;
+		BEGIN Disks.InitDevice(SELF); blocks := 1000; sector[510] := 55X; sector[511] := 0AAX
+		END Init;
+		PROCEDURE GetSize*(VAR size: SIGNED32; VAR res: INTEGER);
+		BEGIN size := blocks; res := Disks.Ok
+		END GetSize;
+		PROCEDURE Transfer*(op, block, num: SIGNED32; VAR data: ARRAY OF CHAR; ofs: SIZE; VAR res: INTEGER);
+		VAR i: SIZE;
+		BEGIN
+			ASSERT(op = Disks.Read); ASSERT(block = 0); ASSERT(num = 1); INC(reads);
+			IF failRead THEN res := Disks.Unsupported; RETURN END;
+			FOR i := 0 TO 511 DO data[ofs+i] := sector[i] END; res := Disks.Ok
+		END Transfer;
+	END Device;
+	END DisksFixture.
+
+positive: base devices return unsupported and initialize their public defaults
+
+	MODULE Test;
+	IMPORT Disks;
+	VAR d: Disks.Device; buf: ARRAY 512 OF CHAR; res: INTEGER; size: SIGNED32; msg: Disks.Message;
+	BEGIN
+		NEW(d); Disks.InitDevice(d); ASSERT(d.blockSize = 512); ASSERT(d.flags = {});
+		ASSERT(d.table = NIL); ASSERT(d.openCount = 0);
+		d.Transfer(Disks.Read, 0, 1, buf, 0, res); ASSERT(res = Disks.Unsupported);
+		d.GetSize(size, res); ASSERT(res = Disks.Unsupported); d.Handle(msg, res); ASSERT(res = Disks.Unsupported);
+		d.Open(res); ASSERT(res = Disks.Unsupported); ASSERT(d.openCount = 0); ASSERT(d.table = NIL)
+	END Test.
+
+positive: partition records decode little endian addresses and boot flags
+
+	MODULE Test;
+	IMPORT Disks, F := DisksFixture;
+	VAR d: F.Device; res: INTEGER;
+	BEGIN
+		NEW(d); d.sector[446] := 80X; d.sector[450] := 83X;
+		d.sector[454] := 2X; d.sector[455] := 1X; d.sector[458] := 34X; d.sector[459] := 2X;
+		Disks.UpdatePartitionTable(d, res); ASSERT(res = Disks.Ok); ASSERT(LEN(d.table) = 2);
+		ASSERT(d.table[0].type = 256); ASSERT(d.table[0].size = 1000); ASSERT(Disks.Valid IN d.table[0].flags);
+		ASSERT(d.table[1].type = 83H); ASSERT(d.table[1].start = 258); ASSERT(d.table[1].size = 564);
+		ASSERT(d.table[1].flags = {Disks.Valid, Disks.Primary, Disks.Boot});
+		ASSERT(d.table[1].ptblock = 0); ASSERT(d.table[1].ptoffset = 446)
+	END Test.
+
+positive: opening twice loads partitions once and the last close clears them
+
+	MODULE Test;
+	IMPORT Disks, F := DisksFixture;
+	VAR d: F.Device; res: INTEGER;
+	BEGIN
+		NEW(d); d.Open(res); ASSERT(res = Disks.Ok); ASSERT(d.openCount = 1); ASSERT(d.reads = 1);
+		d.Open(res); ASSERT(res = Disks.Ok); ASSERT(d.openCount = 2); ASSERT(d.reads = 1);
+		Disks.UpdatePartitionTable(d, res); ASSERT(res = Disks.DeviceInUse);
+		d.Close(res); ASSERT(res = Disks.Ok); ASSERT(d.openCount = 1); ASSERT(d.table # NIL);
+		d.Close(res); ASSERT(res = Disks.Ok); ASSERT(d.openCount = 0); ASSERT(d.table = NIL)
+	END Test.
+
+positive: missing media and transfer errors clear the partition table
+
+	MODULE Test;
+	IMPORT Disks, F := DisksFixture;
+	VAR d: F.Device; res: INTEGER;
+	BEGIN
+		NEW(d); Disks.UpdatePartitionTable(d, res); ASSERT(d.table # NIL);
+		d.blocks := 0; Disks.UpdatePartitionTable(d, res); ASSERT(res = Disks.MediaMissing); ASSERT(d.table = NIL);
+		d.blocks := 1000; d.failRead := TRUE; d.Open(res);
+		ASSERT(res = Disks.Unsupported); ASSERT(d.openCount = 0); ASSERT(d.table = NIL)
+	END Test.
+
+negative: an unopened disk cannot be closed
+
+	MODULE Test;
+	IMPORT Disks;
+	VAR d: Disks.Device; res: INTEGER;
+	BEGIN NEW(d); Disks.InitDevice(d); d.Close(res)
+	END Test.

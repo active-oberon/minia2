@@ -1,0 +1,450 @@
+# Standard library test coverage worklist
+
+Scope: every module in `configs/headless-core.txt`, including platform-specific behavior.
+An import identifies candidate test evidence, not complete behavioral or line coverage.
+Every module remains open until its public API, boundaries, failure paths and applicable target checks are reviewed.
+Transitive candidates come from the union of source imports, including platform variants; they identify possible execution paths, not proof that a particular API ran. Shell/integration checks still need to be mapped.
+
+## Current batch
+
+- `PrevalenceSystem.Test`: isolated configuration/files, descriptor copies/factories, empty systems, name conflicts, abstract operations, unregistered modification, empty/malformed snapshots and repeated module unload. The original ten cases passed nine; an absent descriptor trapped with RETURN missing. Parallel unload repetition also failed 8/17 with a nil-timer trap in the module terminator. Rebuilt Linux64 and AArch64 focused batches pass 35/35; parallel unload repetition passes 17/17 (2048 unload cycles). Registered graphs, transaction logging and recovery remain open.
+
+- `HTTPSession.Test`: repeated immediate shutdown, restart with expiration callbacks, variable replacement and lease caps. The original valid three-case run passed two and timed out on restart; the full Linux64 run separately caught a nil-timer shutdown trap. Rebuilt Linux64 and AArch64 full runs pass all three cases.
+
+- `A2Sequencers.Test`: property notification rules, ten-handler boundaries, copied strings, typed queued messages, synchronous request results, delayed work and cancellation. The original initial ten cases passed four and exposed five handler-loop overruns and an undersized string-message allocation; the complete twelve-case suite passes Linux64 and the AArch64 full run. Property serialization is intentionally unimplemented in the source; concurrent property notifications remain open.
+
+- `DynamicWebpagePlugin.Test`: isolated configuration, GET/POST/HEAD, default pages, duplicate/missing/wildcard hosts, uninstall, malformed XML, empty paths, inherited namespaces and stateless element factories. The original six-case run passed four and exposed whitespace parsing and an empty-URI trap; rebuilt Linux64 and AArch64 validation passed with the startup/display batch (27/27). Stateful elements and event dispatch remain open.
+- `DivXTypes.Test`: binary prefix comparison, bounded memory fill, postprocessing levels, independent scan tables and frame/prediction state. The original run passed 5/9 and exposed four byte-utility failures, including an oversized fill writing beyond the array; rebuilt Linux64 and AArch64 validation passed with the startup/plugin batch (27/27).
+
+- `Drand48.Test`: shared sequence, independent instances, seed and parameter boundaries; Linux64 6/6 passed.
+- `Mail.Test`: metadata, recipient growth/order, headers, dot escaping and invalid indices; Linux64 6/6 passed.
+- `HostClipboard.Test`: absent/installed delegates and locking requirements; Linux64 4/4 passed.
+- `SSHPackets.Test`: wire bytes, strings/arrays, big numbers, cursor bounds, received framing and empty-sentinel diagnostics; rebuilt Linux64 17/17 passed. Nine original checks accepted reads/skips outside the logical payload or negative lengths. SSH transport integration remains open.
+- `CryptoBigNumbers.Test`: signed arithmetic, floor division, copy, shifts, binary encoding, modular math and stream serialization; rebuilt Linux64 12/12 passed, including rejected truncated/negative lengths and streamed growth for a 2048-bit value.
+- `CryptoRSA.Test`: fixed arithmetic, copied inputs, public/private serialization, certificates, raw digest verification and misuse guards; rebuilt Linux64 17/17 passed. The original checks exposed a certificate-chain timeout, leading-zero traps, ignored digest-tail bytes and a borrowed exponent. More malformed-key and SSH integration cases remain open.
+- `CryptoDiffieHellman.Test`: fixed exchange, input copies and initialization guards; rebuilt Linux64 4/4 passed, including fixed-exponent exchanges in all nine named groups. Independent validation of group constants and peer-input rejection remains open.
+- `CompilerInterface.Test` and `DynamicWebpage.Test`: registries, callbacks, filename lookup, empty parameters, descriptors and abstract-method guards; rebuilt Linux64 8/8 passed. Missing compiler delegates now set the error flag; lookup uses the basename and finds the dotted extension even after an earlier unrelated occurrence.
+- `DiskCaches.Test`, `Caches.Test` and `Disks.Test`: cache hits/eviction, device metadata, lifecycle and read/write failures including retry; rebuilt Linux64 15/15 passed.
+- `RAMVolumes.Test` and `BootManager.Test`: in-memory volumes, input bounds, exact MBR splitting/padding and missing files; Linux64 8/8 passed.
+- `MathAlias.Test` and `FileTrapWriter.Test`: facade aliases and trap-file naming/collision avoidance; Linux64 4/4 passed.
+- `DES.Test`: known ciphertext, offsets, in-place encryption, logical shifts and invalid buffers; Linux64 4/4 passed.
+- `WebHTTPServer.Test`: host/path registries, responses, binary output, command helpers, statistics and immediate repeated unload; rebuilt Linux64 6/6 passed. Real listener integration remains open.
+- `CryptoPrimes.Test` and `CryptoDSA.Test`: small/generated primes, fixed signatures, scalar boundaries and public-key serialization; rebuilt Linux64 6/6 passed.
+- `ProtocolUtilities.Test`: SMTP wire delimiters and early printer/bandwidth argument rejection; Linux64 3/3 passed. Remote protocol exchanges remain open.
+- `Random.Test` and `CRC.Test`: seed/state wraparound, generator facade/distributions, streaming checksums, offsets/reset/custom states and the legacy integer fingerprint; Linux64 8/8 passed. `CRC32.Add` is explicitly nonstandard and its kernel fingerprint is preserved; it is not equated with four standard byte updates.
+- `CryptoUtils.Test`: wire integers/strings, zero/sign-padded big numbers, endian blocks, XOR, hexadecimal conversion and slice bounds; rebuilt Linux64 9/9 passed.
+- `StringPool.Test`: canonical empty string, interning, lexical comparisons, growth and short destinations; Linux64 4/4 passed. Initial AArch64 run exposed the missing empty hash entry; rebuilt Linux64 and AArch64 batches now pass.
+- `WebSSMPPlugin.Test`: service expansion/removal, empty/plain files, host installation and GET/HEAD behavior; Linux64 4/4 passed.
+- `CryptoCSPRNG.Test`: requested output boundaries and byte-alignment guards; Linux64 3/3 passed. No entropy-quality claim is made.
+- `RelativeFileSystem.Test`: mounted file/directory forwarding and failed mounts; Linux64 2/2 passed. Enumeration and platform-specific path handling remain open.
+- `EventLoggers.Test`: kernel/file sink lifecycle, serialized event fields, append and rejected starts; Linux64 3/3 passed. File messages use the asynchronous dispatcher with bounded waits. Size cap and unload cleanup remain open.
+
+- `OZip3.Test`: empty/binary round trips, inferred filenames, overwrite backups and rejected commands; rebuilt Linux64 and AArch64 4/4 passed. Malformed compressed payloads remain open.
+
+- `PKCS1.Test`: fixed-key round trips for all legacy block types, exact modulus byte lengths, key direction, input/output bounds and malformed padding; Linux64 and rebuilt AArch64 8/8 passed; the companion RSA suite now has 17 cases. Padding expectations follow [RFC 2313 sections 8.1 and 9.4](https://www.rfc-editor.org/rfc/rfc2313.html#section-8.1); no timing-oracle or entropy-quality claim is made.
+- `Autostart.Test`: isolated configuration, command order, failed commands, ignored text/empty/missing values and missing section; rebuilt Linux64 4/4 passed. It executes only its own fixture commands.
+- `DisplayGTF.Test`: default and documented refresh configuration bytes, invalid/overflowing parameters, mode flags and unsigned pixel clocks; rebuilt Linux64 4/4 passed. It generates strings and does not apply a display mode; physical display support is unverified.
+
+## Regression evidence
+
+- After the latest PrevalenceSystem fixes: focused Linux64 and AArch64 35/35; parallel unload stress 17/17 with 2048 successful load/unload cycles. The added batch now contains 37 new suites plus extended Drand48, with 217/217 passing across the recorded runs. A full rerun after the final PrevalenceSystem change has not been performed.
+- Full SDK before PrevalenceSystem: Linux64 8092 cases, 8063 passed, 29 known failures, no new failures; AArch64 8092 cases, 8058 passed, 34 known failures, no new failures. The added batch (36 new suites plus extended Drand48) passes 207/207 on both targets.
+- `HTTPSession` also passes 40/40 focused HTTP checks and 96/96 parallel repetitions, including 2048 start/stop cycles. The preceding Linux64 full run caught the original nil-timer shutdown trap; the original restart fixture timed out.
+- Earlier full regression after PKCS1: AArch64 8022 cases, 7988 passed, 34 known failures, no new failures; Linux64 8022 cases, 7992 passed, 29 known failures, one intermittent SSMP failure. Parallel repetition reproduced failures in different scenarios. Direct trace capture identified a shutdown trap in `WebHTTPServer.Statistics.Kill`; the fix passes 1024/1024 parallel cases on Linux64.
+- Linux64 full SDK after the masking/string-pool fixes: 8011 cases, 7982 passed, 29 known failures, no new failures. OZip3 was added after this run started and passes separately on both targets.
+- AArch64 full SDK after the masking/string-pool fixes: 8011 cases, 7977 passed, 34 known failures, 0 new failures. OZip3 and the asynchronous file-logger check also pass separately.
+- Latest rebuilt Linux64 crypto/string-pool batch: 31/31 passed. The complete added batch (29 new suites plus extended Drand48) passes 129/129 on Linux64 and AArch64.
+- Earlier runs using the minimal bundle against optional-module suites, sandbox-blocked sockets, colliding temporary directories, or a concurrently replaced bundle are invalid regression evidence and were discarded. Full Linux64 validation uses all 750 freshly built modules; the shipping headless bundle contains fewer modules.
+- `tests/ob-check.sh` verifies that failed child cases report their exit code; the native driver checks passed, but the script's subsequent Wine checks hit the sandbox's forbidden system call and the overall run exited 159. This is not a successful Windows runtime check.
+- Module-list regeneration leaves `configs/moduleListA64.txt` unchanged; Linux64 builds all 750 modules and AArch64 builds all 378 listed modules.
+- Modules remain open until their API and integration/target boundaries are reviewed; test-import counts are not coverage percentages. `Math` is closed as a pure facade: every constant/function alias is checked against Math32 on Linux64 and AArch64.
+
+## Fixed regressions
+
+- `PrevalenceSystem` returns NIL for unknown object descriptors and initializes its snapshot timer before activity starts. Unload waits on actual activity termination instead of a busy-loop counter; timeout-or-stop waiting avoids missed wakeups.
+
+- `HTTPSession` initializes lease-manager state before its activity starts, waits on a timeout-or-stop predicate without losing wakeups and clears the stopped manager for restart. Shutdown waits outside the module lock, allowing an expiration callback to finish using session APIs. Stopping from inside the expiration callback remains outside this validation.
+
+- `A2Sequencers` bounds handler lookup and notification by the handler array length; string messages reserve space for the terminator and retain their complete copied payload.
+
+- `DynamicWebpagePlugin` skips whitespace between host names, stops after trailing whitespace and declines empty paths before indexing the URI. Tree transformation uses the snapshot already provided by `XML.GetContents`, retaining parent links and inherited namespace declarations until each child is transformed.
+- `DivXTypes.MyUtils` rejects negative comparison lengths and invalid fill ranges, accepts empty end ranges and clips writes using the remaining array length without overflowing addition. Byte filling uses checked array writes instead of raw address writes. Decoder integration remains open.
+
+- `Ob.RunInEmulator` no longer mistakes an expected nested command refusal for failure of a successfully loaded test module; the startup-order test reproduces the original false failure and passes after the fix. Actual load refusals and nonzero exits still fail.
+
+- `CryptoBigNumbers`: copies retain signs and allocate empty destination storage; oversized shifts produce zero; masking never resurrects discarded digits; binary serialization writes actual digits without modifying input.
+- `CryptoPrimes` and `CryptoDSA`: small prime boundaries work and signature scalars must be strictly inside `(0, q)`.
+- `DiskCaches` and `Caches`: failed I/O does not publish cache bytes or discard dirty buffers, and successful cache hits return a defined result.
+- `DynamicWebpage`, `CryptoUtils` and `StringPool`: empty parameter lists, zero SSH integers and the canonical empty string index are handled safely.
+- `PKCS1`: block width comes from modulus bytes; RSA key direction matches the block type; serialization is left padded; malformed padding and invalid ranges return zero length without writing plaintext. Block type 0 cannot represent empty/zero-prefixed data unambiguously in the existing API.
+- `WebHTTPServer` initializes the statistics timer before its activity starts and waits for that activity during unload; the old shutdown raced with timer creation. Rebuilt Linux64 passes 1024/1024 parallel SSMP cases, whereas the original shutdown trapped in `Statistics.Kill`. `CryptoRSA` quotes certificate authorities and rejects incomplete chains; `CryptoBigNumbers.FileRead` grows storage only after receiving digits and rejects incomplete/negative lengths instead of allocating the declared size upfront. These fixes pass the AArch64 full regression.
+- `CryptoRSA.Verify` compares the complete raw digest, handles leading zeros and rejects invalid lengths, key components and signature values; generated keys copy the supplied exponent. These fixes pass Linux64 checks and the AArch64 full run. This raw RSA API does not parse PKCS1 signature encoding; legacy `SSHKeys` integration remains outside the headless SDK scope.
+- `SSHPackets` validates reads against payload length, not unused capacity, and rejects negative lengths and invalid cursor movement. `CompilerInterface` reports missing delegates as errors and checks dotted extensions in basenames. `Autostart` skips missing command attributes. `DisplayGTF` rejects invalid or unrepresentable parameters and encodes unsigned clocks/mode flags without signed overflow. The AArch64 full run passed these checks except for the high-bit clock case; using `ENTIERH` avoids signed 32-bit saturation, and the focused startup/display rerun passes 8/8. No display mode is applied.
+
+## Next open behaviors
+
+- Complete existing-suite API review before declaring a module covered; use module imports and the actual compiler/runtime path as candidates only.
+- Extend malformed-key and SSH transport integration, private DSA key behavior, and remaining big-number zero/boundary cases.
+- Map network clients/servers to bounded loopback tests; cover filesystem/volume adapters with temporary files or in-memory devices.
+- Separate OS or peripheral requirements from product failures, and keep reboot/flashing outside test execution.
+
+## Module review queue
+
+- [ ] `A2Sequencers`: [A2Sequencers.Test](../tests/A2Sequencers.Test)
+- [ ] `ASN1`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `ActiveTimers`: [Stopwatch.Test](../tests/Stopwatch.Test)
+- [ ] `AlmSmtpReceiver`: map integration/transitive evidence; add behavioral tests
+- [ ] `Archives`: [Archive.Test](../tests/Archive.Test)
+- [ ] `Attributes`: [Attributes.Test](../tests/Attributes.Test)
+- [ ] `Autostart`: [Autostart.Test](../tests/Autostart.Test)
+- [ ] `BIT`: [Runtime.Test](../tests/Runtime.Test)
+- [ ] `BWHCompressor`: [Compress.Test](../tests/Compress.Test)
+- [ ] `Base64`: [Crypto.Test](../tests/Crypto.Test), [StreamUtilities.Test](../tests/StreamUtilities.Test)
+- [ ] `Bin2Hex`: [Bin2Hex.Test](../tests/Bin2Hex.Test)
+- [ ] `BinToCode`: [BinToCode.Test](../tests/BinToCode.Test)
+- [ ] `BitSets`: [GenericLinker.Test](../tests/GenericLinker.Test), [Runtime.Test](../tests/Runtime.Test)
+- [ ] `BitStreams`: [BitStreams.Test](../tests/BitStreams.Test)
+- [ ] `BootConsole`: map integration/transitive evidence; add behavioral tests
+- [ ] `BootManager`: [BootManager.Test](../tests/BootManager.Test)
+- [ ] `Builtins`: transitive candidates [CSV.Test](../tests/CSV.Test), [DAP.Test](../tests/DAP.Test), [DES.Test](../tests/DES.Test); public API review needed
+- [ ] `CPUID`: map integration/transitive evidence; add behavioral tests
+- [ ] `CRC`: [CRC.Test](../tests/CRC.Test), [Runtime.Test](../tests/Runtime.Test)
+- [ ] `CSS2`: [CSS2.Test](../tests/CSS2.Test)
+- [ ] `CSS2Parser`: [CSS2.Test](../tests/CSS2.Test)
+- [ ] `CSS2Scanner`: [CSS2.Test](../tests/CSS2.Test)
+- [ ] `CSV`: [CSV.Test](../tests/CSV.Test)
+- [ ] `Caches`: [Caches.Test](../tests/Caches.Test)
+- [ ] `CalcConvolution`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `CalcD1`: [Calc.Test](../tests/Calc.Test)
+- [ ] `CalcD2`: [Calc.Test](../tests/Calc.Test)
+- [ ] `CalcD3`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `CalcD4`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `CalcDiethelm`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `CalcFn`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `CalcGauss`: [Calc.Test](../tests/Calc.Test)
+- [ ] `CalcGrunwald`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `Channels`: [Channels.Test](../tests/Channels.Test)
+- [ ] `Checksum`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `Clock`: [Clock.Test](../tests/Clock.Test)
+- [ ] `Commands`: [Archive.Test](../tests/Archive.Test), [Bin2Hex.Test](../tests/Bin2Hex.Test), [BinToCode.Test](../tests/BinToCode.Test), [BootManager.Test](../tests/BootManager.Test), [Commands.Test](../tests/Commands.Test), [Compress.Test](../tests/Compress.Test), [Crypto.Test](../tests/Crypto.Test), [DAP.Test](../tests/DAP.Test), [Debugging.Test](../tests/Debugging.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [Errors.Test](../tests/Errors.Test), [EventLoggers.Test](../tests/EventLoggers.Test), [FoxAssembler.Test](../tests/FoxAssembler.Test), [FoxDisassembler.Test](../tests/FoxDisassembler.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [HotReload.Test](../tests/HotReload.Test), [InOut.Test](../tests/InOut.Test), [Info.Test](../tests/Info.Test), [LSP.Test](../tests/LSP.Test), [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test), [ShellCommands.Test](../tests/ShellCommands.Test), [Stopwatch.Test](../tests/Stopwatch.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [System.Test](../tests/System.Test), [TextConverter.Test](../tests/TextConverter.Test), [UnixBinary.Test](../tests/UnixBinary.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test)
+- [ ] `Compiler`: [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `CompilerInterface`: [CompilerInterface.Test](../tests/CompilerInterface.Test)
+- [ ] `ComplexNumbers`: [ComplexNumbers.Test](../tests/ComplexNumbers.Test)
+- [ ] `Configuration`: [TextConverter.Test](../tests/TextConverter.Test), [Texts.Test](../tests/Texts.Test)
+- [ ] `ContextualDependency`: map integration/transitive evidence; add behavioral tests
+- [ ] `CryptoAES`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoARC4`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoBigNumbers`: [CryptoBigNumbers.Test](../tests/CryptoBigNumbers.Test), [CryptoDSA.Test](../tests/CryptoDSA.Test), [CryptoDiffieHellman.Test](../tests/CryptoDiffieHellman.Test), [CryptoPrimes.Test](../tests/CryptoPrimes.Test), [CryptoRSA.Test](../tests/CryptoRSA.Test), [CryptoUtils.Test](../tests/CryptoUtils.Test)
+- [ ] `CryptoBlowfish`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoCAST`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoCSPRNG`: [CryptoCSPRNG.Test](../tests/CryptoCSPRNG.Test)
+- [ ] `CryptoChaCha20`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoCiphers`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoCurve25519`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoDES`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoDES3`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoDSA`: [CryptoDSA.Test](../tests/CryptoDSA.Test)
+- [ ] `CryptoDiffieHellman`: [CryptoDiffieHellman.Test](../tests/CryptoDiffieHellman.Test)
+- [ ] `CryptoEd25519`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoFortuna`: [CryptoFortuna.Execution.Test](../tests/CryptoFortuna.Execution.Test)
+- [ ] `CryptoFortunaRng`: transitive candidates [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test); public API review needed
+- [ ] `CryptoHKDF`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoHMAC`: [Crypto.Test](../tests/Crypto.Test), [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoHashes`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoIDEA`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoKeccakF1600`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoKeccakSponge`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoMD5`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoPoly1305`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoPrimes`: [CryptoPrimes.Test](../tests/CryptoPrimes.Test)
+- [ ] `CryptoRSA`: [CryptoRSA.Test](../tests/CryptoRSA.Test)
+- [ ] `CryptoSHA1`: [CryptoHashes.Execution.Test](../tests/CryptoHashes.Execution.Test)
+- [ ] `CryptoSHA256`: [CryptoHashes.Execution.Test](../tests/CryptoHashes.Execution.Test)
+- [ ] `CryptoSHA3`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoSHA512`: [CryptoModern.Test](../tests/CryptoModern.Test)
+- [ ] `CryptoStreams`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoTwofish`: [Crypto.Test](../tests/Crypto.Test)
+- [ ] `CryptoUtils`: [Crypto.Test](../tests/Crypto.Test), [CryptoFortuna.Execution.Test](../tests/CryptoFortuna.Execution.Test), [CryptoHashes.Execution.Test](../tests/CryptoHashes.Execution.Test), [CryptoModern.Test](../tests/CryptoModern.Test), [CryptoUtils.Test](../tests/CryptoUtils.Test), [DES.Test](../tests/DES.Test)
+- [ ] `DAP`: [DAP.Test](../tests/DAP.Test)
+- [ ] `DES`: [DES.Test](../tests/DES.Test)
+- [ ] `DNS`: [Sockets.Test](../tests/Sockets.Test)
+- [ ] `Data`: [Data.Test](../tests/Data.Test), [DataIO.Test](../tests/DataIO.Test)
+- [ ] `DataErrors`: [DataErrors.Test](../tests/DataErrors.Test)
+- [ ] `DataIO`: [DataIO.Test](../tests/DataIO.Test)
+- [ ] `DataLists`: [Data.Test](../tests/Data.Test)
+- [ ] `DataQueues`: [Data.Test](../tests/Data.Test), [DataIO.Test](../tests/DataIO.Test)
+- [ ] `DataStacks`: [Data.Test](../tests/Data.Test)
+- [ ] `DataTrees`: [Data.Test](../tests/Data.Test)
+- [ ] `Dates`: [Clock.Test](../tests/Clock.Test), [Dates.Test](../tests/Dates.Test), [Runtime.Test](../tests/Runtime.Test), [Stopwatch.Test](../tests/Stopwatch.Test), [System.Test](../tests/System.Test), [TaskScheduler.Test](../tests/TaskScheduler.Test), [Time.Test](../tests/Time.Test)
+- [ ] `DebugMap`: [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test)
+- [ ] `Debugging`: [Debugging.Test](../tests/Debugging.Test), [MathArrays.Execution.Test](../tests/MathArrays.Execution.Test)
+- [ ] `Diagnostics`: [CompilerInterface.Test](../tests/CompilerInterface.Test), [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxDocumentation.Test](../tests/FoxDocumentation.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [GenericLinker.Test](../tests/GenericLinker.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test), [Linker.Test](../tests/Linker.Test)
+- [ ] `DiskCaches`: [DiskCaches.Test](../tests/DiskCaches.Test)
+- [ ] `DiskFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `DiskVolumes`: map integration/transitive evidence; add behavioral tests
+- [ ] `Disks`: [Caches.Test](../tests/Caches.Test), [DiskCaches.Test](../tests/DiskCaches.Test), [Disks.Test](../tests/Disks.Test)
+- [ ] `DisplayGTF`: [DisplayGTF.Test](../tests/DisplayGTF.Test)
+- [ ] `DivXTypes`: [DivXTypes.Test](../tests/DivXTypes.Test)
+- [ ] `Drand48`: [Drand48.Test](../tests/Drand48.Test)
+- [ ] `DynamicStrings`: [Base.Test](../tests/Base.Test)
+- [ ] `DynamicWebpage`: [DynamicWebpage.Test](../tests/DynamicWebpage.Test)
+- [ ] `DynamicWebpagePlugin`: [DynamicWebpagePlugin.Test](../tests/DynamicWebpagePlugin.Test)
+- [ ] `Errors`: [Errors.Test](../tests/Errors.Test)
+- [ ] `Events`: [EventLoggers.Test](../tests/EventLoggers.Test), [Events.Test](../tests/Events.Test), [EventsMemoryLog.Test](../tests/EventsMemoryLog.Test)
+- [ ] `EventsFileLog`: [EventLoggers.Test](../tests/EventLoggers.Test)
+- [ ] `EventsKernelLog`: [EventLoggers.Test](../tests/EventLoggers.Test)
+- [ ] `EventsMemoryLog`: [EventsMemoryLog.Test](../tests/EventsMemoryLog.Test)
+- [ ] `EventsUtils`: [EventsMemoryLog.Test](../tests/EventsMemoryLog.Test)
+- [ ] `FATFiles`: map integration/transitive evidence; add behavioral tests
+- [ ] `FATVolumes`: map integration/transitive evidence; add behavioral tests
+- [ ] `FNHistories`: [FNHistories.Test](../tests/FNHistories.Test)
+- [ ] `FP1616`: [Base.Test](../tests/Base.Test)
+- [ ] `FTPClient`: map integration/transitive evidence; add behavioral tests
+- [ ] `FTPFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `FileTrapWriter`: [FileTrapWriter.Test](../tests/FileTrapWriter.Test)
+- [ ] `Files`: [Archive.Test](../tests/Archive.Test), [Bin2Hex.Test](../tests/Bin2Hex.Test), [BinToCode.Test](../tests/BinToCode.Test), [BootManager.Test](../tests/BootManager.Test), [CSS2.Test](../tests/CSS2.Test), [CSV.Test](../tests/CSV.Test), [Compress.Test](../tests/Compress.Test), [Crypto.Test](../tests/Crypto.Test), [DataErrors.Test](../tests/DataErrors.Test), [Debugging.Test](../tests/Debugging.Test), [Errors.Test](../tests/Errors.Test), [EventLoggers.Test](../tests/EventLoggers.Test), [FileTrapWriter.Test](../tests/FileTrapWriter.Test), [FoxAssembler.Test](../tests/FoxAssembler.Test), [FoxDisassembler.Test](../tests/FoxDisassembler.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [HotReload.Test](../tests/HotReload.Test), [ImageCodecs.Test](../tests/ImageCodecs.Test), [LSP.Test](../tests/LSP.Test), [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [Numbers.Test](../tests/Numbers.Test), [RAMVolumes.Test](../tests/RAMVolumes.Test), [Raster.Test](../tests/Raster.Test), [RelativeFileSystem.Test](../tests/RelativeFileSystem.Test), [Runtime.Test](../tests/Runtime.Test), [Shell.Test](../tests/Shell.Test), [ShellCommands.Test](../tests/ShellCommands.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [TFLog.Test](../tests/TFLog.Test), [TextConverter.Test](../tests/TextConverter.Test), [Texts.Test](../tests/Texts.Test), [UnixBinary.Test](../tests/UnixBinary.Test), [UnixFiles.Test](../tests/UnixFiles.Test), [Utf16Stream.Execution.Test](../tests/Utf16Stream.Execution.Test), [Utf32Stream.Execution.Test](../tests/Utf32Stream.Execution.Test), [Utf8Stream.Execution.Test](../tests/Utf8Stream.Execution.Test), [Versioning.Test](../tests/Versioning.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WinFS.Test](../tests/WinFS.Test), [XMLGeneratorSchema.Test](../tests/XMLGeneratorSchema.Test), [Zip.Test](../tests/Zip.Test)
+- [ ] `Format`: [Format.Test](../tests/Format.Test)
+- [ ] `FoxA64Assembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxA64Backend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxA64InstructionSet`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxAMD64Assembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxAMD64InstructionSet`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxAMDBackend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxARMAssembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxARMBackend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxARMInstructionSet`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxArrayBase`: transitive candidates [Shortreal.Execution.Test](../tests/Shortreal.Execution.Test); public API review needed
+- [ ] `FoxArrayBaseOptimized`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxAssembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxBackend`: [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxBasic`: [FoxBasic.Test](../tests/FoxBasic.Test), [FoxBinaryCode.Test](../tests/FoxBinaryCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test)
+- [ ] `FoxBinaryCode`: [FoxBinaryCode.Test](../tests/FoxBinaryCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test)
+- [ ] `FoxCodeGenerators`: [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test)
+- [ ] `FoxDisassembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxDocumentationBackend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxDocumentationHtml`: [FoxDocumentation.Test](../tests/FoxDocumentation.Test)
+- [ ] `FoxDocumentationParser`: [FoxDocumentation.Test](../tests/FoxDocumentation.Test)
+- [ ] `FoxDocumentationPrinter`: [FoxDocumentation.Test](../tests/FoxDocumentation.Test)
+- [ ] `FoxDocumentationScanner`: [FoxDocumentation.Test](../tests/FoxDocumentation.Test)
+- [ ] `FoxDocumentationTree`: [FoxDocumentation.Test](../tests/FoxDocumentation.Test)
+- [ ] `FoxFingerprinter`: [Fingerprint.Test](../tests/Fingerprint.Test)
+- [ ] `FoxFormats`: [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxFrontend`: transitive candidates [DAP.Test](../tests/DAP.Test), [LSP.Test](../tests/LSP.Test), [DebugMap.Test](../tests/DebugMap.Test); public API review needed
+- [ ] `FoxGenericObjectFile`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxGlobal`: [Fingerprint.Test](../tests/Fingerprint.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxInterfaceComparison`: transitive candidates [IntermediateCode.Test](../tests/IntermediateCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test); public API review needed
+- [ ] `FoxIntermediateAssembler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxIntermediateBackend`: [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxIntermediateCode`: [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxIntermediateLinker`: [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test)
+- [ ] `FoxIntermediateObjectFile`: transitive candidates [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test); public API review needed
+- [ ] `FoxIntermediateParser`: [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxOberonFrontend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxParser`: [Fingerprint.Test](../tests/Fingerprint.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxPrintout`: [FoxPrintout.Test](../tests/FoxPrintout.Test)
+- [ ] `FoxProfiler`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxProgTools`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxScanner`: [Fingerprint.Test](../tests/Fingerprint.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxSections`: [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxSemanticChecker`: [Fingerprint.Test](../tests/Fingerprint.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxSyntaxTree`: [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `FoxTestBackend`: map integration/transitive evidence; add behavioral tests
+- [ ] `FoxTextualSymbolFile`: transitive candidates [IntermediateCode.Test](../tests/IntermediateCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test); public API review needed
+- [ ] `FoxTranspilerBackend`: map integration/transitive evidence; add behavioral tests
+- [ ] `Frames`: [Frames.Test](../tests/Frames.Test)
+- [ ] `GPIO`: [GPIO.Test](../tests/GPIO.Test)
+- [ ] `GZip`: [Compress.Test](../tests/Compress.Test)
+- [ ] `GenericCollections`: [Data.Test](../tests/Data.Test)
+- [ ] `GenericLinker`: [GenericLinker.Test](../tests/GenericLinker.Test), [Linker.Test](../tests/Linker.Test)
+- [ ] `GenericMaps`: [Maps.Test](../tests/Maps.Test)
+- [ ] `GenericSort`: [Data.Test](../tests/Data.Test)
+- [ ] `Glue`: transitive candidates [CSV.Test](../tests/CSV.Test), [DAP.Test](../tests/DAP.Test), [DES.Test](../tests/DES.Test); public API review needed
+- [ ] `H2ao`: [H2ao.Test](../tests/H2ao.Test)
+- [ ] `HTMLParser`: [HTML.Test](../tests/HTML.Test)
+- [ ] `HTMLScanner`: [HTML.Test](../tests/HTML.Test)
+- [ ] `HTTPSession`: [HTTPSession.Test](../tests/HTTPSession.Test), [HTTP.Test](../tests/HTTP.Test)
+- [ ] `HTTPSupport`: [HTTP.Test](../tests/HTTP.Test)
+- [ ] `Hashing`: [Maps.Test](../tests/Maps.Test)
+- [ ] `Heaps`: [Heaps.Test](../tests/Heaps.Test)
+- [ ] `HierarchicalProfiler`: map integration/transitive evidence; add behavioral tests
+- [ ] `HierarchicalProfiler0`: map integration/transitive evidence; add behavioral tests
+- [ ] `HostClipboard`: [HostClipboard.Test](../tests/HostClipboard.Test)
+- [ ] `HostLibs`: [H2ao.Test](../tests/H2ao.Test)
+- [ ] `IDCT`: map integration/transitive evidence; add behavioral tests
+- [ ] `IP`: [HTTP.Test](../tests/HTTP.Test), [Network.Test](../tests/Network.Test), [Sockets.Test](../tests/Sockets.Test)
+- [ ] `IPBandwidth`: [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test)
+- [ ] `ISO9660Files`: map integration/transitive evidence; add behavioral tests
+- [ ] `ISO9660Volumes`: map integration/transitive evidence; add behavioral tests
+- [ ] `In`: [InOut.Test](../tests/InOut.Test)
+- [ ] `Inflate`: [Compress.Test](../tests/Compress.Test)
+- [ ] `Info`: [Info.Test](../tests/Info.Test)
+- [ ] `IsoImages`: map integration/transitive evidence; add behavioral tests
+- [ ] `JSON`: [DAP.Test](../tests/DAP.Test), [H2ao.Test](../tests/H2ao.Test), [JSON.Test](../tests/JSON.Test), [LSP.Test](../tests/LSP.Test)
+- [ ] `Joysticks`: map integration/transitive evidence; add behavioral tests
+- [ ] `Kernel`: [ActiveCells.Execution.Test](../tests/ActiveCells.Execution.Test), [Locks.Test](../tests/Locks.Test), [TrapWriters.Test](../tests/TrapWriters.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
+- [ ] `KernelLog`: [CryptoDiffieHellman.Test](../tests/CryptoDiffieHellman.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
+- [ ] `LPR`: [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test)
+- [ ] `LSP`: [LSP.Test](../tests/LSP.Test)
+- [ ] `Linker`: [Linker.Test](../tests/Linker.Test)
+- [ ] `Loader`: [Loader.Test](../tests/Loader.Test)
+- [ ] `LocalSockets`: [LocalSockets.Test](../tests/LocalSockets.Test)
+- [ ] `Locks`: [Locks.Test](../tests/Locks.Test)
+- [ ] `MPEGTables`: map integration/transitive evidence; add behavioral tests
+- [ ] `Machine`: [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [MachineFunctions.Test](../tests/MachineFunctions.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
+- [ ] `Mail`: [Mail.Test](../tests/Mail.Test)
+- [ ] `MailStorage`: map integration/transitive evidence; add behavioral tests
+- [x] `Math`: [MathAlias.Test](../tests/MathAlias.Test)
+- [ ] `Math32`: [Mat32.Execution.Test](../tests/Mat32.Execution.Test), [Math.Execution.Test](../tests/Math.Execution.Test), [MathAlias.Test](../tests/MathAlias.Test), [MathFunctions.Test](../tests/MathFunctions.Test)
+- [ ] `Math64`: [Mat64.Execution.Test](../tests/Mat64.Execution.Test), [Math.Execution.Test](../tests/Math.Execution.Test), [MathFunctions.Test](../tests/MathFunctions.Test), [MathL.Test](../tests/MathL.Test)
+- [ ] `MathCbrt`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathCplx`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathCplxSeries`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathErf`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathGamma`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathInt`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathL`: [MathL.Test](../tests/MathL.Test)
+- [ ] `MathMitLef`: [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `MathRat`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MathRe`: [Calc.Test](../tests/Calc.Test), [CalcAdvanced.Test](../tests/CalcAdvanced.Test)
+- [ ] `MathReSeries`: [Numerics.Test](../tests/Numerics.Test)
+- [ ] `MemoryReader`: [MemoryReader.Test](../tests/MemoryReader.Test)
+- [ ] `Modules`: [CSV.Test](../tests/CSV.Test), [Commands.Test](../tests/Commands.Test), [DebugMap.Test](../tests/DebugMap.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [HotReload.Test](../tests/HotReload.Test), [Info.Test](../tests/Info.Test), [Loader.Test](../tests/Loader.Test), [Modules.Test](../tests/Modules.Test), [Reflection.Test](../tests/Reflection.Test)
+- [ ] `MoveToFront`: [Compress.Test](../tests/Compress.Test), [MoveToFront.Test](../tests/MoveToFront.Test)
+- [ ] `NbrCplx`: [DataErrors.Test](../tests/DataErrors.Test), [Numerics.Test](../tests/Numerics.Test)
+- [ ] `NbrInt`: [Calc.Test](../tests/Calc.Test), [DataIO.Test](../tests/DataIO.Test), [Numbers.Test](../tests/Numbers.Test), [Numerics.Test](../tests/Numerics.Test)
+- [ ] `NbrInt16`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrInt32`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrInt64`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrInt8`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrRat`: [DataErrors.Test](../tests/DataErrors.Test), [Numbers.Test](../tests/Numbers.Test), [Numerics.Test](../tests/Numerics.Test)
+- [ ] `NbrRe`: [Calc.Test](../tests/Calc.Test), [CalcAdvanced.Test](../tests/CalcAdvanced.Test), [Numerics.Test](../tests/Numerics.Test)
+- [ ] `NbrRe32`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrRe64`: [Numbers.Test](../tests/Numbers.Test)
+- [ ] `NbrStrings`: [DataIO.Test](../tests/DataIO.Test), [Numbers.Test](../tests/Numbers.Test)
+- [ ] `Network`: [Network.Test](../tests/Network.Test)
+- [ ] `NewHTTPClient`: [HTTP.Test](../tests/HTTP.Test)
+- [ ] `NextPrime`: [NextPrime.Test](../tests/NextPrime.Test)
+- [ ] `OGGUtilities`: map integration/transitive evidence; add behavioral tests
+- [ ] `OGGVorbisPlayer`: map integration/transitive evidence; add behavioral tests
+- [ ] `OZip3`: [OZip3.Test](../tests/OZip3.Test)
+- [ ] `OberonFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `ObjectFile`: [FoxBinaryCode.Test](../tests/FoxBinaryCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [GenericLinker.Test](../tests/GenericLinker.Test), [ObjectFile.Test](../tests/ObjectFile.Test)
+- [ ] `Objects`: [DAP.Test](../tests/DAP.Test), [Events.Test](../tests/Events.Test), [EventsMemoryLog.Test](../tests/EventsMemoryLog.Test), [Locks.Test](../tests/Locks.Test), [Pipes.Test](../tests/Pipes.Test), [ProcessInfo.Test](../tests/ProcessInfo.Test), [ReleaseThreadPool.Test](../tests/ReleaseThreadPool.Test), [Stopwatch.Test](../tests/Stopwatch.Test)
+- [ ] `OldDiskFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `OldDiskVolumes`: map integration/transitive evidence; add behavioral tests
+- [ ] `OpenAL`: map integration/transitive evidence; add behavioral tests
+- [ ] `OpenALSound`: map integration/transitive evidence; add behavioral tests
+- [ ] `Options`: [Options.Execution.Test](../tests/Options.Execution.Test)
+- [ ] `Out`: [InOut.Test](../tests/InOut.Test)
+- [ ] `PKCS1`: [PKCS1.Test](../tests/PKCS1.Test); TLS integration, empty-message reporting and side-channel/entropy review remain open
+- [ ] `POP3Client`: map integration/transitive evidence; add behavioral tests
+- [ ] `PersistentObjects`: map integration/transitive evidence; add behavioral tests
+- [ ] `Pipes`: [Pipes.Test](../tests/Pipes.Test)
+- [ ] `Plugins`: [Plugins.Test](../tests/Plugins.Test)
+- [ ] `PrecisionTimer`: [Stopwatch.Test](../tests/Stopwatch.Test)
+- [ ] `PrevalenceSystem`: [PrevalenceSystem.Test](../tests/PrevalenceSystem.Test)
+- [ ] `ProcessInfo`: [ProcessInfo.Test](../tests/ProcessInfo.Test)
+- [ ] `ProcessInfo0`: transitive candidates [System.Test](../tests/System.Test), [ProcessInfo.Test](../tests/ProcessInfo.Test); public API review needed
+- [ ] `Processes`: [Processes.Test](../tests/Processes.Test)
+- [ ] `RAMVolumes`: [RAMVolumes.Test](../tests/RAMVolumes.Test)
+- [ ] `RAWPrinter`: [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test)
+- [ ] `RFC865Client`: map integration/transitive evidence; add behavioral tests
+- [ ] `Random`: [MathArrays.Execution.Test](../tests/MathArrays.Execution.Test), [Numbers.Test](../tests/Numbers.Test), [Random.Test](../tests/Random.Test), [Shortreal.Execution.Test](../tests/Shortreal.Execution.Test)
+- [ ] `RealConversions`: [RealConversions.Execution.Test](../tests/RealConversions.Execution.Test), [RealConversionsLong.Test](../tests/RealConversionsLong.Test)
+- [ ] `Reals`: [Reals.Test](../tests/Reals.Test)
+- [ ] `Reboot`: map integration/transitive evidence; add behavioral tests
+- [ ] `Reflection`: [DAP.Test](../tests/DAP.Test), [Reflection.Test](../tests/Reflection.Test)
+- [ ] `Regex`: [Regex.Test](../tests/Regex.Test)
+- [ ] `RegisterRFW`: map integration/transitive evidence; add behavioral tests
+- [ ] `RelativeFileSystem`: [RelativeFileSystem.Test](../tests/RelativeFileSystem.Test)
+- [ ] `ReleaseThreadPool`: [ReleaseThreadPool.Test](../tests/ReleaseThreadPool.Test)
+- [ ] `RfsClientProxy`: map integration/transitive evidence; add behavioral tests
+- [ ] `RfsConnection`: map integration/transitive evidence; add behavioral tests
+- [ ] `RfsFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `SMTPClient`: [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test)
+- [ ] `SSHPackets`: [SSHPackets.Test](../tests/SSHPackets.Test)
+- [ ] `SambaClient`: map integration/transitive evidence; add behavioral tests
+- [ ] `SambaServer`: map integration/transitive evidence; add behavioral tests
+- [ ] `Serials`: map integration/transitive evidence; add behavioral tests
+- [ ] `SerialsVirtual`: map integration/transitive evidence; add behavioral tests
+- [ ] `Shell`: [Shell.Test](../tests/Shell.Test)
+- [ ] `ShellCommands`: [ShellCommands.Test](../tests/ShellCommands.Test)
+- [ ] `ShellSerial`: map integration/transitive evidence; add behavioral tests
+- [ ] `Shortreal`: [Shortreal.Execution.Test](../tests/Shortreal.Execution.Test)
+- [ ] `Sockets`: transitive candidates [HTTP.Test](../tests/HTTP.Test), [Sockets.Test](../tests/Sockets.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test); public API review needed
+- [ ] `SoundDevices`: transitive candidates [Texts.Test](../tests/Texts.Test), [WMGraphics.Test](../tests/WMGraphics.Test), [ImageCodecs.Test](../tests/ImageCodecs.Test); public API review needed
+- [ ] `StdIO`: [Runtime.Test](../tests/Runtime.Test)
+- [ ] `StdIOShell`: map integration/transitive evidence; add behavioral tests
+- [ ] `Stopwatch`: [Stopwatch.Test](../tests/Stopwatch.Test)
+- [ ] `StreamUtilities`: [StreamUtilities.Test](../tests/StreamUtilities.Test)
+- [ ] `Streams`: [Archive.Test](../tests/Archive.Test), [Bin2Hex.Test](../tests/Bin2Hex.Test), [BinToCode.Test](../tests/BinToCode.Test), [BitStreams.Test](../tests/BitStreams.Test), [BootManager.Test](../tests/BootManager.Test), [CSV.Test](../tests/CSV.Test), [Commands.Test](../tests/Commands.Test), [CompilerInterface.Test](../tests/CompilerInterface.Test), [Compress.Test](../tests/Compress.Test), [Crypto.Test](../tests/Crypto.Test), [CryptoBigNumbers.Test](../tests/CryptoBigNumbers.Test), [CryptoDSA.Test](../tests/CryptoDSA.Test), [CryptoRSA.Test](../tests/CryptoRSA.Test), [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test), [Debugging.Test](../tests/Debugging.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [Errors.Test](../tests/Errors.Test), [EventLoggers.Test](../tests/EventLoggers.Test), [FileTrapWriter.Test](../tests/FileTrapWriter.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [Format.Test](../tests/Format.Test), [FoxAssembler.Test](../tests/FoxAssembler.Test), [FoxBinaryCode.Test](../tests/FoxBinaryCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxDisassembler.Test](../tests/FoxDisassembler.Test), [FoxDocumentation.Test](../tests/FoxDocumentation.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [Frames.Test](../tests/Frames.Test), [H2ao.Test](../tests/H2ao.Test), [HTML.Test](../tests/HTML.Test), [HTTP.Test](../tests/HTTP.Test), [HotReload.Test](../tests/HotReload.Test), [ImageCodecs.Test](../tests/ImageCodecs.Test), [InOut.Test](../tests/InOut.Test), [Info.Test](../tests/Info.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test), [LSP.Test](../tests/LSP.Test), [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [MemoryReader.Test](../tests/MemoryReader.Test), [ObjectFile.Test](../tests/ObjectFile.Test), [Options.Execution.Test](../tests/Options.Execution.Test), [Pipes.Test](../tests/Pipes.Test), [ProcessInfo.Test](../tests/ProcessInfo.Test), [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test), [RAMVolumes.Test](../tests/RAMVolumes.Test), [Raster.Test](../tests/Raster.Test), [Reflection.Test](../tests/Reflection.Test), [RelativeFileSystem.Test](../tests/RelativeFileSystem.Test), [Runtime.Test](../tests/Runtime.Test), [Shell.Test](../tests/Shell.Test), [ShellCommands.Test](../tests/ShellCommands.Test), [Stopwatch.Test](../tests/Stopwatch.Test), [StreamUtilities.Test](../tests/StreamUtilities.Test), [Streams.Test](../tests/Streams.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [System.Test](../tests/System.Test), [Terminal.Test](../tests/Terminal.Test), [TextConverter.Test](../tests/TextConverter.Test), [TrapWriters.Test](../tests/TrapWriters.Test), [Traps.Test](../tests/Traps.Test), [UnixBinary.Test](../tests/UnixBinary.Test), [Utf16Stream.Execution.Test](../tests/Utf16Stream.Execution.Test), [Utf32Stream.Execution.Test](../tests/Utf32Stream.Execution.Test), [Utf8Stream.Execution.Test](../tests/Utf8Stream.Execution.Test), [Versioning.Test](../tests/Versioning.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WinTraps.Test](../tests/WinTraps.Test), [XML.Test](../tests/XML.Test)
+- [ ] `StringPool`: [Debugging.Test](../tests/Debugging.Test), [ObjectFile.Test](../tests/ObjectFile.Test), [Runtime.Test](../tests/Runtime.Test), [StringPool.Test](../tests/StringPool.Test)
+- [ ] `Strings`: [Archive.Test](../tests/Archive.Test), [Base.Test](../tests/Base.Test), [Bin2Hex.Test](../tests/Bin2Hex.Test), [BinToCode.Test](../tests/BinToCode.Test), [CSV.Test](../tests/CSV.Test), [Channels.Test](../tests/Channels.Test), [Commands.Test](../tests/Commands.Test), [Compress.Test](../tests/Compress.Test), [Crypto.Test](../tests/Crypto.Test), [CryptoHashes.Execution.Test](../tests/CryptoHashes.Execution.Test), [DAP.Test](../tests/DAP.Test), [Data.Test](../tests/Data.Test), [DataErrors.Test](../tests/DataErrors.Test), [Debugging.Test](../tests/Debugging.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [DynamicWebpage.Test](../tests/DynamicWebpage.Test), [Errors.Test](../tests/Errors.Test), [EventLoggers.Test](../tests/EventLoggers.Test), [FileTrapWriter.Test](../tests/FileTrapWriter.Test), [FoxAssembler.Test](../tests/FoxAssembler.Test), [FoxBinaryCode.Test](../tests/FoxBinaryCode.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxDisassembler.Test](../tests/FoxDisassembler.Test), [FoxDocumentation.Test](../tests/FoxDocumentation.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [Frames.Test](../tests/Frames.Test), [GenericLinker.Test](../tests/GenericLinker.Test), [H2ao.Test](../tests/H2ao.Test), [HTML.Test](../tests/HTML.Test), [HTTP.Test](../tests/HTTP.Test), [HotReload.Test](../tests/HotReload.Test), [InOut.Test](../tests/InOut.Test), [Info.Test](../tests/Info.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test), [JSON.Test](../tests/JSON.Test), [LSP.Test](../tests/LSP.Test), [Loader.Test](../tests/Loader.Test), [LocalSockets.Test](../tests/LocalSockets.Test), [Mail.Test](../tests/Mail.Test), [Maps.Test](../tests/Maps.Test), [Network.Test](../tests/Network.Test), [Plugins.Test](../tests/Plugins.Test), [ProcessInfo.Test](../tests/ProcessInfo.Test), [Processes.Test](../tests/Processes.Test), [RAMVolumes.Test](../tests/RAMVolumes.Test), [RealConversions.Execution.Test](../tests/RealConversions.Execution.Test), [Reflection.Test](../tests/Reflection.Test), [Regex.Test](../tests/Regex.Test), [RelativeFileSystem.Test](../tests/RelativeFileSystem.Test), [SVGColors.Test](../tests/SVGColors.Test), [Shell.Test](../tests/Shell.Test), [ShellCommands.Test](../tests/ShellCommands.Test), [Stopwatch.Test](../tests/Stopwatch.Test), [Streams.Test](../tests/Streams.Test), [StringConversions.Test](../tests/StringConversions.Test), [Strings.Test](../tests/Strings.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [System.Test](../tests/System.Test), [TFLog.Test](../tests/TFLog.Test), [TFStringPool.Test](../tests/TFStringPool.Test), [TaskScheduler.Test](../tests/TaskScheduler.Test), [Terminal.Test](../tests/Terminal.Test), [TextConverter.Test](../tests/TextConverter.Test), [Texts.Test](../tests/Texts.Test), [TrapWriters.Test](../tests/TrapWriters.Test), [Traps.Test](../tests/Traps.Test), [UnixFiles.Test](../tests/UnixFiles.Test), [Utf8Strings.Execution.Test](../tests/Utf8Strings.Execution.Test), [Versioning.Test](../tests/Versioning.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WinFS.Test](../tests/WinFS.Test), [WinTraps.Test](../tests/WinTraps.Test), [XML.Test](../tests/XML.Test)
+- [ ] `System`: [System.Test](../tests/System.Test)
+- [ ] `SystemVersion`: [SystemVersion.Test](../tests/SystemVersion.Test)
+- [ ] `TCP`: [HTTP.Test](../tests/HTTP.Test), [Sockets.Test](../tests/Sockets.Test)
+- [ ] `TCPServices`: transitive candidates [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test); public API review needed
+- [ ] `TCPTools`: map integration/transitive evidence; add behavioral tests
+- [ ] `TFClasses`: [Base.Test](../tests/Base.Test)
+- [ ] `TFLog`: [TFLog.Test](../tests/TFLog.Test)
+- [ ] `TFStringPool`: [TFStringPool.Test](../tests/TFStringPool.Test)
+- [ ] `TFTP`: map integration/transitive evidence; add behavioral tests
+- [ ] `TFTPFS`: map integration/transitive evidence; add behavioral tests
+- [ ] `TFTPServer`: map integration/transitive evidence; add behavioral tests
+- [ ] `TLS`: transitive candidates [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test); public API review needed
+- [ ] `TVDriver`: map integration/transitive evidence; add behavioral tests
+- [ ] `Tar`: [Archive.Test](../tests/Archive.Test)
+- [ ] `TaskScheduler`: [TaskScheduler.Test](../tests/TaskScheduler.Test)
+- [ ] `Telnet`: map integration/transitive evidence; add behavioral tests
+- [ ] `Terminal`: map integration/transitive evidence; add behavioral tests
+- [ ] `TerminalCodes`: [Frames.Test](../tests/Frames.Test), [Terminal.Test](../tests/Terminal.Test)
+- [ ] `TestServer`: map integration/transitive evidence; add behavioral tests
+- [ ] `Texts`: [CompilerInterface.Test](../tests/CompilerInterface.Test), [HostClipboard.Test](../tests/HostClipboard.Test), [Texts.Test](../tests/Texts.Test)
+- [ ] `Time`: [Time.Test](../tests/Time.Test)
+- [ ] `Trace`: transitive candidates [CSV.Test](../tests/CSV.Test), [DAP.Test](../tests/DAP.Test), [DES.Test](../tests/DES.Test); public API review needed
+- [ ] `TrapWriters`: [TrapWriters.Test](../tests/TrapWriters.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
+- [ ] `Traps`: [DAP.Test](../tests/DAP.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
+- [ ] `UDP`: [Sockets.Test](../tests/Sockets.Test)
+- [ ] `UDPChatBase`: map integration/transitive evidence; add behavioral tests
+- [ ] `UDPChatServer`: map integration/transitive evidence; add behavioral tests
+- [ ] `UTF8Strings`: [Data.Test](../tests/Data.Test), [Frames.Test](../tests/Frames.Test), [Terminal.Test](../tests/Terminal.Test), [Unicode.Test](../tests/Unicode.Test), [Utf8Strings.Execution.Test](../tests/Utf8Strings.Execution.Test)
+- [ ] `Unicode`: [Unicode.Test](../tests/Unicode.Test)
+- [ ] `Unix`: [Clock.Test](../tests/Clock.Test), [LocalSockets.Test](../tests/LocalSockets.Test), [UnixFiles.Test](../tests/UnixFiles.Test)
+- [ ] `UnixBinary`: [UnixBinary.Test](../tests/UnixBinary.Test)
+- [ ] `UnixFiles`: [UnixFiles.Test](../tests/UnixFiles.Test)
+- [ ] `Unzip`: [Archive.Test](../tests/Archive.Test)
+- [ ] `UpTime`: [Stopwatch.Test](../tests/Stopwatch.Test)
+- [ ] `V24`: map integration/transitive evidence; add behavioral tests
+- [ ] `V24Tracer`: map integration/transitive evidence; add behavioral tests
+- [ ] `Versioning`: [Versioning.Test](../tests/Versioning.Test)
+- [ ] `VirtualDisks`: map integration/transitive evidence; add behavioral tests
+- [ ] `WMEvents`: transitive candidates [Texts.Test](../tests/Texts.Test), [WMGraphics.Test](../tests/WMGraphics.Test), [ImageCodecs.Test](../tests/ImageCodecs.Test); public API review needed
+- [ ] `WebCGI`: map integration/transitive evidence; add behavioral tests
+- [ ] `WebComplex`: map integration/transitive evidence; add behavioral tests
+- [ ] `WebFTPServer`: map integration/transitive evidence; add behavioral tests
+- [ ] `WebHTTP`: [HTTP.Test](../tests/HTTP.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test)
+- [ ] `WebHTTPClient`: map integration/transitive evidence; add behavioral tests
+- [ ] `WebHTTPServer`: [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test)
+- [ ] `WebHTTPServerStatistics`: [WebHTTPServer.Test](../tests/WebHTTPServer.Test)
+- [ ] `WebHTTPServerTools`: [WebHTTPServer.Test](../tests/WebHTTPServer.Test)
+- [ ] `WebHTTPTools`: map integration/transitive evidence; add behavioral tests
+- [ ] `WebSSMPPlugin`: [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test)
+- [ ] `WebSockets`: [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test)
+- [ ] `WebStd`: map integration/transitive evidence; add behavioral tests
+- [ ] `X509`: transitive candidates [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test); public API review needed
+- [ ] `XML`: [DynamicWebpage.Test](../tests/DynamicWebpage.Test), [HTML.Test](../tests/HTML.Test), [XML.Test](../tests/XML.Test), [XMLGeneratorSchema.Test](../tests/XMLGeneratorSchema.Test)
+- [ ] `XMLGeneratorSchema`: [XMLGeneratorSchema.Test](../tests/XMLGeneratorSchema.Test)
+- [ ] `XMLObjects`: [CSS2.Test](../tests/CSS2.Test), [HTML.Test](../tests/HTML.Test), [XML.Test](../tests/XML.Test)
+- [ ] `XMLParser`: [XML.Test](../tests/XML.Test)
+- [ ] `XMLScanner`: [XML.Test](../tests/XML.Test)
+- [ ] `XModem`: map integration/transitive evidence; add behavioral tests
+- [ ] `XYModem`: map integration/transitive evidence; add behavioral tests
+- [ ] `Zip`: [Archive.Test](../tests/Archive.Test), [Zip.Test](../tests/Zip.Test)
+- [ ] `ZipFS`: [Archive.Test](../tests/Archive.Test)
+- [ ] `ZipTool`: map integration/transitive evidence; add behavioral tests
+- [ ] `Zlib`: [Compress.Test](../tests/Compress.Test)
+- [ ] `ZlibBuffers`: [Compress.Test](../tests/Compress.Test)
+- [ ] `ZlibDeflate`: [Compress.Test](../tests/Compress.Test)
+- [ ] `ZlibInflate`: [Compress.Test](../tests/Compress.Test)
+- [ ] `ZlibReaders`: [Compress.Test](../tests/Compress.Test)
+- [ ] `ZlibWriters`: [Compress.Test](../tests/Compress.Test)

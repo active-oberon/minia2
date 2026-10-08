@@ -1,7 +1,7 @@
 MODULE PrevalenceSystem; (** AUTHOR "Luc Blaeser"; PURPOSE "Prevalence System - Persistent Object System"*)
 
 IMPORT XML, XMLObjects, XMLScanner, XMLParser, TFClasses,
-	Strings, Modules, Kernel, Files, Streams, KernelLog, Configuration;
+	Strings, Modules, Objects, Files, Streams, KernelLog, Configuration;
 
 CONST
 	DEBUG = FALSE; (* debug output *)
@@ -27,8 +27,6 @@ CONST
 	XMLAttrSavingCounter ="time";
 	XMLLogRootElemName = "log";
 	XMLLogDelInstElemName = "deleted"; (* only for root elements *)
-
-	TermTimeout = 1000*1000; (* Wait time to terminate *)
 
 	(** abstract base type for all persistent objects.
 	 * Since there is no introspection of object fields possible the user has to implement
@@ -158,12 +156,32 @@ CONST
 		END PersistentObjectWrapper;
 
 		SnapShotManager = OBJECT
-			VAR timer: Kernel.Timer; alive, terminated: BOOLEAN;
+			VAR timer: Objects.Timer; alive, terminated, elapsed: BOOLEAN;
 				i: SIZE; p: ANY; prevSys: PrevalenceSystem;
+
+			PROCEDURE &Init;
+			BEGIN NEW(timer); alive := TRUE
+			END Init;
+
+			PROCEDURE Wakeup;
+			BEGIN {EXCLUSIVE} elapsed := TRUE
+			END Wakeup;
+
+			PROCEDURE Pause;
+			BEGIN {EXCLUSIVE}
+				IF alive THEN
+					elapsed := FALSE; Objects.SetTimeout(timer, Wakeup, SnapShotIntervall);
+					AWAIT(elapsed OR ~alive); Objects.CancelTimeout(timer)
+				END
+			END Pause;
+
+			PROCEDURE Kill;
+			BEGIN {EXCLUSIVE} alive := FALSE; AWAIT(terminated)
+			END Kill;
+
 			BEGIN {ACTIVE}
 				IF (DEBUG) THEN KernelLog.String("Prevalence System: Snapshot Manager started."); KernelLog.Ln END;
-				NEW(timer); alive := TRUE; terminated := FALSE;
-				timer.Sleep(SnapShotIntervall);
+				Pause;
 				WHILE (alive) DO
 					prevSystemList.Lock;
 					FOR i := 0 TO prevSystemList.GetCount()-1 DO
@@ -181,10 +199,11 @@ CONST
 						END
 					END;
 					prevSystemList.Unlock;
-					timer.Sleep(SnapShotIntervall)
+					Pause
 				END;
 				IF (DEBUG) THEN KernelLog.String("Prevalence System: Snapshot Manager terminated."); KernelLog.Ln END;
-				terminated := TRUE;
+			FINALLY
+				BEGIN {EXCLUSIVE} terminated := TRUE END
 		END SnapShotManager;
 
 	TYPE PrevalenceSystem* = OBJECT
@@ -329,7 +348,8 @@ CONST
 			wrapper := GetRegisteredWrapper(obj);
 			IF (wrapper # NIL) THEN
 				RETURN wrapper.descriptor
-			END
+			END;
+			RETURN NIL
 		END GetDescriptorByObject;
 
 		PROCEDURE FindPersistentObjects*(pred: FilterPredicate) : PersistentObjectList;
@@ -1318,14 +1338,9 @@ CONST
 	END RegisterModuleByName;
 
 	PROCEDURE Terminator;
-	VAR counter: SIGNED32;
 	BEGIN
 		IF (snapShotMgr # NIL) THEN
-			snapShotMgr.alive := FALSE;
-			snapShotMgr.timer.Wakeup;
-			counter := 0;
-			WHILE ((~snapShotMgr.terminated) & (counter < TermTimeout)) DO INC(counter) END
-				(* busy wait until snapShotMgr has stopped, avoid permanent system blocking by a timeout *)
+			snapShotMgr.Kill
 		END
 	END Terminator;
 

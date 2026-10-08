@@ -1,0 +1,53 @@
+# Tests for splitting boot manager files in the test process scratch directory.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: splitting preserves the first sector and pads only the tail
+
+	MODULE Test;
+	IMPORT BootManager, Files, Commands, Streams;
+	VAR input, mbr, tail: Files.File; fw: Files.Writer; fr: Files.Reader;
+		args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		i, n, size: SIGNED32; ch: CHAR;
+		PROCEDURE Check(bytes: SIGNED32);
+		BEGIN
+			input := Files.New("boot-split-input"); Files.OpenWriter(fw, input, 0);
+			FOR i := 0 TO bytes-1 DO fw.Char(CHR(i MOD 256)) END; fw.Update; Files.Register(input);
+			Streams.OpenStringReader(args, "boot-split-input"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+			BootManager.Split(c); mbr := Files.Old("BootManagerMBR.Bin"); tail := Files.Old("BootManagerTail.Bin");
+			ASSERT(mbr # NIL); ASSERT(tail # NIL); ASSERT(mbr.Length() = 512);
+			Files.OpenReader(fr, mbr, 0);
+			FOR i := 0 TO 511 DO fr.Char(ch); ASSERT(ch = CHR(i MOD 256)) END;
+			n := bytes-512; size := (n+511) DIV 512*512; ASSERT(tail.Length() = size);
+			Files.OpenReader(fr, tail, 0);
+			FOR i := 0 TO size-1 DO
+				fr.Char(ch); IF i < n THEN ASSERT(ch = CHR((i+512) MOD 256)) ELSE ASSERT(ch = 0X) END
+			END
+		END Check;
+	BEGIN Check(512); Check(513); Check(1024); Check(1300)
+	END Test.
+
+positive: missing input preserves existing output files
+
+	MODULE Test;
+	IMPORT BootManager, Files, Commands, Streams;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		f: Files.File; w: Files.Writer; r: Files.Reader; text: ARRAY 32 OF CHAR;
+	BEGIN
+		f := Files.New("BootManagerMBR.Bin"); Files.OpenWriter(w, f, 0); w.String("keep MBR"); w.Update; Files.Register(f);
+		f := Files.New("BootManagerTail.Bin"); Files.OpenWriter(w, f, 0); w.String("keep tail"); w.Update; Files.Register(f);
+		Streams.OpenStringReader(args, "missing-boot-split-input"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+		BootManager.Split(c);
+		f := Files.Old("BootManagerMBR.Bin"); ASSERT(f.Length() = 8); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "keep");
+		f := Files.Old("BootManagerTail.Bin"); ASSERT(f.Length() = 9); Files.OpenReader(r, f, 0); r.String(text); ASSERT(text = "keep")
+	END Test.
+
+positive: missing input does not create registered output files
+
+	MODULE Test;
+	IMPORT BootManager, Files, Commands, Streams;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; res: INTEGER;
+	BEGIN
+		Files.Delete("BootManagerMBR.Bin", res); Files.Delete("BootManagerTail.Bin", res);
+		Streams.OpenStringReader(args, "missing-boot-split-input"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+		BootManager.Split(c); ASSERT(Files.Old("BootManagerMBR.Bin") = NIL); ASSERT(Files.Old("BootManagerTail.Bin") = NIL)
+	END Test.

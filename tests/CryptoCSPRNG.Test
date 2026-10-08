@@ -1,0 +1,31 @@
+# Tests for output lengths and argument guards; these do not establish cryptographic entropy quality.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: zero and multiblock requests preserve bytes beyond the requested prefix
+
+	MODULE Test;
+	IMPORT CryptoCSPRNG;
+	VAR buf: ARRAY 140 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 139 DO buf[i] := '#' END;
+		CryptoCSPRNG.CSRand(buf, 0); FOR i := 0 TO 139 DO ASSERT(buf[i] = '#') END;
+		CryptoCSPRNG.CSRand(buf, 8); FOR i := 1 TO 139 DO ASSERT(buf[i] = '#') END;
+		CryptoCSPRNG.CSRand(buf, 1040); FOR i := 130 TO 139 DO ASSERT(buf[i] = '#') END;
+		CryptoCSPRNG.CSRand(buf, 1120)
+	END Test.
+
+negative: bit counts must be byte aligned
+
+	MODULE Test;
+	IMPORT CryptoCSPRNG;
+	VAR buf: ARRAY 16 OF CHAR;
+	BEGIN CryptoCSPRNG.CSRand(buf, 7)
+	END Test.
+
+negative: random output cannot exceed the destination buffer
+
+	MODULE Test;
+	IMPORT CryptoCSPRNG;
+	VAR buf: ARRAY 16 OF CHAR;
+	BEGIN CryptoCSPRNG.CSRand(buf, 136)
+	END Test.

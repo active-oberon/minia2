@@ -104,6 +104,60 @@ positive: seeding, and what the previous state was
 		ASSERT(g.Xrand48() = 14)
 	END Test.
 
+positive: mixed draws advance one shared sequence
+
+	MODULE Test;
+	IMPORT Drand48;
+	VAR g: Drand48.Generator;
+	BEGIN
+		NEW(g);
+		ASSERT(g.Xrand48() = 657EB7255101H);
+		ASSERT(g.Lrand48() = 1804928587);
+		ASSERT(g.Mrand48() = 1517566982);
+		ASSERT(g.Drand48() = 72534ABF62F2H / 281474976710656.0D0);
+		ASSERT(g.Xrand48() = 5195D97A8D15H)
+	END Test.
+
+positive: generators keep independent state and parameters
+
+	MODULE Test;
+	IMPORT Drand48;
+	VAR a, b: Drand48.Generator; par: ARRAY 3 OF SIGNED64;
+	BEGIN
+		NEW(a); NEW(b);
+		par[0] := 0; par[1] := 1; par[2] := 7;
+		a.Lcong48(par);
+		ASSERT(a.Xrand48() = 7);
+		ASSERT(b.Xrand48() = 657EB7255101H);
+		ASSERT(a.Xrand48() = 14);
+		ASSERT(b.Xrand48() = 0D72A0C966378H);
+		b.Srand48(1);
+		ASSERT(a.Xrand48() = 21);
+		ASSERT(b.Xrand48() = 0AA849495101H)
+	END Test.
+
+positive: seed and custom parameters normalize at their bit boundaries
+
+	MODULE Test;
+	IMPORT Drand48;
+	VAR g: Drand48.Generator; last: SIGNED64; par: ARRAY 3 OF SIGNED64;
+	BEGIN
+		NEW(g);
+		last := g.Seed48(1000000000000H);
+		ASSERT(last = 1234ABCD330EH);
+		last := g.Seed48(-1);
+		ASSERT(last = 0);
+		last := g.Seed48(1000000000007H);
+		ASSERT(last = 0FFFFFFFFFFFFH);
+		last := g.Seed48(0);
+		ASSERT(last = 7);
+		ASSERT(g.Xrand48() = 0BH);
+		par[0] := -1; par[1] := 1000000000001H; par[2] := 80000007H;
+		g.Lcong48(par);
+		ASSERT(g.Xrand48() = 6);
+		ASSERT(g.Xrand48() = 13)
+	END Test.
+
 positive: the state stays inside 48 bits over a long run
 
 	MODULE Test;

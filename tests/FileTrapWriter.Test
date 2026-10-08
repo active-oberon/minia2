@@ -1,0 +1,40 @@
+# Tests for trap log naming and stream factories in the test scratch directory.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: generated filenames preserve the prefix index and text suffix
+
+	MODULE Test;
+	IMPORT FileTrapWriter, Strings;
+	VAR name: ARRAY 256 OF CHAR; i: SIZE;
+	BEGIN
+		FileTrapWriter.GenerateName("Trace", 0, name);
+		ASSERT(Strings.StartsWith2("Trace_", name)); ASSERT(Strings.EndsWith(".txt", name)); ASSERT(Strings.Length(name) = 26);
+		FOR i := 6 TO 13 DO ASSERT((name[i] >= "0") & (name[i] <= "9")) END;
+		ASSERT(name[14] = "_"); ASSERT(name[15] = "_");
+		FOR i := 16 TO 21 DO ASSERT((name[i] >= "0") & (name[i] <= "9")) END;
+		FileTrapWriter.GenerateName("Trace", 7, name); ASSERT(Strings.EndsWith("_7.txt", name));
+		FileTrapWriter.GenerateName("Trace", -2, name); ASSERT(Strings.EndsWith("_-2.txt", name))
+	END Test.
+
+positive: newly registered trap files cause a different filename on the next request
+
+	MODULE Test;
+	IMPORT FileTrapWriter, Files;
+	VAR first, second: Files.File; a, b: Files.FileName; w: Files.Writer;
+	BEGIN
+		first := FileTrapWriter.GetNewFile("UniqueTrap", a); ASSERT(first # NIL);
+		Files.OpenWriter(w, first, 0); w.String("keep"); w.Update; Files.Register(first);
+		second := FileTrapWriter.GetNewFile("UniqueTrap", b); ASSERT(second # NIL); ASSERT(a # b);
+		ASSERT(Files.Old(a).Length() = 4)
+	END Test.
+
+positive: trap writer factories produce a writable stream
+
+	MODULE Test;
+	IMPORT FileTrapWriter, Streams;
+	VAR w: Streams.Writer;
+	BEGIN
+		w := FileTrapWriter.TrapWriterFactory(); ASSERT(w # NIL); ASSERT(w.Pos() > 0);
+		w.String("test payload"); w.Update; ASSERT(w.res = Streams.Ok);
+		FileTrapWriter.Install; FileTrapWriter.Uninstall; FileTrapWriter.Uninstall
+	END Test.

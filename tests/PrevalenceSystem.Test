@@ -1,0 +1,121 @@
+# Tests for isolated prevalence systems, descriptors, malformed snapshots and activity shutdown.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: prevalence fixtures own their configuration and snapshot files
+
+	MODULE PrevalenceTestShared;
+	IMPORT Files, Configuration;
+	PROCEDURE Write*(CONST name, content: ARRAY OF CHAR);
+	VAR f: Files.File; w: Files.Writer;
+	BEGIN
+		f := Files.New(name); Files.OpenWriter(w, f, 0); w.String(content); w.Update; Files.Register(f)
+	END Write;
+	PROCEDURE Prepare;
+	VAR res: INTEGER;
+	BEGIN
+		Files.Delete("PrevalenceSnapShot.XML", res); Files.Delete("PrevalenceLog.XML", res);
+		Files.Delete("prev-snap.xml", res); Files.Delete("prev-log.xml", res);
+		Write("MyConfiguration.XML", '<Config><Section name="PrevalenceSystem"><Section name="PersistentObjectModules"/></Section></Config>');
+		Configuration.Init; ASSERT(Configuration.config # NIL); Files.Delete("MyConfiguration.XML", res); ASSERT(res = 0)
+	END Prepare;
+	BEGIN Prepare
+	END PrevalenceTestShared.
+
+positive: descriptor sets copy their entries and factories construct persistent objects
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR first, second: P.PersistentObjectDescriptor; set: P.PersistentObjectDescSet;
+		items: ARRAY 2 OF P.PersistentObjectDescriptor; empty: ARRAY 0 OF P.PersistentObjectDescriptor; obj: P.PersistentObject;
+	PROCEDURE Factory(): P.PersistentObject;
+	VAR obj: P.PersistentObject;
+	BEGIN NEW(obj); RETURN obj
+	END Factory;
+	BEGIN
+		NEW(first, "first-module", "first-object", Factory); NEW(second, "second-module", "second-object", Factory);
+		items[0] := first; items[1] := second; NEW(set, items); items[0] := second;
+		ASSERT(set.GetCount() = 2); ASSERT(set.GetItem(0) = first); ASSERT(set.GetItem(1) = second);
+		ASSERT(first.moduleName^ = "first-module"); ASSERT(first.objectName^ = "first-object");
+		obj := first.factory(); ASSERT(obj # NIL); ASSERT(obj.oid = 0); ASSERT(obj.registeredAt = NIL);
+		ASSERT(obj.GetReferrencedObjects() = NIL); NEW(set, empty); ASSERT(set.GetCount() = 0)
+	END Test.
+
+positive: fresh systems retain distinct names and empty lookups return NIL
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR system: P.PrevalenceSystem; orphan: P.PersistentObject;
+	PROCEDURE Any(obj: P.PersistentObject): BOOLEAN;
+	BEGIN RETURN TRUE END Any;
+	BEGIN
+		ASSERT(P.GetPrevalenceSystem("missing") = NIL);
+		ASSERT(P.GetPrevalenceSystem("StandardPrevalenceSystem") = P.standardPrevalenceSystem);
+		NEW(system, "test-system", "prev-snap.xml", "prev-log.xml"); ASSERT(P.GetPrevalenceSystem("test-system") = system);
+		ASSERT(system.SnapShotFileName^ = "prev-snap.xml"); ASSERT(system.LogFileName^ = "prev-log.xml");
+		ASSERT(system.GetPersistentObject(1) = NIL); ASSERT(system.GetDescriptorByObject(NIL) = NIL);
+		NEW(orphan); ASSERT(system.GetDescriptorByObject(orphan) = NIL); ASSERT(P.GetDescriptorByObject(orphan) = NIL);
+		ASSERT(system.FindPersistentObjects(Any) = NIL); system.RemovePersistentRootObject(NIL); system.GarbageCollect
+	END Test.
+
+negative: different systems cannot share a system name
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR first, second: P.PrevalenceSystem;
+	BEGIN NEW(first, "test-system", "prev-snap.xml", "prev-log.xml"); NEW(second, "test-system", "other-snap.xml", "other-log.xml")
+	END Test.
+
+negative: abstract persistent objects cannot externalize state
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem, XML;
+	VAR obj: P.PersistentObject; content: XML.Content;
+	BEGIN NEW(obj); content := obj.Externalize()
+	END Test.
+
+negative: abstract persistent objects cannot internalize state
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR obj: P.PersistentObject;
+	BEGIN NEW(obj); obj.Internalize(NIL)
+	END Test.
+
+negative: an unregistered object cannot commit a modification
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR obj: P.PersistentObject;
+	BEGIN NEW(obj); obj.BeginModification; obj.EndModification
+	END Test.
+
+positive: an empty snapshot restores an empty system
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR system: P.PrevalenceSystem;
+	BEGIN
+		H.Write("prev-snap.xml", '<instances oidcounter="9"/>');
+		NEW(system, "snapshot-system", "prev-snap.xml", "prev-log.xml"); ASSERT(system.GetPersistentObject(9) = NIL)
+	END Test.
+
+negative: malformed snapshots are rejected during construction
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, P := PrevalenceSystem;
+	VAR system: P.PrevalenceSystem;
+	BEGIN H.Write("prev-snap.xml", "<broken"); NEW(system, "snapshot-system", "prev-snap.xml", "prev-log.xml")
+	END Test.
+
+positive: repeated module unload waits for its snapshot activity to stop
+
+	MODULE Test;
+	IMPORT H := PrevalenceTestShared, Modules;
+	VAR module: Modules.Module; res: INTEGER; msg: ARRAY 256 OF CHAR; i: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 127 DO
+			module := Modules.ThisModule("PrevalenceSystem", res, msg); ASSERT(res = Modules.Ok); ASSERT(module # NIL);
+			Modules.FreeModule("PrevalenceSystem", res, msg); ASSERT(res = Modules.Ok);
+			ASSERT(Modules.ModuleByName("PrevalenceSystem") = NIL)
+		END
+	END Test.

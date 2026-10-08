@@ -1,0 +1,54 @@
+# Tests for canonical indices, lexical comparisons and pool/hash-table growth.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: the empty string always has index zero and equal strings share an index
+
+	MODULE Test;
+	IMPORT StringPool;
+	VAR a, b: StringPool.Index; text: ARRAY 32 OF CHAR;
+	BEGIN
+		StringPool.GetString(0, text); ASSERT(text = "");
+		StringPool.GetIndex("", a); ASSERT(a = 0); ASSERT(StringPool.GetIndex1("") = 0);
+		StringPool.GetIndex("same", a); StringPool.GetIndex("same", b); ASSERT(a = b);
+		StringPool.GetString(a, text); ASSERT(text = "same")
+	END Test.
+
+positive: comparisons distinguish equality prefixes case and byte ordering
+
+	MODULE Test;
+	IMPORT StringPool;
+	VAR a, b, c, d: StringPool.Index;
+	BEGIN
+		a := StringPool.GetIndex1("abc"); b := StringPool.GetIndex1("abcd");
+		c := StringPool.GetIndex1("abd"); d := StringPool.GetIndex1("Abc");
+		ASSERT(StringPool.CompareString(a, a) = 0); ASSERT(StringPool.CompareString(a, b) < 0);
+		ASSERT(StringPool.CompareString(b, a) > 0); ASSERT(StringPool.CompareString(a, c) < 0);
+		ASSERT(StringPool.CompareString(d, a) < 0); ASSERT(StringPool.CompareString0(a, "abc") = 0);
+		ASSERT(StringPool.CompareString0(a, "ab") > 0); ASSERT(StringPool.CompareString0(a, "abcd") < 0)
+	END Test.
+
+positive: original indices and strings survive repeated hash table and storage growth
+
+	MODULE Test;
+	IMPORT StringPool;
+	VAR indices: ARRAY 2000 OF StringPool.Index; text, back: ARRAY 300 OF CHAR; i, j: SIGNED32;
+	BEGIN
+		FOR i := 0 TO 1999 DO
+			FOR j := 0 TO 298 DO text[j] := CHR(65 + j MOD 26) END;
+			text[0] := CHR(33 + i DIV 90); text[1] := CHR(33 + i MOD 90); text[299] := 0X;
+			indices[i] := StringPool.GetIndex1(text)
+		END;
+		FOR i := 0 TO 1999 DO
+			FOR j := 0 TO 298 DO text[j] := CHR(65 + j MOD 26) END;
+			text[0] := CHR(33 + i DIV 90); text[1] := CHR(33 + i MOD 90); text[299] := 0X;
+			ASSERT(StringPool.GetIndex1(text) = indices[i]); StringPool.GetString(indices[i], back); ASSERT(back = text)
+		END
+	END Test.
+
+negative: retrieval rejects a destination shorter than the stored string
+
+	MODULE Test;
+	IMPORT StringPool;
+	VAR index: StringPool.Index; text: ARRAY 2 OF CHAR;
+	BEGIN index := StringPool.GetIndex1("long"); StringPool.GetString(index, text)
+	END Test.

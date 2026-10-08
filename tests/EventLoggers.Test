@@ -1,0 +1,60 @@
+# Tests for kernel/file event sink lifecycle and serialized file contents.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: the kernel event sink installs once and accepts formatted events
+
+	MODULE Test;
+	IMPORT Logger := EventsKernelLog, Events;
+	VAR before: SIZE; event: Events.Event;
+	BEGIN
+		ASSERT(Logger.eventLogger # NIL, 101); before := Events.NnofListeners; ASSERT(before >= 1, 102);
+		Logger.Install; Logger.Install; ASSERT(Events.NnofListeners = before, 103);
+		event := Events.NewEvent("kernel-test", Events.Information, 1, 2, 3, "kernel-marker");
+		event.date := 2026*512+10*32+8; Logger.eventLogger.Handle(event)
+	END Test.
+
+positive: file logging starts once writes events stops and can append existing content
+
+	MODULE Test;
+	IMPORT Logger := EventsFileLog, Events, Files, Streams, Commands, Strings, Objects;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+		f: Files.File; r: Files.Reader; event: Events.Event; text: ARRAY 4096 OF CHAR; before: SIZE;
+	PROCEDURE AwaitMessage(CONST marker: ARRAY OF CHAR): BOOLEAN;
+	VAR file: Files.File; reader: Files.Reader; contents: ARRAY 4096 OF CHAR; len: SIZE; attempts: SIGNED32;
+	BEGIN
+		FOR attempts := 0 TO 199 DO
+			file := Files.Old("event-logger.tmp");
+			IF file # NIL THEN
+				Files.OpenReader(reader, file, 0); reader.Bytes(contents, 0, 4095, len); contents[len] := 0X;
+				IF Strings.Pos(marker, contents) >= 0 THEN RETURN TRUE END
+			END;
+			Objects.Sleep(10)
+		END;
+		RETURN FALSE
+	END AwaitMessage;
+	BEGIN
+		NEW(args, 256); args.Set("event-logger.tmp"); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL);
+		before := Events.NnofListeners; Logger.Start(c); ASSERT(Logger.eventLogger # NIL, 104); ASSERT(Events.NnofListeners = before+1, 105);
+		args.Set("event-logger.tmp"); Logger.Start(c); ASSERT(Events.NnofListeners = before+1, 106);
+		event := Events.NewEvent("file-test", Events.Error, 4, 5, 6, "first-marker");
+		Events.Add(event, FALSE); ASSERT(AwaitMessage("first-marker"), 119); Logger.Stop(c);
+		ASSERT(Logger.eventLogger = NIL, 107); ASSERT(Events.NnofListeners = before, 108); Logger.Stop(c);
+		f := Files.Old("event-logger.tmp"); ASSERT(f # NIL, 109); Files.OpenReader(r, f, 0); r.Bytes(text, 0, 4095, before); text[before] := 0X;
+		ASSERT(Strings.Pos("first-marker", text) >= 0, 110); ASSERT(Strings.Pos("file-test", text) >= 0, 111); ASSERT(Strings.Pos("[4,5,6]", text) >= 0, 112);
+		args.Set("-append event-logger.tmp"); Logger.Start(c); ASSERT(Logger.eventLogger # NIL, 113);
+		event := Events.NewEvent("file-test", Events.Information, 4, 5, 6, "second-marker");
+		Events.Add(event, FALSE); ASSERT(AwaitMessage("second-marker"), 120); Logger.Stop(c);
+		f := Files.Old("event-logger.tmp"); Files.OpenReader(r, f, 0); r.Bytes(text, 0, 4095, before); text[before] := 0X;
+		ASSERT(Strings.Pos("first-marker", text) >= 0, 114); ASSERT(Strings.Pos("second-marker", text) >= 0, 115)
+	END Test.
+
+positive: unknown parameters and append of a missing file leave the logger stopped
+
+	MODULE Test;
+	IMPORT Logger := EventsFileLog, Streams, Commands, Strings;
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context; text: ARRAY 256 OF CHAR;
+	BEGIN
+		NEW(args, 256); args.Set("-unknown"); NEW(out, 256); NEW(c, NIL, args, out, out, NIL);
+		Logger.Start(c); ASSERT(Logger.eventLogger = NIL, 116); out.Update; out.Get(text); ASSERT(Strings.Pos("Unexpected parameter", text) >= 0, 117);
+		args.Set("-append event-log-missing.tmp"); Logger.Start(c); ASSERT(Logger.eventLogger = NIL, 118)
+	END Test.

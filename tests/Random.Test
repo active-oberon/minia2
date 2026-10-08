@@ -1,0 +1,51 @@
+# Tests for generator state, reseeding, distributions and the synchronized facade.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: default seeds and explicit reseeding reproduce streams across wraparound
+
+	MODULE Test;
+	IMPORT Random;
+	VAR a, b: Random.Generator; i, value: SIGNED32;
+	BEGIN
+		NEW(a); NEW(b); b.InitSeed(1);
+		FOR i := 0 TO 999 DO ASSERT(a.Integer() = b.Integer()) END;
+		a.InitSeed(12345); value := a.Integer(); a.InitSeed(12345); ASSERT(a.Integer() = value);
+		b.InitSeed(12345); ASSERT(b.Integer() = value)
+	END Test.
+
+positive: synchronized sequences preserve every generator operation and seed
+
+	MODULE Test;
+	IMPORT Random;
+	VAR g: Random.Generator; s: Random.Sequence; i: SIGNED32;
+	BEGIN
+		NEW(g); NEW(s); g.InitSeed(771); s.InitSeed(771);
+		FOR i := 0 TO 299 DO
+			ASSERT(g.Integer() = s.Integer()); ASSERT(g.Dice(17) = s.Dice(17));
+			ASSERT(g.Uniform() = s.Uniform()); ASSERT(g.Exp(2.0) = s.Exp(2.0));
+			ASSERT(g.Gaussian() = s.Gaussian())
+		END
+	END Test.
+
+positive: distributions remain finite and dice stay within their requested range
+
+	MODULE Test;
+	IMPORT Random;
+	VAR g: Random.Generator; i, d: SIGNED32; u, e, n: FLOAT32;
+	BEGIN
+		NEW(g);
+		FOR i := 0 TO 1999 DO
+			d := g.Dice(7); ASSERT((d >= 0) & (d < 7)); ASSERT(g.Dice(1) = 0);
+			u := g.Uniform(); ASSERT((u >= 0.0) & (u <= 1.0));
+			e := g.Exp(3.0); ASSERT((e >= 0.0) & (e < 100.0));
+			n := g.Gaussian(); ASSERT((n > -100.0) & (n < 100.0))
+		END
+	END Test.
+
+negative: dice with zero sides cannot produce a result
+
+	MODULE Test;
+	IMPORT Random;
+	VAR g: Random.Generator; d: SIGNED32;
+	BEGIN NEW(g); d := g.Dice(0)
+	END Test.

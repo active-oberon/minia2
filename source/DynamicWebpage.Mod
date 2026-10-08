@@ -58,6 +58,7 @@ MODULE DynamicWebpage; (** AUTHOR "Luc Blaeser"; PURPOSE "Basetypes for Dynamic 
 
 			PROCEDURE GetCount*() : SIZE;
 			BEGIN
+				IF parameters = NIL THEN RETURN 0 END;
 				RETURN LEN(parameters)
 			END GetCount;
 		END ParameterList;

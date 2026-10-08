@@ -158,11 +158,13 @@ VAR
 	PROCEDURE IsPrime*( a: BigNumber;  checks: SIGNED16;  doTrialDiv: BOOLEAN ): BOOLEAN;
 	VAR i, k: SIGNED16;  A, A1, A1odd, check: BigNumber;
 	BEGIN
-		IF checks = 0 THEN  checks := Checks( a.BitSize( ) )  END;
+		IF a.IsZero() OR ((a.len = 1) & (a.d[0] = 1)) THEN RETURN FALSE END;
+		IF (a.len = 1) & (a.d[0] = 2) THEN RETURN TRUE END;
+		IF checks = 0 THEN checks := Checks(MAX(100, a.BitSize())) END;
 		IF ~ODD( a.d[0] ) THEN  RETURN FALSE  END;
 		IF doTrialDiv THEN
 			FOR i := 1 TO N - 1 DO
-				IF B.ModWord( a, primes[i] ) = 0 THEN  RETURN FALSE  END
+				IF B.ModWord(a, primes[i]) = 0 THEN RETURN (a.len = 1) & (a.d[0] = primes[i]) END
 			END
 		END;
 		B.Copy( a, A );

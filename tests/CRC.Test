@@ -1,0 +1,57 @@
+# Tests for streaming CRC state, offsets, empty updates and custom initialization.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: legacy integer CRC updates preserve their nonstandard kernel fingerprint
+
+	MODULE Test;
+	IMPORT CRC;
+	VAR words: CRC.CRC32; values, expected: ARRAY 6 OF SIGNED32; i: SIGNED32;
+	BEGIN
+		values[0] := 0; values[1] := 1; values[2] := -1; values[3] := MIN(SIGNED32);
+		values[4] := MAX(SIGNED32); values[5] := 123456789;
+		expected[0] := SIGNED32(0D2D03FB2H); expected[1] := SIGNED32(0BA8BE9ACH);
+		expected[2] := SIGNED32(0D431163EH); expected[3] := SIGNED32(0BE87804AH);
+		expected[4] := SIGNED32(03EEDD36CH); expected[5] := SIGNED32(08DF74F8AH);
+		NEW(words); ASSERT(words.Get() = 0);
+		FOR i := 0 TO 5 DO
+			words.Add(values[i]); ASSERT(words.Get() = expected[i])
+		END
+	END Test.
+
+positive: CRC32 chunk boundaries and reset preserve the standard check value
+
+	MODULE Test;
+	IMPORT CRC;
+	VAR s: CRC.CRC32Stream; data: ARRAY 16 OF CHAR; res: INTEGER;
+	BEGIN
+		NEW(s); ASSERT(s.GetCRC() = 0); data := "xx123456789yy";
+		s.Send(data, 2, 4, FALSE, res); ASSERT(res = 0);
+		s.Send(data, 6, 0, FALSE, res); ASSERT(res = 0);
+		s.Send(data, 6, 5, FALSE, res); ASSERT(s.GetCRC() = SIGNED32(0CBF43926H));
+		ASSERT(s.GetUninvertedCRC() = SIGNED32(0340BC6D9H));
+		s.Reset; ASSERT(s.GetCRC() = 0);
+		s.String("123456789"); ASSERT(s.GetCRC() = SIGNED32(0CBF43926H))
+	END Test.
+
+positive: setting CRC32 state flushes buffered data before replacing it
+
+	MODULE Test;
+	IMPORT CRC;
+	VAR a, b: CRC.CRC32Stream;
+	BEGIN
+		NEW(a); NEW(b); a.String("discarded"); a.SetCRC(123456); b.SetCRC(123456);
+		a.String("retained"); b.String("retained"); ASSERT(a.GetCRC() = b.GetCRC());
+		ASSERT(a.GetCRC() = a.GetCRC())
+	END Test.
+
+positive: CRC16 check value and custom seed survive buffered and offset writes
+
+	MODULE Test;
+	IMPORT CRC;
+	VAR a, b: CRC.CRC16Stream; data: ARRAY 16 OF CHAR; res: INTEGER;
+	BEGIN
+		NEW(a); ASSERT(a.GetCRC() = -1); a.String("123456789"); ASSERT(a.GetCRC() = SIGNED16(029B1H));
+		NEW(b); a.String("discarded"); a.SetCRC(0); b.SetCRC(0); data := "xx123456789yy";
+		a.Send(data, 2, 9, FALSE, res); ASSERT(res = 0); b.String("123456789");
+		ASSERT(a.GetCRC() = SIGNED16(031C3H)); ASSERT(a.GetCRC() = b.GetCRC())
+	END Test.

@@ -19,7 +19,7 @@ BEGIN
 			p := enum.GetNext();
 			IF p IS XML.Element THEN
 				e := p(XML.Element); value := e.GetAttributeValue("value");
-				IF (value^ # "") THEN
+				IF (value # NIL) & (value^ # "") THEN
 					IF Trace THEN KernelLog.String("Autostart: executing "); KernelLog.String(value^); KernelLog.Ln END;
 					Commands.Call(value^, {Commands.Wait}, res, msg);
 					IF (res # 0) THEN

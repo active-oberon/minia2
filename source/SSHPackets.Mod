@@ -32,6 +32,7 @@ TYPE
 			
 			PROCEDURE &Init*( ptype: CHAR; bufsize: SIZE );
 			BEGIN
+				ASSERT(bufsize > 0);
 				NEW( buf, bufsize );
 				type := ptype; buf[0] := ptype;  len := 1;
 				sent := TRUE
@@ -65,6 +66,8 @@ TYPE
 			PROCEDURE AppArray*( CONST arr: ARRAY OF CHAR;  pos, arlen: SIZE );
 			VAR i: SIZE;
 			BEGIN
+				ASSERT((pos >= 0) & (pos <= LEN(arr)) & (arlen >= 0) & (arlen <= LEN(arr)-pos));
+				ASSERT(arlen <= LEN(buf^)-len-4);
 				AppInteger( SIGNED32(arlen) );
 				FOR i := 0 TO arlen-1 DO  buf[len+i] := arr[pos+i]  END;
 				INC( len, arlen )
@@ -77,19 +80,28 @@ TYPE
 			
 			(*================================================================*)
 			
+			(* RequireRead rejects bytes outside the logical payload before moving its cursor. *)
+			PROCEDURE RequireRead(size: SIZE);
+			BEGIN
+				ASSERT((pos >= 0) & (pos <= len) & (size >= 0) & (size <= len-pos))
+			END RequireRead;
+
 			PROCEDURE SetPos*( p: SIZE );
 			BEGIN
+				ASSERT((p >= 0) & (p <= len));
 				pos := p
 			END SetPos;
 			
 			PROCEDURE IncPos*( i: INTEGER );
 			BEGIN
+				ASSERT((i >= -pos) & (i <= len-pos));
 				INC( pos, i )
 			END IncPos;
 			
 			PROCEDURE GetInteger*(): SIGNED32;
 			VAR i: SIGNED32;
 			BEGIN
+				RequireRead(4);
 				i :=	ASH( SIGNED32( ORD( buf[pos] ) ), 24 ) +
 						ASH( SIGNED32( ORD( buf[pos + 1] ) ), 16 ) +
 						ASH( SIGNED32( ORD( buf[pos + 2] ) ), 8 ) +
@@ -101,6 +113,7 @@ TYPE
 			PROCEDURE GetChar*(): CHAR;
 			VAR c: CHAR; p: SIZE;
 			BEGIN 
+				RequireRead(1);
 				p := pos;
 				c := buf[pos];  INC( pos );  RETURN c
 			END GetChar;
@@ -110,6 +123,7 @@ TYPE
 			BEGIN
 				start := pos;
 				l := GetInteger( );
+				RequireRead(l);
 				INC( pos, l );
 				size := l + 4
 			END GetBlobInfo;
@@ -118,6 +132,7 @@ TYPE
 			VAR i, slen: SIGNED32;
 			BEGIN
 				slen := GetInteger();
+				RequireRead(slen); ASSERT(slen < LEN(str));
 				FOR i := 0 TO slen - 1 DO  str[i] := buf[pos + i]  END;
 				str[slen] := 0X;  INC( pos, slen )
 			END GetString;
@@ -126,6 +141,7 @@ TYPE
 			VAR i: SIZE;
 			BEGIN
 				arlen := GetInteger();
+				RequireRead(arlen); ASSERT(arlen <= LEN(arr));
 				FOR i := 0 TO arlen - 1 DO  arr[i] := buf[pos + i]  END;
 				INC( pos, arlen )
 			END GetArray;
@@ -134,6 +150,7 @@ TYPE
 			VAR b: B.BigNumber;  l: SIGNED32;
 			BEGIN
 				l := GetInteger( );
+				RequireRead(l);
 				B.AssignBin( b, buf^, pos, l );
 				INC( pos, l );
 				RETURN b
@@ -148,7 +165,7 @@ TYPE
 				IF sent THEN  Log.String( "Sent: " )  ELSE  Log.String( "Got: " )  END;
 				Log.Hex( ORD( type ), -2 ); Log.String( "X(" );  Log.Int( ORD( type ), 0 );  Log.String( "), len=" ); Log.Int( len, 0 ); 
 				SetPos( 1 );
-				IF (type = 50X) OR (type = 5DX) OR (type = 5EX) THEN
+				IF (len >= 5) & ((type = 50X) OR (type = 5DX) OR (type = 5EX)) THEN
 					i := GetInteger( );  
 					Log.String( ", " );  Log.Int( i, 0 );
 				END;
@@ -188,6 +205,7 @@ VAR
 	PROCEDURE MakeReceivedPacket*( CONST trbuf: ARRAY OF CHAR;  len: SIZE ): Packet;
 	VAR p: Packet; i: SIZE;
 	BEGIN
+		ASSERT((len > 0) & (LEN(trbuf) >= 5) & (len <= LEN(trbuf)-5));
 		NEW( p, 0X, len ); 
 		FOR i := 0 TO len - 1 DO  p.buf[i] := trbuf[i+5]  END;
 		p.type := p.buf[0];

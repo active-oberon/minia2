@@ -1,0 +1,58 @@
+# Tests for dynamic page parameters, descriptors and default element behavior.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: empty parameter lists have zero entries and missing names return NIL
+
+	MODULE Test;
+	IMPORT D := DynamicWebpage;
+	VAR list: D.ParameterList;
+	BEGIN
+		NEW(list); ASSERT(list.GetCount() = 0);
+		ASSERT(list.GetParameterByName("missing") = NIL); ASSERT(list.GetParameterValueByName("missing") = NIL);
+		NEW(list.parameters, 0); ASSERT(list.GetCount() = 0); ASSERT(list.GetParameterByName("") = NIL)
+	END Test.
+
+positive: parameter lookup is exact and returns the first matching entry
+
+	MODULE Test;
+	IMPORT D := DynamicWebpage, Strings;
+	VAR list: D.ParameterList; p: D.Parameter;
+	BEGIN
+		NEW(list); NEW(list.parameters, 3);
+		NEW(p); p.name := Strings.NewString("name"); p.value := Strings.NewString("first"); list.parameters[0] := p;
+		NEW(p); p.name := Strings.NewString("Name"); p.value := Strings.NewString("capital"); list.parameters[1] := p;
+		NEW(p); p.name := Strings.NewString("name"); p.value := Strings.NewString("second"); list.parameters[2] := p;
+		ASSERT(list.GetCount() = 3); ASSERT(list.GetParameterByName("name") = list.parameters[0]);
+		ASSERT(list.GetParameterValueByName("name")^ = "first");
+		ASSERT(list.GetParameterValueByName("Name")^ = "capital");
+		ASSERT(list.GetParameterByName("NAME") = NIL)
+	END Test.
+
+positive: descriptor sets copy the array and factories return their element
+
+	MODULE Test;
+	IMPORT D := DynamicWebpage, XML, Strings;
+	VAR desc, other: D.ActiveElementDescriptor; set: D.ActiveElementDescSet;
+		items: ARRAY 2 OF D.ActiveElementDescriptor; element: D.ActiveElement; input: XML.Element;
+		first, second: Strings.String;
+		PROCEDURE Factory(): D.ActiveElement;
+		VAR e: D.StateLessActiveElement;
+		BEGIN NEW(e); RETURN e
+		END Factory;
+	BEGIN
+		NEW(desc, "first", Factory); NEW(other, "second", Factory);
+		items[0] := desc; items[1] := other; NEW(set, items); items[0] := other;
+		ASSERT(set.GetCount() = 2); ASSERT(set.GetItem(0) = desc); ASSERT(set.GetItem(1) = other);
+		ASSERT(desc.elementName = "first"); element := desc.factory(); ASSERT(element IS D.StateLessActiveElement);
+		NEW(input); ASSERT(element.PreTransform(input, NIL) = input); ASSERT(element.GetEventHandlers() = NIL);
+		first := D.CreateNewObjectId(); second := D.CreateNewObjectId();
+		ASSERT(first^ # second^); ASSERT(Strings.StartsWith2(D.DXPReservedObjectIdPrefix, first^))
+	END Test.
+
+negative: abstract active elements cannot transform a page
+
+	MODULE Test;
+	IMPORT D := DynamicWebpage, XML;
+	VAR e: D.ActiveElement; result: XML.Content;
+	BEGIN NEW(e); result := e.Transform(NIL, NIL)
+	END Test.

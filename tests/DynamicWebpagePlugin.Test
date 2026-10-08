@@ -1,0 +1,198 @@
+# Tests for isolated dynamic page handling and host installation without a listener.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: the dynamic page fixture isolates configuration and provides request streams
+
+	MODULE DynamicWebpagePluginTestShared;
+	IMPORT Files, Configuration, Commands, Streams, WebHTTP, Server := WebHTTPServer, Plugin := DynamicWebpagePlugin,
+		D := DynamicWebpage, XML, HTTPSupport;
+	VAR instances*, before*, after*: SIGNED32;
+	TYPE Marker = OBJECT(D.StateLessActiveElement)
+		PROCEDURE PreTransform*(input: XML.Element; request: HTTPSupport.HTTPRequest): XML.Content;
+		BEGIN INC(before); RETURN input
+		END PreTransform;
+		PROCEDURE Transform*(input: XML.Element; request: HTTPSupport.HTTPRequest): XML.Content;
+		BEGIN INC(after); input.SetName("strong"); RETURN input
+		END Transform;
+	END Marker;
+	PROCEDURE CreateMarker(): D.ActiveElement;
+	VAR marker: Marker;
+	BEGIN NEW(marker); INC(instances); RETURN marker
+	END CreateMarker;
+	PROCEDURE GetActiveElementDescriptors*(): D.ActiveElementDescSet;
+	VAR items: ARRAY 1 OF D.ActiveElementDescriptor; set: D.ActiveElementDescSet;
+	BEGIN NEW(items[0], "Marker", CreateMarker); NEW(set, items); RETURN set
+	END GetActiveElementDescriptors;
+	PROCEDURE Write*(CONST name, content: ARRAY OF CHAR);
+	VAR f: Files.File; w: Files.Writer;
+	BEGIN
+		f := Files.New(name); Files.OpenWriter(w, f, 0); w.String(content); w.Update; Files.Register(f)
+	END Write;
+	PROCEDURE Configure*;
+	VAR res: INTEGER;
+	BEGIN
+		Write("MyConfiguration.XML", '<Config><Section name="DynamicWebpages"><Section name="ActiveElementModules"><Setting value="DynamicWebpagePluginTestShared"/></Section></Section></Config>');
+		Configuration.Init; ASSERT(Configuration.config # NIL); Files.Delete("MyConfiguration.XML", res); ASSERT(res = 0)
+	END Configure;
+	PROCEDURE Command*(install: BOOLEAN; CONST names: ARRAY OF CHAR; VAR text: ARRAY OF CHAR);
+	VAR args: Streams.StringReader; out: Streams.StringWriter; c: Commands.Context;
+	BEGIN
+		NEW(args, 256); args.Set(names); NEW(out, 4096); NEW(c, NIL, args, out, out, NIL);
+		IF install THEN Plugin.Install(c) ELSE Plugin.Uninstall(c) END; out.Update; out.Get(text)
+	END Command;
+	PROCEDURE Request*(host: Server.Host; method: SIGNED32; CONST uri: ARRAY OF CHAR;
+		VAR reply: WebHTTP.ResponseHeader; VAR text: ARRAY OF CHAR);
+	VAR input: Streams.StringReader; out: Streams.StringWriter; r: Streams.Reader; w: Streams.Writer; req: WebHTTP.RequestHeader;
+	BEGIN
+		NEW(input, 128); input.Set(""); NEW(out, 8192); r := input; w := out;
+		COPY(uri, req.uri); COPY(host.name, req.host); req.method := method; req.maj := 1; req.min := 0;
+		host.Handle(req, reply, r, w, FALSE); out.Update; out.Get(text)
+	END Request;
+	END DynamicWebpagePluginTestShared.
+
+positive: GET and POST render XHTML while HEAD omits the page body
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-page.dxp", "<html><body>dynamic-marker</body></html>");
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host);
+		H.Command(TRUE, host.name, text); ASSERT(Strings.Pos("added to dxp.example.test", text) >= 0);
+		H.Request(host, WebHTTP.GetM, "/dxp-page.dxp?value=one", reply, text);
+		ASSERT(reply.statuscode = WebHTTP.OK); ASSERT(reply.contenttype = "text/html");
+		ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) >= 0); ASSERT(Strings.Pos("dynamic-marker", text) >= 0);
+		ASSERT(Strings.Pos("Pragma: no-cache", text) >= 0);
+		H.Request(host, WebHTTP.PostM, "/dxp-page.dxp", reply, text); ASSERT(reply.statuscode = WebHTTP.OK);
+		ASSERT(Strings.Pos("dynamic-marker", text) >= 0);
+		H.Request(host, WebHTTP.HeadM, "/dxp-page.dxp", reply, text); ASSERT(reply.statuscode = WebHTTP.OK);
+		ASSERT(Strings.Pos("dynamic-marker", text) < 0);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: registered stateless elements run pre and post transformation and reuse one instance
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-active.dxp", '<html xmlns:d="DynamicWebpagePluginTestShared"><body><d:Marker>active-marker</d:Marker></body></html>');
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host); H.Command(TRUE, host.name, text);
+		H.Request(host, WebHTTP.GetM, "/dxp-active.dxp", reply, text); ASSERT(reply.statuscode = WebHTTP.OK);
+		ASSERT(Strings.Pos("<strong>active-marker</strong>", text) >= 0);
+		ASSERT(H.instances = 1); ASSERT(H.before = 1); ASSERT(H.after = 1);
+		H.Request(host, WebHTTP.GetM, "/dxp-active.dxp", reply, text);
+		ASSERT(H.instances = 1); ASSERT(H.before = 2); ASSERT(H.after = 2);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: unknown elements in a registered namespace report an error without invoking a factory
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-active.dxp", '<html xmlns:d="DynamicWebpagePluginTestShared"><body><d:Missing/></body></html>');
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host); H.Command(TRUE, host.name, text);
+		H.Request(host, WebHTTP.GetM, "/dxp-active.dxp", reply, text);
+		ASSERT(Strings.Pos("is not defined", text) >= 0); ASSERT(H.instances = 0);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: duplicate and missing hosts are diagnosed and uninstall restores static serving
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-page.dxp", "<html><body>plain-marker</body></html>");
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host);
+		H.Command(TRUE, host.name, text); H.Command(TRUE, host.name, text);
+		ASSERT(Strings.Pos("already installed", text) >= 0);
+		H.Command(TRUE, "absent.example.test", text); ASSERT(Strings.Pos("not present", text) >= 0);
+		H.Command(FALSE, "absent.example.test", text); ASSERT(Strings.Pos("not present", text) >= 0);
+		H.Command(FALSE, host.name, text); H.Command(FALSE, host.name, text);
+		H.Request(host, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(reply.statuscode = WebHTTP.OK);
+		ASSERT(Strings.Pos("plain-marker", text) >= 0); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) < 0);
+		Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: separate host arguments install and uninstall every named host
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR first, second: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-page.dxp", "<html><body>host-marker</body></html>");
+		NEW(first, "first.example.test"); first.SetPrefix("."); Server.AddHost(first);
+		NEW(second, "second.example.test"); second.SetPrefix("."); Server.AddHost(second);
+		H.Command(TRUE, "  first.example.test   second.example.test  ", text);
+		ASSERT(Strings.Pos("added to first.example.test", text) >= 0);
+		ASSERT(Strings.Pos("added to second.example.test", text) >= 0);
+		ASSERT(Strings.Pos("default host", text) < 0);
+		H.Request(second, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) >= 0);
+		H.Command(FALSE, "  first.example.test   second.example.test  ", text);
+		H.Request(first, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) < 0);
+		H.Request(second, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) < 0);
+		Server.RemoveHost(first.name, res); ASSERT(res = Server.Ok); Server.RemoveHost(second.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: wildcard installation and named uninstall preserve the separately installed default host
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR first, second, default: Server.Host; list: Server.HostList;
+		reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-page.dxp", "<html><body>host-marker</body></html>");
+		NEW(first, "first.example.test"); first.SetPrefix("."); Server.AddHost(first);
+		NEW(second, "second.example.test"); second.SetPrefix("."); Server.AddHost(second);
+		list := Server.FindHosts(""); ASSERT(list # NIL); default := list.host; default.SetPrefix(".");
+		H.Command(TRUE, "*.example.test", text); ASSERT(Strings.Pos("added to first.example.test", text) >= 0);
+		ASSERT(Strings.Pos("added to second.example.test", text) >= 0); H.Command(TRUE, "", text);
+		H.Command(FALSE, "  first.example.test   second.example.test  ", text);
+		H.Request(first, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) < 0);
+		H.Request(second, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) < 0);
+		H.Request(default, WebHTTP.GetM, "/dxp-page.dxp", reply, text); ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) >= 0);
+		H.Command(FALSE, "", text); Server.RemoveHost(first.name, res); ASSERT(res = Server.Ok);
+		Server.RemoveHost(second.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: directory requests render the default dynamic page
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("index.dxp", "<html><body>index-marker</body></html>");
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host); H.Command(TRUE, host.name, text);
+		H.Request(host, WebHTTP.GetM, "/?value=one", reply, text); ASSERT(reply.statuscode = WebHTTP.OK);
+		ASSERT(Strings.Pos("<!DOCTYPE html PUBLIC", text) >= 0); ASSERT(Strings.Pos("index-marker", text) >= 0);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: missing pages and malformed XML produce bounded diagnostic responses
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP, Strings;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; H.Write("dxp-invalid.dxp", "<html><body>unfinished");
+		NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host); H.Command(TRUE, host.name, text);
+		H.Request(host, WebHTTP.GetM, "/dxp-absent.dxp", reply, text); ASSERT(reply.statuscode = WebHTTP.NotFound);
+		ASSERT(Strings.Pos("404", text) >= 0);
+		H.Request(host, WebHTTP.GetM, "/dxp-invalid.dxp", reply, text); ASSERT(Strings.Pos("Error while parsing", text) >= 0);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.
+
+positive: empty request paths do not index before the URI buffer
+
+	MODULE Test;
+	IMPORT H := DynamicWebpagePluginTestShared, Server := WebHTTPServer, WebHTTP;
+	VAR host: Server.Host; reply: WebHTTP.ResponseHeader; text: ARRAY 8192 OF CHAR; res: INTEGER;
+	BEGIN
+		H.Configure; NEW(host, "dxp.example.test"); host.SetPrefix("."); Server.AddHost(host);
+		H.Command(TRUE, host.name, text); H.Request(host, WebHTTP.GetM, "", reply, text);
+		H.Request(host, WebHTTP.GetM, "?value=one", reply, text);
+		H.Command(FALSE, host.name, text); Server.RemoveHost(host.name, res); ASSERT(res = Server.Ok)
+	END Test.

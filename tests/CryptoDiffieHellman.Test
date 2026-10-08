@@ -1,0 +1,53 @@
+# Tests for deterministic Diffie-Hellman exchange and initialization guards.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: two fixed private exponents produce the same shared secret
+
+	MODULE Test;
+	IMPORT DH := CryptoDiffieHellman, B := CryptoBigNumbers, KernelLog;
+	VAR alice, bob: DH.DH; p, g, a, b, apub, bpub, secret, expected: B.BigNumber;
+	BEGIN
+		NEW(alice, 8, ""); NEW(bob, 8, "");
+		B.AssignInt(p, 23); B.AssignInt(g, 5); B.AssignInt(a, 6); B.AssignInt(b, 15);
+		alice.SetPrime(p, g); alice.SetPrivKey(a); bob.SetPrime(p, g); bob.SetPrivKey(b);
+		p.Inc; g.Inc; a.Inc; b.Inc;
+		apub := alice.GenPubKey(); B.AssignInt(expected, 8); ASSERT(apub.EQ(expected));
+		bpub := bob.GenPubKey(); B.AssignInt(expected, 19); ASSERT(bpub.EQ(expected));
+		secret := alice.ComputeKey(bpub); B.AssignInt(expected, 2); ASSERT(secret.EQ(expected));
+		secret := bob.ComputeKey(apub); ASSERT(secret.EQ(expected))
+	END Test.
+
+negative: public key generation requires group parameters
+
+	MODULE Test;
+	IMPORT DH := CryptoDiffieHellman, B := CryptoBigNumbers, KernelLog;
+	VAR dh: DH.DH; result: B.BigNumber;
+	BEGIN NEW(dh, 8, ""); result := dh.GenPubKey()
+	END Test.
+
+negative: unknown named groups are rejected
+
+	MODULE Test;
+	IMPORT DH := CryptoDiffieHellman;
+	VAR dh: DH.DH;
+	BEGIN NEW(dh, 0, "unknown-test-group")
+	END Test.
+
+positive: every named group completes an exchange with fixed private exponents
+
+	MODULE Test;
+	IMPORT DH := CryptoDiffieHellman, B := CryptoBigNumbers, KernelLog;
+	VAR names: ARRAY 9 OF ARRAY 32 OF CHAR; a, b: DH.DH;
+		x, y, pa, pb, sa, sb, again: B.BigNumber; i: SIGNED32;
+	BEGIN
+		names[0] := "dh.ssl.192"; names[1] := "dh.ssl.512"; names[2] := "dh.ssl.1024";
+		names[3] := "dh.1536.MODP"; names[4] := "dh.ssh.group1"; names[5] := "dh.ssh.group14";
+		names[6] := "dh.1024.MODP.160"; names[7] := "dh.2048.MODP.224"; names[8] := "dh.2048.MODP.256";
+		B.AssignInt(x, 3); B.AssignInt(y, 5);
+		FOR i := 0 TO 8 DO
+			NEW(a, 0, names[i]); NEW(b, 0, names[i]); a.SetPrivKey(x); b.SetPrivKey(y);
+			pa := a.GenPubKey(); pb := b.GenPubKey(); ASSERT(~pa.IsZero()); ASSERT(~pb.IsZero());
+			sa := a.ComputeKey(pb); sb := b.ComputeKey(pa); IF ~sa.EQ(sb) THEN KernelLog.String(names[i]); KernelLog.Ln; B.Print(pa); B.Print(pb); B.Print(sa); B.Print(sb) END; ASSERT(sa.EQ(sb), 201); ASSERT(~sa.IsZero(), 301);
+			again := a.GenPubKey(); ASSERT(again.EQ(pa))
+		END
+	END Test.

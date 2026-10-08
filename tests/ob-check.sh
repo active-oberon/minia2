@@ -289,6 +289,20 @@ case "$(cat "$work/test-baseline.txt")" in
 esac
 rm -f "$suite/a2test-expected.txt"
 
+cat > "$suite/ExitStatus.Test" <<'EOF'
+positive: a child failure includes its exit status
+
+	MODULE Test;
+	BEGIN ASSERT(FALSE)
+	END Test.
+EOF
+check "failed child exit status" 1 "$ob" test "$suite/ExitStatus.Test"
+case "$LAST_OUTPUT" in
+	*"(exit code "*) echo "ok    failed child reports its exit status" ;;
+	*) echo "FAIL  failed child omitted its exit status"; fail=1 ;;
+esac
+rm -f "$suite/ExitStatus.Test"
+
 # -j: the same run, in pieces, at the same time. The point of the check is that the transcript is
 # the same one -- the verdicts, in the same order, under a header line saying how it was divided.
 # Files.Test is in here on purpose: its cases build helper modules and import them from later ones,

@@ -5,9 +5,6 @@ MODULE DivXTypes;
 (* Heavily based on the OpenDivX Decoder: www.projectmayo.com *)
 
 
-	IMPORT
-		SYSTEM;
-
 	CONST
 		(* Write Debug Output to into File DivXDebug.Log *)
 		Debug* = FALSE;
@@ -76,7 +73,7 @@ MODULE DivXTypes;
 		VAR
 			i: SIGNED32;
 		BEGIN
-			IF ( len > LEN( ar1 ) ) OR ( len > LEN( ar2 ) ) THEN
+			IF ( len < 0 ) OR ( len > LEN( ar1 ) ) OR ( len > LEN( ar2 ) ) THEN
 				RETURN FALSE;
 			END;
 
@@ -91,20 +88,11 @@ MODULE DivXTypes;
 		(* Set Mem To given value *)
 		PROCEDURE MemSet*( d: PointerToArrayOfCHAR; offset: SIGNED32; val: CHAR; len: SIGNED32 );
 		VAR
-			begin, end: ADDRESS;
+			i, count: SIZE;
 		BEGIN
-			begin := ADDRESSOF( d[offset]  );
-
-			IF len + offset <= LEN( d ) THEN
-				end := len + begin;
-			ELSE
-				end := LEN( d ) + begin;
-			END;
-
-			WHILE begin < end DO
-				SYSTEM.PUT8( begin, val );
-				INC( begin );
-			END;
+			ASSERT(d # NIL); ASSERT((offset >= 0) & (offset <= LEN(d)) & (len >= 0));
+			count := MIN(len, LEN(d)-offset);
+			FOR i := 0 TO count-1 DO d[offset+i] := val END;
 		END MemSet;
 	END MyUtils;
 

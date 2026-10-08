@@ -2265,6 +2265,9 @@ BEGIN
 			ELSE
 				Strings.Append(line, "  (did not come back)")
 			END
+		ELSIF exitCode # 0 THEN
+			Strings.Append(line, "  (exit code ");
+			Strings.AppendInt(line, exitCode); Strings.AppendChar(line, ')')
 		END;
 		Tell(job, line);
 		IF TestOrigin(job.current.name, key) THEN                (* an editor jumps from this one *)
@@ -2957,8 +2960,8 @@ END WriteExpected;
 
 	The verdict cannot be an exit code here: the A2 runtime exits 0 whatever happened, so what is
 	read is what it said, exactly as the shell version had to. A bare `Trap` line is not a failure
-	-- cases trap on purpose and the runtime carries on -- but "Could not load module", an `error:`
-	or a missing "<entry> loaded." are.
+	-- cases trap on purpose and the runtime carries on -- but a load refusal or a missing
+	"<entry> loaded." are.
 
 	The emulator's output goes to the same case.log as everything else, appended after what has
 	already been written to it, so a failing case reads as one story.
@@ -3021,10 +3024,10 @@ BEGIN
 		error.String(line); error.Char(0AX);		(* into the case log, for the parent to show *)
 		(*	Not "error:": a case is free to provoke one and check what was said about it --
 			three cases in Loader.Test hand the loader a broken object file on purpose, and the
-			refusal they are checking is printed with that word in it. What decides is whether
+			refusal they are checking is printed with that word in it. Autostart likewise checks
+			recovery after a command reports "not successful". What decides is whether
 			the module loaded and what the process exited with. *)
-		IF (Strings.Pos("Could not load module", line) >= 0)
-				OR (Strings.Pos("not successful", line) >= 0) THEN
+		IF Strings.Pos("Could not load module", line) = 0 THEN
 			bad := TRUE
 		END;
 		IF Strings.Pos(marker, line) >= 0 THEN loaded := TRUE END

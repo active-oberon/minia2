@@ -1,0 +1,86 @@
+# Tests for disk cache hits, eviction, write through and failed transfers in memory.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test DiskCacheFixture;System.Load Test"
+
+positive: the in memory disk used by these tests
+
+	MODULE DiskCacheFixture;
+	IMPORT Disks;
+	TYPE Disk* = OBJECT
+	VAR data*: ARRAY 133120 OF CHAR; reads*, writes*: SIGNED32; failRead*, failWrite*: BOOLEAN;
+		PROCEDURE &Init*;
+		VAR i: SIZE;
+		BEGIN FOR i := 0 TO LEN(data)-1 DO data[i] := CHR((i DIV 512) MOD 256) END
+		END Init;
+		PROCEDURE Transfer*(op, block, num: SIGNED32; VAR buf: ARRAY OF CHAR; ofs: SIZE; VAR res: INTEGER);
+		VAR i: SIZE;
+		BEGIN
+			res := Disks.Ok;
+			IF op = Disks.Read THEN
+				INC(reads); IF failRead THEN res := Disks.Unsupported; RETURN END;
+				FOR i := 0 TO num*512-1 DO buf[ofs+i] := data[block*512+i] END
+			ELSE
+				ASSERT(op = Disks.Write); INC(writes); IF failWrite THEN res := Disks.Unsupported; RETURN END;
+				FOR i := 0 TO num*512-1 DO data[block*512+i] := buf[ofs+i] END
+			END
+		END Transfer;
+	END Disk;
+	END DiskCacheFixture.
+
+positive: cache hits share a line and collisions reload the evicted line
+
+	MODULE Test;
+	IMPORT DiskCaches, Disks, F := DiskCacheFixture;
+	VAR disk: F.Disk; cache: DiskCaches.Cache; buf: ARRAY 1026 OF CHAR; res: INTEGER; i: SIZE;
+	BEGIN
+		NEW(disk); NEW(cache, disk.Transfer, 2); buf[0] := "!"; buf[1025] := "!";
+		cache.Transfer(Disks.Read, 0, 2, buf, 1, res); ASSERT(res = Disks.Ok); ASSERT(disk.reads = 1);
+		ASSERT(buf[0] = "!"); ASSERT(buf[1025] = "!");
+		FOR i := 1 TO 512 DO ASSERT(buf[i] = 0X); ASSERT(buf[i+512] = 1X) END;
+		cache.Transfer(Disks.Read, 1, 1, buf, 1, res); ASSERT(disk.reads = 1); ASSERT(buf[1] = 1X);
+		cache.Transfer(Disks.Read, 256, 1, buf, 1, res); ASSERT(disk.reads = 2); ASSERT(buf[1] = 0X);
+		cache.Transfer(Disks.Read, 1, 1, buf, 1, res); ASSERT(disk.reads = 3); ASSERT(buf[1] = 1X)
+	END Test.
+
+positive: writes update cached data and reach the disk across line boundaries
+
+	MODULE Test;
+	IMPORT DiskCaches, Disks, F := DiskCacheFixture;
+	VAR disk: F.Disk; cache: DiskCaches.Cache; buf: ARRAY 1538 OF CHAR; res: INTEGER; i: SIZE;
+	BEGIN
+		NEW(disk); NEW(cache, disk.Transfer, 2);
+		cache.Transfer(Disks.Read, 0, 1, buf, 1, res);
+		FOR i := 1 TO 1536 DO buf[i] := "x" END;
+		cache.Transfer(Disks.Write, 1, 3, buf, 1, res); ASSERT(res = Disks.Ok); ASSERT(disk.writes = 2);
+		FOR i := 512 TO 2047 DO ASSERT(disk.data[i] = "x") END;
+		cache.Transfer(Disks.Read, 1, 1, buf, 1, res); ASSERT(buf[1] = "x"); ASSERT(disk.reads = 1);
+		cache.Transfer(Disks.Read, 2, 2, buf, 1, res); ASSERT(disk.reads = 2);
+		FOR i := 1 TO 1024 DO ASSERT(buf[i] = "x") END
+	END Test.
+
+positive: failed reads leave the destination untouched and are retried
+
+	MODULE Test;
+	IMPORT DiskCaches, Disks, F := DiskCacheFixture;
+	VAR disk: F.Disk; cache: DiskCaches.Cache; buf: ARRAY 512 OF CHAR; res: INTEGER; i: SIZE;
+	BEGIN
+		NEW(disk); NEW(cache, disk.Transfer, 2); disk.failRead := TRUE;
+		FOR i := 0 TO 511 DO buf[i] := "!" END;
+		cache.Transfer(Disks.Read, 1, 1, buf, 0, res); ASSERT(res = Disks.Unsupported);
+		FOR i := 0 TO 511 DO ASSERT(buf[i] = "!") END;
+		disk.failRead := FALSE; cache.Transfer(Disks.Read, 1, 1, buf, 0, res);
+		ASSERT(res = Disks.Ok); ASSERT(disk.reads = 2); ASSERT(buf[0] = 1X)
+	END Test.
+
+positive: failed writes do not publish uncommitted bytes in the cache
+
+	MODULE Test;
+	IMPORT DiskCaches, Disks, F := DiskCacheFixture;
+	VAR disk: F.Disk; cache: DiskCaches.Cache; buf: ARRAY 512 OF CHAR; res: INTEGER; i: SIZE;
+	BEGIN
+		NEW(disk); NEW(cache, disk.Transfer, 2);
+		cache.Transfer(Disks.Read, 1, 1, buf, 0, res);
+		FOR i := 0 TO 511 DO buf[i] := "x" END;
+		disk.failWrite := TRUE; cache.Transfer(Disks.Write, 1, 1, buf, 0, res); ASSERT(res = Disks.Unsupported);
+		disk.failWrite := FALSE; cache.Transfer(Disks.Read, 1, 1, buf, 0, res);
+		ASSERT(res = Disks.Ok); ASSERT(buf[0] = 1X); ASSERT(disk.data[512] = 1X)
+	END Test.
