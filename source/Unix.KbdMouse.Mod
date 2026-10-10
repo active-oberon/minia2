@@ -179,6 +179,21 @@ VAR
 						END;
 						km.flags := KeyState( ) + {Inputs.Release};
 						SendKeyboardMsg( km )
+					ELSE
+						keycount := X11.LookupString(kp, buffer, bufsize, keysym, compstatus);
+						km.ch := 0X;
+						IF keycount > 0 THEN
+							km.ch := buffer[0];
+							IF X11.ControlMask IN kp.state THEN
+								km.keysym := ORD(km.ch)
+							ELSE
+								km.keysym := MapKeysym(ORD(km.ch))
+							END
+						ELSE
+							km.keysym := MapKeysym(keysym)
+						END;
+						km.flags := KeyState() + {Inputs.Release};
+						SendKeyboardMsg(km)
 					END
 			| X11.ButtonPress: be := S.VAL(X11.ButtonEvent, event);
 					X11.lastEventTime := be.time;
