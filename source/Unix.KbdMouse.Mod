@@ -89,6 +89,15 @@ VAR
 	END SendKeyboardMsg;
 	
 
+	PROCEDURE SendFocusMsg(focused: BOOLEAN);
+	VAR message: Inputs.FocusMsg;
+	BEGIN
+		message.focused := focused;
+		Machine.Release(Machine.X11);
+		Inputs.keyboard.Handle(message);
+		Machine.Acquire(Machine.X11)
+	END SendFocusMsg;
+
 	PROCEDURE PollXQueue;
 	CONST bufsize = 20;
 	VAR keycount, xr, yr, x, y, dz, i: SIGNED32;
@@ -195,6 +204,8 @@ VAR
 						km.flags := KeyState() + {Inputs.Release};
 						SendKeyboardMsg(km)
 					END
+			| X11.FocusIn, X11.FocusOut:
+					SendFocusMsg(event.typ = X11.FocusIn)
 			| X11.ButtonPress: be := S.VAL(X11.ButtonEvent, event);
 					X11.lastEventTime := be.time;
 					dz := 0;
@@ -300,7 +311,8 @@ VAR
 		X11.SelectInput( disp.xdisp, disp.primary,
 						  X11.ExposureMask + X11.ButtonPressMask + X11.OwnerGrabButtonMask +
 						  X11.ButtonReleaseMask + X11.PointerMotionHintMask + X11.PointerMotionMask +
-						  X11.KeyPressMask + X11.KeyReleaseMask + X11.StructureNotifyMask );
+						  X11.KeyPressMask + X11.KeyReleaseMask + X11.StructureNotifyMask +
+						  X11.FocusChangeMask );
 		Machine.Release( Machine.X11 );
 
 		InitKeysym;

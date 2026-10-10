@@ -95,6 +95,10 @@ CONST
 TYPE
 	Message* = RECORD END;	(** generic message. *)
 
+	FocusMsg* = RECORD (Message)
+		focused*: BOOLEAN
+	END;
+
 	KeyboardMsg* = RECORD (Message)
 		ch*: CHAR;	(** extended ASCII key code, or 0X if not relevant *)
 		flags*: SET;	(** key flags *)

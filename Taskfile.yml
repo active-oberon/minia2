@@ -676,6 +676,11 @@ tasks:
           fi
         }
 
+  x11-keys:
+    desc: X11 key release and focus notifications (needs Xephyr)
+    cmds:
+      - bash {{.CURRENT_DIR}}/tests/x11-keys-check.sh {{.BUILD_DIR}}/bundle
+
   gui-repaint:
     desc: A windowed program's picture, after something covered it (needs Xephyr and a bundled SDK)
     cmds:
