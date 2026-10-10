@@ -33,7 +33,8 @@ IMPORT KernelLog;
 
 	PROCEDURE Do*;
 	BEGIN
-		KernelLog.String("x"); KernelLog.Ln
+		KernelLog.String("x");
+		KernelLog.Ln
 	END Do;
 
 END StdlibJump.
@@ -125,13 +126,29 @@ project = os.path.join(work, "proj")
 child = os.path.join(project, "LspProjectChild.Mod")
 main = os.path.join(project, "LspProjectMain.Mod")
 with open(child, "w") as f:
-    f.write('MODULE LspProjectChild; IMPORT Strings; VAR greeting*: ARRAY 32 OF CHAR; '
-            'BEGIN greeting := "hello"; Strings.Append(greeting, "!") END LspProjectChild.\n')
+    f.write('''MODULE LspProjectChild;
+IMPORT Strings;
+VAR greeting*: ARRAY 32 OF CHAR;
+BEGIN
+    greeting := "hello";
+    Strings.Append(greeting, "!")
+END LspProjectChild.
+''')
 with open(main, "w") as f:
-    f.write('MODULE LspProjectMain; IMPORT LspProjectChild; '
-            'VAR greeting*: ARRAY 32 OF CHAR; '
-            'BEGIN greeting := LspProjectChild.greeting END LspProjectMain.\n')
+    f.write('''MODULE LspProjectMain;
+IMPORT LspProjectChild;
+VAR greeting*: ARRAY 32 OF CHAR;
+BEGIN
+    greeting := LspProjectChild.greeting
+END LspProjectMain.
+''')
 source = open(main).read()
+# A different project in the launch directory must never shadow the editor's project.
+with open(os.path.join(work, "LspProjectChild.Mod"), "w") as f:
+    f.write('''MODULE LspProjectChild;
+CONST wrong* = 0;
+END LspProjectChild.
+''')
 off = source.index("LspProjectChild.greeting") + len("LspProjectChild.")
 line = source[:off].count("\n")
 char = off - (source.rfind("\n", 0, off) + 1)
@@ -147,8 +164,11 @@ stream = b"".join(frame(m) for m in [
      "params": {"textDocument": {"uri": uri},
                 "position": {"line": line, "character": char}}},
 ])
-p = subprocess.run([ob, "lsp", "--live"], input=stream, cwd=project,
-                   capture_output=True, env=dict(os.environ, TMPDIR=work, A2_PROJECT=project),
+clean_env = dict(os.environ, TMPDIR=work)
+for key in ("A2_PROJECT", "A2_SYMS", "A2SDK"):
+    clean_env.pop(key, None)
+p = subprocess.run([ob, "lsp", "--live"], input=stream, cwd=work,
+                   capture_output=True, env=clean_env,
                    timeout=300)
 answer = None
 diagnostics = None
@@ -172,4 +192,127 @@ if first["uri"] != "file://" + child:
     print("[FAIL] project definition landed in %s" % first["uri"], file=sys.stderr)
     sys.exit(1)
 print("[PASS] project module importing Strings resolves on first open")
+
+from pathlib import Path
+
+project = Path(work) / "project with % spaces"
+shared = Path(work) / "shared sources"
+vendor = project / ".a2pkg" / "example" / "library"
+for directory in (project / "tests", shared, vendor):
+    directory.mkdir(parents=True, exist_ok=True)
+(project / "a2pkg.json").write_text(json.dumps({
+    "name": "lsp-project", "sourcePaths": ["../shared sources"]
+}))
+(vendor / "a2pkg.json").write_text('{"name":"library"}')
+(vendor / "LspVendorLeaf.Mod").write_text('''MODULE LspVendorLeaf;
+VAR value*: SIGNED32;
+BEGIN
+    value := 41
+END LspVendorLeaf.
+''')
+(shared / "LspShared.Mod").write_text('''MODULE LspShared;
+IMPORT LspVendorLeaf;
+VAR value*: SIGNED32;
+BEGIN
+    value := LspVendorLeaf.value + 1
+END LspShared.
+''')
+(project / "LspChild.Mod").write_text('''MODULE LspChild;
+IMPORT Strings, LspShared;
+VAR greeting*: ARRAY 32 OF CHAR;
+BEGIN
+    greeting := "hello";
+    Strings.Append(greeting, "!")
+END LspChild.
+''')
+(Path(work) / "LspChild.Mod").write_text('''MODULE LspChild;
+CONST wrong* = 0;
+END LspChild.
+''')
+main = project / "tests" / "LspMain.Mod"
+main.write_text('''MODULE LspMain;
+IMPORT LspChild, LspShared, LspVendorLeaf, KernelLog;
+VAR greeting: ARRAY 32 OF CHAR; value: SIGNED32;
+PROCEDURE Do*;
+BEGIN
+    greeting := LspChild.greeting;
+    value := LspShared.value;
+    KernelLog.Int(value, 0);
+    KernelLog.Ln;
+    value := LspVendorLeaf.value;
+    KernelLog.Int(value, 0);
+    KernelLog.Ln
+END Do;
+END LspMain.
+''')
+source = main.read_text()
+
+
+def check_project(label, roots):
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": dict({"processId": None, "capabilities": {}}, **roots)},
+        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+        {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+         "params": {"textDocument": {"uri": main.as_uri(), "languageId": "oberon",
+                                     "version": 1, "text": source}}},
+    ]
+    expected = {}
+    for request_id, symbol, target in [
+        (2, "LspChild.greeting", project / "LspChild.Mod"),
+        (3, "LspShared.value", shared / "LspShared.Mod"),
+        (4, "LspVendorLeaf.value", vendor / "LspVendorLeaf.Mod"),
+    ]:
+        offset = source.index(symbol) + symbol.index(".") + 1
+        messages.append({"jsonrpc": "2.0", "id": request_id,
+            "method": "textDocument/definition", "params": {
+                "textDocument": {"uri": main.as_uri()},
+                "position": {"line": source[:offset].count("\n"),
+                             "character": offset - source.rfind("\n", 0, offset) - 1}}})
+        expected[request_id] = target
+    proc = subprocess.run([ob, "lsp", "--live"], input=b"".join(map(frame, messages)),
+                          cwd=work, capture_output=True, env=clean_env, timeout=30)
+    if proc.returncode:
+        raise AssertionError((label, proc.stderr.decode()))
+    answers = {}
+    diagnostics = None
+    for chunk in proc.stdout.decode().split("Content-Length:"):
+        try:
+            reply = json.loads(chunk.split("\r\n\r\n", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        if reply.get("method") == "textDocument/publishDiagnostics":
+            diagnostics = reply["params"]["diagnostics"]
+        if reply.get("id") in expected:
+            answers[reply["id"]] = reply.get("result")
+    assert diagnostics == [], (label, diagnostics, proc.stderr.decode())
+    for request_id, target in expected.items():
+        answer = answers.get(request_id)
+        assert answer, (label, request_id, answer)
+        location = answer if isinstance(answer, dict) else answer[0]
+        assert location["uri"] == target.as_uri(), (label, location, target)
+    print("[PASS] %s: nested imports, local and vendored definitions" % label)
+
+
+check_project("rootUri from another cwd", {"rootUri": project.as_uri()})
+check_project("workspaceFolders from another cwd", {
+    "rootUri": None, "workspaceFolders": [{"uri": project.as_uri(), "name": "example"}]
+})
+check_project("document fallback without a workspace", {"rootUri": None})
+
+# Builds must resolve the same manifest without prebuilt symbols in dependency directories.
+binary = project / "check"
+proc = subprocess.run([ob, "build", str(main), "-o", str(binary)], cwd=project,
+                      capture_output=True, env=clean_env, timeout=30)
+assert proc.returncode == 0, (proc.stdout.decode(), proc.stderr.decode())
+proc = subprocess.run([str(binary)], capture_output=True, timeout=10)
+assert proc.returncode == 0 and proc.stdout.split() == [b"42", b"41"], proc
+print("[PASS] ob build uses the same local and vendored dependencies")
+
+for invalid in ("../shared sources", [42], [""], ["../missing"], ["LspChild.Mod"]):
+    (project / "a2pkg.json").write_text(json.dumps({"sourcePaths": invalid}))
+    proc = subprocess.run([ob, "build", str(main), "-o", str(binary)], cwd=project,
+                          capture_output=True, env=clean_env, timeout=10)
+    assert proc.returncode != 0 and b"sourcePaths" in proc.stderr, (invalid, proc)
+print("[PASS] invalid dependency paths are rejected")
 PY

@@ -540,11 +540,20 @@ BEGIN
 END BuildPackages;
 
 PROCEDURE BuildSiblings(CONST work, platform, objectExtension, symbolExtension: ARRAY OF CHAR);
-VAR vendor: Path; changed: BOOLEAN;
+VAR vendor: Path; changed: BOOLEAN; paths: JSON.Array; path: Strings.String; index: SIZE;
 BEGIN
 	Join(project, ".a2pkg", vendor);
+	paths := ProjectSources();
 	REPEAT
 		changed := BuildDirectory(project, work, platform, objectExtension, symbolExtension);
+		IF paths # NIL THEN
+			FOR index := 0 TO paths.length-1 DO
+				path := paths.At(index)(JSON.String).value;
+				IF BuildDirectory(path^, work, platform, objectExtension, symbolExtension) THEN
+					changed := TRUE
+				END
+			END
+		END;
 		IF BuildPackages(vendor, work, platform, objectExtension, symbolExtension, 2) THEN changed := TRUE END
 	UNTIL ~changed
 END BuildSiblings;
@@ -571,13 +580,75 @@ BEGIN
 	RETURN ok
 END AddPackagePaths;
 
-(* Every package `ob get` installed, on the search path -- after the project, so a module beside
-   the program still wins over one that came from the registry. *)
-PROCEDURE AddVendored(): BOOLEAN;
-VAR vendor: Path;
+(* AddDependencyPaths keeps local and vendored imports consistent across SDK verbs. *)
+PROCEDURE AddDependencyPaths(): BOOLEAN;
+VAR vendor: Path; paths: JSON.Array; path: Strings.String; index: SIZE;
 BEGIN
-	Join(project, ".a2pkg", vendor); RETURN AddPackagePaths(vendor, 2)
-END AddVendored;
+	paths := ProjectSources();
+	IF failed THEN
+		RETURN FALSE
+	END;
+	IF paths # NIL THEN
+		FOR index := 0 TO paths.length-1 DO
+			path := paths.At(index)(JSON.String).value;
+			IF ~AddSearchPath(path^) THEN
+				RETURN FALSE
+			END
+		END
+	END;
+	Join(project, ".a2pkg", vendor);
+	RETURN AddPackagePaths(vendor, 2)
+END AddDependencyPaths;
+
+(** ProjectSources resolves local dependency directories against the project for every verb. *)
+PROCEDURE ProjectSources(): JSON.Array;
+VAR manifest, path, resolved: Path; object: JSON.Object; value, item: JSON.Value;
+	paths, result: JSON.Array; name: Strings.String; index: SIZE; handle: ADDRESS;
+BEGIN
+	Join(project, "a2pkg.json", manifest);
+	IF ~ObHost.Exists(manifest) THEN
+		RETURN NIL
+	END;
+	IF ~ReadJsonFile(manifest, object) THEN
+		DieOn("invalid project manifest: ", manifest);
+		RETURN NIL
+	END;
+	value := object.Get("sourcePaths");
+	IF value = NIL THEN
+		RETURN NIL
+	END;
+	IF ~(value IS JSON.Array) THEN
+		Die("sourcePaths must be an array of directories");
+		RETURN NIL
+	END;
+	paths := value(JSON.Array);
+	result := JSON.NewArray();
+	FOR index := 0 TO paths.length-1 DO
+		item := paths.At(index);
+		IF ~(item IS JSON.String) THEN
+			Die("sourcePaths entries must be directory strings");
+			RETURN NIL
+		END;
+		name := item(JSON.String).value;
+		IF name^ = "" THEN
+			Die("sourcePaths entries must not be empty");
+			RETURN NIL
+		END;
+		Absolute(project, name^, path);
+		IF ~ObHost.RealPath(path, resolved) THEN
+			DieOn("sourcePaths directory not found: ", path);
+			RETURN NIL
+		END;
+		handle := ObHost.OpenDirectory(resolved);
+		IF handle = 0 THEN
+			DieOn("sourcePaths entry is not a directory: ", resolved);
+			RETURN NIL
+		END;
+		ObHost.CloseDirectory(handle);
+		result.Add(JSON.NewString(resolved))
+	END;
+	RETURN result
+END ProjectSources;
 
 (*
 	Search paths every verb wants: the standard library, where this run writes, and the user's own
@@ -588,7 +659,7 @@ END AddVendored;
 *)
 PROCEDURE PrepareIn(CONST work: ARRAY OF CHAR): BOOLEAN;
 BEGIN
-	RETURN AddSearchPath(lib) & AddSearchPath(work) & AddSearchPath(project) & AddVendored() & SetWorkPath(work)
+	RETURN AddSearchPath(lib) & AddSearchPath(work) & AddSearchPath(project) & AddDependencyPaths() & SetWorkPath(work)
 END PrepareIn;
 
 (* --- verbs ------------------------------------------------------------------------------- *)
@@ -1084,7 +1155,7 @@ BEGIN
 	   when the compiler runs, and what runs here is this machine's code whatever is being built *)
 	(* Fresh objects and symbols must precede leftovers in the project and vendored packages. *)
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(library) OR ~AddSearchPath(scratch)
-			OR ~AddSearchPath(project) OR ~AddVendored() OR ~SetWorkPath(scratch) THEN
+			OR ~AddSearchPath(project) OR ~AddDependencyPaths() OR ~SetWorkPath(scratch) THEN
 		DiscardScratch(scratch); RETURN
 	END;
 	IF gui & ~AddSearchPath(libGui) THEN DiscardScratch(scratch); RETURN END;
@@ -1340,7 +1411,7 @@ VAR name, page, source, destination: Path;
 BEGIN
 	IF ~ModuleName(file, name) THEN DieOn("cannot read a MODULE header from ", file); RETURN FALSE END;
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(scratch) OR ~AddSearchPath(project)
-			OR ~AddVendored() OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
+			OR ~AddDependencyPaths() OR ~SetWorkPath(scratch) THEN RETURN FALSE END;
 	COPY(name, page); Strings.Append(page, ".html");
 	IF ~CompileForDocumentation(file, page) THEN RETURN FALSE END;
 	Join(scratch, page, source); Join(output, page, destination);
@@ -1416,7 +1487,7 @@ BEGIN
 	END;
 
 	(* the siblings are compiled once, here, rather than by each of the children in turn *)
-	IF AddSearchPath(lib) & AddSearchPath(scratch) & AddSearchPath(project) & AddVendored() & SetWorkPath(scratch) THEN
+	IF AddSearchPath(lib) & AddSearchPath(scratch) & AddSearchPath(project) & AddDependencyPaths() & SetWorkPath(scratch) THEN
 		BuildSiblings(scratch, CompilerPlatform, ObjectExtension, SymbolExtension)
 	END;
 
@@ -3059,7 +3130,7 @@ BEGIN
 	   code whatever is being compiled. The two libraries cannot be confused for each other -- a
 	   target is its object and symbol file extensions. *)
 	IF ~AddSearchPath(lib) OR ~AddSearchPath(testLibrary) OR ~AddSearchPath(scratch)
-			OR ~AddSearchPath(project) OR ~AddVendored() OR ~SetWorkPath(scratch) THEN
+			OR ~AddSearchPath(project) OR ~AddDependencyPaths() OR ~SetWorkPath(scratch) THEN
 		failed := TRUE
 	ELSE
 		Join(scratch, "TesterInput.txt", source);
@@ -3160,7 +3231,7 @@ BEGIN
 	IF ~ObHost.ExecutablePath(testSelf) THEN Die("cannot find my own binary"); RETURN END;
 	IF ~ScratchDirectory(testScratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	IF AddSearchPath(lib) & AddSearchPath(testLibrary) & AddSearchPath(testScratch)
-			& AddSearchPath(project) & AddVendored() & SetWorkPath(testScratch) THEN
+			& AddSearchPath(project) & AddDependencyPaths() & SetWorkPath(testScratch) THEN
 		BuildSiblings(testScratch, testPlatform, testObject, testSymbol)
 	END;
 	(* Only now, because the image is linked into the scratch directory. *)
@@ -3331,6 +3402,36 @@ BEGIN
 	Say(line)
 END BindVerb;
 
+(** ConfigureLspProject finds the document's project and shares dependency paths with builds. *)
+PROCEDURE ConfigureLspProject(CONST directory: ARRAY OF CHAR);
+VAR current, parent, marker: Path; ignore: BOOLEAN;
+BEGIN
+	IF directory = "" THEN
+		COPY(project, current)
+	ELSIF ~ObHost.RealPath(directory, current) THEN
+		RETURN
+	END;
+	COPY(current, project);
+	LOOP
+		Join(current, "a2pkg.json", marker);
+		IF ObHost.Exists(marker) THEN
+			COPY(current, project);
+			EXIT
+		END;
+		Join(current, ".git", marker);
+		IF ObHost.Exists(marker) THEN
+			COPY(current, project);
+			EXIT
+		END;
+		Directory(current, parent);
+		IF (parent = "") OR (parent = current) THEN
+			EXIT
+		END;
+		COPY(parent, current)
+	END;
+	ignore := AddSearchPath(project) & AddDependencyPaths() & AddSearchPath(directory)
+END ConfigureLspProject;
+
 PROCEDURE LspVerb;
 VAR argument, scratch, symbols: Path; live: BOOLEAN; context: Commands.Context; ignore: BOOLEAN;
 	compilerPlatform, objectExtension, symbolExtension, linkOptions, suffix, boot: Path;
@@ -3348,9 +3449,10 @@ BEGIN
 	IF ~TargetSettings(HostTarget, compilerPlatform, objectExtension, symbolExtension,
 			linkOptions, suffix, boot) THEN RETURN END;
 	LSP.SetTarget(symbolExtension, compilerPlatform);
+	LSP.SetProjectSetup(ConfigureLspProject);
 	IF ~ScratchDirectory(scratch) THEN Die("cannot create a scratch directory"); RETURN END;
 	IF AddSearchPath(lib) & AddSearchPath(libSym) & AddSearchPath(scratch)
-			& AddSearchPath(project) & SetWorkPath(scratch) THEN
+			& SetWorkPath(scratch) THEN
 		IF ObHost.Env("A2_SYMS", symbols) & (symbols # "") THEN ignore := AddSearchPath(symbols) END;
 		NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
 		IF live THEN LSP.RunLive(context) ELSE LSP.Run(context) END

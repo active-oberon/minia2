@@ -500,8 +500,24 @@ Point any LSP client at `docker run --rm -i -v "$PWD:/work" minia2-sdk lsp [--li
 stdlib go-to-definition.
 
 From the tarball the command is the path to `ob` and nothing else:
-`{ "/path/to/minia2-sdk-.../ob", "lsp", "--live" }` — the project is the directory the
-editor is in, so there is no mount to get right and no container per session.
+`{ "/path/to/minia2-sdk-.../ob", "lsp", "--live" }`. The native server uses the editor's
+`workspaceFolders` or `rootUri`, falling back to the opened file's directory. It finds
+the nearest `a2pkg.json` or `.git` and resolves imports independently of the editor's
+launch directory. Vendored packages under `.a2pkg/` use the same paths as `ob build`.
+
+For local libraries outside the project, declare directories relative to `a2pkg.json`:
+
+```json
+{
+  "name": "my-project",
+  "sourcePaths": ["../shared-library"]
+}
+```
+
+Both the native LSP and SDK build/run/compile commands use `sourcePaths`. Paths must
+name existing directories; malformed entries fail with an explicit error. No per-project
+editor configuration or `A2_SYMS` is needed for these source dependencies. `A2_SYMS`
+remains available for prebuilt symbols. Restart the server after changing the manifest.
 
 **Neovim:** use the maintained configuration described in [IDE.md §1c](IDE.md#1c-neovim).
 It selects `$A2_OB`, then `ob` on `PATH`, then Docker; the Docker path mounts

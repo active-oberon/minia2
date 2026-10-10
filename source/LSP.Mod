@@ -17,6 +17,8 @@ CONST
 	CR = 0DX; LF = 0AX;
 
 TYPE
+	ProjectSetup* = PROCEDURE (CONST directory: ARRAY OF CHAR);
+
 	Document = OBJECT
 	VAR next: Document; uri: Strings.String; text: Strings.String;
 	END Document;
@@ -672,6 +674,13 @@ VAR
 		defaults keep a caller that sets nothing working as before. *)
 	symbolSuffix: ARRAY 16 OF CHAR;
 	platformOption: ARRAY 32 OF CHAR;
+	projectSetup: ProjectSetup;
+
+	(** SetProjectSetup shares the SDK's project and dependency discovery with editor requests. *)
+	PROCEDURE SetProjectSetup* (setup: ProjectSetup);
+	BEGIN
+		projectSetup := setup
+	END SetProjectSetup;
 
 	(** Name symbol files and compile them for this platform: ".SymU8", "UnixA64". *)
 	PROCEDURE SetTarget* (CONST suffix, platform: ARRAY OF CHAR);
@@ -772,6 +781,64 @@ VAR
 		RETURN prefix[i] = 0X
 	END StartsWith;
 
+	PROCEDURE HexDigit (ch: CHAR): SIGNED32;
+	BEGIN
+		IF (ch >= "0") & (ch <= "9") THEN
+			RETURN ORD(ch) - ORD("0")
+		END;
+		ch := CAP(ch);
+		IF (ch >= "A") & (ch <= "F") THEN
+			RETURN ORD(ch) - ORD("A") + 10
+		END;
+		RETURN -1
+	END HexDigit;
+
+	(* UriPath decodes local file URIs before they reach the filesystem. *)
+	PROCEDURE UriPath (uri: Strings.String; VAR path: ARRAY OF CHAR): BOOLEAN;
+	VAR i, n: SIZE; high, low: SIGNED32; ch: CHAR;
+	BEGIN
+		path := "";
+		IF uri = NIL THEN
+			RETURN FALSE
+		END;
+		IF StartsWith(uri^, "file://localhost/") THEN
+			i := 16
+		ELSIF StartsWith(uri^, "file:///") THEN
+			i := 7
+		ELSIF uri[0] = "/" THEN
+			i := 0
+		ELSE
+			RETURN FALSE
+		END;
+		n := 0;
+		WHILE uri[i] # 0X DO
+			IF n >= LEN(path)-1 THEN
+				RETURN FALSE
+			END;
+			ch := uri[i];
+			IF ch = "%" THEN
+				IF (uri[i+1] = 0X) OR (uri[i+2] = 0X) THEN
+					RETURN FALSE
+				END;
+				high := HexDigit(uri[i+1]);
+				low := HexDigit(uri[i+2]);
+				IF (high < 0) OR (low < 0) OR ((high = 0) & (low = 0)) THEN
+					RETURN FALSE
+				END;
+				ch := CHR(high * 16 + low);
+				INC(i, 2)
+			END;
+			path[n] := ch;
+			INC(n);
+			INC(i)
+		END;
+		path[n] := 0X;
+		IF (symbolSuffix = ".SymWw") & (n >= 3) & (path[0] = "/") & (path[2] = ":") THEN
+			Strings.Delete(path, 0, 1)
+		END;
+		RETURN n > 0
+	END UriPath;
+
 	(* The directory of an open document, with its trailing slash, taken from the document's
 	   own URI. The sweep over a project's other modules used to enumerate "./*.Mod", which
 	   is the process's working directory -- and `ob lsp` sets that to a scratch directory,
@@ -780,21 +847,50 @@ VAR
 	   directory we can always name. Returns FALSE for a URI with no path or no scheme we
 	   understand, and the caller then falls back to the working directory. *)
 	PROCEDURE DocumentDir (uri: Strings.String; VAR dir: ARRAY OF CHAR): BOOLEAN;
-	CONST scheme = "file://";
-	VAR i, from, last, n: SIZE;
+	VAR last: SIZE;
 	BEGIN
-		IF uri = NIL THEN RETURN FALSE END;
-		from := 0; i := 0;
-		WHILE (scheme[i] # 0X) & (uri[i] = scheme[i]) DO INC(i) END;
-		IF scheme[i] = 0X THEN from := i ELSIF uri[0] # "/" THEN RETURN FALSE END;
-		last := -1; i := from;
-		WHILE uri[i] # 0X DO IF uri[i] = "/" THEN last := i END; INC(i) END;
-		IF last < from THEN RETURN FALSE END;
-		n := 0; i := from;
-		WHILE (i <= last) & (n < LEN(dir)-1) DO dir[n] := uri[i]; INC(n); INC(i) END;
-		dir[n] := 0X;
-		RETURN n > 0
+		IF ~UriPath(uri, dir) THEN
+			RETURN FALSE
+		END;
+		last := Strings.Length(dir);
+		WHILE (last > 0) & (dir[last-1] # "/") DO
+			DEC(last)
+		END;
+		dir[last] := 0X;
+		RETURN last > 0
 	END DocumentDir;
+
+	(* ConfigureProject prefers the client's workspace and falls back to the opened document. *)
+	PROCEDURE ConfigureProject (params: JSON.Object);
+	VAR folders: JSON.Array; folder: JSON.Object; uri: Strings.String; dir: ARRAY 1024 OF CHAR;
+	BEGIN
+		IF (projectSetup = NIL) OR (params = NIL) THEN
+			RETURN
+		END;
+		folders := JSON.GetArray(params, "workspaceFolders");
+		IF (folders # NIL) & (folders.length > 0) THEN
+			folder := JSON.AsObject(folders.At(0));
+			IF JSON.GetString(folder, "uri", uri) & UriPath(uri, dir) THEN
+				projectSetup(dir);
+				RETURN
+			END
+		END;
+		IF JSON.GetString(params, "rootUri", uri) & UriPath(uri, dir) THEN
+			projectSetup(dir)
+		END
+	END ConfigureProject;
+
+	(* ConfigureDocument makes sibling imports available even when the editor sends no root. *)
+	PROCEDURE ConfigureDocument (uri: Strings.String);
+	VAR dir: ARRAY 1024 OF CHAR;
+	BEGIN
+		IF projectSetup # NIL THEN
+			IF ~DocumentDir(uri, dir) THEN
+				dir := ""
+			END;
+			projectSetup(dir)
+		END
+	END ConfigureDocument;
 
 	(*	Mask for enumerating the other modules beside `uri`, and the prefix to read them by.
 
@@ -1178,7 +1274,7 @@ VAR
 	END PrefixedSource;
 
 	PROCEDURE ModSourceFile (uri: Strings.String; CONST mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
-	VAR dir: ARRAY 1024 OF CHAR;
+	VAR dir: ARRAY 1024 OF CHAR; file: Files.File;
 	BEGIN
 		IF DocumentDir(uri, dir) THEN
 			COPY(dir, fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
@@ -1186,7 +1282,11 @@ VAR
 			IF PrefixedSource(dir, mname, fn) THEN RETURN TRUE END
 		END;
 		COPY(mname, fn); Strings.Append(fn, ".Mod");
-		IF FileExists(fn) THEN RETURN TRUE END;
+		file := Files.Old(fn);
+		IF file # NIL THEN
+			Files.GetName(file, fn);
+			RETURN TRUE
+		END;
 		IF stdlibSrcHost[0] # 0X THEN
 			(* The host tree first: the native SDK reads the path it was handed, and /libsrc is a
 			   mount only the image has -- looking there alone made stdlibSrc dead weight outside a
@@ -1269,6 +1369,33 @@ VAR
 		RETURN Strings.NewString(s)
 	END SiblingUri;
 
+	(* FileUri escapes host paths so spaces and percent signs survive editor round trips. *)
+	PROCEDURE FileUri (CONST path: ARRAY OF CHAR): Strings.String;
+	CONST hex = "0123456789ABCDEF";
+	VAR uri: ARRAY 4096 OF CHAR; i: SIZE; ch: CHAR; value: SIGNED32;
+	BEGIN
+		uri := "file://";
+		IF path[0] # "/" THEN
+			Strings.AppendChar(uri, "/")
+		END;
+		i := 0;
+		WHILE path[i] # 0X DO
+			ch := path[i];
+			IF ((ch >= "A") & (ch <= "Z")) OR ((ch >= "a") & (ch <= "z"))
+				OR ((ch >= "0") & (ch <= "9")) OR (ch = "/") OR (ch = ":")
+				OR (ch = "-") OR (ch = "_") OR (ch = ".") OR (ch = "~") THEN
+				Strings.AppendChar(uri, ch)
+			ELSE
+				value := ORD(ch);
+				Strings.AppendChar(uri, "%");
+				Strings.AppendChar(uri, hex[value DIV 16]);
+				Strings.AppendChar(uri, hex[value MOD 16])
+			END;
+			INC(i)
+		END;
+		RETURN Strings.NewString(uri)
+	END FileUri;
+
 	(* Host file:// URI of module <mname>'s source, or NIL if not addressable.
 	   - project module: its <mname>.Mod is symlinked into the cwd (from /work);
 	     map it to a sibling of the current document.
@@ -1281,7 +1408,9 @@ VAR
 		IF ModSourceFile(curUri, mname, f) & ~StartsWith(f, "/libsrc/") THEN
 			(* beside the document: an absolute path already, so it is its own URI. From the working
 			   directory: a bare name, and the document's own directory is what it is relative to. *)
-			IF f[0] = "/" THEN COPY("file://", s); Strings.Append(s, f); RETURN Strings.NewString(s) END;
+			IF (f[0] = "/") OR (f[1] = ":") THEN
+				RETURN FileUri(f)
+			END;
 			RETURN SiblingUri(curUri, mname)
 		END;
 		COPY(mname, f); Strings.Append(f, ".Mod");
@@ -2870,6 +2999,7 @@ VAR
 				IF JSON.GetString(req, "method", method) THEN
 					params := JSON.AsObject(req.Get("params"));
 					IF method^ = "initialize" THEN
+						ConfigureProject(params);
 						caps := JSON.NewObject();
 						caps.Set("textDocumentSync", JSON.NewNumber(1));   (* full sync *)
 						caps.Set("hoverProvider", JSON.NewBool(TRUE));
@@ -2926,6 +3056,7 @@ VAR
 					ELSIF method^ = "textDocument/didOpen" THEN
 						td := JSON.AsObject(params.Get("textDocument"));
 						IF (td # NIL) & JSON.GetString(td, "uri", uri) & JSON.GetString(td, "text", text) THEN
+							ConfigureDocument(uri);
 							PutDoc(uri^, text^); PublishFor(out, uri)
 						END
 					ELSIF method^ = "textDocument/didChange" THEN
