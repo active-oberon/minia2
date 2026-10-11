@@ -4,12 +4,13 @@
   "context": "A2",
   "shipped": true,
   "status": "draft",
-  "description": "Turning values into bytes and back: JSON, CSV, Base64, CRC.",
+  "description": "Turning values into bytes and back: JSON, configuration YAML, CSV, Base64, CRC.",
   "provides": [
     "Base64",
     "CRC",
     "CSV",
-    "JSON"
+    "JSON",
+    "YAML"
   ],
   "requires": {
     "std/base": "*",

@@ -1,0 +1,58 @@
+# YAML parser checks live beside the implementation as {TEST} procedures.
+# options --mayTrap --command="System.Free Test;System.Load Test"
+
+positive: configuration mappings and scalar types
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.Configuration
+	END Test.
+
+positive: block and flow collections
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.Collections
+	END Test.
+
+positive: quoted and plain scalars
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.QuotesAndPlainScalars
+	END Test.
+
+positive: malformed and unsupported input
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.RejectMalformed
+	END Test.
+
+positive: budgets and line endings
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.BudgetsAndLineEndings
+	END Test.
+
+positive: streams and file loading
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.StreamsAndFiles
+	END Test.
+
+positive: node and file size budgets
+
+	MODULE Test;
+	IMPORT YAML;
+	BEGIN
+		YAML.ResourceLimits
+	END Test.

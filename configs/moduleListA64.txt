@@ -314,6 +314,7 @@ HTMLParser.Mod
 NewHTTPClient.Mod
 CSV.Mod
 JSON.Mod
+YAML.Mod
 LSP.Mod
 DebugMap.Mod
 DAP.Mod
