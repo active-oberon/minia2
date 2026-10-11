@@ -345,6 +345,7 @@ XMLParser
 XMLScanner
 XModem
 XYModem
+YAML
 Zip
 ZipFS
 ZipTool
