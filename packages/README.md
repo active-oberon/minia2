@@ -11,7 +11,7 @@ files are not (yet) physically moved. A manifest is a plain `a2pkg.json`.
 ## The four top-level directories
 
 - **`std/`** — the standard library: what other packages talk to each other through, plus
-  what those types are built from. 12 packages, 144 modules. `docs/STDLIB.md` states the
+  what those types are built from. 13 packages, 160 modules. `docs/STDLIB.md` states the
   rule and records what moved out on 2026-08-27 and why.
 - **`lib/`** — library that is not standard: crypto, compression, archives, the web
   framework, graphics and the window manager, drivers, disks, media, sound, the numeric

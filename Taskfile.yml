@@ -805,6 +805,8 @@ tasks:
 
   registry:
     desc: The shipped module lists still say what packages/std says
+    env:
+      BUILD_DIR: '{{.BUILD_DIR}}'
     # configs/headless-core*.txt are derived from the registry, so they can go stale in two ways:
     # a package gains or loses a module, or a module's imports start reaching the window system.
     # --check writes nothing and fails on either, and on a module in the payload that no package

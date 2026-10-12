@@ -95,6 +95,7 @@ set -- ${args+"${args[@]}"}
 
 BOOT=compilers/Linux64/oberon
 [ -x "$BOOT" ] || { echo "missing bootstrap compiler $BOOT" >&2; exit 1; }
+build="${BUILD_DIR:-target}"
 
 # platform -> the four things that differ: build directory, compiler defines, object and
 # symbol extension, output list. The defines are what DependencyWalker resolves the
@@ -103,11 +104,11 @@ generate() {
 	local platform="$1" bin defines objext symext out guiout graph
 	local sources=(source/*.Mod)
 	case "$platform" in
-		linux64) bin=target/Linux64/bin; defines=UNIX,AMD64; objext=GofUu; symext=SymUu
+		linux64) bin="$build/Linux64/bin"; defines=UNIX,AMD64; objext=GofUu; symext=SymUu
 		         out=configs/headless-core.txt; guiout=configs/gui-core.txt ;;
-		win64)   bin=target/Win64/bin;   defines=WIN,AMD64;  objext=GofWw; symext=SymWw
+		win64)   bin="$build/Win64/bin"; defines=WIN,AMD64;  objext=GofWw; symext=SymWw
 		         out=configs/headless-core-win64.txt; guiout=configs/gui-core-win64.txt ;;
-		armhf)   bin=target/LinuxARM/bin; defines=UNIX,ARM;  objext=GofA;  symext=SymA
+		armhf)   bin="$build/LinuxARM/bin"; defines=UNIX,ARM; objext=GofA; symext=SymA
 		         out=configs/headless-core-armhf.txt; guiout=configs/gui-core-armhf.txt
 		         # Windows.Kernel32.Mod ends in UNIMPLEMENTED for every machine that is not x86,
 		         # so the walker cannot even parse it with UNIX,ARM and gives up on the whole run.

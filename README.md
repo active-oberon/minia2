@@ -127,6 +127,9 @@ See [`docs/SDK.md`](docs/SDK.md) for all of them,
 [`docs/IDE.md`](docs/IDE.md) for editor setup, and [`docs/TESTING.md`](docs/TESTING.md) for how the
 suites in `tests/` are written and run.
 
+[`Logging`](docs/Logging.md) provides structured application logs with typed fields,
+shared level filtering, and text or JSON handlers in every SDK target.
+
 **Debugging** is `ob dap` — an ordinary debug adapter, so any editor that speaks the protocol
 drives it with no code of ours in between: breakpoints on a line, stepping, the call stack, and
 the parameters and locals of each frame. Neovim through `nvim-dap`, VS Code through the `.vsix`

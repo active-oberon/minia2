@@ -15,6 +15,17 @@ The border is Rust's, because Rust is the one modern standard library designed
 per-package API to copy is Go's — those are the best available specifications.
 The size to aim for is Oberon's own.
 
+## Structured logging, 2026-10-12
+
+`std/logging` adds `Logging`, a tier-3 shared record and handler contract for
+application diagnostics. It depends on `std/base`, `std/text`, `std/time`,
+`std/runtime` and `std/encoding`, reusing stream writers, owned strings, clocks,
+calendar conversion and JSON escaping.
+The package ships on every target. Text and JSON handlers serialize complete
+records synchronously; `With` copies context and `Enabled` avoids constructing
+disabled records. Boot and kernel diagnostics keep their existing `KernelLog`
+interface. See [Logging](Logging.md) for the API, output and ownership rules.
+
 ## The payload, 2026-09-04: `headless` became `shipped`, and it grew
 
 The manifest field that decides what the SDK carries was called `headless`, which was the

@@ -1,0 +1,235 @@
+# Structured logging: escaping, exact integers, context isolation, filtering, failures and concurrent writers.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: JSON keeps typed fields and metadata separate and escapes every string
+
+	MODULE Test;
+	IMPORT Logging, Streams, JSON, Strings;
+	VAR buffer: Streams.Buffer; log: Logging.Logger; attrs: ARRAY 5 OF Logging.Attr;
+		value: JSON.Value; object, fields: JSON.Object; text: Strings.String; message: ARRAY 32 OF CHAR; res: SIGNED32;
+	BEGIN
+		NEW(buffer, 16); NEW(log, Logging.NewJSONHandler(buffer.GetWriter()));
+		message := 'hello "world"'; Strings.AppendChar(message, 0AX);
+		attrs[0] := Logging.String("msg", "user field");
+		attrs[1] := Logging.Int("count", -42); attrs[2] := Logging.Bool("ready", TRUE);
+		attrs[3] := Logging.Float("ratio", 0.5); attrs[4] := Logging.String('odd"key', 'a\b');
+		res := log.Log(Logging.LevelInfo, message, attrs); ASSERT(res = Streams.Ok);
+		text := buffer.GetString(); ASSERT(JSON.Parse(text^, value)); object := value(JSON.Object);
+		ASSERT(JSON.GetString(object, "msg", text)); ASSERT(text^ = message);
+		ASSERT(JSON.GetString(object, "level", text)); ASSERT(text^ = "INFO");
+		ASSERT(JSON.GetString(object, "time", text)); ASSERT(Strings.Length(text^) = 20); ASSERT(text[19] = "Z");
+		fields := JSON.GetObject(object, "attrs"); ASSERT(fields # NIL);
+		ASSERT(JSON.GetString(fields, "msg", text)); ASSERT(text^ = "user field");
+		value := fields.Get("count"); ASSERT(value(JSON.Number).value = -42);
+		value := fields.Get("ready"); ASSERT(value(JSON.Bool).value);
+		value := fields.Get("ratio"); ASSERT(value(JSON.Number).value = 0.5);
+		ASSERT(JSON.GetString(fields, 'odd"key', text)); ASSERT(text^ = 'a\b')
+	END Test.
+
+positive: signed and unsigned 64-bit fields reach JSON without rounding through a real
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings;
+	VAR buffer: Streams.Buffer; log: Logging.Logger; attrs: ARRAY 3 OF Logging.Attr; text: Strings.String;
+	BEGIN
+		NEW(buffer, 8); NEW(log, Logging.NewJSONHandler(buffer.GetWriter()));
+		attrs[0] := Logging.Int("min", MIN(SIGNED64)); attrs[1] := Logging.Int("max", MAX(SIGNED64));
+		attrs[2] := Logging.UInt("id", MAX(UNSIGNED64));
+		ASSERT(log.Log(Logging.LevelInfo, "integers", attrs) = Streams.Ok); text := buffer.GetString();
+		ASSERT(Strings.Pos('"min":-9223372036854775808', text^) >= 0);
+		ASSERT(Strings.Pos('"max":9223372036854775807', text^) >= 0);
+		ASSERT(Strings.Pos('"id":18446744073709551615', text^) >= 0)
+	END Test.
+
+positive: text output quotes unsafe keys and does not turn message data into log lines
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings;
+	VAR buffer: Streams.Buffer; handler: Logging.StreamHandler; record: Logging.Record;
+		text: Strings.String; message: ARRAY 8 OF CHAR; i, lines: SIZE;
+	BEGIN
+		NEW(buffer, 16); handler := Logging.NewTextHandler(buffer.GetWriter());
+		record.time.year := 1970; record.time.month := 1; record.time.day := 1; record.level := Logging.LevelWarn;
+		message := "a"; message[1] := 0AX; message[2] := 0DX; message[3] := 22X; message[4] := 0X;
+		record.message := Strings.NewString(message); NEW(record.attrs, 2);
+		record.attrs[0] := Logging.String("two words=", message); record.attrs[1] := Logging.Bool("ready", FALSE);
+		ASSERT(handler.Handle(record) = Streams.Ok); text := buffer.GetString();
+		ASSERT(Strings.Pos("time=1970-01-01T00:00:00Z level=WARN", text^) = 0);
+		ASSERT(Strings.Pos('msg="a\n\r\""', text^) >= 0);
+		ASSERT(Strings.Pos('"attrs.two words="="a\n\r\""', text^) >= 0);
+		ASSERT(Strings.Pos("attrs.ready=false", text^) >= 0);
+		lines := 0; FOR i := 0 TO Strings.Length(text^) - 1 DO IF text[i] = 0AX THEN INC(lines) END END;
+		ASSERT(lines = 1)
+	END Test.
+
+positive: With freezes caller data leaves the parent alone and later fields replace earlier ones
+
+	MODULE Test;
+	IMPORT Logging, Streams, JSON, Strings;
+	VAR buffer: Streams.Buffer; parent, child: Logging.Logger; fields: ARRAY 2 OF Logging.Attr;
+		added: ARRAY 1 OF Logging.Attr; text, result: Strings.String; value: JSON.Value; attrs: JSON.Object;
+	BEGIN
+		NEW(buffer, 32); NEW(parent, Logging.NewJSONHandler(buffer.GetWriter()));
+		fields[0] := Logging.String("component", "server"); fields[1] := Logging.Int("id", 1);
+		parent := parent.With(fields); added[0] := Logging.Int("id", 2); child := parent.With(added);
+		fields[0].key[0] := "X"; fields[0].text[0] := "X"; fields[1].integer := 99; added[0].integer := 99;
+		ASSERT(child.Info("child") = Streams.Ok); text := buffer.GetString(); ASSERT(JSON.Parse(text^, value));
+		attrs := JSON.GetObject(value(JSON.Object), "attrs"); value := attrs.Get("id"); ASSERT(value(JSON.Number).value = 2);
+		ASSERT(JSON.GetString(attrs, "component", result)); ASSERT(result^ = "server");
+		buffer.Clear; ASSERT(parent.Info("parent") = Streams.Ok); text := buffer.GetString(); ASSERT(JSON.Parse(text^, value));
+		attrs := JSON.GetObject(value(JSON.Object), "attrs"); value := attrs.Get("id"); ASSERT(value(JSON.Number).value = 1);
+		fields[0] := Logging.Int("id", 3); fields[1] := Logging.Int("id", 4); buffer.Clear;
+		ASSERT(child.Log(Logging.LevelInfo, "override", fields) = Streams.Ok); text := buffer.GetString();
+		ASSERT(JSON.Parse(text^, value)); attrs := JSON.GetObject(value(JSON.Object), "attrs");
+		value := attrs.Get("id"); ASSERT(value(JSON.Number).value = 4);
+		ASSERT(Strings.Pos('"id":', text^) = Strings.Pos('"id":4', text^))
+	END Test.
+
+positive: filtering precedes record construction and a shared handler changes levels dynamically
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings;
+	VAR buffer: Streams.Buffer; handler: Logging.StreamHandler; parent, child: Logging.Logger;
+		invalid, context: ARRAY 1 OF Logging.Attr; text: Strings.String;
+	BEGIN
+		NEW(buffer, 32); handler := Logging.NewTextHandler(buffer.GetWriter()); NEW(parent, handler);
+		context[0] := Logging.String("component", "child"); child := parent.With(context);
+		ASSERT(~parent.Enabled(Logging.LevelDebug)); ASSERT(parent.Enabled(Logging.LevelInfo));
+		ASSERT(parent.Log(Logging.LevelDebug, "discarded", invalid) = Streams.Ok);
+		ASSERT(parent.Debug("debug") = Streams.Ok); text := buffer.GetString(); ASSERT(text^ = "");
+		handler.SetLevel(Logging.LevelWarn); ASSERT(~child.Enabled(Logging.LevelInfo));
+		ASSERT(child.Info("info") = Streams.Ok); ASSERT(parent.Warn("warning") = Streams.Ok);
+		ASSERT(child.Error("error") = Streams.Ok); text := buffer.GetString();
+		ASSERT(Strings.Pos("level=WARN", text^) >= 0); ASSERT(Strings.Pos("level=ERROR", text^) >= 0);
+		ASSERT(Strings.Pos('msg="info"', text^) < 0);
+		handler.SetLevel(Logging.LevelDebug); ASSERT(child.Debug("enabled") = Streams.Ok)
+	END Test.
+
+positive: custom handlers receive typed records and their errors reach the caller
+
+	MODULE Test;
+	IMPORT Logging, Streams, Dates;
+	TYPE Capture = OBJECT (Logging.Handler)
+		VAR seen: SIGNED32;
+		PROCEDURE Handle(CONST record: Logging.Record): SIGNED32;
+		BEGIN
+			INC(seen); ASSERT(Dates.ValidDateTime(record.time)); ASSERT(record.level = 9); ASSERT(record.message^ = "custom");
+			ASSERT(LEN(record.attrs^) = 1); ASSERT(record.attrs[0].key^ = "id");
+			ASSERT(record.attrs[0].kind = Logging.UIntValue); ASSERT(record.attrs[0].unsigned = MAX(UNSIGNED64));
+			RETURN 8765
+		END Handle;
+	END Capture;
+	VAR handler: Capture; log: Logging.Logger; attrs: ARRAY 2 OF Logging.Attr;
+	BEGIN
+		NEW(handler); NEW(log, handler);
+		attrs[0] := Logging.Int("id", 1); attrs[1] := Logging.UInt("id", MAX(UNSIGNED64));
+		ASSERT(log.Log(9, "custom", attrs) = 8765);
+		ASSERT(handler.seen = 1)
+	END Test.
+
+positive: a stream failure is reported and an already failed writer cannot pretend to recover
+
+	MODULE Test;
+	IMPORT Logging, Streams;
+	VAR writer: Streams.Writer; log: Logging.Logger; calls: SIGNED32;
+	PROCEDURE Fail(CONST data: ARRAY OF CHAR; offset, length: SIZE; propagate: BOOLEAN; VAR res: INTEGER);
+	BEGIN INC(calls); res := 6789 END Fail;
+	BEGIN
+		NEW(writer, Fail, 16); NEW(log, Logging.NewTextHandler(writer));
+		ASSERT(log.Error("failed") = 6789); ASSERT(calls = 1);
+		ASSERT(log.Info("still failed") = 6789); ASSERT(calls = 1)
+	END Test.
+
+positive: long fields survive multiple writer buffers and the old event message limit
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings, JSON;
+	VAR buffer: Streams.Buffer; log: Logging.Logger; message: ARRAY 4097 OF CHAR;
+		text, actual: Strings.String; value: JSON.Value; fields: JSON.Object; attrs: ARRAY 1 OF Logging.Attr; i: SIZE;
+	BEGIN
+		FOR i := 0 TO LEN(message) - 2 DO message[i] := "x" END; message[LEN(message) - 1] := 0X;
+		NEW(buffer, 7); NEW(log, Logging.NewJSONHandler(buffer.GetWriter()));
+		attrs[0] := Logging.String("payload", message);
+		ASSERT(log.Log(Logging.LevelInfo, message, attrs) = Streams.Ok);
+		text := buffer.GetString(); ASSERT(JSON.Parse(text^, value));
+		ASSERT(JSON.GetString(value(JSON.Object), "msg", actual)); ASSERT(actual^ = message);
+		fields := JSON.GetObject(value(JSON.Object), "attrs");
+		ASSERT(JSON.GetString(fields, "payload", actual)); ASSERT(actual^ = message)
+	END Test.
+
+positive: non-finite floats remain parseable and a custom numeric level retains its value
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings, JSON, SYSTEM;
+	VAR buffer: Streams.Buffer; log: Logging.Logger; fields: ARRAY 3 OF Logging.Attr;
+		text: Strings.String; value: JSON.Value; attrs: JSON.Object;
+	BEGIN
+		fields[0] := Logging.Float("nan", SYSTEM.VAL(FLOAT64, 7FF8000000000000H));
+		fields[1] := Logging.Float("positive", SYSTEM.VAL(FLOAT64, 7FF0000000000000H));
+		fields[2] := Logging.Float("negative", SYSTEM.VAL(FLOAT64, 0FFF0000000000000H));
+		NEW(buffer, 16); NEW(log, Logging.NewJSONHandler(buffer.GetWriter()));
+		ASSERT(log.Log(9, "floats", fields) = Streams.Ok); text := buffer.GetString();
+		ASSERT(JSON.Parse(text^, value)); ASSERT(JSON.GetString(value(JSON.Object), "level", text)); ASSERT(text^ = "9");
+		attrs := JSON.GetObject(value(JSON.Object), "attrs");
+		ASSERT(JSON.GetString(attrs, "nan", text)); ASSERT(text^ = "NaN");
+		ASSERT(JSON.GetString(attrs, "positive", text)); ASSERT(text^ = "+Inf");
+		ASSERT(JSON.GetString(attrs, "negative", text)); ASSERT(text^ = "-Inf")
+	END Test.
+
+positive: concurrent parent and child loggers write complete records even with a yielding tiny writer
+
+	MODULE Test;
+	IMPORT Logging, Streams, Strings, JSON, Objects;
+	CONST Workers = 4; Rounds = 40;
+	TYPE
+		Output = OBJECT
+		VAR buffer: Streams.Buffer; writer: Streams.Writer; done: SIGNED32;
+		PROCEDURE &Init;
+		BEGIN NEW(buffer, 16); writer := buffer.GetWriter() END Init;
+		PROCEDURE Send(CONST data: ARRAY OF CHAR; offset, length: SIZE; propagate: BOOLEAN; VAR res: INTEGER);
+		VAR i: SIZE;
+		BEGIN
+			FOR i := offset TO offset + length - 1 DO writer.Char(data[i]); Objects.Yield END;
+			writer.Update; res := writer.res
+		END Send;
+		PROCEDURE Done;
+		BEGIN {EXCLUSIVE} INC(done) END Done;
+		PROCEDURE Finished(): BOOLEAN;
+		BEGIN {EXCLUSIVE} RETURN done = Workers END Finished;
+		END Output;
+		Worker = OBJECT
+		VAR log: Logging.Logger; output: Output; id: SIGNED32;
+		PROCEDURE &Start(log: Logging.Logger; output: Output; id: SIGNED32);
+		BEGIN SELF.log := log; SELF.output := output; SELF.id := id END Start;
+		BEGIN {ACTIVE}
+			BEGIN
+				VAR i: SIGNED32; VAR attrs: ARRAY 2 OF Logging.Attr;
+				FOR i := 1 TO Rounds DO
+					attrs[0] := Logging.Int("worker", id); attrs[1] := Logging.Int("seq", i);
+					ASSERT(log.Log(Logging.LevelInfo, "parallel", attrs) = Streams.Ok)
+				END
+			END;
+			output.Done
+		END Worker;
+	VAR output: Output; writer: Streams.Writer; parent, child: Logging.Logger; worker: Worker;
+		reader: Streams.StringReader; text: Strings.String; value: JSON.Value; attrs: JSON.Object;
+		seen: ARRAY Workers, Rounds OF BOOLEAN; context: ARRAY 1 OF Logging.Attr; id, seq: SIGNED32; i, count: SIZE;
+	BEGIN
+		NEW(output); NEW(writer, output.Send, 7); NEW(parent, Logging.NewJSONHandler(writer));
+		context[0] := Logging.String("component", "child"); child := parent.With(context);
+		FOR i := 0 TO Workers - 1 DO
+			IF i MOD 2 = 0 THEN NEW(worker, parent, output, SIGNED32(i)) ELSE NEW(worker, child, output, SIGNED32(i)) END
+		END;
+		i := 0; WHILE ~output.Finished() & (i < 2000) DO Objects.Sleep(10); INC(i) END;
+		ASSERT(output.Finished()); text := output.buffer.GetString(); NEW(reader, Strings.Length(text^) + 1); reader.Set(text^);
+		count := 0;
+		WHILE JSON.ParseStream(reader, value) DO
+			ASSERT(JSON.GetString(value(JSON.Object), "msg", text)); ASSERT(text^ = "parallel");
+			attrs := JSON.GetObject(value(JSON.Object), "attrs");
+			value := attrs.Get("worker"); id := SIGNED32(ENTIER(value(JSON.Number).value));
+			value := attrs.Get("seq"); seq := SIGNED32(ENTIER(value(JSON.Number).value)) - 1;
+			ASSERT((id >= 0) & (id < Workers) & (seq >= 0) & (seq < Rounds));
+			ASSERT(~seen[id, seq]); seen[id, seq] := TRUE; INC(count)
+		END;
+		ASSERT(count = Workers * Rounds)
+	END Test.

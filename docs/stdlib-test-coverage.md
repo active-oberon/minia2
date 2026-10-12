@@ -7,6 +7,8 @@ Transitive candidates come from the union of source imports, including platform 
 
 ## Current batch
 
+- `Logging.Test`: typed JSON/text fields, UTC timestamps, exact signed/unsigned 64-bit limits, escaping, context snapshots and overrides, dynamic filtering, custom handlers, stream failures, long values, non-finite floats and 160 concurrent records through a yielding writer. Linux64 and AArch64 related checks pass 40/40 each; i386, ARM32 and Win64 logging checks pass 10/10 each. ARM uses qemu and Win64 uses Wine. Inline attribute array literals remain a compiler limitation; declared arrays are covered.
+
 - `PrevalenceSystem.Test`: isolated configuration/files, descriptor copies/factories, empty systems, name conflicts, abstract operations, unregistered modification, empty/malformed snapshots and repeated module unload. The original ten cases passed nine; an absent descriptor trapped with RETURN missing. Parallel unload repetition also failed 8/17 with a nil-timer trap in the module terminator. Rebuilt Linux64 and AArch64 focused batches pass 35/35; parallel unload repetition passes 17/17 (2048 unload cycles). Registered graphs, transaction logging and recovery remain open.
 
 - `HTTPSession.Test`: repeated immediate shutdown, restart with expiration callbacks, variable replacement and lease caps. The original valid three-case run passed two and timed out on restart; the full Linux64 run separately caught a nil-timer shutdown trap. Rebuilt Linux64 and AArch64 full runs pass all three cases.
@@ -289,6 +291,7 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `Loader`: [Loader.Test](../tests/Loader.Test)
 - [ ] `LocalSockets`: [LocalSockets.Test](../tests/LocalSockets.Test)
 - [ ] `Locks`: [Locks.Test](../tests/Locks.Test)
+- [ ] `Logging`: [Logging.Test](../tests/Logging.Test)
 - [ ] `MPEGTables`: map integration/transitive evidence; add behavioral tests
 - [ ] `Machine`: [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [MachineFunctions.Test](../tests/MachineFunctions.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
 - [ ] `Mail`: [Mail.Test](../tests/Mail.Test)

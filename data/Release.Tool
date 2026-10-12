@@ -1046,6 +1046,7 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	CSV.Mod # support for comma separated value files
 	JSON.Mod # RFC 8259 JSON parser and serializer
 	YAML.Mod # bounded configuration YAML reader
+	Logging.Mod # structured application logging with typed fields and stream handlers
 	LSP.Mod # Active Oberon language server (LSP over stdio)
 	DebugMap.Mod # PC to source position, kept from the compilation that wrote the code
 	DAP.Mod # debug adapter: a trapped program, read where it stopped (DAP over stdio)

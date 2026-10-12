@@ -196,6 +196,7 @@ Linker
 Loader
 LocalSockets
 Locks
+Logging
 MPEGTables
 Machine
 Mail

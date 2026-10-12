@@ -25,3 +25,4 @@ Loader
 Shell
 StdIOShell
 System
+Logging

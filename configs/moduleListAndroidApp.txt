@@ -1,8 +1,9 @@
-# What the Android application loads at run time, beyond the 32 modules linked into the image.
+# What the Android application loads at run time, beyond the modules linked into the image.
 #
 # The image is configs/moduleListLinux.txt and nothing else: the same runtime the command line bundle
 # uses, with no graphics in it at all. Everything below travels in the package as an object file and is
 # loaded when the window arrives -- which is why this list exists and why it is in import order.
+# Logging is linked into that image by moduleListLinux.txt and needs no duplicate entry here.
 #
 # It is the transitive closure of the four modules the application actually names -- AndroidDisplay,
 # AndroidInput, DisplayDemo, WMDemo -- minus what is already in the image. Add an import to any of

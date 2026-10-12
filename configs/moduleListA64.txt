@@ -315,6 +315,7 @@ NewHTTPClient.Mod
 CSV.Mod
 JSON.Mod
 YAML.Mod
+Logging.Mod
 LSP.Mod
 DebugMap.Mod
 DAP.Mod
