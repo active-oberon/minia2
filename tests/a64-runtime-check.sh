@@ -57,7 +57,7 @@ modules=(
 	ISO9660Files.Mod Unix.UnixFiles.Mod RelativeFileSystem.Mod BitSets.Mod
 	Diagnostics.Mod StringPool.Mod ObjectFile.Mod GenericLinker.Mod Loader.Mod
 	Unix.BootConsole.Mod Shell.Mod StdIOShell.Mod
-	Unix.ProcessInfo0.Mod ProcessInfo.Mod System.Mod
+	Unix.ProcessInfo0.Mod ProcessInfo.Mod System.Mod JSON.Mod Logging.Mod
 )
 
 mkdir -p "$out"
