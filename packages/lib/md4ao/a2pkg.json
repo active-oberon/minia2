@@ -1,0 +1,46 @@
+{
+  "name": "lib/md4ao",
+  "tier": 7,
+  "context": "A2",
+  "shipped": true,
+  "status": "draft",
+  "description": "Bohdan Troshchynskyi’s MD2AO Markdown and help viewer: document and inline parsing, source highlighting, tables, mathematical formulas, search and A2 window-manager rendering.",
+  "provides": [
+    "AAGraphics",
+    "MDClip",
+    "MDConfig",
+    "MDHighlight",
+    "MDInline",
+    "MDLayout",
+    "MDMath",
+    "MDParser",
+    "MDScanner",
+    "MDSearch",
+    "MDSource",
+    "MDTree",
+    "MDView"
+  ],
+  "requires": {
+    "lib/archive": "*",
+    "lib/gui": "*",
+    "lib/web": "*",
+    "std/base": "*",
+    "std/math": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Imported from https://gitlab.inf.ethz.ch/felixf/oberon, master at 1be2fd50b4f5ab98302d5294ab5d5d7e51c0356c, on 2026-10-12; the original sources and authorship are preserved."
+  ],
+  "graphical": [
+    "AAGraphics",
+    "MDClip",
+    "MDConfig",
+    "MDLayout",
+    "MDMath",
+    "MDSearch",
+    "MDSource",
+    "MDView"
+  ]
+}

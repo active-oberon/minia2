@@ -7,6 +7,8 @@ Transitive candidates come from the union of source imports, including platform 
 
 ## Current batch
 
+- `A2DB.Test` and `MD4AO.Test`: six database and five Markdown cases; Linux64, AArch64 and i386 11/11. These imported modules remain open for complete API, malformed-input, multi-page, recovery and GUI review; see [upstream notes](UPSTREAM-OCP.md).
+
 - `Logging.Test`: typed JSON/text fields, UTC timestamps, exact signed/unsigned 64-bit limits, escaping, context snapshots and overrides, dynamic filtering, custom handlers, stream failures, long values, non-finite floats and 160 concurrent records through a yielding writer. Linux64 and AArch64 related checks pass 40/40 each; i386, ARM32 and Win64 logging checks pass 10/10 each. ARM uses qemu and Win64 uses Wine. Inline attribute array literals remain a compiler limitation; declared arrays are covered.
 
 - `PrevalenceSystem.Test`: isolated configuration/files, descriptor copies/factories, empty systems, name conflicts, abstract operations, unregistered modification, empty/malformed snapshots and repeated module unload. The original ten cases passed nine; an absent descriptor trapped with RETURN missing. Parallel unload repetition also failed 8/17 with a nil-timer trap in the module terminator. Rebuilt Linux64 and AArch64 focused batches pass 35/35; parallel unload repetition passes 17/17 (2048 unload cycles). Registered graphs, transaction logging and recovery remain open.
@@ -100,6 +102,7 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `Attributes`: [Attributes.Test](../tests/Attributes.Test)
 - [ ] `Autostart`: [Autostart.Test](../tests/Autostart.Test)
 - [ ] `BIT`: [Runtime.Test](../tests/Runtime.Test)
+- [ ] `BTreeStr`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `BWHCompressor`: [Compress.Test](../tests/Compress.Test)
 - [ ] `Base64`: [Crypto.Test](../tests/Crypto.Test), [StreamUtilities.Test](../tests/StreamUtilities.Test)
 - [ ] `Bin2Hex`: [Bin2Hex.Test](../tests/Bin2Hex.Test)
@@ -168,6 +171,8 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `CryptoTwofish`: [Crypto.Test](../tests/Crypto.Test)
 - [ ] `CryptoUtils`: [Crypto.Test](../tests/Crypto.Test), [CryptoFortuna.Execution.Test](../tests/CryptoFortuna.Execution.Test), [CryptoHashes.Execution.Test](../tests/CryptoHashes.Execution.Test), [CryptoModern.Test](../tests/CryptoModern.Test), [CryptoUtils.Test](../tests/CryptoUtils.Test), [DES.Test](../tests/DES.Test)
 - [ ] `DAP`: [DAP.Test](../tests/DAP.Test)
+- [ ] `DB`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
+- [ ] `DBMeta`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `DES`: [DES.Test](../tests/DES.Test)
 - [ ] `DNS`: [Sockets.Test](../tests/Sockets.Test)
 - [ ] `Data`: [Data.Test](../tests/Data.Test), [DataIO.Test](../tests/DataIO.Test)
@@ -180,6 +185,7 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `Dates`: [Clock.Test](../tests/Clock.Test), [Dates.Test](../tests/Dates.Test), [Runtime.Test](../tests/Runtime.Test), [Stopwatch.Test](../tests/Stopwatch.Test), [System.Test](../tests/System.Test), [TaskScheduler.Test](../tests/TaskScheduler.Test), [Time.Test](../tests/Time.Test)
 - [ ] `DebugMap`: [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test)
 - [ ] `Debugging`: [Debugging.Test](../tests/Debugging.Test), [MathArrays.Execution.Test](../tests/MathArrays.Execution.Test)
+- [ ] `DemoKV2`: database-library candidates [A2DB.Test](../tests/A2DB.Test); demo command not executed, API review remains open
 - [ ] `Diagnostics`: [CompilerInterface.Test](../tests/CompilerInterface.Test), [DAP.Test](../tests/DAP.Test), [DebugMap.Test](../tests/DebugMap.Test), [Diagnostics.Test](../tests/Diagnostics.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [FoxCodeGenerators.Test](../tests/FoxCodeGenerators.Test), [FoxDocumentation.Test](../tests/FoxDocumentation.Test), [FoxIntermediateLinker.Test](../tests/FoxIntermediateLinker.Test), [FoxPrintout.Test](../tests/FoxPrintout.Test), [GenericLinker.Test](../tests/GenericLinker.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test), [Linker.Test](../tests/Linker.Test)
 - [ ] `DiskCaches`: [DiskCaches.Test](../tests/DiskCaches.Test)
 - [ ] `DiskFS`: map integration/transitive evidence; add behavioral tests
@@ -283,6 +289,7 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `IsoImages`: map integration/transitive evidence; add behavioral tests
 - [ ] `JSON`: [DAP.Test](../tests/DAP.Test), [H2ao.Test](../tests/H2ao.Test), [JSON.Test](../tests/JSON.Test), [LSP.Test](../tests/LSP.Test)
 - [ ] `Joysticks`: map integration/transitive evidence; add behavioral tests
+- [ ] `KVStoreV2`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `Kernel`: [ActiveCells.Execution.Test](../tests/ActiveCells.Execution.Test), [Locks.Test](../tests/Locks.Test), [TrapWriters.Test](../tests/TrapWriters.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
 - [ ] `KernelLog`: [CryptoDiffieHellman.Test](../tests/CryptoDiffieHellman.Test), [Fingerprint.Test](../tests/Fingerprint.Test), [IntermediateCode.Test](../tests/IntermediateCode.Test)
 - [ ] `LPR`: [ProtocolUtilities.Test](../tests/ProtocolUtilities.Test)
@@ -292,6 +299,11 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `LocalSockets`: [LocalSockets.Test](../tests/LocalSockets.Test)
 - [ ] `Locks`: [Locks.Test](../tests/Locks.Test)
 - [ ] `Logging`: [Logging.Test](../tests/Logging.Test)
+- [ ] `MDHighlight`: [MD4AO.Test](../tests/MD4AO.Test); focused import regressions, API review remains open
+- [ ] `MDInline`: [MD4AO.Test](../tests/MD4AO.Test); focused import regressions, API review remains open
+- [ ] `MDParser`: [MD4AO.Test](../tests/MD4AO.Test); focused import regressions, API review remains open
+- [ ] `MDScanner`: [MD4AO.Test](../tests/MD4AO.Test); focused import regressions, API review remains open
+- [ ] `MDTree`: [MD4AO.Test](../tests/MD4AO.Test); focused import regressions, API review remains open
 - [ ] `MPEGTables`: map integration/transitive evidence; add behavioral tests
 - [ ] `Machine`: [Linker.Test](../tests/Linker.Test), [Loader.Test](../tests/Loader.Test), [MachineFunctions.Test](../tests/MachineFunctions.Test), [SymbolFile.Test](../tests/SymbolFile.Test), [Traps.Test](../tests/Traps.Test), [WinTraps.Test](../tests/WinTraps.Test)
 - [ ] `Mail`: [Mail.Test](../tests/Mail.Test)
@@ -341,6 +353,8 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `Out`: [InOut.Test](../tests/InOut.Test)
 - [ ] `PKCS1`: [PKCS1.Test](../tests/PKCS1.Test); TLS integration, empty-message reporting and side-channel/entropy review remain open
 - [ ] `POP3Client`: map integration/transitive evidence; add behavioral tests
+- [ ] `PageLayout`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
+- [ ] `Pager`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `PersistentObjects`: map integration/transitive evidence; add behavioral tests
 - [ ] `Pipes`: [Pipes.Test](../tests/Pipes.Test)
 - [ ] `Plugins`: [Plugins.Test](../tests/Plugins.Test)
@@ -376,6 +390,9 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `Shortreal`: [Shortreal.Execution.Test](../tests/Shortreal.Execution.Test)
 - [ ] `Sockets`: transitive candidates [HTTP.Test](../tests/HTTP.Test), [Sockets.Test](../tests/Sockets.Test), [WebHTTPServer.Test](../tests/WebHTTPServer.Test); public API review needed
 - [ ] `SoundDevices`: transitive candidates [Texts.Test](../tests/Texts.Test), [WMGraphics.Test](../tests/WMGraphics.Test), [ImageCodecs.Test](../tests/ImageCodecs.Test); public API review needed
+- [ ] `SqlExec`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
+- [ ] `SqlParse`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
+- [ ] `SqlScan`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `StdIO`: [Runtime.Test](../tests/Runtime.Test)
 - [ ] `StdIOShell`: map integration/transitive evidence; add behavioral tests
 - [ ] `Stopwatch`: [Stopwatch.Test](../tests/Stopwatch.Test)
@@ -396,6 +413,7 @@ Transitive candidates come from the union of source imports, including platform 
 - [ ] `TFTPServer`: map integration/transitive evidence; add behavioral tests
 - [ ] `TLS`: transitive candidates [WebHTTPServer.Test](../tests/WebHTTPServer.Test), [WebSSMPPlugin.Test](../tests/WebSSMPPlugin.Test), [WebSockets.Execution.Test](../tests/WebSockets.Execution.Test); public API review needed
 - [ ] `TVDriver`: map integration/transitive evidence; add behavioral tests
+- [ ] `Table`: [A2DB.Test](../tests/A2DB.Test); focused import regressions, API review remains open
 - [ ] `Tar`: [Archive.Test](../tests/Archive.Test)
 - [ ] `TaskScheduler`: [TaskScheduler.Test](../tests/TaskScheduler.Test)
 - [ ] `Telnet`: map integration/transitive evidence; add behavioral tests

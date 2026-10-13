@@ -1,0 +1,80 @@
+positive: scanner recognizes headings lists fences and the final line without a newline
+
+	MODULE Test;
+	IMPORT MDScanner, Streams;
+	VAR reader: Streams.StringReader; scanner: MDScanner.Scanner; token: MDScanner.Token;
+	BEGIN
+		NEW(reader, 256); reader.Set(\"## Title ##\n- item\n3. third\n```ao\n\tcode\nlast"\); NEW(scanner, reader);
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Heading); ASSERT(token.level = 2); ASSERT(token.text = "Title");
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Bullet); ASSERT(token.text = "item");
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Ordered); ASSERT(token.num = 3);
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Fence); ASSERT(token.text = "ao");
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Indented); ASSERT(token.text = "code");
+		scanner.Next(token); ASSERT(token.kind = MDScanner.Text); ASSERT(token.text = "last");
+		scanner.Next(token); ASSERT(token.kind = MDScanner.EOF); scanner.Next(token); ASSERT(token.kind = MDScanner.EOF)
+	END Test.
+
+positive: tree unlink keeps sibling links and duplicate heading anchors are unique
+
+	MODULE Test;
+	IMPORT MDTree;
+	VAR root, first, second, third: MDTree.Node; path, fragment: ARRAY 64 OF CHAR;
+	BEGIN
+		root := MDTree.NewNode(MDTree.Document); first := MDTree.NewNode(MDTree.Heading);
+		second := MDTree.NewNode(MDTree.Heading); third := MDTree.NewNode(MDTree.Paragraph);
+		MDTree.Append(first, MDTree.NewTextNode(MDTree.Text, "Hello World!"));
+		MDTree.Append(second, MDTree.NewTextNode(MDTree.Text, "Hello World!"));
+		MDTree.Append(root, first); MDTree.AssignHeadingId(root, first);
+		MDTree.Append(root, second); MDTree.AssignHeadingId(root, second); MDTree.Append(root, third);
+		ASSERT(first.id^ = "hello-world"); ASSERT(second.id^ = "hello-world-1");
+		ASSERT(MDTree.FindById(root, second.id^) = second); MDTree.Unlink(second);
+		ASSERT(first.next = third); ASSERT(third.prev = first); ASSERT(second.parent = NIL);
+		MDTree.SplitDest("help.md#hello-world", path, fragment); ASSERT(path = "help.md"); ASSERT(fragment = "hello-world");
+		ASSERT(MDTree.LinkKind("https://example.org") = MDTree.LinkExternal)
+	END Test.
+
+positive: inline markup keeps plain text and link destinations
+
+	MODULE Test;
+	IMPORT MDTree, MDInline;
+	VAR paragraph, child: MDTree.Node; text: MDTree.String; found: BOOLEAN;
+	BEGIN
+		paragraph := MDTree.NewNode(MDTree.Paragraph);
+		MDInline.Parse(paragraph, "**bold** and *emphasis* with `code` and [link](help.md#topic)");
+		MDTree.PlainText(paragraph, text); ASSERT(text^ = "bold and emphasis with code and link");
+		child := paragraph.first; found := FALSE;
+		WHILE child # NIL DO
+			IF child.kind = MDTree.Link THEN ASSERT(child.dest^ = "help.md#topic"); found := TRUE END;
+			ASSERT(child.parent = paragraph); child := child.next
+		END;
+		ASSERT(found)
+	END Test.
+
+positive: document parsing retains headings fenced code tables and display math
+
+	MODULE Test;
+	IMPORT MDTree, MDParser, Streams;
+	VAR reader: Streams.StringReader; root, node: MDTree.Node;
+	BEGIN
+		NEW(reader, 512); reader.Set(\"# Topic\n\n```ao\nMODULE Demo;\n```\n\n| Name | Value |\n|:---|---:|\n| a | b |\n\n$$x+y$$"\);
+		root := MDParser.Parse(reader); ASSERT(root.kind = MDTree.Document);
+		node := root.first; ASSERT(node.kind = MDTree.Heading); ASSERT(node.id^ = "topic");
+		node := node.next; ASSERT(node.kind = MDTree.CodeBlock); ASSERT(node.info^ = "ao"); ASSERT(node.text^ = "MODULE Demo;");
+		node := node.next; ASSERT(node.kind = MDTree.Table); ASSERT(node.first.header);
+		ASSERT(node.first.first.align = MDTree.AlignLeft); ASSERT(node.first.last.align = MDTree.AlignRight);
+		node := node.next; ASSERT(node.kind = MDTree.MathBlock); ASSERT(node.text^ = "x+y"); ASSERT(node.next = NIL)
+	END Test.
+
+positive: highlighting carries nested comment state across lines and marks procedure names
+
+	MODULE Test;
+	IMPORT MDHighlight;
+	VAR state: MDHighlight.State; span: MDHighlight.Span; found: BOOLEAN;
+	BEGIN
+		ASSERT(MDHighlight.IsOberon("ActiveOberon title")); ASSERT(~MDHighlight.IsOberon("go"));
+		MDHighlight.Reset(state); span := MDHighlight.Line("(* outer (* nested", state);
+		ASSERT(state.depth = 2); ASSERT(span.kind = MDHighlight.Comment);
+		span := MDHighlight.Line("*) *) PROCEDURE Demo*;", state); ASSERT(state.depth = 0); found := FALSE;
+		WHILE span # NIL DO IF span.kind = MDHighlight.ProcName THEN found := TRUE END; span := span.next END;
+		ASSERT(found); ASSERT(MDHighlight.Line("", state) = NIL)
+	END Test.

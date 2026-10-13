@@ -1047,6 +1047,9 @@ PACKAGE Applications ARCHIVE "Applications.zip" SOURCE "ApplicationsSrc.zip" DES
 	JSON.Mod # RFC 8259 JSON parser and serializer
 	YAML.Mod # bounded configuration YAML reader
 	Logging.Mod # structured application logging with typed fields and stream handlers
+	PageLayout.Mod Pager.Mod DBMeta.Mod Table.Mod BTreeStr.Mod DB.Mod
+	KVStoreV2.Mod SqlScan.Mod SqlParse.Mod SqlExec.Mod DemoKV2.Mod
+	MDTree.Mod MDScanner.Mod MDInline.Mod MDParser.Mod MDHighlight.Mod
 	LSP.Mod # Active Oberon language server (LSP over stdio)
 	DebugMap.Mod # PC to source position, kept from the compilation that wrote the code
 	DAP.Mod # debug adapter: a trapped program, read where it stopped (DAP over stdio)
@@ -1242,6 +1245,9 @@ PACKAGE GuiApplicationsMini ARCHIVE "GuiApplicationsMini.zip" SOURCE "GuiApplica
 	SSHGlobals.Mod  SSHPackets.Mod  SSHKeys.Mod
 	SSHTransport.Mod  SSHAuthorize.Mod  SSHChannels.Mod
 	SSHTerminal.Mod  SSH.Mod
+	AAGraphics.Mod MDMath.Mod MDSource.Mod MDSearch.Mod MDLayout.Mod
+	MDConfig.Mod MDClip.Mod MDView.Mod MDStyles.XML MD4AO.tool MD2AO-demo.zip
+
 END
 
 PACKAGE GuiApplications ARCHIVE "GuiApplications.zip" SOURCE "GuiApplicationsSrc.zip" DESCRIPTION "Window Manager and Graphical Applications"

@@ -1,0 +1,30 @@
+{
+  "name": "lib/a2db",
+  "tier": 4,
+  "context": "A2",
+  "shipped": true,
+  "status": "draft",
+  "description": "Bohdan Troshchynskyi’s A2DB prototype: paged storage, slotted records, a string B+Tree, key/value operations and a minimal SQL scanner, parser and executor.",
+  "provides": [
+    "BTreeStr",
+    "DB",
+    "DBMeta",
+    "DemoKV2",
+    "KVStoreV2",
+    "PageLayout",
+    "Pager",
+    "SqlExec",
+    "SqlParse",
+    "SqlScan",
+    "Table"
+  ],
+  "requires": {
+    "std/base": "*",
+    "std/runtime": "*",
+    "std/system": "*",
+    "std/text": "*"
+  },
+  "residual": [
+    "Imported from https://gitlab.inf.ethz.ch/felixf/oberon, master at 1be2fd50b4f5ab98302d5294ab5d5d7e51c0356c, on 2026-10-12; the original sources and authorship are preserved."
+  ]
+}

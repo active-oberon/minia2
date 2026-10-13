@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	MD2AO style file, read by MDConfig.
+	Put a font that contains Cyrillic letters into fontName (find it with: MDView.CheckFont FontName 14 ~).
+	Every attribute and element is optional; an empty fontName or fontSize="0" means the system default.
+-->
+<MDStyles fontName="" fontSize="0" codeFont="Courier">
+	<Font id="h1" scale="200"/>
+	<Font id="h2" scale="160"/>
+	<Font id="h3" scale="135"/>
+	<Font id="code" name="Courier"/>
+
+	<Color id="text" value="000000FF"/>
+	<Color id="link" value="0000C0FF"/>
+	<Color id="code" value="282828FF"/>
+	<Color id="codeBg" value="ECECECFF"/>
+	<Color id="math" value="006000FF"/>
+	<Color id="codeHead" value="DCDCDCFF"/>
+	<Color id="keyword" value="0000A0FF"/>
+	<Color id="builtin" value="007070FF"/>
+	<Color id="string" value="AA2828FF"/>
+	<Color id="number" value="960082FF"/>
+	<Color id="comment" value="5A825AFF"/>
+
+	<Spacing margin="10" indent="22" gap="8" leading="2"/>
+</MDStyles>

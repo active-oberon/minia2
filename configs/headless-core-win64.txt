@@ -6,6 +6,7 @@ Archives
 Attributes
 Autostart
 BIT
+BTreeStr
 BWHCompressor
 Base64
 Bin2Hex
@@ -74,6 +75,8 @@ CryptoStreams
 CryptoTwofish
 CryptoUtils
 DAP
+DB
+DBMeta
 DES
 DNS
 Data
@@ -86,6 +89,7 @@ DataTrees
 Dates
 DebugMap
 Debugging
+DemoKV2
 Diagnostics
 DiskCaches
 DiskFS
@@ -187,6 +191,7 @@ Info
 IsoImages
 JSON
 Joysticks
+KVStoreV2
 Kernel
 Kernel32
 KernelLog
@@ -197,6 +202,11 @@ Loader
 LocalSockets
 Locks
 Logging
+MDHighlight
+MDInline
+MDParser
+MDScanner
+MDTree
 MPEGTables
 Machine
 Mail
@@ -247,6 +257,8 @@ Options
 Out
 PKCS1
 POP3Client
+PageLayout
+Pager
 PersistentObjects
 Pipes
 Plugins
@@ -282,6 +294,9 @@ ShellCommands
 ShellSerial
 Shortreal
 SoundDevices
+SqlExec
+SqlParse
+SqlScan
 StdIO
 StdIOShell
 Stopwatch
@@ -302,6 +317,7 @@ TFTPFS
 TFTPServer
 TLS
 TVDriver
+Table
 Tar
 TaskScheduler
 Telnet

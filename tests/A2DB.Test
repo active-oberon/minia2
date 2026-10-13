@@ -1,0 +1,95 @@
+positive: slotted pages preserve binary records and reuse deleted slots after compaction
+
+	MODULE Test;
+	IMPORT PageLayout;
+	VAR page: ARRAY PageLayout.PageSize OF CHAR; data, result: ARRAY 4 OF CHAR;
+		header: PageLayout.PageHeader; first, second, reused, length: SIZE;
+	BEGIN
+		data[0] := 0X; data[1] := 0FFX; data[2] := "A"; data[3] := 0X;
+		PageLayout.Init(page); ASSERT(PageLayout.Insert(page, data, LEN(data), first));
+		ASSERT(PageLayout.InsertReuse(page, "hello", 5, second));
+		ASSERT(PageLayout.Get(page, first, result, length)); ASSERT(length = 4); ASSERT(result = data);
+		ASSERT(~PageLayout.Get(page, -1, result, length));
+		ASSERT(PageLayout.Delete(page, second)); ASSERT(~PageLayout.Delete(page, second));
+		ASSERT(PageLayout.Compact(page)); ASSERT(PageLayout.InsertReuse(page, data, 4, reused));
+		ASSERT(reused = second); PageLayout.ReadHeader(page, header); ASSERT(header.slotCount = 2);
+		ASSERT(PageLayout.Get(page, first, result, length)); ASSERT(result = data)
+	END Test.
+
+positive: page capacity rejects a record without changing the page
+
+	MODULE Test;
+	IMPORT PageLayout;
+	VAR page, original, data: ARRAY PageLayout.PageSize OF CHAR; slot: SIZE;
+	BEGIN
+		PageLayout.Init(page); original := page;
+		ASSERT(~PageLayout.Insert(page, data, LEN(data), slot)); ASSERT(page = original);
+		ASSERT(~PageLayout.InsertReuse(page, data, 0, slot)); ASSERT(page = original)
+	END Test.
+
+positive: pager round trips a page and zero fills reads past the file
+
+	MODULE Test;
+	IMPORT Pager, Files;
+	VAR db: Pager.DB; page, result: Pager.Page; i: SIZE; res: SIGNED32;
+	BEGIN
+		Pager.Open(db, "pager-fixture.db"); ASSERT(Pager.PageCount(db) = 0);
+		page.id := 0; FOR i := 0 TO Pager.PageSize - 1 DO page.data[i] := CHR(i MOD 256) END;
+		Pager.WritePage(db, page); ASSERT(Pager.PageCount(db) = 1);
+		Pager.ReadPage(db, 0, result); ASSERT(result.data = page.data);
+		Pager.ReadPage(db, 1, result); FOR i := 0 TO Pager.PageSize - 1 DO ASSERT(result.data[i] = 0X) END;
+		Files.Delete("pager-fixture.db", res); ASSERT(res = 0)
+	END Test.
+
+positive: key value updates and deletes survive reopening the database
+
+	MODULE Test;
+	IMPORT KVStoreV2, Files;
+	VAR store, reopened: KVStoreV2.Store; data, result: ARRAY 16 OF CHAR; length: SIZE; res: SIGNED32;
+	BEGIN
+		KVStoreV2.Open(store, "kv-fixture.db");
+		ASSERT(~KVStoreV2.Get(store, "missing", result, length));
+		COPY("first", data); ASSERT(KVStoreV2.PutUnique(store, "key", data, 5));
+		ASSERT(~KVStoreV2.PutUnique(store, "key", data, 5));
+		ASSERT(KVStoreV2.Get(store, "key", result, length)); ASSERT(length = 5); ASSERT(result = data);
+		COPY("second", data); ASSERT(KVStoreV2.UpdateOnly(store, "key", data, 6));
+		KVStoreV2.Open(reopened, "kv-fixture.db");
+		ASSERT(KVStoreV2.Get(reopened, "key", result, length)); ASSERT(length = 6); ASSERT(result = data);
+		ASSERT(KVStoreV2.DeleteV1(reopened, "key")); ASSERT(~KVStoreV2.Get(reopened, "key", result, length));
+		Files.Delete("kv-fixture.db", res); ASSERT(res = 0)
+	END Test.
+
+positive: SQL parses quoted identifiers and reports unsupported or incomplete statements
+
+	MODULE Test;
+	IMPORT SqlParse;
+	VAR parser: SqlParse.Parser; statement: SqlParse.Statement; error: ARRAY 200 OF CHAR; line, col: SIGNED32;
+	BEGIN
+		SqlParse.Init(parser, 'SELECT "value" FROM kv WHERE "key" = ?;'); ASSERT(SqlParse.Parse(parser, statement));
+		ASSERT(statement.kind = SqlParse.stSelect); ASSERT(statement.select.colsQuoted[0]);
+		ASSERT(statement.select.condCount = 1); ASSERT(statement.select.conds[0].right.kind = SqlParse.vkParam);
+		SqlParse.Init(parser, "SELECT FROM"); ASSERT(~SqlParse.Parse(parser, statement));
+		SqlParse.Error(parser, error, line, col); ASSERT(error # ""); ASSERT(line >= 1); ASSERT(col >= 1);
+		SqlParse.Init(parser, "CREATE TABLE kv (key TEXT)"); ASSERT(~SqlParse.Parse(parser, statement))
+	END Test.
+
+positive: parameterized SQL inserts selects updates and deletes a key
+
+	MODULE Test;
+	IMPORT SqlParse, SqlExec, KVStoreV2, Files;
+	VAR store: KVStoreV2.Store; parser: SqlParse.Parser; statement: SqlParse.Statement;
+		result: ARRAY 256 OF CHAR; length: SIZE; res: SIGNED32;
+	BEGIN
+		KVStoreV2.Open(store, "sql-fixture.db");
+		SqlParse.Init(parser, "INSERT INTO kv (key,value) VALUES (?,?)"); ASSERT(SqlParse.Parse(parser, statement));
+		ASSERT(SqlExec.Exec(store, statement, "id", "before", result, length));
+		SqlParse.Init(parser, "UPDATE kv SET value=? WHERE key=?"); ASSERT(SqlParse.Parse(parser, statement));
+		ASSERT(SqlExec.Exec(store, statement, "after", "id", result, length));
+		SqlParse.Init(parser, "SELECT value FROM kv WHERE key=?"); ASSERT(SqlParse.Parse(parser, statement));
+		ASSERT(SqlExec.Exec(store, statement, "id", "", result, length)); ASSERT(length = 5);
+		ASSERT(result[0] = "a"); ASSERT(result[4] = "r");
+		SqlParse.Init(parser, "DELETE FROM kv WHERE key=?"); ASSERT(SqlParse.Parse(parser, statement));
+		ASSERT(SqlExec.Exec(store, statement, "id", "", result, length));
+		ASSERT(~KVStoreV2.Get(store, "id", result, length));
+		Files.Delete("sql-fixture.db", res); ASSERT(res = 0)
+	END Test.
