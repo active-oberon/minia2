@@ -1301,11 +1301,26 @@ tasks:
     # What "the SDK" means here is three things in a row, and forgetting one is the usual way to
     # spend an hour on a defect that was fixed already: the tree is compiled (target/<host>/bin),
     # the bundle is assembled from it (target/bundle, which is what ./ob runs), and the bundle is
-    # installed (~/.local/share/a2sdk, which is what plain `ob` runs). The AArch64 objects are a
+    # installed (~/.local/share/a2sdk on Linux, %LOCALAPPDATA%/Programs/a2sdk on Windows,
+    # which is what plain `ob` runs). The AArch64 objects are a
     # fourth and are built only on request: they are minutes, and only `ob build -t a64` and the
     # A64 suites read them.
     cmds:
       - task: "{{.HOST}}"
+      - task: '{{if eq OS "windows"}}update-windows{{else}}update-unix{{end}}'
+
+  update-windows:
+    internal: true
+    env:
+      A64: '{{.A64 | default ""}}'
+    cmds:
+      - powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{.CURRENT_DIR}}/sdk/update-windows.ps1" -BuildDir "{{.BUILD_DIR}}"
+
+  update-unix:
+    internal: true
+    env:
+      A64: '{{.A64 | default ""}}'
+    cmds:
       - task: bundle
       - |
         set -eo pipefail

@@ -86,6 +86,7 @@ so they cannot drift apart:
 task bundle          # target/bundle + minia2-sdk-<version>-linux-amd64.tar.gz  (no Docker)
 task bundle-check    # unpack the tarball elsewhere and use it with an empty environment
 task win-bundle      # the Windows SDK: ob.exe and the library it compiles against
+task update          # build, bundle and install the SDK for this machine (Linux or Windows)
 task a64-stdlib      # prerequisite for both AArch64 bundles
 task a64-bundle      # the AArch64 SDK, native on the device (glibc)
 task a64-bundle-android  # the same against Bionic: Termux without proot
@@ -93,6 +94,12 @@ task bundle32        # the i386 SDK, and its own run.sh against it
 task bundle-armhf    # the armhf SDK, used under qemu (task arm32-sysroot for the C library)
 task docker          # the Docker image (same payload at /opt/a2sdk)
 ```
+
+On Windows, run `task update` from PowerShell or Git Bash with Git for Windows installed.
+It installs `ob.exe` and its library into `%LOCALAPPDATA%\Programs\a2sdk`; add that directory
+to your user `PATH` to run `ob`. Set `A2SDK_HOME` to choose another installation directory.
+`task update A64=1` also builds and includes the AArch64 objects.
+The update stops language servers using that SDK; restart your editor afterwards.
 
 To put the latest release on a machine — download, unpack into `~/.local/share/a2sdk`,
 link `ob` into `~/.local/bin`, nothing else touched and no privilege asked for:

@@ -1,5 +1,9 @@
 *.bin filter=lfs diff=lfs merge=lfs -text
 
+# Git Bash also reads these on Windows; CRLF breaks scripts and module names.
+*.sh text eol=lf
+configs/*.txt text eol=lf
+
 # A2 / Active Oberon sources. Without this they are detected as Modula-2,
 # and some of them as AMPL.
 *.Mod linguist-language=Oberon
