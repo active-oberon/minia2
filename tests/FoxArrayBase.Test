@@ -1,0 +1,106 @@
+# Integer array reductions must preserve slicing and SIGNED32 semantics.
+# options --mayTrap --prolog="Compiler.Compile TesterInput.txt" --command="System.Free Test;System.Load Test"
+
+positive: SIGNED32 SUM empty arrays, lengths and unaligned slices
+
+	MODULE Test;
+	VAR values: ARRAY [*] OF SIGNED32; first, count, i: SIZE; expected: SIGNED32;
+	BEGIN
+		FOR count := 0 TO 129 DO
+			NEW(values, count); values := 2;
+			ASSERT(SUM(values) = 2 * count)
+		END;
+		NEW(values, 136);
+		FOR i := 0 TO 135 DO values[i] := SIGNED32(i MOD 23) - 11 END;
+		FOR first := 0 TO 7 DO
+			expected := 0;
+			FOR count := 1 TO 129 DO
+				INC(expected, values[first + count - 1]);
+				ASSERT(SUM(values[first .. first + count - 1]) = expected)
+			END
+		END
+	END Test.
+
+positive: SIGNED32 SUM strided and multidimensional slices
+
+	MODULE Test;
+	VAR values: ARRAY [*,*] OF SIGNED32; tensor: ARRAY [?] OF SIGNED32;
+		i, j: SIZE; total, selected, column: SIGNED32;
+	BEGIN
+		NEW(values, 5, 37); total := 0; selected := 0;
+		FOR i := 0 TO 4 DO
+			FOR j := 0 TO 36 DO
+				values[i, j] := SIGNED32(37 * i + j) - 92;
+				INC(total, values[i, j]);
+				IF (i >= 1) & (i <= 3) & ODD(j) THEN INC(selected, values[i, j]) END
+			END
+		END;
+		ASSERT(SUM(values) = total);
+		ASSERT(SUM(values[1 .. 3, 1 .. 35 BY 2]) = selected);
+		FOR j := 0 TO 36 DO
+			column := 0;
+			FOR i := 0 TO 4 DO INC(column, values[i, j]) END;
+			ASSERT(SUM(values[*, j]) = column)
+		END;
+		tensor := values[1 .. 3, *];
+		selected := 0;
+		FOR i := 1 TO 3 DO FOR j := 0 TO 36 DO INC(selected, values[i, j]) END END;
+		ASSERT(SUM(tensor) = selected)
+	END Test.
+
+positive: SIGNED32 SUM independent lanes retain integer wraparound
+
+	MODULE Test;
+	VAR values: ARRAY [*] OF SIGNED32; count, i: SIZE; expected: SIGNED32;
+	BEGIN
+		FOR count := 0 TO 129 DO
+			NEW(values, count); expected := 0;
+			FOR i := 0 TO count - 1 DO
+				CASE i MOD 4 OF
+				| 0: values[i] := MAX(SIGNED32)
+				| 1: values[i] := MIN(SIGNED32)
+				| 2: values[i] := 1
+				| 3: values[i] := 0
+				END;
+				INC(expected, values[i])
+			END;
+			ASSERT(SUM(values) = expected);
+			values := MAX(SIGNED32);
+			IF ODD(count) THEN expected := MAX(SIGNED32) - SIGNED32(count - 1)
+			ELSE expected := -SIGNED32(count) END;
+			ASSERT(SUM(values) = expected)
+		END
+	END Test.
+
+positive: SIGNED32 SUM installed and default loops preserve strides and partial sums
+
+	MODULE Test;
+	IMPORT FoxArrayBase;
+	VAR saved: PROCEDURE(ladr, dadr: ADDRESS; linc, len: SIZE); install: PROCEDURE;
+
+	PROCEDURE Check;
+	VAR values: ARRAY 264 OF SIGNED32; first, count, stride, i: SIZE; expected, actual: SIGNED32;
+	BEGIN
+		FOR i := 0 TO LEN(values) - 1 DO values[i] := SIGNED32(i MOD 29) - 14 END;
+		FOR first := 0 TO 3 DO
+			FOR stride := -2 TO 2 DO
+				FOR count := 0 TO 65 DO
+					expected := 123456789; actual := expected;
+					FOR i := 0 TO count - 1 DO INC(expected, values[130 + first + i * stride]) END;
+					FoxArrayBase.loopSumAL(ADDRESSOF(values[130 + first]), ADDRESSOF(actual), stride * SIZEOF(SIGNED32), count);
+					ASSERT(actual = expected)
+				END
+			END
+		END
+	END Check;
+
+	BEGIN
+		GETPROCEDURE("FoxArrayBaseOptimized", "Install", install);
+		saved := FoxArrayBase.loopSumAL;
+		Check;
+		FoxArrayBase.SetDefaults;
+		IF (install # NIL) & (SIZEOF(ADDRESS) = 8) THEN ASSERT(saved # FoxArrayBase.loopSumAL) END;
+		Check;
+		FoxArrayBase.loopSumAL := saved;
+		Check
+	END Test.

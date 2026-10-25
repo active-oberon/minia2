@@ -156,6 +156,7 @@ VAR
 	allocTemp*: SIGNED32;   (* statistics *)
 
 	(* procedures that might be replaced by ASM methods *)
+	loopSumAL*: UnaryASLoop;
 	loopSPAXAX*, loopSPARAR*: BinaryAASLoop;
 	loopSPAZAZ, loopSPALZALZ: BinaryAASLoop;
 	loopAddAXAX*, loopAddARAR*, loopAddAZAZ*, loopAddALZALZ*: BinaryAAALoop;
@@ -197,6 +198,7 @@ VAR
 	PROCEDURE SetDefaults*;   (* set standard procedures *)
 	BEGIN
 		KernelLog.String( "FoxArrayBase: setting runtime library (semi-optimized) default methods." );  KernelLog.Ln;  loopSPAXAX := SPAXAXLoop;
+		loopSumAL := SumALLoop;
 		loopSPARAR := SPARARLoop;  loopAddAXAX := AddAXAXLoop;  loopSubAXAX := SubAXAXLoop; loopEMulAXAX := EMulAXAXLoop;
 		loopSPAZAZ := SPAZAZLoop; loopSPALZALZ := SPALZALZLoop;
 		loopAddARAR := AddARARLoop; loopSubARAR := SubARARLoop; loopEMulARAR := EMulARARLoop; loopMatMulAXAX := MatMulAXAXLoop;
@@ -8646,7 +8648,7 @@ TYPE
 	TYPE Type = SIGNED32;
 	VAR val: Type;
 	BEGIN
-		val := 0;  ApplyUnaryASOp( ADDRESSOF( val ), left , SumALLoop );
+		val := 0;  ApplyUnaryASOp( ADDRESSOF( val ), left , loopSumAL );
 		RETURN val;
 	END "SUM";
 

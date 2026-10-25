@@ -23,6 +23,7 @@
   },
   "residual": [
     "FoxArrayBase and FoxArrayBaseOptimized are the RUNTIME of math arrays: code the compiler generates calls them, no source names them. They live here rather than in std/compiler because their subject is arithmetic. FoxArrayBaseOptimized is x86 kernels and does not exist on AArch64; FoxArrayBase loads it by name if it is there.",
+    "On AMD64, the installed array optimizer uses SSE2 for contiguous SIGNED32 SUM, with unaligned loads and scalar handling of strides and tails. Other targets retain the portable reduction; the result keeps SIGNED32 wraparound semantics.",
     "Drand48 entered 2026-08-24: the libc random generator's algorithm, beside Random.",
     "NextPrime entered 2026-08-24 the same way: BWHCompressor needs it and nobody had claimed it.",
     "Out on 2026-08-27: 13 module(s) to lib/numbers. the standard library keeps what packages talk to each other through, and these are leaves ob get can deliver. Sources still live in source/; `headless` false keeps them out of the SDK payload."

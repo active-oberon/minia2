@@ -7130,10 +7130,65 @@ VAR
 		END;
 	END InstallSSE;
 
+	(* SumALLoopSSE uses independent accumulators without requiring aligned input or AVX support. *)
+	PROCEDURE SumALLoopSSE(ladr, dadr: ADDRESS; linc, len: SIZE);
+	CODE {SYSTEM.AMD64, SYSTEM.SSE2}
+		MOV RCX, [RBP + len]
+		CMP RCX, 0
+		JLE finish
+		MOV RSI, [RBP + ladr]
+		MOV RDI, [RBP + dadr]
+		MOV RDX, [RBP + linc]
+		MOV EAX, [RDI]
+		CMP RDX, 4
+		JNE scalar
+		CMP RCX, 16
+		JL scalar
+		PXOR XMM0, XMM0
+		PXOR XMM1, XMM1
+		PXOR XMM2, XMM2
+		PXOR XMM3, XMM3
+	loop16:
+		MOVDQU XMM4, [RSI]
+		PADDD XMM0, XMM4
+		MOVDQU XMM4, [RSI + 16]
+		PADDD XMM1, XMM4
+		MOVDQU XMM4, [RSI + 32]
+		PADDD XMM2, XMM4
+		MOVDQU XMM4, [RSI + 48]
+		PADDD XMM3, XMM4
+		ADD RSI, 64
+		SUB RCX, 16
+		CMP RCX, 16
+		JGE loop16
+		PADDD XMM0, XMM1
+		PADDD XMM2, XMM3
+		PADDD XMM0, XMM2
+		MOVDQA XMM1, XMM0
+		PSRLDQ XMM1, 8
+		PADDD XMM0, XMM1
+		MOVDQA XMM1, XMM0
+		PSRLDQ XMM1, 4
+		PADDD XMM0, XMM1
+		MOVD R8D, XMM0
+		ADD EAX, R8D
+	scalar:
+		TEST RCX, RCX
+		JZ store
+		ADD EAX, [RSI]
+		ADD RSI, RDX
+		DEC RCX
+		JMP scalar
+	store:
+		MOV [RDI], EAX
+	finish:
+	END SumALLoopSSE;
+
 	PROCEDURE InstallSSE2*;   (* extra for testing, will be merged with Install in later versions *)
 	BEGIN
 		IF Machine.SSE2Support THEN
 			KernelLog.String( "SSE2 " );
+			ArrayBase.loopSumAL := SumALLoopSSE;
 			ArrayBase.loopSPAXAX := SPAXAXLoopSSE;
 			ArrayBase.loopAddAXAX := AddAXAXLoopSSE;
 			ArrayBase.loopSubAXAX := SubAXAXLoopSSE;
