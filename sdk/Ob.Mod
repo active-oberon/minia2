@@ -19,7 +19,11 @@ MODULE Ob;	(** AUTHOR "Andrii Puhachenko"; PURPOSE "The ob command line, in Acti
 
 IMPORT StdIO, Commands, Modules, Streams, Strings, Files, Diagnostics, JSON, Compiler, Linker,
 	Shell, LSP, DAP, H2ao, Kernel, Trace, SyntaxTree := FoxSyntaxTree, FoxScanner, FoxParser, FoxBasic, FoxGlobal,
-	ObHost;
+	ObHost
+#IF WIN THEN
+	, ObDebug
+#END
+	;
 
 CONST
 	MaxPath = ObHost.MaxPath;
@@ -3471,8 +3475,37 @@ BEGIN
 	WHILE NextArgument(argument) DO DieOn("unknown option: ", argument); RETURN END;
 	debugging := TRUE;
 	NEW(context, StdIO.env.in, NIL, StdIO.env.out, error, NIL);
+#IF WIN THEN
+	ObDebug.Serve(context)
+#ELSE
 	DAP.Serve(context, RunFile)
+#END
 END DapVerb;
+
+#IF WIN THEN
+(* Internal child entry: only publish the symbols of this exact load. All execution control,
+	breakpoint patching and inspection belong to the parent Windows debugger. *)
+TYPE DebugPublisher = OBJECT
+VAR symbols: Path;
+	PROCEDURE Ready;
+	BEGIN
+		IF ~ObDebug.Publish(symbols) THEN
+			Die("cannot publish debug symbols"); Modules.Shutdown(Modules.PowerDown)
+		END
+	END Ready;
+END DebugPublisher;
+
+PROCEDURE DebugRunVerb;
+VAR source, procedure, symbols: Path; message: ARRAY 256 OF CHAR; publisher: DebugPublisher;
+BEGIN
+	IF ~NextArgument(source) OR ~NextArgument(procedure) OR ~NextArgument(symbols) THEN
+		Die("debug-run is internal: source procedure symbols"); RETURN
+	END;
+	debugging := TRUE;
+	NEW(publisher); COPY(symbols, publisher.symbols);
+	IF ~RunFile(source, procedure, out, publisher.Ready, message) THEN Die(message) END
+END DebugRunVerb;
+#END
 
 (*
 	The interactive shell, in the user's own directory. What the shell version had to do here --
@@ -3532,6 +3565,9 @@ BEGIN
 	ELSIF verb = "bind" THEN BindVerb
 	ELSIF verb = "lsp" THEN LspVerb
 	ELSIF verb = "dap" THEN DapVerb
+#IF WIN THEN
+	ELSIF verb = "debug-run" THEN DebugRunVerb
+#END
 	ELSIF verb = "repl" THEN ReplVerb
 	ELSIF (verb = "version") OR (verb = "--version") OR (verb = "-v") THEN Version
 	ELSIF (verb = "") OR (verb = "help") OR (verb = "-h") OR (verb = "--help") THEN Help

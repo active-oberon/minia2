@@ -134,7 +134,7 @@ END Same;
 (*	StartOf answers where the code of a procedure was loaded. The references section of a loaded
 	module says it, and the module is the part of the name before the first dot -- which is how
 	Reflection spells it, so it is how Take wrote it down. *)
-PROCEDURE StartOf (CONST name: ARRAY OF CHAR): ADDRESS;
+PROCEDURE StartOf* (CONST name: ARRAY OF CHAR): ADDRESS;
 VAR module: Modules.Module; head: Modules.Name; refs: Modules.Bytes; offset: SIZE; i: SIZE;
 BEGIN
 	i := 0;
@@ -172,6 +172,13 @@ BEGIN
 	END;
 	RETURN best
 END AddressOf;
+
+(** Enumerate the map when saving symbols for an external debugger. Addresses must be resolved
+	from the loaded module in the target process, never from another copy of the same source. *)
+PROCEDURE First* (): Procedure;
+BEGIN
+	RETURN procedures
+END First;
 
 (** Forget drops everything kept so far. *)
 PROCEDURE Forget*;
