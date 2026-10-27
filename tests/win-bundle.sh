@@ -122,16 +122,17 @@ fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/win-bundle.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 cp "$root/sdk/Windows.ObHost.Mod" "$work/ObHost.Mod"
+cp "$root/sdk/ObDebug.Mod" "$work/"
 cp "$root/sdk/Ob.Mod" "$work/"
 winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
 if [ "$native" = 1 ]; then
 	made="$targets/Win64"
-	obsources="$(winpath "$work")/ObHost.Mod $(winpath "$work")/Ob.Mod"
+	obsources="$(winpath "$work")/ObHost.Mod $(winpath "$work")/ObDebug.Mod $(winpath "$work")/Ob.Mod"
 else
 	made="$work"
-	obsources="./ObHost.Mod ./Ob.Mod"
+	obsources="./ObHost.Mod ./ObDebug.Mod ./Ob.Mod"
 fi
-rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw
+rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw "$made"/ObDebug.SymWw "$made"/ObDebug.GofWw
 ( cd "$work" && "$oberon" do "
 	Files.AddSearchPath $(winpath "$work")~
 	Files.AddSearchPath $(winpath "$build")/bin~
@@ -146,11 +147,11 @@ rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/Ob
 # once, and the log is where it says so on both hosts.
 grep -qE 'error:' "$work/link.log" && { sed 's/^/    /' "$work/link.log" >&2; echo "the compiler reported errors" >&2; exit 1; }
 install -m 755 "$made/ob.exe" "$out/ob.exe"
-# Ob and ObHost belong in lib/ too: a project that imports them, and the language server, resolve
+# Ob, ObHost and ObDebug belong in lib/ too: a project that imports them, and the language server, resolve
 # them from there like any other module.
-install -m 644 "$made"/Ob.SymWw "$made"/ObHost.SymWw "$out/lib/"
+install -m 644 "$made"/Ob.SymWw "$made"/ObHost.SymWw "$made"/ObDebug.SymWw "$out/lib/"
 if [ "$native" = 1 ]; then
-	rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw
+	rm -f "$made"/ob.exe "$made"/ob.log "$made"/Ob.SymWw "$made"/Ob.GofWw "$made"/ObHost.SymWw "$made"/ObHost.GofWw "$made"/ObDebug.SymWw "$made"/ObDebug.GofWw
 fi
 
 install -m 644 "$root/license.txt" "$out/LICENSE.txt"
