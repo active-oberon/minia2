@@ -8014,7 +8014,7 @@ TYPE
 			import := currentScope.ownerModule.moduleScope.firstImport;
 			WHILE(import # NIL) DO
 				IF (import.module.name = Global.SystemName) OR (import.module.name = Global.systemName)  THEN
-					RETURN;
+					import.MarkUsed; RETURN;
 				END;
 				import := import.nextImport;
 			END;
@@ -8750,6 +8750,9 @@ TYPE
 		(** symbols *)
 		PROCEDURE Symbol(x: SyntaxTree.Symbol);
 		BEGIN
+			(* Runtime imports can retain initialization or dynamically resolved commands. *)
+			IF (x IS SyntaxTree.Import) & (x(SyntaxTree.Import).module # NIL)
+				& ~Global.IsSystemModule(x(SyntaxTree.Import).module) THEN RETURN END;
 			IF ~x.used & (x.access * SyntaxTree.Public = {}) & (x.access # SyntaxTree.Hidden) THEN
 				IF ~(x IS SyntaxTree.Parameter) THEN
 					Warning(x,"never used");

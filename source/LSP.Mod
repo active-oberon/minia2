@@ -205,6 +205,7 @@ TYPE
 			IF e = NIL THEN RETURN END;
 			WITH e:
 				  SyntaxTree.SymbolDesignator DO Consider(e); WExpr(e.left)
+				| SyntaxTree.Conversion DO WExpr(e.typeExpression); WExpr(e.expression)
 				| SyntaxTree.ProcedureCallDesignator DO WExpr(e.left); WList(e.parameters)
 				| SyntaxTree.BuiltinCallDesignator DO
 					(* the builtin's own name, which nothing else records: without it ASSERT and
@@ -287,7 +288,8 @@ TYPE
 				(* the declaration's own name is also a resolvable site (so hover /
 				   definition / references work when the cursor is on the declaration) *)
 				sym.GetName(dnm);
-				IF (dnm[0] # "@") & (sym.position.line > 0) THEN
+				(* RESULT is a synthetic return parameter, not a declaration in the source. *)
+				IF (dnm[0] # "@") & (sym.name # FoxGlobal.ResultName) & (sym.position.line > 0) THEN
 					Hit(sym, sym.position.start, Strings.Length(dnm), sym.position.start, Strings.Length(dnm))
 				END;
 				(*	An import is declared under its alias, so the span above is the alias and nothing
@@ -1250,7 +1252,7 @@ VAR
 	   prefix of the platform the server itself compiles for; otherwise the first match answers. *)
 	PROCEDURE PrefixedSource (CONST dir, mname: ARRAY OF CHAR; VAR fn: ARRAY OF CHAR): BOOLEAN;
 	VAR en: Files.Enumerator; found, tail, name: ARRAY 1024 OF CHAR;
-		flags: SET; tm, dt: SIGNED32; sz: Files.Size; mask: ARRAY 1024 OF CHAR; wanted: ARRAY 32 OF CHAR;
+		flags: SET; tm, dt: SIGNED32; sz: Files.Size; mask: ARRAY 1024 OF CHAR; wanted, cpu: ARRAY 32 OF CHAR; preferred: BOOLEAN;
 	BEGIN
 		COPY(".", tail); Strings.Append(tail, mname); Strings.Append(tail, ".Mod");
 		(* platformOption is "-p=Unix64" / "-p=Win64" -- what the server compiles for, and so which
@@ -1259,14 +1261,22 @@ VAR
 		ELSIF Strings.Pos("Win", platformOption) >= 0 THEN COPY("Windows.", wanted)
 		ELSE COPY("", wanted)
 		END;
+		IF Strings.Pos("A64", platformOption) >= 0 THEN COPY("A64.", cpu)
+		ELSIF Strings.Pos("64", platformOption) >= 0 THEN COPY("AMD64.", cpu)
+		ELSIF Strings.Pos("ARM", platformOption) >= 0 THEN COPY("ARM.", cpu)
+		ELSE COPY("I386.", cpu)
+		END;
 		COPY(dir, mask); Strings.Append(mask, "*"); Strings.Append(mask, tail);
-		found := "";
+		found := ""; preferred := FALSE;
 		NEW(en); en.Open(mask, {});
 		WHILE en.HasMoreEntries() DO
 			IF en.GetEntry(name, flags, tm, dt, sz) THEN
 				IF found = "" THEN COPY(name, found) END;
 				ModuleBaseName(name, fn);
-				IF StartsWith(fn, wanted) THEN COPY(name, found) END
+				IF (wanted # "") & StartsWith(fn, wanted) THEN
+					COPY(name, found); preferred := TRUE
+				ELSIF ~preferred & StartsWith(fn, cpu) THEN COPY(name, found)
+				END
 			END
 		END;
 		IF found = "" THEN RETURN FALSE END;
@@ -1291,11 +1301,13 @@ VAR
 			(* The host tree first: the native SDK reads the path it was handed, and /libsrc is a
 			   mount only the image has -- looking there alone made stdlibSrc dead weight outside a
 			   container, so no jump ever left the open file. *)
-			COPY(stdlibSrcHost, fn); Strings.Append(fn, "/");
-			Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
+			COPY(stdlibSrcHost, dir); Strings.Append(dir, "/");
+			COPY(dir, fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
 			IF FileExists(fn) THEN RETURN TRUE END;
+			IF PrefixedSource(dir, mname, fn) THEN RETURN TRUE END;
 			COPY("/libsrc/", fn); Strings.Append(fn, mname); Strings.Append(fn, ".Mod");
-			IF FileExists(fn) THEN RETURN TRUE END
+			IF FileExists(fn) THEN RETURN TRUE END;
+			IF PrefixedSource("/libsrc/", mname, fn) THEN RETURN TRUE END
 		END;
 		RETURN FALSE
 	END ModSourceFile;
@@ -1405,25 +1417,13 @@ VAR
 	PROCEDURE SourceUriFor (curUri: Strings.String; CONST mname: ARRAY OF CHAR): Strings.String;
 	VAR f, s: ARRAY 1024 OF CHAR;
 	BEGIN
-		IF ModSourceFile(curUri, mname, f) & ~StartsWith(f, "/libsrc/") THEN
-			(* beside the document: an absolute path already, so it is its own URI. From the working
-			   directory: a bare name, and the document's own directory is what it is relative to. *)
-			IF (f[0] = "/") OR (f[1] = ":") THEN
-				RETURN FileUri(f)
-			END;
-			RETURN SiblingUri(curUri, mname)
+		IF ~ModSourceFile(curUri, mname, f) THEN RETURN NIL END;
+		IF StartsWith(f, "/libsrc/") THEN
+			ModuleBaseName(f, s); Strings.Append(s, ".Mod");
+			COPY(stdlibSrcHost, f); Strings.Append(f, "/"); Strings.Append(f, s)
 		END;
-		COPY(mname, f); Strings.Append(f, ".Mod");
-		IF FileExists(f) THEN RETURN SiblingUri(curUri, mname) END;
-		IF stdlibSrcHost[0] # 0X THEN
-			COPY("/libsrc/", f); Strings.Append(f, mname); Strings.Append(f, ".Mod");
-			IF FileExists(f) THEN
-				COPY("file://", s); Strings.Append(s, stdlibSrcHost);
-				Strings.Append(s, "/"); Strings.Append(s, mname); Strings.Append(s, ".Mod");
-				RETURN Strings.NewString(s)
-			END
-		END;
-		RETURN NIL
+		IF (f[0] = "/") OR (f[1] = ":") THEN RETURN FileUri(f) END;
+		RETURN SiblingUri(curUri, mname)
 	END SourceUriFor;
 
 	PROCEDURE Location (uri: Strings.String; line, char, len: SIGNED32): JSON.Object;
@@ -2896,7 +2896,7 @@ VAR
 	END RemoveImportEdit;
 
 	(* textDocument/codeAction: add-import quickfixes for undeclared qualifiers in the
-	   supplied diagnostics, removal of an import nothing names, and comment/uncomment
+	   supplied diagnostics, removal of an unused SYSTEM import, and comment/uncomment
 	   of a non-empty selection. *)
 	PROCEDURE CodeActions (text, uri: Strings.String; diags: JSON.Array;
 		sl, sc, el, ec: SIGNED32): JSON.Value;
@@ -2934,10 +2934,7 @@ VAR
 				INC(i)
 			END
 		END;
-		(*	An import nothing names. The checker already answers this -- it marks a symbol used
-			when it resolves a name to it -- so there is nothing to count here. Offered only with
-			the cursor in the IMPORT clause: that is where one looks for it, and it keeps the
-			checker off every other code-action request, which a client sends per cursor move. *)
+		(* Only SYSTEM has no runtime initialization or dynamically resolved commands to retain. *)
 		impKw := IndexOf(text, "IMPORT", 0);
 		IF impKw >= 0 THEN
 			impEnd := IndexOf(text, ";", impKw);
@@ -2952,7 +2949,7 @@ VAR
 					END;
 					imp := m.moduleScope.firstImport;
 					WHILE imp # NIL DO
-						IF ~imp.used THEN
+						IF ~imp.used & (imp.module # NIL) & FoxGlobal.IsSystemModule(imp.module) THEN
 							act := RemoveImportEdit(text, uri, imp, live = 1);
 							IF act # NIL THEN actions.Add(act) END
 						END;
@@ -3004,6 +3001,7 @@ VAR
 						caps.Set("textDocumentSync", JSON.NewNumber(1));   (* full sync *)
 						caps.Set("hoverProvider", JSON.NewBool(TRUE));
 						caps.Set("definitionProvider", JSON.NewBool(TRUE));
+						caps.Set("declarationProvider", JSON.NewBool(TRUE));
 						caps.Set("documentSymbolProvider", JSON.NewBool(TRUE));
 						compl := JSON.NewObject();
 						trig := JSON.NewArray(); trig.Add(JSON.NewString("."));
@@ -3095,7 +3093,7 @@ VAR
 							IF doc # NIL THEN res := HoverAt(doc.text, PosToOffset(doc.text, line, char), uri) END
 						END;
 						Respond(out, req.Get("id"), res)
-					ELSIF method^ = "textDocument/definition" THEN
+					ELSIF (method^ = "textDocument/definition") OR (method^ = "textDocument/declaration") THEN
 						td := JSON.AsObject(params.Get("textDocument"));
 						pos := JSON.AsObject(params.Get("position"));
 						res := NIL;

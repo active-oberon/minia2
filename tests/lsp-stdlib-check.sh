@@ -120,6 +120,54 @@ if got != want:
 
 print("[PASS] the jump lands in the tree stdlibSrc names (line %d)" % first["range"]["start"]["line"])
 
+# Platform-prefixed sources belong in the library tree as well as beside a document.
+for module, member, filename, declaration, call in [
+    ("PrecisionTimer", "GetFrequency", "Unix.PrecisionTimer.Mod",
+     "PROCEDURE GetFrequency*(): SIGNED64; BEGIN RETURN 1 END GetFrequency;",
+     "IF PrecisionTimer.GetFrequency() = 1 THEN END"),
+    ("FoxArrayBaseOptimized", "Install", "AMD64.FoxArrayBaseOptimized.Mod",
+     "PROCEDURE Install*; BEGIN END Install;", "FoxArrayBaseOptimized.Install"),
+]:
+    source = "MODULE %s;\n%s\nEND %s.\n" % (module, declaration, module)
+    other = ("Windows." if filename.startswith("Unix.") else "I386.") + module + ".Mod"
+    with open(os.path.join(libsrc, other), "w") as f:
+        f.write(source)
+    with open(os.path.join(libsrc, filename), "w") as f:
+        f.write(source)
+    text = "MODULE StdlibJump;\nIMPORT %s;\nBEGIN %s END StdlibJump.\n" % (module, call)
+    off = text.index(module + "." + member) + len(module) + 1
+    pos = {"line": text[:off].count("\n"), "character": off - text.rfind("\n", 0, off) - 1}
+    imported = {"line": 1, "character": len("IMPORT ")}
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"rootUri": "file://" + os.path.dirname(doc), "capabilities": {},
+                    "initializationOptions": {"stdlibSrc": libsrc}}},
+        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+        {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+         "params": {"textDocument": {"uri": uri, "languageId": "oberon", "version": 1, "text": text}}},
+    ]
+    for request_id, method, position in [(2, "definition", pos), (3, "declaration", pos),
+                                         (4, "definition", imported), (5, "declaration", imported)]:
+        requests.append({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/" + method,
+                         "params": {"textDocument": {"uri": uri}, "position": position}})
+    proc = subprocess.run([ob, "lsp", "--live"], input=b"".join(map(frame, requests)),
+                          capture_output=True, env=dict(os.environ, TMPDIR=work), timeout=30)
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+    answers = {}
+    for part in proc.stdout.decode(errors="replace").split("Content-Length:"):
+        try:
+            answer = json.loads(part.split("\r\n\r\n", 1)[-1])
+        except ValueError:
+            continue
+        if "id" in answer:
+            answers[answer["id"]] = answer.get("result")
+    target = "file://" + os.path.join(libsrc, filename)
+    for request_id in (2, 3, 4, 5):
+        location = answers.get(request_id)
+        assert location and location["uri"] == target, (filename, request_id, location, proc.stderr.decode())
+        assert location["range"]["start"]["line"] == (1 if request_id < 4 else 0), location
+    print("[PASS] definition and declaration reach prefixed library source %s" % filename)
+
 # A project module that imports the standard library must be prepared on demand:
 # only Main is opened, so Child cannot get its symbols from an earlier didOpen.
 project = os.path.join(work, "proj")
