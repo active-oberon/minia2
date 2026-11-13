@@ -1017,6 +1017,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	TextSize, AlignedTextSize, DataSize, AlignedDataSize: SIZE;
 	resources: Resources; resourceContent: Builder;
 	ResourceSize, AlignedResourceSize, ResourceAddress: SIZE;
+	DebugDirectoryAddress, DebugDirectorySize, AlignedDebugDirectorySize: SIZE;
 	stamp: SIGNED64; stampIndex: SIZE;
 	pos: SIZE;
 	sum, carry: SIZE; pending: BOOLEAN;	(* the file's checksum, accumulated as it is written *)
@@ -1119,6 +1120,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		IF HasRelocs() THEN INC(count) END;
 		IF HasExports() THEN INC(count) END;
 		IF HasResources() THEN INC(count) END;
+		IF DebugDirectorySize # 0 THEN INC(count) END;
 		RETURN count
 	END Sections;
 
@@ -1219,7 +1221,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 	PROCEDURE WriteOptionalHeader;
 	VAR ImageSize: SIZE;
 	BEGIN
-		ImageSize := Align(BaseCodeAddress+AlignedCodeSize+AlignedExportTableSize()+AlignedRelocTableSize()+AlignedResourceSize, SectionAlignment);
+		ImageSize := Align(BaseCodeAddress+AlignedCodeSize+AlignedExportTableSize()+AlignedRelocTableSize()+AlignedResourceSize+AlignedDebugDirectorySize, SectionAlignment);
 
 		(* 0 *) IF bitmode = 64 THEN
 			WriteWORD (0020BH);	(* Magic *)
@@ -1230,7 +1232,7 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 		(* 2 *) WriteBYTE (1);	(* MajorLinkerVersion *)
 		(* 3 *) WriteBYTE (0);	(* MinorLinkerVersion *)
 		(* 4 *) WriteDWORD (TextSize);	(* SizeOfCode *)
-		(* 8 *) WriteDWORD (DataSize + ResourceSize);	(* SizeOfInitializedData *)
+		(* 8 *) WriteDWORD (DataSize + ResourceSize + DebugDirectorySize);	(* SizeOfInitializedData *)
 		(* 12 *) WriteDWORD (0);	(* SizeOfUninitializedData *)
 		(* 16 *) WriteDWORD (BaseCodeAddress);	(* AddressOfEntryPoint *)
 		(* 20 *) WriteDWORD (BaseCodeAddress);	(* BaseOfCode *)
@@ -1304,7 +1306,8 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			WriteDWORD (BaseCodeAddress + AlignedCodeSize+AlignedExportTableSize()) ; WriteDWORD (RelocTableSize()); (* location and size of of reloc section *)
 		ELSE Reserve(8)
 		END;
-		Reserve ((DirectoryEntries - 6) * 8);
+		WriteDWORD (DebugDirectoryAddress); WriteDWORD (DebugDirectorySize);
+		Reserve ((DirectoryEntries - 7) * 8);
 	END WriteOptionalHeader;
 
 	PROCEDURE WriteSections;
@@ -1379,6 +1382,12 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			(* 36 *) WriteDWORD (40000040H);	(* INITIALIZED_DATA | MEM_READ *)
 		END;
 
+		IF DebugDirectorySize # 0 THEN
+			WriteString(".rdata"); Reserve(2);
+			WriteDWORD(DebugDirectorySize); WriteDWORD(DebugDirectoryAddress);
+			WriteDWORD(AlignedDebugDirectorySize); WriteDWORD(DebugDirectoryAddress);
+			Reserve(12); WriteDWORD(40000040H)
+		END;
 		ReserveTo(BaseCodeAddress);
 
 		(**** code section *****)
@@ -1465,6 +1474,11 @@ VAR OptionalHeaderSize, CodeSize, AlignedCodeSize, HeadersSize, BaseCodeAddress:
 			FOR i := 0 TO ResourceSize - 1 DO WriteBYTE(ORD(resourceContent.bytes[i])) END;
 			Reserve(AlignedResourceSize - ResourceSize);
 		END;
+		IF DebugDirectorySize # 0 THEN
+			(* IMAGE_DEBUG_TYPE_REPRO marks the timestamp as a content hash rather than a date. *)
+			WriteDWORD (0); WriteDWORD (stamp); WriteDWORD (0); WriteDWORD (16); Reserve(12);
+			Reserve(AlignedDebugDirectorySize - DebugDirectorySize)
+		END;
 	END WriteSections;
 
 BEGIN
@@ -1491,12 +1505,13 @@ BEGIN
 	AlignedTextSize := Align(TextSize, SectionAlignment);
 	AlignedDataSize := Align(DataSize, SectionAlignment);
 	AlignedCodeSize := AlignedTextSize + AlignedDataSize;
-	HeadersSize :=  Align(DOSStubSize + HeaderSize + OptionalHeaderSize + Sections() * SectionHeaderSize, FileAlignment);
+	DebugDirectoryAddress := 0; DebugDirectorySize := 0;
+	IF subSystem # EFISubsystem THEN DebugDirectorySize := 28 END;
+	AlignedDebugDirectorySize := Align(DebugDirectorySize, SectionAlignment);
+	HeadersSize := Align(DOSStubSize + HeaderSize + OptionalHeaderSize + Sections() * SectionHeaderSize, FileAlignment);
 	BaseCodeAddress := Align(HeadersSize, SectionAlignment);
 
-	(*	The resource section is the last one, so its address is known as soon as the four before it
-		have their sizes -- and it needs to be known, because the descriptors inside `.rsrc` point at
-		its own bytes with an RVA. *)
+	(* Resource descriptors need their section RVA before their bytes can be built. *)
 	ResourceSize := 0; AlignedResourceSize := 0;
 	IF HasResources() THEN
 		ResourceAddress := BaseCodeAddress + AlignedCodeSize + AlignedExportTableSize() + AlignedRelocTableSize();
@@ -1504,18 +1519,11 @@ BEGIN
 		ResourceSize := resourceContent.length;
 		AlignedResourceSize := Align(ResourceSize, SectionAlignment);
 	END;
+	IF DebugDirectorySize # 0 THEN
+		DebugDirectoryAddress := BaseCodeAddress + AlignedCodeSize + AlignedExportTableSize() + AlignedRelocTableSize() + AlignedResourceSize
+	END;
 
-	(*
-		The timestamp is taken from the image and not from the clock, and that is not a nicety:
-		this tree checks that the binary `ob build` writes is byte for byte the one the shell
-		version writes, and a stamp read off the clock differs between two links of the same input.
-		ELF has no such field, so only the PE targets ever noticed -- CI did, on the first push.
-
-		Zero is what it was before 04.09.2026, and zero is on every heuristic list of things a
-		packer leaves behind. A value folded out of the image is neither: it is not zero, it does
-		not move unless the image does, and a reproducible stamp is what /Brepro writes for the
-		same reason.
-	*)
+	(* A content hash keeps links reproducible; IMAGE_DEBUG_TYPE_REPRO declares that it is not a date. *)
 	stamp := 0;
 	FOR stampIndex := 0 TO arrangement.bits.GetSize () - 1 BY 8 DO
 		stamp := (stamp * 33 + arrangement.bits.GetBits (stampIndex, 8)) MOD 100000000H

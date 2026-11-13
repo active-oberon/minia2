@@ -230,6 +230,42 @@ for spec in "linux64 hello" "win64 hello.exe" "a64 hello-arm64"; do
 			&& "$shellob" build Hello.Mod -t "$target" -o "shell/$name" >/dev/null 2>&1; then
 		if cmp -s "$name" "shell/$name"; then echo "ok    build $target is byte for byte the shell version's"
 		else echo "FAIL  build $target differs from the shell version's binary"; fail=1; fi
+		if [ "$target" = win64 ]; then
+			if python3 - "$name" <<'PY'
+import pathlib, struct, sys
+
+image = pathlib.Path(sys.argv[1]).read_bytes()
+pe = struct.unpack_from("<I", image, 60)[0]
+optional = pe + 24
+section_count = struct.unpack_from("<H", image, pe + 6)[0]
+section_table = optional + struct.unpack_from("<H", image, pe + 20)[0]
+debug, size = struct.unpack_from("<II", image, optional + 112 + 6 * 8)
+assert size == 28, "missing reproducible-build debug directory"
+debug_offset = None
+for index in range(section_count):
+    section = section_table + index * 40
+    virtual_size, address, raw_size, raw = struct.unpack_from("<IIII", image, section + 8)
+    flags = struct.unpack_from("<I", image, section + 36)[0]
+    assert flags & 0xa0000000 != 0xa0000000, "writable executable section"
+    if address <= debug and debug + size <= address + min(virtual_size, raw_size):
+        debug_offset = raw + debug - address
+assert debug_offset is not None, "debug directory is outside the image sections"
+entry = struct.unpack_from("<IIHHIIII", image, debug_offset)
+stamp = struct.unpack_from("<I", image, pe + 8)[0]
+assert entry == (0, stamp, 0, 0, 16, 0, 0, 0), "missing IMAGE_DEBUG_TYPE_REPRO"
+checksum_at = optional + 64
+stored = struct.unpack_from("<I", image, checksum_at)[0]
+total = 0
+for offset in range(0, len(image), 2):
+    if not checksum_at <= offset < checksum_at + 4:
+        total += int.from_bytes(image[offset:offset + 2], "little")
+        total = (total & 0xffff) + (total >> 16)
+total = (total & 0xffff) + (total >> 16)
+assert stored == total + len(image), "incorrect PE checksum"
+print("ok    Windows PE declares reproducibility, separates code/data and has a valid checksum")
+PY
+			then :; else echo "FAIL  Windows PE metadata"; fail=1; fi
+		fi
 	else
 		echo "FAIL  build $target did not produce a binary"; fail=1
 	fi
@@ -533,19 +569,20 @@ elif [ ! -d "$sdk/lib-win64" ] || [ ! -f "$winbin/WinTrace.SymWw" ]; then
 else
 	win="$work/win"; winsdk="$work/winsdk/lib"
 	mkdir -p "$win" "$winsdk"
-	# Only our two modules are compiled here. Kernel32 (with the bindings ObHost needs), JSON,
+	# The driver and its two helpers are compiled here. Kernel32 (with the bindings ObHost needs), JSON,
 	# LSP and WinTrace come out of lib-win64 like any other library module -- they are in the
 	# Win64 release definition and in configs/headless-core-win64.txt, so a Win64 build and the
 	# bundle made from it carry them. That was not true while the Win64 build in the tree was
 	# months old, and the difference read as "the release list is missing them".
 	cp "$root/sdk/Windows.ObHost.Mod"  "$win/ObHost.Mod"
+	cp "$root/sdk/ObDebug.Mod"        "$win/ObDebug.Mod"
 	cp "$root/sdk/Ob.Mod" "$win/"
 	winboot="$(grep -vE '^(StdIOShell|Shell)$' "$root/configs/moduleListWin.txt" | tr '\n' ' ')"
 	( cd "$win" && "$oberon" do "
 		Files.AddSearchPath $win~
 		Files.AddSearchPath $build/bin~
 		Files.AddSearchPath $sdk/lib-win64~
-		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./ObHost.Mod ./Ob.Mod ~
+		Compiler.Compile -p=Win64 --objectFileExtension=GofWw --symbolFileExtension=.SymWw ./ObHost.Mod ./ObDebug.Mod ./Ob.Mod ~
 		Linker.Link --fileFormat=PE64CUI --extension=GofWw --displacement=401000H --fileName='ob.exe'
 		$winboot Ob
 		~
