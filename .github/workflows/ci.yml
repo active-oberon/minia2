@@ -20,12 +20,12 @@ jobs:
         # Without these the A64 checks skip, and a skip reads exactly like a pass: the code
         # generator, the collector and the write barriers on AArch64 would then be covered by
         # nothing. A64_REQUIRE below turns a skip into a failure, so this step is what keeps
-        # that from firing. qemu-user-static runs the AArch64 binaries, libc6-arm64-cross is
+        # that from firing. qemu-user runs the AArch64 binaries, libc6-arm64-cross is
         # the C library they are dynamically linked against, and llvm brings llvm-mc, which the
         # encoder is checked against.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static libc6-arm64-cross llvm
+          sudo apt-get install -y --no-install-recommends qemu-user libc6-arm64-cross llvm
       - name: Install the 32-bit C libraries the i386 and armhf SDKs run against
         # Same rule as the line above: without these the two 32-bit bundle checks skip, and a skip
         # reads exactly like a pass -- which is how a bundle that builds and cannot compile a line

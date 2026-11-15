@@ -330,8 +330,8 @@ def main():
     llvm_mc = llvm_tool("llvm-mc")
     objcopy = llvm_tool("llvm-objcopy")
     if not qemu or not llvm_mc or not objcopy:
-        die_skip("need qemu-aarch64-static, llvm-mc and llvm-objcopy "
-                 "(Debian: apt install qemu-user-static llvm-18)")
+        die_skip("need qemu-aarch64 or qemu-aarch64-static, llvm-mc and llvm-objcopy "
+                 "(Debian/Ubuntu: apt install qemu-user llvm)")
 
     with tempfile.TemporaryDirectory() as work:
         listing = compile_for_a64(build, work)

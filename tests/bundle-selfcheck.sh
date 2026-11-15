@@ -334,8 +334,8 @@ if [ -d "$root/lib-a64" ]; then
 		printf '  ok    %-30s %6s  %s\n' "ob build -t a64" "${_ELAPSED}s" "${results#"$root"/}/build-a64.log"
 		pass=$((pass+1))
 		# Run too, if there is an emulator and an AArch64 C library -- neither expected on a
-		# machine unpacking a tarball, so absence is a skip. Both names, because CI installs
-		# qemu-user-static, which is qemu-aarch64-static on the PATH; and -L, because the binary
+		# machine unpacking a tarball, so absence is a skip. Both names support qemu-user and
+		# older qemu-user-static installations; and -L, because the binary
 		# is dynamically linked (libc6-arm64-cross leaves a sysroot at /usr/aarch64-linux-gnu).
 		qemu="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
 		sysroot="${A64_SYSROOT:-}"

@@ -974,8 +974,8 @@ tasks:
             # A64_REQUIRE turns a skip into a failure: on a machine that is meant to have the
             # tools -- CI -- a silent skip is the check not running at all, which reads the same
             # as it passing.
-            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] running A64 code needs qemu-user-static and llvm, and A64_REQUIRE is set"; exit 1; }
-            echo "[SKIP] running A64 code needs qemu-user-static and llvm"
+            [ -z "$A64_REQUIRE" ] || { echo "[FAIL] running A64 code needs qemu-user and llvm, and A64_REQUIRE is set"; exit 1; }
+            echo "[SKIP] running A64 code needs qemu-user and llvm"
           else
             exit "$status"
           fi
